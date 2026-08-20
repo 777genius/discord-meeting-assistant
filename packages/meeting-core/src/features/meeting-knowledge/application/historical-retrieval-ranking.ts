@@ -220,15 +220,16 @@ export function resolveRequestedSpeakerAliases(
   question: string,
   aliases: SpeakerAliasMapV1 = {},
 ): readonly RequestedSpeakerAliasV1[] {
-  const questionTokens = tokens(question);
   const selected = new Map<string, RequestedSpeakerAliasV1>();
   for (const [speakerId, values] of Object.entries(aliases)) {
-    const matchedAlias = values.find((value) => {
+    const matchedAlias = values.map((value) => {
       const aliasTokens = tokens(value);
-      return aliasTokens.size > 0 && [...aliasTokens].every((token) =>
-        questionTokens.has(token)
-      ) && aliasMentionIsUnambiguous(question, value, aliasTokens);
-    });
+      const questionSpan = contiguousAliasSpan(question, value);
+      return questionSpan !== undefined && aliasTokens.size > 0 &&
+          aliasMentionIsUnambiguous(question, questionSpan, aliasTokens)
+        ? questionSpan
+        : undefined;
+    }).find((value): value is string => value !== undefined);
     if (matchedAlias !== undefined) {
       selected.set(speakerId, Object.freeze({ matchedAlias, speakerId }));
     }
@@ -255,8 +256,21 @@ function aliasMentionIsUnambiguous(
   const escaped = escapeRegExp(alias.trim());
   return new RegExp(
     `(?:\\b(?:by|did|from|has|said)\\s+${escaped}\\b|\\b${escaped}\\s+(?:decided|proposed|said|suggested)\\b)`,
-    "u",
+    "iu",
   ).test(question);
+}
+
+function contiguousAliasSpan(question: string, alias: string): string | undefined {
+  const aliasTokens = [...tokens(alias)];
+  if (aliasTokens.length === 0) {
+    return undefined;
+  }
+  const pattern = aliasTokens.map(escapeRegExp).join("[^\\p{L}\\p{N}]+");
+  const match = new RegExp(
+    `(?<![\\p{L}\\p{N}])(${pattern})(?![\\p{L}\\p{N}])`,
+    "iu",
+  ).exec(question);
+  return match?.[1];
 }
 
 function escapeRegExp(value: string): string {

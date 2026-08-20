@@ -162,7 +162,7 @@ function enabled(value: boolean | (() => boolean)): boolean {
   return typeof value === "function" ? value() : value;
 }
 
-/** Deterministic score fusion with one current-evidence reservation. */
+/** Deterministic score fusion that retains both non-empty evidence sources. */
 function crossSourceRank(
   current: readonly FocusedMemoryReference[],
   historical: readonly FocusedMemoryReference[],
@@ -179,14 +179,18 @@ function crossSourceRank(
   );
   const selected: FocusedMemoryReference[] = [];
   const reservedCurrent = current[0];
+  const reservedHistorical = historical[0];
   if (reservedCurrent !== undefined && maximumCandidates > 0) {
     selected.push(reservedCurrent);
+  }
+  if (reservedHistorical !== undefined && selected.length < maximumCandidates) {
+    selected.push(reservedHistorical);
   }
   for (const { candidate } of decorated) {
     if (selected.length >= maximumCandidates) {
       break;
     }
-    if (candidate !== reservedCurrent) {
+    if (candidate !== reservedCurrent && candidate !== reservedHistorical) {
       selected.push(candidate);
     }
   }

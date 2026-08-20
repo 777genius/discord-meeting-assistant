@@ -25,6 +25,14 @@ function turn(
   };
 }
 
+function historicalSource(meetingId: string) {
+  return {
+    meetingId,
+    transcriptId: `transcript-${meetingId}`,
+    transcriptVersion: 1,
+  };
+}
+
 describe("Meeting Knowledge GroundingPlan", () => {
   it("builds only a bounded, locally rehydrated focused selection", () => {
     const plan = createFocusedRetrievalGroundingPlan({
@@ -79,6 +87,30 @@ describe("Meeting Knowledge GroundingPlan", () => {
     expect(plan.evidence.reduce((bytes, evidence) =>
       bytes + new TextEncoder().encode(evidence.text).byteLength, 0
     )).toBeLessThan(1_000);
+  });
+
+  it("groups cross-meeting evidence before ordering meeting-relative time", () => {
+    const plan = createFocusedRetrievalGroundingPlan({
+      authorityGeneration: focusedMemoryGeneration("f".repeat(64)),
+      coverage: "sufficient",
+      humanActorIds: ["speaker-a"],
+      turns: [{
+        ...turn(90, "older meeting late turn", "speaker-a"),
+        source: historicalSource("a"),
+      }, {
+        ...turn(5, "newer meeting early turn", "speaker-a"),
+        source: historicalSource("b"),
+      }, {
+        ...turn(1, "older meeting early turn", "speaker-a"),
+        source: historicalSource("a"),
+      }],
+    });
+
+    expect(plan.evidence.map(({ text }) => text)).toEqual([
+      "older meeting early turn",
+      "older meeting late turn",
+      "newer meeting early turn",
+    ]);
   });
 
   it("rejects low coverage, duplicate turns, and non-human canonical evidence", () => {

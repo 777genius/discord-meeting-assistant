@@ -162,6 +162,14 @@ function adapter(
   });
 }
 
+function historicalSource(meetingId: string) {
+  return {
+    meetingId,
+    transcriptId: `transcript-${meetingId}`,
+    transcriptVersion: 1,
+  };
+}
+
 describe("Meeting Knowledge subscription runtime contract", () => {
   it("serializes only bounded locally rehydrated focused evidence", async () => {
     const runtime = new RuntimeFake();
@@ -538,6 +546,65 @@ describe("Meeting Knowledge grounding runtime contract", () => {
       extracts: [],
       providerPayload: "forbidden",
     }).success).toBe(false);
+  });
+});
+
+describe("Meeting Knowledge answer privacy regressions", () => {
+  it("does not bind a configured compound name from separated question words", async () => {
+    const runtime = new RuntimeFake();
+    await adapter(runtime, {
+      "88888888888888888": ["Anna Smith"],
+    }).generate({
+      ...generationRequest(),
+      question: "Did Smith agree with Anna?",
+    });
+
+    const prompt = JSON.parse(runtime.request?.task.prompt ?? "null") as {
+      readonly questionSpeakerBindings: readonly unknown[];
+    };
+    expect(prompt.questionSpeakerBindings).toEqual([]);
+  });
+
+  it("preserves anonymous meeting boundaries for relative timestamps", async () => {
+    const runtime = new RuntimeFake();
+    const base = generationRequest();
+    const plan = createFocusedRetrievalGroundingPlan({
+      authorityGeneration: base.plan.authorityGeneration,
+      coverage: "sufficient",
+      humanActorIds: ["77777777777777777", "88888888888888888"],
+      turns: [{
+        endMs: 5_401_000,
+        source: historicalSource("older"),
+        speakerId: "77777777777777777",
+        startMs: 5_400_000,
+        text: "Older meeting late turn.",
+        turnHash: "7".repeat(64),
+        turnId: "older-late",
+      }, {
+        endMs: 301_000,
+        source: historicalSource("newer"),
+        speakerId: "88888888888888888",
+        startMs: 300_000,
+        text: "Newer meeting early turn.",
+        turnHash: "8".repeat(64),
+        turnId: "newer-early",
+      }],
+    });
+
+    await adapter(runtime).generate({ ...base, plan });
+
+    const serializedPrompt = runtime.request?.task.prompt ?? "";
+    const prompt = JSON.parse(serializedPrompt) as {
+      readonly evidence: readonly { readonly meetingReference: string }[];
+    };
+    expect(prompt.evidence.map(({ meetingReference }) => meetingReference))
+      .toEqual(["M1", "M2"]);
+    expect(serializedPrompt).not.toContain("transcript-older");
+    expect(serializedPrompt).not.toContain("transcript-newer");
+    expect(serializedPrompt).not.toContain('"meetingId"');
+    expect(runtime.request?.task.systemPrompt).toContain(
+      "never infer chronology or compare relative times",
+    );
   });
 });
 

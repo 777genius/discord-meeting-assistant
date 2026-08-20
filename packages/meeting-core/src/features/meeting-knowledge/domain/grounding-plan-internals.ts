@@ -13,13 +13,23 @@ function compareCanonicalTurns(
   left: RehydratedEvidenceTurn,
   right: RehydratedEvidenceTurn,
 ): number {
-  return left.startMs - right.startMs ||
+  const leftSource = canonicalSourceKey(left);
+  const rightSource = canonicalSourceKey(right);
+  return (leftSource < rightSource ? -1 : leftSource > rightSource ? 1 : 0) ||
+    left.startMs - right.startMs ||
     left.endMs - right.endMs ||
     (left.turnId < right.turnId ? -1 : left.turnId > right.turnId ? 1 : 0) ||
     (left.source?.sourceStartCodePoint ?? -1) -
       (right.source?.sourceStartCodePoint ?? -1) ||
     (left.source?.sourceEndCodePoint ?? -1) -
       (right.source?.sourceEndCodePoint ?? -1);
+}
+
+function canonicalSourceKey(turn: RehydratedEvidenceTurn): string {
+  const source = turn.source;
+  return source === undefined
+    ? "0:current"
+    : `1:${source.meetingId}\u0000${source.transcriptId}\u0000${source.transcriptVersion}`;
 }
 
 function normalizeEvidenceSource(

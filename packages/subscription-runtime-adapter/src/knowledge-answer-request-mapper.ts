@@ -29,6 +29,7 @@ const commonKnowledgeAnswerSystemPrompt = [
   "For answered status, emit concise claims and cite the smallest direct evidenceId set for every claim.",
   "Include material correction or contradiction evidence; do not resolve conflicts by silently choosing one turn.",
   "questionSpeakerBindings map only a name already present in the question to its anonymous evidence speakerReference; use them for attribution.",
+  "meetingReference anonymously groups turns from one meeting. startMs and endMs reset inside each meetingReference; never infer chronology or compare relative times across different meetingReference values.",
   "Never cite an ID absent from evidence. Never expose speaker references as identities or output S1/S2 labels.",
   "Use not_a_question only when the input is not a question. Do not emit links, Discord mentions, markdown, bidi controls, or invented facts.",
 ].join(" ");
@@ -88,15 +89,29 @@ export function buildSubscriptionRuntimeKnowledgeAnswerRequest(
   }
   validateEvidenceBindings(request);
   const speakerReferences = new Map<string, string>();
+  const meetingReferences = new Map<string, string>();
   const evidence = request.plan.evidence.map((turn) => {
     let speakerReference = speakerReferences.get(turn.speakerId);
     if (speakerReference === undefined) {
       speakerReference = `S${speakerReferences.size + 1}`;
       speakerReferences.set(turn.speakerId, speakerReference);
     }
+    const meetingKey = turn.source === undefined
+      ? "current"
+      : [
+          turn.source.meetingId,
+          turn.source.transcriptId,
+          turn.source.transcriptVersion,
+        ].join("\u0000");
+    let meetingReference = meetingReferences.get(meetingKey);
+    if (meetingReference === undefined) {
+      meetingReference = `M${meetingReferences.size + 1}`;
+      meetingReferences.set(meetingKey, meetingReference);
+    }
     return {
       endMs: turn.endMs,
       evidenceId: turn.evidenceId,
+      meetingReference,
       speakerReference,
       startMs: turn.startMs,
       text: turn.text,

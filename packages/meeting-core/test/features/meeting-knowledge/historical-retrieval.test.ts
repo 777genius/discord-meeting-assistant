@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildHistoricalIndexPlan,
+  resolveRequestedSpeakerAliases,
   type HistoricalMemoryPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
@@ -239,6 +240,35 @@ describe("focused historical retrieval", () => {
     expect(result.plan.sources[0]?.locator).toBe(vlad);
   });
 
+});
+
+describe("requested speaker alias matching", () => {
+  const aliases = {
+    "opaque-anna": ["Anna Smith"],
+    "opaque-will": ["Will"],
+  } as const;
+
+  it("requires a contiguous name span and preserves the exact question text", () => {
+    expect(resolveRequestedSpeakerAliases(
+      "Did Smith agree with Anna?",
+      aliases,
+    )).toEqual([]);
+    expect(resolveRequestedSpeakerAliases(
+      "What did anna smith propose?",
+      aliases,
+    )).toEqual([{ matchedAlias: "anna smith", speakerId: "opaque-anna" }]);
+  });
+
+  it("recognizes an unambiguous sentence-initial ambiguous English name", () => {
+    expect(resolveRequestedSpeakerAliases(
+      "Did Will propose the launch date?",
+      aliases,
+    )).toEqual([{ matchedAlias: "Will", speakerId: "opaque-will" }]);
+    expect(resolveRequestedSpeakerAliases(
+      "When will Atlas launch?",
+      aliases,
+    )).toEqual([]);
+  });
 });
 
 describe("focused historical cross-meeting ranking", () => {

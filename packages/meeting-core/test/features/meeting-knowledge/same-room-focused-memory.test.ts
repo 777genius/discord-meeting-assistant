@@ -171,6 +171,36 @@ describe("same-room focused memory merge", () => {
     }
   });
 
+  it("reserves historical evidence when current recall fills the candidate cap", async () => {
+    const historical = historicalBlock(
+      "meeting-historical-low-score",
+      "cedar historical correction",
+    );
+    const current: FocusedMemoryReference[] = Array.from(
+      { length: 40 },
+      (_, index) => currentCandidate(index, 1 - index / 100),
+    );
+    const result = await sameRoom({
+      blocks: [historical],
+      current: { retrieve: async () => ({
+        authorityGeneration: "authority-1",
+        candidates: current,
+        schemaVersion: 1,
+        status: "current",
+      }) },
+      scores: [0.2],
+    }).retrieve(retrievalRequest(40));
+
+    expect(result.status).toBe("current");
+    if (result.status === "current") {
+      expect(result.candidates).toHaveLength(40);
+      expect(result.candidates[0]).toEqual(current[0]);
+      expect(result.candidates[1]?.meetingId).toBe(
+        "meeting-historical-low-score",
+      );
+    }
+  });
+
   it("decays turns in one block so other evidence survives top-k", async () => {
     const baseDense = historicalBlock("meeting-dense", "dense cedar evidence");
     const separate = historicalBlock(
