@@ -374,7 +374,8 @@ function deploymentExpectation(): HostedDeploymentSafetyExpectationV1 {
     allowedNetworks: ["discord-meeting-e2e"], campaignId, campaignRoot: "/srv/e2e/campaigns",
     campaignRootOwnerGid: 10_001, campaignRootOwnerUid: 10_001,
     craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG-E2E",
-      networkName: "discord-meeting-e2e", tcpDestinationPort: 443,
+      databaseIpv4: "172.28.0.3", networkName: "discord-meeting-e2e", projectName: "craig-meeting-e2e",
+      tcpDestinationPort: 443,
       udpDestinationPorts: { end: 65_535, start: 1_024 } },
     deployRoot: "/srv/e2e", sourceRoot: "/srv/e2e/source",
     greeting: {

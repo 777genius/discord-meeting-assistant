@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   FileCraigCampaignCredentialStore,
   craigProjectName,
+  deriveCraigCampaignNetworkPolicy,
   provisionCraigDisposableCampaignStack,
   teardownSuccessfulCraigCampaignStack,
 } from "../src/craig-disposable-campaign-stack.js";
@@ -41,42 +42,62 @@ describe.skipIf(docker === undefined)("Craig disposable stack with local Compose
     const credentialFile = join(control, "craig.env");
     const project = craigProjectName(campaignId, release);
     const migrationChecksum = "e".repeat(64);
+    const networkPolicy = deriveCraigCampaignNetworkPolicy(campaignId, release, { end: 65_535, start: 1_024 });
+    const databaseUrl = "postgresql://craig:local-password-01234567890123456789@database:5432/craig";
     const compose = `services:
   database:
     image: ${docker.postgres.repositoryDigest}
     hostname: database
-    network_mode: none
     environment:
-      POSTGRES_DB: \${POSTGRES_DB}
-      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD}
-      POSTGRES_USER: \${POSTGRES_USER}
+      POSTGRES_DB: craig
+      POSTGRES_PASSWORD: local-password-01234567890123456789
+      POSTGRES_USER: craig
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \${POSTGRES_USER} -d \${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "grep -qx postgres /proc/1/comm && psql -U craig -d craig -c 'SELECT 1'"]
       interval: 1s
       timeout: 1s
       retries: 30
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    networks:
+      ${networkPolicy.name}:
+        ipv4_address: ${networkPolicy.databaseIpv4}
   migrate:
     image: ${docker.postgres.repositoryDigest}
+    depends_on:
+      database:
+        condition: service_started
+        required: true
+        restart: true
     network_mode: service:database
     environment:
-      DATABASE_URL: \${DATABASE_URL}
+      DATABASE_URL: ${databaseUrl}
   bot:
     image: ${docker.substitute.repositoryDigest}
-    network_mode: none
     environment:
-      DATABASE_URL: \${DATABASE_URL}
+      DATABASE_URL: ${databaseUrl}
       DISCORD_APPLICATION_ID: '1533877611258708230'
-      E2E_CAMPAIGN_ID: \${E2E_CAMPAIGN_ID}
+      E2E_CAMPAIGN_ID: ${campaignId}
       E2E_SOURCE_REVISION: ${"c".repeat(40)}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 1s
       timeout: 1s
       retries: 30
+    networks:
+      ${networkPolicy.name}:
+        ipv4_address: ${networkPolicy.botIpv4}
 volumes:
   postgres-data:
+networks:
+  ${networkPolicy.name}:
+    name: ${networkPolicy.name}
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: ${networkPolicy.bridgeInterface}
+    ipam:
+      config:
+        - subnet: ${networkPolicy.subnet}
 `;
     await writeFile(composeFile, compose, { mode: 0o600 });
     const input = {
@@ -86,7 +107,8 @@ volumes:
         migrations: [{ checksum: migrationChecksum, version: "001" }], migrationTable: "migrations",
         name: "craig", password: "local-password-01234567890123456789",
         schema: "public", service: "database", user: "craig", volume: "postgres-data" },
-      migrationImageIdentity: docker.postgres, migrationService: "migrate", readinessTimeoutSeconds: 60,
+      migrationImageIdentity: docker.postgres, migrationService: "migrate", networkPolicy,
+      readinessTimeoutSeconds: 60,
       release, service: "bot",
       serviceIdentity: { applicationId: "1533877611258708230", imageId: docker.substitute.imageId,
         protocol: { command: ["redis-cli", "ping"],
@@ -116,6 +138,9 @@ volumes:
 type ImageIdentity = { imageId: string; repositoryDigest: string };
 async function localImages(): Promise<{ postgres: ImageIdentity; substitute: ImageIdentity } | undefined> {
   try {
+    if (typeof process.getuid !== "function" || process.getuid() !== 0) { return undefined; }
+    await Promise.all([executeFile("/usr/sbin/iptables", ["--version"], { timeout: 5_000 }),
+      executeFile("/usr/sbin/iptables-save", ["--version"], { timeout: 5_000 })]);
     await executeFile("/usr/bin/docker", ["version"], { timeout: 5_000 });
     const inspect = async (name: string): Promise<ImageIdentity> => {
       const result = await executeFile("/usr/bin/docker", ["image", "inspect", name], { timeout: 5_000 });

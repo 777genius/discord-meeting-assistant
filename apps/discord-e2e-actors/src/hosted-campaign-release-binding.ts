@@ -17,8 +17,8 @@ import { FileSecretReader } from "./keychain.js";
 import { GENERATED_HOSTED_CAMPAIGN_COMPILED_RELEASE } from
   "./hosted-campaign-compiled-release.generated.js";
 import { hostedCraigNetworkPolicyV1Schema } from "./hosted-deployment-safety-receipt.js";
-import { assertCraigCampaignStackInputMatchesTrust, craigCampaignStackTrustSchema } from
-  "./craig-campaign-stack-release-trust.js";
+import { craigCampaignStackTrustSchema } from "./craig-campaign-stack-release-trust.js";
+import { assertCraigStackInputMatchesCompiledTrust } from "./craig-stack-compiled-trust-fence.js";
 import { craigProjectName, verifyCraigCampaignStackReceiptV2, type CraigCampaignStackInput } from
   "./craig-disposable-campaign-stack.js";
 import { hostedCampaignDefinitionV1Schema } from "./hosted-campaign-plan-builder.js";
@@ -90,7 +90,7 @@ export const hostedCampaignReleaseTrustRootV1Schema = z.object({
   discordReceiptTtlMs: z.number().int().positive().max(60_000), environmentFile: absolutePath,
   host: z.literal(HOSTED_CAMPAIGN_TARGET.host),
   remoteComposeFile: absolutePath,
-  schemaVersion: z.literal(4),
+  schemaVersion: z.literal(5),
   secretDirectory: absolutePath, services: z.array(service.omit({ containerId: true })).length(4),
   sourceRoot: absolutePath,
   voicetextReceiptTtlMs: z.number().int().positive().max(60_000),
@@ -151,7 +151,7 @@ export function assertCraigStackInputMatchesCompiledTrustRoot(candidate: CraigCa
   trustRoot: HostedCampaignReleaseTrustRootV1 | undefined = COMPILED_HOSTED_CAMPAIGN_RELEASE_TRUST_ROOT,
 ): void {
   if (trustRoot === undefined) { throw new Error("A build-admitted compiled hosted campaign release is required"); }
-  assertCraigCampaignStackInputMatchesTrust(candidate, trustRoot.craigStack, expectedRelease);
+  assertCraigStackInputMatchesCompiledTrust(candidate, trustRoot, expectedRelease);
 }
 
 function digestHostedCampaignReleaseBindingV1(value: unknown): string {

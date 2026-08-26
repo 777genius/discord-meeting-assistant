@@ -454,6 +454,7 @@ boundaries:
         - "@discordjs/opus"
         - "@discordjs/voice"
         - discord.js
+        - yaml
         - zod
       builtins:
         - node:child_process

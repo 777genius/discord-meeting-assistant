@@ -1,6 +1,5 @@
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-
 import { runHostedCampaign, type HostedCampaignLeaseHandle, type HostedCampaignPorts } from
   "./hosted-campaign-coordinator.js";
 import { assertExecutableEnvironmentPaths, parseHostedCampaignArguments, parseHostedCampaignPlan } from
@@ -11,8 +10,8 @@ import { assertAdmissionAuditMatchesInvocation, assertHostedCampaignPlanMatchesD
 import { hostedClockPreflightReceiptV2Schema, type HostedClockPreflightReceiptV2 } from
   "./hosted-clock-proof-v2.js";
 import { writeCreateOnlyClockPreflightProof } from "./hosted-clock-preflight-proof-store.js";
-import { HostedCampaignProcessAdapter, type HostedCampaignTrustedRuntimeEnvironment,
-  validateHostedCampaignTrustedRuntimeEnvironment } from "./hosted-campaign-process-adapter.js";
+import { HostedCampaignProcessAdapter, type HostedCampaignTrustedRuntimeEnvironment } from
+  "./hosted-campaign-process-adapter.js";
 import { createHostedCampaignProductionComposition } from "./hosted-campaign-production-composition.js";
 import { createHostedCampaignProductionPolicy } from "./hosted-campaign-production-policy.js";
 import { collectFiniteArtifactManifest, verifyFiniteArtifactManifest } from "./finite-artifact-manifest.js";
@@ -21,18 +20,21 @@ import { createHostedCampaignPassReceiptV2, createCampaignLeaseCleanupReceipt, c
   createCraigStackTeardownReceipt, verifyHostedCampaignPassReceiptV2, type HostedCampaignPassReceiptV2,
   type HostedCampaignReleaseReferenceV1 } from "./hosted-campaign-pass-receipt.js";
 import { FileCraigCampaignCredentialStore, provisionCraigDisposableCampaignStack,
-  teardownSuccessfulCraigCampaignStack, verifyCraigCampaignStackReceiptV2, type CraigCampaignStackInput,
+  planCraigDisposableCampaignStack, teardownSuccessfulCraigCampaignStack, verifyCraigCampaignStackReceiptV2,
+  type CraigCampaignStackInput, type PlannedCraigCampaignStackV1,
   type CraigCampaignStackMutationStartV1, type CraigCampaignStackReceiptV2 } from
   "./craig-disposable-campaign-stack.js";
 import { LocalDockerCommandExecutor, writeCreateOnlyPrivateJson } from
   "./craig-campaign-stack-local-adapters.js";
 import { digestCanonical } from "./hosted-campaign-local-admission.js";
 import { assertCraigStackInputMatchesCompiledTrustRoot } from "./hosted-campaign-release-binding.js";
+import { assertPlannedCraigStackMatchesHostedCampaign } from "./craig-stack-preprovision-fence.js";
+import { loadHostedCampaignTrustedRuntimeEnvironment } from "./hosted-campaign-trusted-environment.js";
+export { loadHostedCampaignTrustedRuntimeEnvironment } from "./hosted-campaign-trusted-environment.js";
 import { assertHostedCampaignReceiptAbsent, writeCreateOnlyHostedCampaignReceipt } from
   "./hosted-campaign-pass-store.js";
 export { assertHostedCampaignReceiptAbsent, writeCreateOnlyHostedCampaignReceipt } from
   "./hosted-campaign-pass-store.js";
-
 export interface HostedCampaignCliDependencies {
   readonly assertAdmissionAudit: typeof assertAdmissionAuditMatchesInvocation;
   readonly assertReceiptAbsent: (path: string) => Promise<void>;
@@ -49,6 +51,7 @@ export interface HostedCampaignCliDependencies {
   readonly readDefinition: (path: string) => Promise<unknown>;
   readonly readPlan: (path: string) => Promise<unknown>;
   readonly releaseReference?: HostedCampaignReleaseReferenceV1;
+  readonly plannedCraigStack?: PlannedCraigCampaignStackV1;
   readonly provisionCraigStack?: (lease: HostedCampaignLeaseHandle, onMutationStarted: () => void) =>
     Promise<CraigCampaignStackReceiptV2>;
   readonly retainCampaignLeaseReceipt?: (receipt: Readonly<Record<string, unknown>>) => Promise<void>;
@@ -69,7 +72,6 @@ type HostedCampaignControlPaths = Readonly<{
   releaseBindingPath?: string;
   craigStackInputPath?: string;
 }>;
-
 interface HostedCampaignFreshAuthorizationInvocation
 {
   readonly bindings: unknown;
@@ -116,6 +118,8 @@ export async function runHostedCampaignCli(
   if (!Number.isSafeInteger(deadlineEpochMilliseconds)) {
     throw new Error("Hosted campaign deadline is unsafe");
   }
+  assertPlannedCraigStackMatchesHostedCampaign(definition, input, dependencies.releaseReference,
+    dependencies.plannedCraigStack, dependencies.provisionCraigStack !== undefined);
   const ports = await dependencies.createPorts(input);
   let craigStack: CraigCampaignStackReceiptV2 | undefined; let craigMutationStarted = false;
   let finalReceipt: HostedCampaignPassReceiptV2 | undefined;
@@ -124,8 +128,13 @@ export async function runHostedCampaignCli(
   await runHostedCampaign(input, ports, { deadlineEpochMilliseconds, signal }, {
     authorizeAfterLease: async (lease) => {
       craigStack = await dependencies.provisionCraigStack?.(lease, () => { craigMutationStarted = true; });
-      if (craigStack !== undefined && craigStack.projectName !== input.target.craigProject) {
-        throw new Error("Provisioned Craig project does not match the compiled hosted campaign plan");
+      if (craigStack !== undefined && (dependencies.plannedCraigStack === undefined
+        || craigStack.projectName !== input.target.craigProject
+        || craigStack.projectName !== dependencies.plannedCraigStack.projectName
+        || craigStack.campaignId !== dependencies.plannedCraigStack.campaignId
+        || craigStack.planSha256 !== dependencies.plannedCraigStack.planSha256
+        || JSON.stringify(craigStack.release) !== JSON.stringify(dependencies.plannedCraigStack.release))) {
+        throw new Error("Provisioned Craig stack does not match the pre-provision compiled fence");
       }
       const fresh = await dependencies.authorizeFreshAdmission({
         bindings, deadlineEpochMs: deadlineEpochMilliseconds, definition,
@@ -284,22 +293,6 @@ export async function createProductionHostedCampaignPorts(
   });
 }
 
-export function loadHostedCampaignTrustedRuntimeEnvironment(
-  environment: Readonly<NodeJS.ProcessEnv>,
-): HostedCampaignTrustedRuntimeEnvironment {
-  const optional = (name: "LANG" | "LC_ALL" | "SSH_AUTH_SOCK"): Record<string, string> => {
-    const value = environment[name];
-    return value === undefined ? {} : { [name]: value };
-  };
-  return validateHostedCampaignTrustedRuntimeEnvironment({
-    HOME: environment.HOME ?? "",
-    ...optional("LANG"),
-    ...optional("LC_ALL"),
-    PATH: environment.PATH ?? "",
-    ...optional("SSH_AUTH_SOCK"),
-  });
-}
-
 async function main(): Promise<void> {
   const controller = new AbortController();
   const forwardSignal = (signal: "SIGINT" | "SIGTERM"): void => {
@@ -356,6 +349,7 @@ export async function runProductionHostedCampaignCli(
     readBindings: readPrivateHostedCampaignPlan,
     readDefinition: readPrivateHostedCampaignPlan,
     readPlan: readPrivateHostedCampaignPlan,
+    plannedCraigStack: planCraigDisposableCampaignStack(craigStackInput),
     releaseReference,
     provisionCraigStack: (lease, onMutationStarted) => provisionCraigDisposableCampaignStack(craigStackInput, {
       commands: commandExecutor,

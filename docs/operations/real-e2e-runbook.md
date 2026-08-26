@@ -235,13 +235,14 @@ Supplied remote-capability files remain untrusted diagnostic declarations and ne
 authority. Do not bypass admission, run against production, or present local
 coordinator coverage as real-provider qualification.
 
-Craig egress is provisioned separately by test-host operations; admission is
-strictly read-only and never installs, deletes, or reorders firewall rules. The
-compiled trust root pins `craigNetworkPolicy` (the Docker bridge/interface,
-dedicated filter chain, TCP destination port 443, and UDP destination range).
-Preflight resolves the exact release-bound Craig container, network ID, and IPv4
-address, then reads `iptables-save` twice. It requires exact source-bound TCP and
-UDP accepts, an exact destination-bound `ESTABLISHED,RELATED` return, reachable
+The disposable stack derives its exact project, network, bridge, subnet, static
+Craig/PostgreSQL addresses, and firewall chain from campaign ID plus release.
+The compiled trust root pins TCP 443 and the UDP range. Provisioning starts
+PostgreSQL, completes migration, installs exact Craig-to-PostgreSQL TCP 5432,
+Discord TCP 443, UDP, established/related return, and terminal deny rules, and
+proves them before Craig starts. Fresh admission resolves the release-bound
+Craig container, network ID, and IPv4 address, then reads `iptables-save` twice.
+It requires those exact accepts and return traffic, reachable
 FORWARD dispatches with no earlier matching DROP/REJECT, and one unconditional
 terminal DROP after the exact allow rules. RETURN and unreviewed policy-chain
 rules fail closed so later broad FORWARD accepts or jumps cannot extend Craig
@@ -289,9 +290,12 @@ Set the same admitted release reference in the campaign definition's
 `craigRelease` and the private Craig stack input's `release`. This derives the
 dynamic Compose project before a container exists; the observed container ID
 never feeds back into the release or project digest. Store the mode-0600 stack
-input directly in the campaign control directory. The compiled pre-Docker check
-compares the same release and derived project, and the strict rendered Compose
-schema rejects every unbound field or external resolution path. Docker Compose
+input directly in the campaign control directory. The compiled pre-provision
+check compares campaign, release, derived project, and complete stack plan before
+the ports factory. Direct YAML validation rejects `env_file`, includes, extends,
+builds, configs, secrets, profiles, interpolation, host binds, tags, anchors,
+aliases, and merges before any journal, credential, or command effect. The strict
+rendered schema remains a later cross-check. Docker Compose
 runs with retained stdin, a closed environment, source-owned arguments, and the
 fixed `/` working directory.
 
@@ -309,7 +313,9 @@ pnpm --filter @discord-meeting/discord-e2e-actors run:hosted-campaign -- \
 
 Provisioning runs under the canonical create-only campaign lease. Failed
 campaign infrastructure and partial evidence are retained. Only a fully
-admitted successful campaign can invoke the fixed 30-second Compose teardown.
+admitted successful campaign can invoke teardown. It revalidates the safe source,
+stops and proves Craig stopped, removes and proves the firewall absent, and only
+then invokes the fixed 30-second Compose teardown.
 The stack receipt and finite evidence are retained first. The hosted campaign
 pass receipt is then published create-only, reread, and independently verified
 while the exact plan-bound lease is still held. Only that verification permits

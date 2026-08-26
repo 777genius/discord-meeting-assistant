@@ -57,6 +57,13 @@ const bindings = () => ({
     schemaVersion: 1,
   } as const);
 const plan = () => buildResolvedHostedCampaignPlanV1(definition(), bindings());
+const releaseReference = { releaseBindingSha256: "1".repeat(64), releaseId: "release-1",
+  trustRootSha256: "2".repeat(64) } as const;
+const releasedDefinition = () => ({ ...definition(), craigRelease: releaseReference });
+const releasedPlan = () => buildResolvedHostedCampaignPlanV1(releasedDefinition(), bindings());
+const plannedCraigStack = () => ({ campaignId: "campaign-1", credentialFile: "/private/craig.env",
+  kind: "planned-craig-campaign-stack", networkPolicy: {} as never, planSha256: "3".repeat(64),
+  projectName: releasedPlan().target.craigProject, release: releaseReference, schemaVersion: 1 } as const);
 
 const admittedReceipt = () => ({
   clockPreflightProof: clockProof(),
@@ -340,7 +347,6 @@ describe("run-hosted-campaign CLI", () => {
         assertReceiptAbsent: async () => {},
         createPorts: async () => { effects.push("factory"); throw new Error("unreachable"); },
         now: Date.now,
-
         readAdmission: async () => ({}), readBindings: async () => bindings(),
         readDefinition: async () => definition(), readPlan: async () => plan(),
         authorizeFreshAdmission: async () => { effects.push("authorize"); return freshAuthorization(); },
@@ -350,9 +356,71 @@ describe("run-hosted-campaign CLI", () => {
     )).rejects.toThrow("mismatch");
     expect(effects).toEqual(["admission"]);
   });
+
+});
+
+describe("Craig pre-provision fence", () => {
+  it("rejects every Craig campaign/project/release pre-provision mismatch with zero effects", async () => {
+    const cases = [
+      { craig: plannedCraigStack(), definition: definition(), plan: plan() },
+      { craig: { ...plannedCraigStack(), campaignId: "other-campaign" },
+        definition: releasedDefinition(), plan: releasedPlan() },
+      { craig: { ...plannedCraigStack(), projectName: "craig-e2e-00000000000000000000" },
+        definition: releasedDefinition(), plan: releasedPlan() },
+      { craig: { ...plannedCraigStack(), release: { ...releaseReference, releaseId: "other-release" } },
+        definition: releasedDefinition(), plan: releasedPlan() },
+    ];
+    for (const testCase of cases) {
+      const effects: string[] = [];
+      await expect(runHostedCampaignCli(
+        ["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"],
+        {
+          assertAdmissionAudit: () => admittedReceipt(), assertReceiptAbsent: async () => {},
+          authorizeFreshAdmission: async () => { effects.push("authorize"); return freshAuthorization(); },
+          createPorts: async () => { effects.push("ports"); throw new Error("unreachable"); },
+          now: Date.now, plannedCraigStack: testCase.craig as never,
+          provisionCraigStack: async () => { effects.push("provision"); throw new Error("unreachable"); },
+          readAdmission: async () => ({}), readBindings: async () => bindings(),
+          readDefinition: async () => testCase.definition, readPlan: async () => testCase.plan, releaseReference,
+          writeReceipt: async () => { effects.push("receipt"); }, writeClockPreflightProof: async () => {},
+        }, new AbortController().signal,
+      )).rejects.toThrow(/before provisioning/u);
+      expect(effects).toEqual([]);
+    }
+  });
 });
 
 describe("run-hosted-campaign launch authorization", () => {
+  it("retains the canonical lease when provisioning fails after durable mutation-start", async () => {
+    const effects: string[] = [];
+    await expect(runHostedCampaignCli(
+      ["/plan.json", "/receipt.json", "1000", "/admission.json", "/definition.json", "/bindings.json"],
+      {
+        assertAdmissionAudit: () => admittedReceipt(), assertReceiptAbsent: async () => {},
+        authorizeFreshAdmission: async () => freshAuthorization(),
+        createPorts: async () => ({
+          acquireCampaignLease: async () => { effects.push("acquire"); return {
+            campaignId: "campaign-1",
+          } as HostedCampaignLeaseHandle; },
+          awaitBarrier: async () => { throw new Error("unreachable"); }, awaitChildCompletion: async () => {},
+          publishReleaseGate: async () => {}, publishSupplementalGate: async () => {},
+          releaseCampaignLease: async () => { effects.push("release"); },
+          startChild: async () => { throw new Error("unreachable"); }, stopChild: async () => {},
+        }),
+        now: Date.now,
+        plannedCraigStack: plannedCraigStack(), releaseReference,
+        provisionCraigStack: async (_lease, onMutationStarted) => {
+          effects.push("mutation-receipt"); onMutationStarted();
+          effects.push("docker-effect"); throw new Error("partial provisioning failed");
+        },
+        readAdmission: async () => ({}), readBindings: async () => bindings(),
+        readDefinition: async () => releasedDefinition(), readPlan: async () => releasedPlan(),
+        writeReceipt: async () => {}, writeClockPreflightProof: async () => {},
+      }, new AbortController().signal,
+    )).rejects.toThrow("partial provisioning failed");
+    expect(effects).toEqual(["acquire", "mutation-receipt", "docker-effect"]);
+  });
+
   it("acquires the lease before fresh authorization and releases it without spawning on failure", async () => {
     const effects: string[] = [];
     const serializedAdmission = JSON.stringify(admittedReceipt());
@@ -371,14 +439,23 @@ describe("run-hosted-campaign launch authorization", () => {
           };
         },
         now: Date.now,
+        plannedCraigStack: plannedCraigStack(), releaseReference,
+        provisionCraigStack: async () => { effects.push("provision"); return {
+          campaignId: "campaign-1", planSha256: plannedCraigStack().planSha256,
+          projectName: plannedCraigStack().projectName, release: releaseReference,
+        } as never; },
+        retainCraigStackReceipt: async () => { effects.push("retain-stack-evidence"); },
+        teardownCraigStack: async () => { effects.push("teardown-stack"); },
 
         readAdmission: async () => ({}), readBindings: async () => bindings(),
-        readDefinition: async () => definition(), readPlan: async () => plan(), writeReceipt: async () => {},
+        readDefinition: async () => releasedDefinition(), readPlan: async () => releasedPlan(), writeReceipt: async () => {},
       writeClockPreflightProof: async () => {},
         authorizeFreshAdmission: async () => { effects.push("authorize"); throw new Error("fresh authorization failed"); },
       }, new AbortController().signal,
     )).rejects.toThrow("fresh authorization failed");
-    expect(effects).toEqual(["admission", "factory", "acquire", "authorize", "release"]);
+    expect(effects).toEqual([
+      "admission", "factory", "acquire", "provision", "authorize",
+    ]);
   });
 
   it("propagates cancellation into post-lease authorization and releases without spawning", async () => {

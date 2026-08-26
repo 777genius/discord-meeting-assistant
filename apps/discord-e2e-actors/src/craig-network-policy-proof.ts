@@ -101,6 +101,8 @@ export function proveCraigFirewallPolicy(input: Readonly<{
     throw new Error("Craig firewall policy chain contains an unsupported match");
   }
   const required = [
+    { destination: `${input.policy.databaseIpv4}/32`, input: input.bridgeInterface, protocol: "tcp",
+      source: `${address}/32`, destinationPort: "5432", states: ["ESTABLISHED", "NEW"], target: "ACCEPT" },
     { input: input.bridgeInterface, protocol: "tcp", source: `${address}/32`,
       destinationPort: String(input.policy.tcpDestinationPort), states: ["ESTABLISHED", "NEW"], target: "ACCEPT" },
     { input: input.bridgeInterface, protocol: "udp", source: `${address}/32`,
@@ -112,7 +114,7 @@ export function proveCraigFirewallPolicy(input: Readonly<{
   const accepted = policyRules.filter(({ target }) => target === "ACCEPT");
   if (accepted.length !== required.length || required.some((expected) =>
     !accepted.some((actual) => sameMatch(actual, expected)))) {
-    throw new Error("Craig firewall policy lacks the exact TCP 443, UDP, or established return rule");
+    throw new Error("Craig firewall policy lacks the exact TCP 443, PostgreSQL 5432, UDP, or established return rule");
   }
   if (policyRules.some((rule) => rule.target !== "ACCEPT" && rule.target !== "DROP")) {
     throw new Error("Craig firewall policy chain contains an unreviewed semantic rule");

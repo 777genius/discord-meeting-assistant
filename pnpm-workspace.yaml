@@ -41,6 +41,7 @@ catalog:
   typescript: 7.0.2
   vitest: 4.1.10
   ws: 8.21.1
+  yaml: 2.9.0
   zod: 4.4.3
 
 minimumReleaseAge: 1440

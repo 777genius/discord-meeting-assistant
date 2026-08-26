@@ -42,6 +42,7 @@
     "@discordjs/opus": "catalog:",
     "@discordjs/voice": "catalog:",
     "discord.js": "catalog:",
+    "yaml": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

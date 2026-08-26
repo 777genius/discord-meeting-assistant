@@ -85,13 +85,20 @@ complete ordered migration version/checksum set, and a source/version-bound
 Craig application-protocol readiness command with its expected response digest.
 It also carries the exact canonical Compose bytes and digest; both must match
 the build-generated trust root, admitted release reference, and derived project
-before the Docker executor is created. Compose
+before the ports factory, journal, credential, or Docker executor is reached.
+The authoritative YAML is parsed directly first. Directives, tags, anchors,
+aliases, merges, interpolation, includes, `env_file`, extends, profiles, builds,
+configs, secrets, bind paths, and every field outside the closed source schema
+fail with zero effects. Compose
 may render exactly the admitted database, migration, and bot services only.
 The top level and all three service objects use exact strict field allowlists.
 Extra or unknown fields, services, dependencies, privilege, capabilities,
 external/custom networking or storage, runtimes, devices, non-null commands or
 entrypoints, build/config/secret inputs, namespace sharing, and mounts fail
-closed. Docker receives only the retained Compose stdin, a closed environment,
+closed. A campaign/release-only bridge, subnet, static database/bot addresses,
+and firewall chain allow exact PostgreSQL TCP 5432, Discord TCP 443, the compiled
+UDP range, and established/related returns before the real Craig service starts;
+one terminal drop denies everything else. Docker receives only the retained Compose stdin, a closed environment,
 fixed source-owned arguments, and the fixed `/` resolution context.
 Production accepts only the reviewed Craig V1 command
 `/app/bin/craig-control readiness --format=json`; the separately tagged
@@ -101,7 +108,7 @@ integration and is rejected by `run:hosted-campaign`.
 Preflight is deliberately pre-stack: it validates the exact local plan,
 fixtures, secrets, disk, and release trust without looking for the legacy
 `craig-meeting-e2e` project. The runner then acquires the plan-bound canonical
-lease, provisions the dynamic `craig-e2e-…` project, and performs fresh full
+lease, provisions the dynamic `craig-e2e-…` project/network, and performs fresh full
 remote provenance and official-bot identity admission against that container.
 
 ```sh

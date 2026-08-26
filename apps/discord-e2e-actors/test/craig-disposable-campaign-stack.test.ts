@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   FileCraigCampaignCredentialStore,
   craigProjectName,
+  deriveCraigCampaignNetworkPolicy,
   planCraigDisposableCampaignStack,
   provisionCraigDisposableCampaignStack,
   teardownSuccessfulCraigCampaignStack,
@@ -25,6 +26,7 @@ const release = {
   releaseBindingSha256: "1".repeat(64), releaseId: "release-42", trustRootSha256: "2".repeat(64),
 } as const;
 const id = "3".repeat(64);
+const databaseId = "2".repeat(64);
 const image = `sha256:${"4".repeat(64)}`;
 const repository = `registry.test/craig@sha256:${"5".repeat(64)}`;
 const revision = "6".repeat(40);
@@ -39,7 +41,53 @@ async function fixture(campaignId = "campaign-42"): Promise<CraigCampaignStackIn
   const leaseContents = `${JSON.stringify({ campaignId, campaignRoot: campaignPath, planSha256: "9".repeat(64) })}\n`;
   await writeFile(join(campaignPath, "barriers", "campaign.lease"), leaseContents, { mode: 0o600 });
   const composeFile = join(campaignRoot, "compose.yaml");
-  const composeCanonical = "services: {}\n";
+  const networkPolicy = deriveCraigCampaignNetworkPolicy(campaignId, release, { end: 65_535, start: 1_024 });
+  const databaseUrl = "postgresql://craig:fresh-campaign-password-0123456789@database:5432/craig";
+  const composeCanonical = `services:
+  database:
+    image: postgres@sha256:${"7".repeat(64)}
+    hostname: database
+    environment:
+      POSTGRES_DB: craig
+      POSTGRES_PASSWORD: fresh-campaign-password-0123456789
+      POSTGRES_USER: craig
+    networks:
+      ${networkPolicy.name}:
+        ipv4_address: ${networkPolicy.databaseIpv4}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+  migrate:
+    image: ${repository}
+    depends_on:
+      database:
+        condition: service_started
+        required: true
+        restart: true
+    environment:
+      DATABASE_URL: ${databaseUrl}
+    network_mode: service:database
+  bot:
+    image: ${repository}
+    environment:
+      DATABASE_URL: ${databaseUrl}
+      DISCORD_APPLICATION_ID: '1533877611258708230'
+      E2E_CAMPAIGN_ID: ${campaignId}
+      E2E_SOURCE_REVISION: '${revision}'
+    networks:
+      ${networkPolicy.name}:
+        ipv4_address: ${networkPolicy.botIpv4}
+volumes:
+  postgres-data:
+networks:
+  ${networkPolicy.name}:
+    name: ${networkPolicy.name}
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: ${networkPolicy.bridgeInterface}
+    ipam:
+      config:
+        - subnet: ${networkPolicy.subnet}
+`;
   await writeFile(composeFile, composeCanonical, { mode: 0o600 });
   return {
     campaignId, campaignRoot, composeCanonical,
@@ -50,7 +98,7 @@ async function fixture(campaignId = "campaign-42"): Promise<CraigCampaignStackIn
       password: "fresh-campaign-password-0123456789", schema: "public", service: "database",
       user: "craig", volume: "postgres-data" },
     migrationImageIdentity: { imageId: image, repositoryDigest: repository },
-    migrationService: "migrate", readinessTimeoutSeconds: 45, release,
+    migrationService: "migrate", networkPolicy, readinessTimeoutSeconds: 45, release,
     service: "bot", serviceIdentity: { applicationId: "1533877611258708230", imageId: image,
       protocol: { command: ["/app/bin/craig-control", "readiness", "--format=json"],
         expectedResponseSha256: createHash("sha256").update(protocolResponse).digest("hex"),
@@ -63,16 +111,19 @@ function rendered(input: CraigCampaignStackInput) {
   const project = craigProjectName(input.campaignId, release);
   const url = "postgresql://craig:fresh-campaign-password-0123456789@database:5432/craig";
   return {
+    networks: { [input.networkPolicy.name]: { driver: "bridge",
+      driver_opts: { "com.docker.network.bridge.name": input.networkPolicy.bridgeInterface },
+      ipam: { config: [{ subnet: input.networkPolicy.subnet }] }, name: input.networkPolicy.name } },
     name: project,
     services: {
       bot: { command: null, entrypoint: null,
         environment: { DATABASE_URL: url, DISCORD_APPLICATION_ID: input.serviceIdentity.applicationId,
           E2E_CAMPAIGN_ID: input.campaignId, E2E_SOURCE_REVISION: revision }, image: repository,
-        network_mode: "none" },
+        networks: { [input.networkPolicy.name]: { ipv4_address: input.networkPolicy.botIpv4 } } },
       database: { command: null, entrypoint: null,
         environment: { POSTGRES_DB: "craig", POSTGRES_PASSWORD: "fresh-campaign-password-0123456789",
         POSTGRES_USER: "craig" }, image: `postgres@sha256:${"7".repeat(64)}`,
-        network_mode: "none",
+        networks: { [input.networkPolicy.name]: { ipv4_address: input.networkPolicy.databaseIpv4 } },
         volumes: [{ source: "postgres-data", target: "/var/lib/postgresql/data", type: "volume", volume: {} }] },
       migrate: { command: null, depends_on: { database: { condition: "service_started", required: true,
         restart: true } }, entrypoint: null, environment: { DATABASE_URL: url }, image: repository,
@@ -86,13 +137,25 @@ class Harness {
   readonly calls: CraigCampaignStackCommandRequest[] = [];
   migrationOutput = `001|${migrationChecksum}\n`;
   protocolOutput = protocolResponse;
+  databaseUp = false;
+  botStopped = false;
+  firewallRemoved = false;
   constructor(readonly input: CraigCampaignStackInput) {}
   readonly execute = vi.fn(async (request: CraigCampaignStackCommandRequest): Promise<CraigCampaignStackCommandResult> => {
     this.calls.push(request);
     const args = request.args;
+    const firewallResult = this.#handleFirewall(request);
+    if (firewallResult !== undefined) { return firewallResult; }
     if (args.includes("config")) { return result(0, JSON.stringify(rendered(this.input))); }
     if (args[0] === "volume" && args[1] === "inspect") { return result(1, "", "No such volume"); }
     if ((args[0] === "volume" || args[0] === "network") && args[1] === "ls") { return result(); }
+    if (args[0] === "network" && args[1] === "inspect") {
+      if (!this.databaseUp) { return result(1, "", "No such network"); }
+      return result(0, JSON.stringify([{ Driver: "bridge", Id: "a".repeat(64),
+        Labels: { "com.docker.compose.project": craigProjectName(this.input.campaignId, release) },
+        Name: this.input.networkPolicy.name,
+        Options: { "com.docker.network.bridge.name": this.input.networkPolicy.bridgeInterface } }]));
+    }
     if (args[0] === "image" && args[1] === "inspect") {
       const repositoryDigest = args[2]!;
       return result(0, JSON.stringify([{ Id: image, RepoDigests: [repositoryDigest] }]));
@@ -101,24 +164,59 @@ class Harness {
       return result(0, args.at(-1)?.includes("ORDER BY version") === true
         ? this.migrationOutput : "craig|craig\n");
     }
+    if (args.includes("up") && args.at(-1) === "database") { this.databaseUp = true; return result(); }
+    if (args.includes("stop") && args.at(-1) === "bot") { this.botStopped = true; return result(); }
     if (args.includes("/app/bin/craig-control")) { return result(0, this.protocolOutput); }
-    if (args.includes("--quiet") && args.at(-1) === "bot") { return result(0, `${id}\n`); }
+    if (args.includes("--quiet") && args.at(-1) === "database") { return result(0, `${databaseId}\n`); }
+    if (args.includes("--quiet") && args.at(-1) === "bot") {
+      return result(0, this.botStopped ? "" : `${id}\n`);
+    }
     if (args[0] === "inspect") {
+      if (args[1] === databaseId) { return result(0, JSON.stringify([{ Id: databaseId,
+        NetworkSettings: { Networks: { [this.input.networkPolicy.name]: {
+          IPAddress: this.input.networkPolicy.databaseIpv4, NetworkID: "a".repeat(64),
+        } } } }])); }
       const configDigest = digestCanonical(rendered(this.input));
       return result(0, JSON.stringify([{ Id: id, Image: image, Config: { Image: repository,
         Env: [`E2E_CAMPAIGN_ID=${this.input.campaignId}`, `E2E_SOURCE_REVISION=${revision}`,
           `DISCORD_APPLICATION_ID=${this.input.serviceIdentity.applicationId}`],
         Labels: { "com.docker.compose.project": craigProjectName(this.input.campaignId, release),
           "com.docker.compose.service": "bot", "e2e.compose-config-sha256": configDigest } },
-        State: { Health: { Status: "healthy" }, Running: true } }]));
+        NetworkSettings: { Networks: { [this.input.networkPolicy.name]: {
+          IPAddress: this.input.networkPolicy.botIpv4, NetworkID: "a".repeat(64),
+        } } }, State: { Health: { Status: "healthy" }, Running: true } }]));
     }
     return result();
   });
+  #handleFirewall(request: CraigCampaignStackCommandRequest): CraigCampaignStackCommandResult | undefined {
+    if (request.executable === "/usr/sbin/iptables-save") {
+      return result(0, this.firewallRemoved ? "*filter\n:FORWARD DROP [0:0]\nCOMMIT\n" : firewall(this.input));
+    }
+    if (request.executable !== "/usr/sbin/iptables") { return undefined; }
+    if (request.args[0] === "-X") { this.firewallRemoved = true; }
+    return result();
+  }
   ports(): CraigCampaignStackPorts {
     return { commands: { execute: this.execute }, credentials: new FileCraigCampaignCredentialStore(),
       mutationJournal: { markStarted: vi.fn(async () => {}) },
       now: () => Date.parse("2026-08-26T12:00:00.000Z") };
   }
+}
+
+function firewall(input: CraigCampaignStackInput): string {
+  const policy = input.networkPolicy;
+  return `*filter
+:FORWARD DROP [0:0]
+:${policy.chain} - [0:0]
+-A FORWARD -i ${policy.bridgeInterface} -s ${policy.botIpv4}/32 -j ${policy.chain}
+-A FORWARD -o ${policy.bridgeInterface} -d ${policy.botIpv4}/32 -j ${policy.chain}
+-A ${policy.chain} -i ${policy.bridgeInterface} -s ${policy.botIpv4}/32 -d ${policy.databaseIpv4}/32 -p tcp -m conntrack --ctstate NEW,ESTABLISHED --dport 5432 -j ACCEPT
+-A ${policy.chain} -i ${policy.bridgeInterface} -s ${policy.botIpv4}/32 -p tcp -m conntrack --ctstate NEW,ESTABLISHED --dport 443 -j ACCEPT
+-A ${policy.chain} -i ${policy.bridgeInterface} -s ${policy.botIpv4}/32 -p udp -m conntrack --ctstate NEW,ESTABLISHED --dport ${policy.udpDestinationPorts.start}:${policy.udpDestinationPorts.end} -j ACCEPT
+-A ${policy.chain} -o ${policy.bridgeInterface} -d ${policy.botIpv4}/32 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+-A ${policy.chain} -j DROP
+COMMIT
+`;
 }
 
 describe("Craig disposable private-campaign stack", () => {
@@ -136,11 +234,19 @@ describe("Craig disposable private-campaign stack", () => {
       planSha256: plan.planSha256, projectName: plan.projectName, schemaVersion: 2, serviceHealth: "healthy" });
     expect(status.mode & 0o777).toBe(0o600);
     expect(credentials).toContain("POSTGRES_PASSWORD=fresh-campaign-password-0123456789");
-    expect(harness.calls.every(({ environment, executable }) => executable === "/usr/bin/docker"
-      && environment.PATH === "/usr/bin:/bin" && environment.DOCKER_HOST === undefined)).toBe(true);
+    expect(harness.calls.every(({ environment, executable }) =>
+      ["/usr/bin/docker", "/usr/sbin/iptables", "/usr/sbin/iptables-save"].includes(executable)
+      && environment.PATH?.endsWith("/usr/bin:/bin") === true && environment.DOCKER_HOST === undefined)).toBe(true);
     expect(harness.calls.every(({ workingDirectory }) => workingDirectory === "/")).toBe(true);
     expect(harness.calls.filter(({ args }) => args.includes("up") || args.includes("run"))
       .every(({ args }) => args.includes("--no-deps"))).toBe(true);
+    const databaseUp = harness.calls.findIndex(({ args }) => args.includes("up") && args.at(-1) === "database");
+    const firewallInstall = harness.calls.findIndex(({ executable, args }) =>
+      executable === "/usr/sbin/iptables" && args[0] === "-N");
+    const botUp = harness.calls.findIndex(({ args }) => args.includes("up") && args.at(-1) === "bot");
+    expect(databaseUp).toBeGreaterThan(-1);
+    expect(firewallInstall).toBeGreaterThan(databaseUp);
+    expect(botUp).toBeGreaterThan(firewallInstall);
     const { receiptSha256: _ignored, ...receiptContent } = receipt;
     expect(receipt.receiptSha256).toBe(digestCanonical(receiptContent));
   });
@@ -160,6 +266,43 @@ describe("Craig disposable private-campaign stack", () => {
     expect(harness.calls.some(({ args }) => args.includes("up"))).toBe(false);
   });
 
+  it("rejects source preprocessing and external-resolution surfaces with zero effects", async () => {
+    const baseline = await fixture("campaign-source-adversarial");
+    const insertBot = (line: string): string => baseline.composeCanonical.replace(
+      `  bot:\n    image: ${repository}\n`, `  bot:\n    ${line}\n    image: ${repository}\n`);
+    const cases = [
+      insertBot("env_file: /etc/os-release"),
+      `include: /etc/os-release\n${baseline.composeCanonical}`,
+      insertBot("extends:\n      file: /etc/os-release\n      service: bot"),
+      insertBot("build: https://attacker.invalid/context.git"),
+      `configs:\n  host:\n    file: /etc/os-release\n${baseline.composeCanonical}`,
+      `secrets:\n  host:\n    file: /etc/os-release\n${baseline.composeCanonical}`,
+      insertBot("profiles: [unsafe]"),
+      baseline.composeCanonical.replace("POSTGRES_DB: craig", "POSTGRES_DB: ${HOST_DATABASE}"),
+      baseline.composeCanonical.replace("- postgres-data:/var/lib/postgresql/data",
+        "- /etc/os-release:/var/lib/postgresql/data"),
+      baseline.composeCanonical.replace("environment:\n      POSTGRES_DB", "environment: &host\n      POSTGRES_DB")
+        .replace("environment:\n      DATABASE_URL", "environment: *host\n      # DATABASE_URL"),
+      baseline.composeCanonical.replace("POSTGRES_DB: craig", "<<: &host { POSTGRES_DB: craig }"),
+      baseline.composeCanonical.replace("POSTGRES_DB: craig", "POSTGRES_DB: !include /etc/os-release"),
+      baseline.composeCanonical.replace("environment:\n      POSTGRES_DB", "environment:\n      nested: &host value\n      POSTGRES_DB"),
+    ];
+    for (const [index, composeCanonical] of cases.entries()) {
+      const input = { ...baseline, composeCanonical,
+        composeCanonicalSha256: createHash("sha256").update(composeCanonical).digest("hex") };
+      const commands = vi.fn(async () => result());
+      const credentials = vi.fn(async () => { throw new Error("credential effect must remain unreachable"); });
+      const mutation = vi.fn(async () => { throw new Error("mutation effect must remain unreachable"); });
+      await expect(provisionCraigDisposableCampaignStack(input, {
+        commands: { execute: commands }, credentials: { reserveCreateOnly: credentials },
+        mutationJournal: { markStarted: mutation },
+      }, await leaseFor(baseline)), `source case ${index}`).rejects.toThrow();
+      expect(commands, `source case ${index} commands`).not.toHaveBeenCalled();
+      expect(credentials, `source case ${index} credentials`).not.toHaveBeenCalled();
+      expect(mutation, `source case ${index} mutation`).not.toHaveBeenCalled();
+    }
+  });
+
   it("retains failed resources and permits bounded teardown only from an intact success receipt", async () => {
     const input = await fixture("campaign-teardown");
     const harness = new Harness(input);
@@ -169,7 +312,9 @@ describe("Craig disposable private-campaign stack", () => {
     await teardownSuccessfulCraigCampaignStack(receipt, input, lease, harness.ports());
     const teardownCalls = harness.calls.slice(teardownCallStart);
     expect(teardownCalls.filter(({ args }) => args[0] === "image" && args[1] === "inspect")).toHaveLength(3);
-    expect(teardownCalls.at(-2)?.args).toContain("config");
+    expect(teardownCalls.findIndex(({ args }) => args.includes("stop")))
+      .toBeLessThan(teardownCalls.findIndex(({ executable, args }) =>
+        executable === "/usr/sbin/iptables" && args[0] === "-D"));
     expect(teardownCalls.at(-1)?.args).toContain("--volumes");
     await expect(teardownSuccessfulCraigCampaignStack(
       { ...receipt, receiptSha256: "0".repeat(64) }, input, lease, harness.ports()))
@@ -192,11 +337,31 @@ describe("Craig disposable private-campaign stack", () => {
     const receipt = await provisionCraigDisposableCampaignStack(input, harness.ports(), lease);
     await writeFile(input.composeFile, "services:\n  attacker: {}\n", { mode: 0o600 });
     await teardownSuccessfulCraigCampaignStack(receipt, input, lease, harness.ports());
-    expect(harness.calls.filter(({ args }) => args[0] === "compose").every((request) =>
-      request.args.includes("--file") && request.args.includes("-")
-      && request.standardInput === input.composeCanonical
-      && request.environment.POSTGRES_PASSWORD === "fresh-campaign-password-0123456789")).toBe(true);
+    expect(harness.calls.filter(({ args, executable }) => executable === "/usr/bin/docker"
+      && args[0] === "compose").filter((request) =>
+      !request.args.includes("--file") || !request.args.includes("-")
+      || request.standardInput !== input.composeCanonical
+      || request.environment.POSTGRES_PASSWORD !== "fresh-campaign-password-0123456789")
+      .map(({ args, standardInput, environment }) => ({ args, standardInput,
+        password: environment.POSTGRES_PASSWORD }))).toEqual([]);
     expect(harness.calls.some(({ args }) => args.includes("down"))).toBe(true);
+  });
+
+  it("rejects unsafe retained source before teardown can invoke Compose external resolution", async () => {
+    const input = await fixture("campaign-unsafe-teardown-source");
+    const harness = new Harness(input);
+    const lease = await leaseFor(input);
+    const receipt = await provisionCraigDisposableCampaignStack(input, harness.ports(), lease);
+    const composeCanonical = input.composeCanonical.replace(
+      `  bot:\n    image: ${repository}\n`,
+      `  bot:\n    env_file: /etc/os-release\n    image: ${repository}\n`,
+    );
+    const unsafe = { ...input, composeCanonical,
+      composeCanonicalSha256: createHash("sha256").update(composeCanonical).digest("hex") };
+    const callCount = harness.calls.length;
+    await expect(teardownSuccessfulCraigCampaignStack(receipt, unsafe, lease, harness.ports()))
+      .rejects.toThrow();
+    expect(harness.calls).toHaveLength(callCount);
   });
 
   it("rejects extra services and dependencies before any targeted up or run", async () => {
@@ -244,8 +409,8 @@ describe("Craig disposable private-campaign stack", () => {
       ["volumes_from", (value) => { Object.assign(value.services.bot, { volumes_from: ["external"] }); }],
       ["ipc", (value) => { Object.assign(value.services.bot, { ipc: "host" }); }],
       ["pid", (value) => { Object.assign(value.services.bot, { pid: "host" }); }],
-      ["host network_mode", (value) => { value.services.bot.network_mode = "host"; }],
-      ["bridge network_mode", (value) => { value.services.bot.network_mode = "bridge"; }],
+      ["host network_mode", (value) => { Object.assign(value.services.bot, { network_mode: "host" }); }],
+      ["bridge network_mode", (value) => { Object.assign(value.services.bot, { network_mode: "bridge" }); }],
       ["runtime", (value) => { Object.assign(value.services.bot, { runtime: "runc" }); }],
       ["env_file", (value) => { Object.assign(value.services.bot, { env_file: "../host.env" }); }],
       ["device", (value) => { Object.assign(value.services.bot, { devices: ["/dev/null"] }); }],

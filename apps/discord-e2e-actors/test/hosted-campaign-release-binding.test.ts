@@ -39,7 +39,8 @@ const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
     transcriptExpectationSha256: pinnedCanary.transcriptExpectation.sha256 },
   clockMaximumSkewMs: 250, deployRoot: "/srv/e2e", discordReceiptTtlMs: 30_000,
   craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG_E2E",
-    networkName: "discord-meeting-e2e", tcpDestinationPort: 443,
+    databaseIpv4: "172.28.0.3", networkName: "discord-meeting-e2e", projectName: "craig-meeting-e2e",
+    tcpDestinationPort: 443,
     udpDestinationPorts: { end: 65_535, start: 1_024 } },
   craigStack: {
     applicationId: "1533877611258708230", composeCanonical: stackCompose,
@@ -57,7 +58,7 @@ const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
       repositoryDigest: `registry.test/craig@sha256:${"a".repeat(64)}` }, sourceRevision: "a".repeat(40),
   },
   environmentFile: "/srv/e2e/source.env", host: "codex-workers-eu-01",
-  remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 4,
+  remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 5,
   secretDirectory: "/run/secrets/discord-e2e",
   services: services.map(([component, composeProject, composeService, digit]) => ({
     component, composeProject, composeService, imageId: `sha256:${digit.repeat(64)}`,

@@ -19,6 +19,8 @@ const inertProcessOverride = {
 const image = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
 
 export type RenderedCraigCompose = Readonly<{
+  networks: Record<string, { driver: "bridge"; driver_opts: Record<string, string>;
+    ipam: { config: readonly [{ subnet: string }] }; name: string }>;
   name: string;
   services: Record<string, RenderedService>;
   volumes: Record<string, { name: string }>;
@@ -31,7 +33,8 @@ type RenderedService = Readonly<{
   healthcheck?: z.infer<typeof healthcheck>;
   hostname?: string;
   image: string;
-  network_mode: string;
+  network_mode?: string;
+  networks?: Record<string, { ipv4_address: string }>;
   volumes?: readonly Readonly<{ source: string; target: string; type: "volume"; volume: Record<never, never> }>[];
 }>;
 
@@ -52,7 +55,9 @@ export function validateRenderedCraigCompose(
     healthcheck: healthcheck.optional(),
     hostname: z.literal(input.database.service).optional(),
     image,
-    network_mode: z.literal("none"),
+    networks: z.object({
+      [input.networkPolicy.name]: z.object({ ipv4_address: z.literal(input.networkPolicy.databaseIpv4) }).strict(),
+    }).strict(),
     volumes: z.tuple([z.object({
       source: z.literal(input.database.volume),
       target: z.literal("/var/lib/postgresql/data"),
@@ -77,10 +82,24 @@ export function validateRenderedCraigCompose(
     healthcheck: healthcheck.optional(),
     hostname: z.literal(input.service).optional(),
     image,
-    network_mode: z.literal("none"),
+    networks: z.object({
+      [input.networkPolicy.name]: z.object({ ipv4_address: z.literal(input.networkPolicy.botIpv4) }).strict(),
+    }).strict(),
   }).strict();
   const schema = z.object({
     name: z.literal(projectName),
+    networks: z.object({
+      [input.networkPolicy.name]: z.object({
+        driver: z.literal("bridge"),
+        driver_opts: z.object({
+          "com.docker.network.bridge.name": z.literal(input.networkPolicy.bridgeInterface),
+        }).strict(),
+        ipam: z.object({ config: z.tuple([
+          z.object({ subnet: z.literal(input.networkPolicy.subnet) }).strict(),
+        ]) }).strict(),
+        name: z.literal(input.networkPolicy.name),
+      }).strict(),
+    }).strict(),
     services: z.object({
       [input.database.service]: databaseService,
       [input.migrationService]: migrationService,

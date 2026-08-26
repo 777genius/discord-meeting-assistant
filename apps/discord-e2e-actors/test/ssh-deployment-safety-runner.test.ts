@@ -20,7 +20,8 @@ const expectation: HostedDeploymentSafetyExpectationV1 = {
   campaignRootOwnerGid: 10_001,
   campaignRootOwnerUid: 10_001,
   craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG_E2E",
-    networkName: "discord-meeting-e2e", tcpDestinationPort: 443,
+    databaseIpv4: "172.28.0.3", networkName: "discord-meeting-e2e", projectName: "craig-meeting-e2e",
+    tcpDestinationPort: 443,
     udpDestinationPorts: { end: 65_535, start: 1_024 } },
   deployRoot: "/srv/e2e",
   greeting: {
@@ -213,6 +214,7 @@ function firewallRules(earlierForward = "", laterForward = ""): string {
 ${earlierForward}-A FORWARD -i br-craige2e -s 172.28.0.2/32 -j CRAIG_E2E
 [9:900] -A FORWARD -o br-craige2e -d 172.28.0.2/32 -j CRAIG_E2E
 ${laterForward}-A CRAIG_E2E -s 172.28.0.2/32 -i br-craige2e -p tcp -m conntrack --ctstate NEW,ESTABLISHED --dport 443 -j ACCEPT
+-A CRAIG_E2E -s 172.28.0.2/32 -d 172.28.0.3/32 -i br-craige2e -p tcp -m conntrack --ctstate NEW,ESTABLISHED --dport 5432 -j ACCEPT
 -A CRAIG_E2E -i br-craige2e -s 172.28.0.2/32 -p udp -m conntrack --ctstate ESTABLISHED,NEW --dport 1024:65535 -j ACCEPT
 -A CRAIG_E2E -o br-craige2e -d 172.28.0.2/32 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 -A CRAIG_E2E -j DROP
