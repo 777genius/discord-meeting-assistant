@@ -128,8 +128,8 @@ describe("published grounded meeting question", () => {
   it("deterministically interleaves authoritative live and V2-only historical evidence",
     async () => {
       const observedPlans: string[][] = [];
-      const historical: FocusedHistoricalEvidenceV2Port = {
-        retrieve: vi.fn(async (input) => {
+      const retrieve = vi.fn<FocusedHistoricalEvidenceV2Port["retrieve"]>(
+        async (input) => {
           expect(input.signal.aborted).toBe(false);
           return {
             authorityGeneration: "historical-generation-1",
@@ -155,7 +155,10 @@ describe("published grounded meeting question", () => {
               turnId: "historical-turn-1",
             }],
           };
-        }),
+        },
+      );
+      const historical: FocusedHistoricalEvidenceV2Port = {
+        retrieve,
       };
       const generated: GroundedAnswerGenerator = {
         ...generator(),
@@ -196,7 +199,7 @@ describe("published grounded meeting question", () => {
         "The launch is Friday.",
         "The prior meeting approved Atlas.",
       ]]);
-      expect(historical.retrieve).toHaveBeenCalledTimes(3);
+      expect(retrieve).toHaveBeenCalledTimes(3);
     });
 
   it("rebuilds the canonical watermark for the final playback authority fence", async () => {

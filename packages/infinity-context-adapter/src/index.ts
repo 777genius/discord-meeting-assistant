@@ -4,6 +4,12 @@ export {
   type InfinityContextLiveFinalizedMemoryConfigV1,
 } from "./infinity-context-live-finalized-memory.js";
 export {
+  INFINITY_EXACT_DOCUMENT_RELEASE_GATE,
+  type InfinityExactDocumentIdentityV1,
+  type InfinityExactDocumentReconciliationV1,
+  type InfinityExactDocumentSdkV1,
+} from "./infinity-exact-document-compatibility.js";
+export {
   InfinityContextHistoricalMemoryAdapter,
   type InfinityContextHistoricalMemoryConfigV1,
 } from "./infinity-context-historical-memory.js";

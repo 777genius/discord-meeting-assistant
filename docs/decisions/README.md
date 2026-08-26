@@ -5,6 +5,7 @@
 - [ADR-0026: Host subscription account pool](0026-host-subscription-account-pool.md)
 - [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)
 - [ADR-0053: V2-only meeting retrieval composition](0053-v2-only-meeting-retrieval.md)
+- [ADR-0055: Exact-document live-memory reconciliation](0055-exact-document-live-reconciliation.md)
 
 ## Accepted
 

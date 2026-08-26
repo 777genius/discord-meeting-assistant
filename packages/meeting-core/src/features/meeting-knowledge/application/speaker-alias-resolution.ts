@@ -138,12 +138,29 @@ export function hasAmbiguousRequestedActorAlias(
 }
 
 function matchAlias(question: string, alias: string): AliasQuestionSpan | undefined {
+  const canonicalQuestion = canonicalIdentityText(question);
   const aliasTokens = orderedTokens(alias);
-  const span = contiguousAliasSpan(question, aliasTokens);
+  const span = aliasTokens.length === 0
+    ? literalAliasSpan(canonicalQuestion, canonicalIdentityText(alias))
+    : contiguousAliasSpan(canonicalQuestion, aliasTokens);
   return span !== undefined && aliasTokens.length > 0 &&
-      aliasMentionIsUnambiguous(question, span.text, aliasTokens)
+      aliasMentionIsUnambiguous(canonicalQuestion, span.text, aliasTokens)
     ? span
-    : undefined;
+    : aliasTokens.length === 0 ? span : undefined;
+}
+
+function literalAliasSpan(
+  question: string,
+  alias: string,
+): AliasQuestionSpan | undefined {
+  if (alias.length === 0) {
+    return undefined;
+  }
+  const match = new RegExp(`(${escapeRegExp(alias)})`, "u").exec(question);
+  const text = match?.[1];
+  return text === undefined || match === null
+    ? undefined
+    : Object.freeze({ end: match.index + text.length, start: match.index, text });
 }
 
 function hasConflictingSpeakerOwner(
@@ -214,6 +231,10 @@ function escapeRegExp(value: string): string {
 
 function orderedTokens(value: string): readonly string[] {
   return Object.freeze(
-    value.normalize("NFKC").toLocaleLowerCase("und").match(/[\p{L}\p{N}]+/gu) ?? [],
+    canonicalIdentityText(value).match(/[\p{L}\p{N}]+/gu) ?? [],
   );
+}
+
+function canonicalIdentityText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("und");
 }

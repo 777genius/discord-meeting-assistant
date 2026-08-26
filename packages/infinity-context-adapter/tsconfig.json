@@ -4,19 +4,5 @@
     "rootDir": ".",
     "types": ["node", "vitest/globals"]
   },
-  "exclude": [
-    "test/historical-planner-query-isolation.e2e.test.ts",
-    "test/infinity-context-historical-memory.e2e.test.ts",
-    "test/infinity-context-positional.e2e.test.ts",
-    "test/infinity-context-qualification-contract.test.ts",
-    "test/infinity-context-real-service.e2e.test.ts",
-    "test/infinity-context-semantic-quality.e2e.test.ts",
-    "test/infinity-context-semantic-service.e2e.test.ts",
-    "test/infinity-semantic-qualification.test.ts",
-    "test/real-service-qualification-helper.ts",
-    "test/semantic-quality-answer-runner.ts",
-    "test/semantic-quality-evaluation.test.ts",
-    "test/semantic-quality-retrieval-helper.ts"
-  ],
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }

@@ -32,7 +32,7 @@ export function redactRetrievalQueryIdentities(
   question: string,
   aliases: readonly RetrievalActorAliasOwnerV1[],
 ): string {
-  let redacted = question
+  let redacted = canonicalIdentityText(question)
     .replace(/<(?:@!?|@&|#)\d{17,20}>/gu, "participant")
     .replace(/(?<!\d)\d{17,20}(?!\d)/gu, "participant");
   for (const owner of aliases) {
@@ -50,14 +50,19 @@ export function redactRetrievalQueryIdentities(
 }
 
 function identityAliasPattern(alias: string): RegExp {
-  const tokens = alias.normalize("NFKC").match(/[\p{L}\p{N}]+/gu) ?? [];
+  const canonicalAlias = canonicalIdentityText(alias);
+  const tokens = canonicalAlias.match(/[\p{L}\p{N}]+/gu) ?? [];
   if (tokens.length === 0) {
-    return /(?!)x/gu;
+    return new RegExp(escapeRegExp(canonicalAlias), "gu");
   }
   return new RegExp(
     `(?<![\\p{L}\\p{N}])${tokens.map(escapeRegExp).join("[^\\p{L}\\p{N}]+")}(?![\\p{L}\\p{N}])`,
     "giu",
   );
+}
+
+function canonicalIdentityText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("und");
 }
 
 function escapeRegExp(value: string): string {

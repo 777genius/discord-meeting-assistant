@@ -122,7 +122,8 @@ describe("persisted focused locator Retrieval V2 request", () => {
       });
       expect(request).not.toBeNull();
       expect(request?.queries).toEqual([{
-        query: question.replace(/Влад|Vlad/gu, "participant"),
+        query: question.normalize("NFKC").toLocaleLowerCase("und")
+          .replace(/влад|vlad/gu, "participant"),
         queryId: "original-question",
       }]);
       expect(request?.filters.actorKeys).toEqual(["opaque-vlad"]);
@@ -183,7 +184,7 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
       "dactor1.r1.unprofiled-active",
     ]);
     expect(request?.queries).toEqual([{
-      query: "What did participant decide?",
+      query: "what did participant decide?",
       queryId: "original-question",
     }]);
     expect(JSON.stringify(request)).not.toContain(rawActorId);
@@ -191,6 +192,7 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
 
   it.each([
     "ALEX SMITH",
+    "Ａｌｅｘ Ｓｍｉｔｈ",
     "Alex-Smith",
     "alex_smith",
     "Alex   Smith",
@@ -211,8 +213,56 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
       });
 
       expect(request?.queries[0]?.query).not.toMatch(/alex|smith/iu);
-      expect(request?.filters.actorKeys).toEqual(["opaque-alex"]);
+    expect(request?.filters.actorKeys).toEqual(["opaque-alex"]);
     });
+
+  it.each([
+    ["Ａｌｉｃｅ", "Alice"],
+    ["Alice", "ＡＬＩＣＥ"],
+    ["AlicE", "Ａｌｉｃｅ"],
+  ])("normalizes query %s and configured alias %s before resolution and redaction",
+    async (questionAlias, configuredAlias) => {
+      const { store } = fixture();
+      const request = await new PrepareFocusedLocatorRetrievalV2Request({
+        ids: new TestIds(),
+        providerBinding,
+        speakerAliases: [{ actorKeys: ["opaque-alice"], aliases: [configuredAlias] }],
+        store,
+      }).prepare({
+        currentMeetingId: "current-meeting",
+        question: `What did ${questionAlias} decide?`,
+        roomId: "room-1",
+        scopeId: "scope-1",
+      });
+
+      expect(request?.filters.actorKeys).toEqual(["opaque-alice"]);
+      expect(JSON.stringify(request?.queries)).not.toMatch(/alice|Ａｌｉｃｅ/iu);
+      expect(request?.queries[0]?.query).toBe("what did participant decide?");
+    });
+
+  it.each(["🔥", "⚙️", "++", "...", "🧑🏽‍💻"])(
+    "redacts literal-safe symbol-only alias %s including repetition",
+    async (alias) => {
+      const { store } = fixture();
+      const request = await new PrepareFocusedLocatorRetrievalV2Request({
+        ids: new TestIds(),
+        providerBinding,
+        speakerAliases: [{ actorKeys: ["opaque-symbol"], aliases: [alias] }],
+        store,
+      }).prepare({
+        currentMeetingId: "current-meeting",
+        question: `What did ${alias} / ${alias} decide?`,
+        roomId: "room-1",
+        scopeId: "scope-1",
+      });
+
+      expect(request?.filters.actorKeys).toEqual(["opaque-symbol"]);
+      expect(request?.queries[0]?.query).toBe(
+        "what did participant / participant decide?",
+      );
+      expect(JSON.stringify(request)).not.toContain(alias);
+    },
+  );
 
   it("fails closed before provider preparation for duplicate alias owners", async () => {
     const { store } = fixture();
@@ -239,6 +289,33 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
     expect(actorKeysForQuestion).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["Ａｌｉｃｅ", "Alice", "ＡＬＩＣＥ"],
+    ["🔥", "🔥", "🔥"],
+    ["Alex---Smith", "Alex Smith", "Ａｌｅｘ＿Ｓｍｉｔｈ"],
+  ])("fails before I/O for normalized ambiguous alias %s",
+    async (questionAlias, firstAlias, secondAlias) => {
+      const { store } = fixture();
+      const listPlans = vi.spyOn(store, "listCurrentRoomPlans");
+      const request = await new PrepareFocusedLocatorRetrievalV2Request({
+        ids: new TestIds(),
+        providerBinding,
+        speakerAliases: [
+          { actorKeys: ["owner-one"], aliases: [firstAlias] },
+          { actorKeys: ["owner-two"], aliases: [secondAlias] },
+        ],
+        store,
+      }).prepare({
+        currentMeetingId: "current-meeting",
+        question: `What did ${questionAlias} decide?`,
+        roomId: "room-1",
+        scopeId: "scope-1",
+      });
+
+      expect(request).toBeNull();
+      expect(listPlans).not.toHaveBeenCalled();
+    });
+
   it("keeps rotated actor keys under one alias owner and redacts every identity form", async () => {
     const { plan, store } = fixture();
     const rawActorId = "123456789012345678";
@@ -262,7 +339,7 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
       "dactor1.r2.active",
     ]);
     expect(request?.queries[0]?.query).toBe(
-      "What did participant participant and participant decide between 07:00 and 08:00?",
+      "what did participant participant and participant decide between 07:00 and 08:00?",
     );
     expect(JSON.stringify(request)).not.toMatch(
       new RegExp(`${rawActorId}|Vlad|Vladimir`, "u"),

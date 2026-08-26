@@ -4,11 +4,26 @@ import type {
   HttpTransport,
   JsonObject,
   JsonValue,
-  SourceRef,
 } from "@infinity-context/sdk";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-
+import type {
+  InfinityExactDocumentIdentityV1,
+  InfinityExactDocumentSdkV1,
+} from "../src/infinity-exact-document-compatibility.js";
+import {
+  asRecord,
+  deferred,
+  envelope,
+  json,
+  notFound,
+  string,
+  strings,
+  type IngestGate,
+  type RecordedExactHttpRequest,
+  type RecordedRequest,
+  type StoredDocument,
+} from "./disposable-infinity-endpoint-support.js";
 const require = createRequire(import.meta.url);
 const retrievalCapability = JSON.parse(readFileSync(require.resolve(
   "@infinity-context/sdk-v2/fixtures/context_retrieval_v2/capability.json",
@@ -16,7 +31,6 @@ const retrievalCapability = JSON.parse(readFileSync(require.resolve(
 const retrievalSuccess = JSON.parse(readFileSync(require.resolve(
   "@infinity-context/sdk-v2/fixtures/context_retrieval_v2/success.json",
 ), "utf8")) as Record<string, unknown>;
-
 export const DISPOSABLE_RETRIEVAL_V2_BINDING = Object.freeze({
   capabilityFingerprint: retrievalCapability.capability_fingerprint as string,
   contractVersion: "context-retrieval.v2" as const,
@@ -29,100 +43,10 @@ export const DISPOSABLE_RETRIEVAL_V2_BINDING = Object.freeze({
   serviceRevision: retrievalCapability.service_revision as string,
 });
 
-interface StoredDocument {
-  readonly id: string;
-  indexingStatus: string;
-  readonly memoryScopeExternalRef: string;
-  processed: boolean;
-  readonly sourceExternalId: string;
-  readonly sourceRefs: readonly SourceRef[];
-  readonly sourceType: string;
-  readonly retrievalProjection: Readonly<Record<string, unknown>>;
-  readonly spaceSlug: string;
-  readonly text: string;
-  readonly threadExternalRef: string;
-  readonly title: string;
-  status: string;
-}
-
-interface RecordedRequest {
-  readonly body: JsonValue | null;
-  readonly idempotencyKey: string | null;
-  readonly method: string;
-  readonly path: string;
-  readonly query: string;
-}
-
-interface RecordedExactHttpRequest {
-  readonly bodyBytes: Uint8Array;
-  readonly method: string;
-  readonly path: string;
-}
-
-interface IngestGate {
-  readonly release: Promise<void>;
-  readonly started: () => void;
-}
-
 export interface DisposableInfinityRuntimeQualificationReceipt {
   readonly embeddingProfileDigestSha256: string;
   readonly embeddingProfileId: string;
   readonly serviceRevision: string;
-}
-
-function missingDeferredResolver(): void {
-  throw new Error("disposable deferred resolver was not initialized");
-}
-
-function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
-  let resolver = missingDeferredResolver;
-  const promise = new Promise<void>((resolve) => {
-    resolver = resolve;
-  });
-  return {
-    promise,
-    resolve: () => {
-      resolver();
-    },
-  };
-}
-
-function asRecord(value: unknown): Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Readonly<Record<string, unknown>>
-    : {};
-}
-
-function string(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function strings(value: unknown): readonly string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
-function json(status: number, value: JsonValue): HttpResponse {
-  return {
-    body: JSON.stringify(value),
-    headers: new Headers({ "content-type": "application/json", "x-request-id": `fake-${status}` }),
-    status,
-  };
-}
-
-function notFound(): HttpResponse {
-  return json(404, {
-    error: {
-      code: "memory.not_found",
-      message: "disposable document not found",
-      retryable: false,
-    },
-  });
-}
-
-function envelope(data: JsonValue): HttpResponse {
-  return json(200, { data });
 }
 
 /** In-memory endpoint behind the official SDK's HttpTransport request path. */
@@ -132,11 +56,8 @@ export class DisposableInfinityEndpoint implements HttpTransport {
   readonly #processIdempotency = new Map<string, string>();
   readonly #scopes = new Map<string, JsonObject>();
   readonly #spaces = new Map<string, JsonObject>();
-  #nextDocument = 1;
-  #nextScope = 1;
-  #nextSpace = 1;
-  #loseIngestResponse = false;
-  #loseDocumentDeleteResponse = false;
+  #nextDocument = 1; #nextScope = 1; #nextSpace = 1;
+  #loseIngestResponse = false; #loseDocumentDeleteResponse = false;
   #loseProcessResponse = false;
   #loseThreadDeleteResponse = false;
   #failDocumentDelete = false;
@@ -155,6 +76,62 @@ export class DisposableInfinityEndpoint implements HttpTransport {
   #scopeListCursorFormat: "encoded" | "numeric" = "numeric";
   public readonly requests: RecordedRequest[] = [];
   public readonly exactHttpRequests: RecordedExactHttpRequest[] = [];
+  public readonly exactDocumentRequests: Array<Readonly<{
+    readonly documentId: string;
+    readonly operation: "delete" | "reconcile";
+  }>> = [];
+
+  public exactDocumentSdk(): InfinityExactDocumentSdkV1 {
+    return Object.freeze({
+      contractVersion: "infinity.document-exact-reconciliation.v1" as const,
+      deleteExactDocument: async (input: InfinityExactDocumentIdentityV1 & {
+        readonly deletionIdempotencyKey: string;
+        readonly signal: AbortSignal;
+      }) => {
+        input.signal.throwIfAborted();
+        this.exactDocumentRequests.push(Object.freeze({
+          documentId: input.documentId,
+          operation: "delete" as const,
+        }));
+        const document = this.#exactDocument(input);
+        if (document === undefined || document.status === "deleted") {
+          return { status: "deleted" as const };
+        }
+        document.status = "deleted";
+        document.processed = false;
+        if (this.#loseDocumentDeleteResponse) {
+          this.#loseDocumentDeleteResponse = false;
+          return { status: "outcome_unknown" as const };
+        }
+        return { status: "deleted" as const };
+      },
+      reconcileExactDocument: async (input: InfinityExactDocumentIdentityV1 & {
+        readonly signal: AbortSignal;
+      }) => {
+        input.signal.throwIfAborted();
+        this.exactDocumentRequests.push(Object.freeze({
+          documentId: input.documentId,
+          operation: "reconcile" as const,
+        }));
+        const document = this.#exactDocument(input);
+        if (document === undefined || document.status !== "active") {
+          return { status: "absent" as const };
+        }
+        return Object.freeze({
+          documentId: document.sourceExternalId,
+          idempotencyKey: input.idempotencyKey,
+          memoryScopeExternalRef: document.memoryScopeExternalRef,
+          processed: document.processed,
+          projectionGeneration: string(document.retrievalProjection.projection_generation),
+          remoteDocumentId: document.id,
+          sourceType: document.sourceType,
+          spaceSlug: document.spaceSlug,
+          status: "active" as const,
+          threadExternalRef: document.threadExternalRef,
+        });
+      },
+    });
+  }
 
   public recordExactHttpRequest(
     method: string,
@@ -166,6 +143,32 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       method,
       path,
     }));
+  }
+
+  #exactDocument(input: InfinityExactDocumentIdentityV1): StoredDocument | undefined {
+    const remoteId = this.#ingestIdempotency.get(input.idempotencyKey);
+    const document = remoteId === undefined ? undefined : this.#documents.get(remoteId);
+    const identityCollision = [...this.#documents.values()].find(({ sourceExternalId }) =>
+      sourceExternalId === input.documentId
+    );
+    if (document === undefined) {
+      if (identityCollision !== undefined) {
+        throw new Error("synthetic exact document identity belongs to another mutation");
+      }
+      return undefined;
+    }
+    if (
+      document.sourceExternalId !== input.documentId ||
+      document.memoryScopeExternalRef !== input.memoryScopeExternalRef ||
+      string(document.retrievalProjection.projection_generation) !==
+        input.projectionGeneration ||
+      document.sourceType !== input.sourceType ||
+      document.spaceSlug !== input.spaceSlug ||
+      document.threadExternalRef !== input.threadExternalRef
+    ) {
+      throw new Error("synthetic exact document reconciliation scope mismatch");
+    }
+    return document;
   }
 
   public pauseNextIngest(): {

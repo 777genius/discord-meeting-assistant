@@ -4,7 +4,6 @@ import type {
   LiveFinalizedMemoryProjectionResultV1,
   LiveFinalizedMemoryProjectionV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import { InfinityContextClient, type HttpTransport } from "@infinity-context/sdk";
 import {
   DOCUMENT_RETRIEVAL_PROJECTION_SCHEMA_V1,
   InfinityContextClient as InfinityContextClientV2,
@@ -21,8 +20,12 @@ import {
   failure,
   processMutationAccepted,
 } from "./infinity-context-sdk-contract.js";
+import {
+  requireInfinityExactDocumentSdk,
+  type InfinityExactDocumentIdentityV1,
+  type InfinityExactDocumentSdkV1,
+} from "./infinity-exact-document-compatibility.js";
 
-const maximumListedDocuments = 100;
 const sourceType = "meeting_live_human_turn";
 
 interface LiveTopology {
@@ -39,6 +42,7 @@ export interface InfinityContextLiveFinalizedMemoryConfigV1 {
   readonly operationTimeoutMs: number;
   readonly requestTimeoutMs: number;
   readonly schemaVersion: number;
+  readonly exactDocuments?: InfinityExactDocumentSdkV1;
   readonly token: string | (() => Promise<string | null | undefined> | string | null | undefined);
   /** Test injection still traverses the official SDK clients. */
   readonly transport?: unknown;
@@ -51,7 +55,7 @@ export class InfinityContextLiveFinalizedMemoryAdapter
   readonly #actorKeys: HistoricalRetrievalActorKeyMapper;
   readonly #ids: HistoricalOpaqueIdPort;
   readonly #index: InfinityContextClientV2;
-  readonly #lookup: InfinityContextClient;
+  readonly #exactDocuments: InfinityExactDocumentSdkV1;
   readonly #operationTimeoutMs: number;
   readonly #requestTimeoutMs: number;
 
@@ -71,18 +75,13 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     this.#ids = config.ids;
     this.#operationTimeoutMs = config.operationTimeoutMs;
     this.#requestTimeoutMs = config.requestTimeoutMs;
+    this.#exactDocuments = requireInfinityExactDocumentSdk(config.exactDocuments);
     const common = {
       baseUrl: config.baseUrl,
       retryPolicy: { maxAttempts: 1 as const },
       timeoutMs: config.requestTimeoutMs,
       token: config.token,
     };
-    this.#lookup = new InfinityContextClient({
-      ...common,
-      ...(config.transport === undefined
-        ? {}
-        : { transport: config.transport as HttpTransport }),
-    });
     this.#index = new InfinityContextClientV2({
       ...common,
       ...(config.transport === undefined
@@ -105,36 +104,33 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     );
     try {
       const response = await operation.request(this.#requestTimeoutMs, (signal) =>
-        this.#lookup.documents.listScopeDocuments({
-          limit: maximumListedDocuments,
-          memoryScopeExternalRef: topology.memoryScopeExternalRef,
+        this.#exactDocuments.reconcileExactDocument({
+          ...this.exactIdentity(projection, topology),
           signal,
-          spaceSlug: topology.spaceSlug,
-          status: "active",
-          threadExternalRef: topology.threadExternalRef,
         })
       );
-      if (!Array.isArray(response.data) || response.data.length >= maximumListedDocuments) {
-        throw new InfinityContextAdapterContractError(
-          "live memory reconciliation cannot prove a unique bounded document",
-        );
-      }
-      const matches = response.data.filter((candidate) =>
-        documentSourceExternalId(candidate) === projection.documentId
-      );
-      if (matches.length === 0) {
+      if (response.status === "absent") {
         return { status: "not_found" };
       }
-      if (matches.length !== 1 || documentId(matches[0]!) === "") {
+      if (!matchesExactIdentity(response, this.exactIdentity(projection, topology)) ||
+        response.remoteDocumentId.length === 0) {
         throw new InfinityContextAdapterContractError(
-          "live memory reconciliation found ambiguous document ownership",
+          "live memory exact reconciliation returned conflicting ownership",
         );
       }
-      const record = matches[0] as unknown as Readonly<Record<string, unknown>>;
-      if (record.source_type !== sourceType) {
-        throw new InfinityContextAdapterContractError(
-          "live memory document identity belongs to another source type",
-        );
+      if (!response.processed) {
+        const processed = (await operation.request(
+          this.#requestTimeoutMs,
+          (signal) => this.#index.documents.processDocument(
+            response.remoteDocumentId,
+            { idempotencyKey: `${projection.mutationId}:process`, signal },
+          ),
+        )).data;
+        if (!processMutationAccepted(processed)) {
+          throw new InfinityContextAdapterContractError(
+            "live memory exact reconciliation could not settle processing",
+          );
+        }
       }
       return { status: "applied" };
     } catch (error) {
@@ -247,39 +243,19 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     );
     try {
       const response = await operation.request(this.#requestTimeoutMs, (signal) =>
-        this.#lookup.documents.listScopeDocuments({
-          limit: maximumListedDocuments,
-          memoryScopeExternalRef: topology.memoryScopeExternalRef,
-          signal,
-          spaceSlug: topology.spaceSlug,
-          status: "active",
-          threadExternalRef: topology.threadExternalRef,
-        })
-      );
-      if (!Array.isArray(response.data) || response.data.length >= maximumListedDocuments) {
-        throw new InfinityContextAdapterContractError(
-          "live memory removal cannot prove a unique bounded document",
-        );
-      }
-      const matches = response.data.filter((candidate) =>
-        documentSourceExternalId(candidate) === projection.documentId
-      );
-      if (matches.length === 0) {
-        return { status: "applied" };
-      }
-      if (matches.length !== 1) {
-        throw new InfinityContextAdapterContractError(
-          "live memory removal found ambiguous document ownership",
-        );
-      }
-      const remoteId = documentId(matches[0]!);
-      await operation.request(this.#requestTimeoutMs, (signal) =>
-        this.#lookup.documents.deleteDocument(remoteId, {
-          headers: { "x-client-mutation-id": `${projection.mutationId}:retire` },
+        this.#exactDocuments.deleteExactDocument({
+          ...this.exactIdentity(projection, topology),
+          deletionIdempotencyKey: `${projection.mutationId}:retire`,
           signal,
         })
       );
-      return { status: "applied" };
+      return response.status === "deleted"
+        ? { status: "applied" }
+        : {
+            code: "memory.live_document_deletion_outcome_unknown",
+            retryable: true,
+            status: "outcome_unknown",
+          };
     } catch (error) {
       return failure(error, "outcome_unknown");
     } finally {
@@ -300,6 +276,21 @@ export class InfinityContextLiveFinalizedMemoryAdapter
         "live-memory-meeting.v1",
         [projection.meetingId],
       )}`,
+    });
+  }
+
+  private exactIdentity(
+    projection: LiveFinalizedMemoryProjectionV1,
+    topology: LiveTopology,
+  ): InfinityExactDocumentIdentityV1 {
+    return Object.freeze({
+      documentId: projection.documentId,
+      idempotencyKey: projection.mutationId,
+      memoryScopeExternalRef: topology.memoryScopeExternalRef,
+      projectionGeneration: `live.v1.${projection.generation}`,
+      sourceType,
+      spaceSlug: topology.spaceSlug,
+      threadExternalRef: topology.threadExternalRef,
     });
   }
 
@@ -340,6 +331,22 @@ export class InfinityContextLiveFinalizedMemoryAdapter
       );
     }
   }
+}
+
+function matchesExactIdentity(
+  response: Exclude<
+    Awaited<ReturnType<InfinityExactDocumentSdkV1["reconcileExactDocument"]>>,
+    { readonly status: "absent" }
+  >,
+  expected: InfinityExactDocumentIdentityV1,
+): boolean {
+  return response.documentId === expected.documentId &&
+    response.idempotencyKey === expected.idempotencyKey &&
+    response.memoryScopeExternalRef === expected.memoryScopeExternalRef &&
+    response.projectionGeneration === expected.projectionGeneration &&
+    response.sourceType === expected.sourceType &&
+    response.spaceSlug === expected.spaceSlug &&
+    response.threadExternalRef === expected.threadExternalRef;
 }
 
 function validProjection(projection: LiveFinalizedMemoryProjectionV1): boolean {

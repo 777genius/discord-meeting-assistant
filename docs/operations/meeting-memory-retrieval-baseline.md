@@ -84,12 +84,11 @@ family, and its ASR noise was authored rather than emitted by an ASR system.
 | Evidence/request bytes | Full serialized request bytes only; no evidence-only split | Unavailable |
 | Retrieval, generation, total latency | p50/p95/max support exists | Unavailable |
 
-The `perfectOutcome` values in
-[`semantic-quality-evaluation.test.ts`](../../packages/infinity-context-adapter/test/semantic-quality-evaluation.test.ts)
-are authored inputs that test evaluation arithmetic, repetition handling, and
-receipt validation. They are not retrieval or model outputs. The harness also
-sets `productionQualityQualified: false`; a generated answer artifact remains
-pending independent adjudication.
+The authored fixtures in
+[`semantic-quality-v4-evaluation.test.ts`](../../packages/infinity-context-adapter/test/semantic-quality-v4-evaluation.test.ts)
+test evaluation arithmetic, repetition handling, and receipt validation. They
+are not retrieval or model outputs. Production qualification remains pending
+independent adjudication.
 
 ## Why the legacy corpus is not this baseline
 

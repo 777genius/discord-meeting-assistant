@@ -64,8 +64,13 @@ export async function waitForHistoricalRows(
   predicate: (row: { readonly meeting_id: string; readonly state: string }) => boolean,
   expectedCount: number,
   signal: AbortSignal,
+  timeoutMilliseconds = 90_000,
 ): Promise<void> {
-  const deadline = Date.now() + 30_000;
+  if (!Number.isSafeInteger(timeoutMilliseconds) ||
+    timeoutMilliseconds < 1 || timeoutMilliseconds > 120_000) {
+    throw new RangeError("historical reconciliation timeout must be within 1..120000ms");
+  }
+  const deadline = Date.now() + timeoutMilliseconds;
   let rows = await historicalRows(pool);
   while (Date.now() < deadline) {
     signal.throwIfAborted();

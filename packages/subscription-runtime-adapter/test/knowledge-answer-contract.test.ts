@@ -277,7 +277,7 @@ describe("Meeting Knowledge subscription runtime contract", () => {
       }[];
     };
     expect(prompt.questionSpeakerBindings).toEqual([
-      { name: "Vlad", speakerReference: "S2" },
+      { name: "vlad", speakerReference: "S2" },
     ]);
     expect(serializedPrompt).not.toContain("77777777777777777");
     expect(serializedPrompt).not.toContain("88888888888888888");

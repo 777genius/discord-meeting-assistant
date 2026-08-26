@@ -96,8 +96,8 @@ function unsupportedQuestionsAndDistractors(special: Map<number, string>): { rea
   return Object.freeze({ questions: Object.freeze(questions) });
 }
 
-export function semanticQualityQuestionSetDigest(questions: readonly FrozenQualityQuestion[]): string { return digest(questions); }
-export function semanticQualityCorpusDigest(input: { readonly questionSetSha256: string; readonly turns: AcceptedFinalMeetingV1["humanTurns"] }): string { return digest(input); }
+function semanticQualityQuestionSetDigest(questions: readonly FrozenQualityQuestion[]): string { return digest(questions); }
+function semanticQualityCorpusDigest(input: { readonly questionSetSha256: string; readonly turns: AcceptedFinalMeetingV1["humanTurns"] }): string { return digest(input); }
 function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex"); }
 function turnId(position: number): string { return `quality-turn-${position.toString().padStart(3, "0")}`; }
 function routine(position: number): string { return position % 3 === 0 ? `Planning thread ${position}: dependencies were reviewed, um, but no decision landed.` : position % 3 === 1 ? `Обсуждение ${position}: команда сверила риски, финального решения не было.` : `Mixed note ${position}: еще checked blockers, nothing was approved.`; }

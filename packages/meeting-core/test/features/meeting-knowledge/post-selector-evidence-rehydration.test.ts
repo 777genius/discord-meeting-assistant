@@ -189,7 +189,7 @@ function currentV2Binding(): QuestionBindingSnapshot {
       request: retrievalV2Request,
       retrievalPath: "infinity_locator_v2",
     },
-  } as QuestionBindingSnapshot;
+  };
 }
 
 function indexedAnchorEvidence(indexGeneration = "generation-1") {

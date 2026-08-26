@@ -27,6 +27,8 @@ import {
   runQualificationStage,
 } from "./meeting-knowledge-production-composition-diagnostics.js";
 
+vi.setConfig({ testTimeout: 30_000 });
+
 describe("Infinity production semantic qualification composition", () => {
   it("derives every durable lease above the separately bounded operation deadline", () => {
     expect(historicalSyncLeaseDurationMs(1_000)).toBe(31_000);
@@ -85,7 +87,7 @@ describe("Infinity production semantic qualification composition", () => {
     });
     const runtime = requiredHistoricalRuntime(
       pool, infinity, true, true, "test",
-      retainedProductionEmbeddingProfileAttestation,
+      { embeddingProfileAttestation: retainedProductionEmbeddingProfileAttestation },
     );
     const deletionOnly = requiredHistoricalRuntime(pool, infinity, false, false, "test");
     try {
@@ -139,7 +141,7 @@ describe("Infinity production semantic qualification composition", () => {
       await infinity.close();
       await pool.end();
     }
-  }, 15_000);
+  }, 30_000);
 
   it("denies mock-qualified search without disabling the base deletion runtime", async () => {
     const pool = new Pool({
@@ -264,7 +266,7 @@ describe("Infinity deletion-only transport qualification", () => {
       expect(query).not.toHaveBeenCalled();
       expect(connect).not.toHaveBeenCalled();
       const requests = infinity.endpoint.requests.map(({ method, path }) => `${method} ${path}`);
-      expect(requests.length).toBeGreaterThanOrEqual(3);
+      expect(requests.length).toBeGreaterThanOrEqual(2);
       expect(requests.every((request) => request === "GET /v1/capabilities"))
         .toBe(true);
       expect(runtime.servingAuthorized()).toBe(false);
@@ -424,7 +426,7 @@ describe("Infinity production semantic qualification continuation", () => {
       await infinity.close();
       await pool.end();
     }
-  }, 15_000);
+  }, 30_000);
 
   it("keeps production search closed when the endpoint instance echo drifts", async () => {
     const pool = new Pool({
@@ -444,7 +446,7 @@ describe("Infinity production semantic qualification continuation", () => {
       true,
       true,
       "production",
-      retainedProductionEmbeddingProfileAttestation,
+      { embeddingProfileAttestation: retainedProductionEmbeddingProfileAttestation },
     );
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();

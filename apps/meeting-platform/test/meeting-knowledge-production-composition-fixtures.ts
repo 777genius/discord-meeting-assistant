@@ -83,10 +83,14 @@ export function requiredHistoricalRuntime(
   indexingEnabled: boolean,
   searchEnabled: boolean,
   environment: "production" | "test" = "test",
-  embeddingProfileAttestation: NonNullable<
-    PlatformConfig["infinityContext"]
-  >["activation"]["embeddingProfileAttestation"] = null,
+  options: {
+    readonly embeddingProfileAttestation?: NonNullable<
+      PlatformConfig["infinityContext"]
+    >["activation"]["embeddingProfileAttestation"];
+    readonly participantGreetingProfiles?: PlatformConfig["participantGreetingProfiles"];
+  } = {},
 ): PlatformHistoricalMemoryRuntime {
+  const embeddingProfileAttestation = options.embeddingProfileAttestation ?? null;
   const effectiveEmbeddingProfileAttestation = environment === "test"
     ? embeddingProfileAttestation ?? retainedProductionEmbeddingProfileAttestation
     : embeddingProfileAttestation;
@@ -103,14 +107,17 @@ export function requiredHistoricalRuntime(
         INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
     });
   }
-  const runtime = createPlatformHistoricalMemory({
-    config: platformConfig(
+  const baseConfig = platformConfig(
       infinity.baseUrl,
       indexingEnabled,
       searchEnabled,
       environment,
       effectiveEmbeddingProfileAttestation,
-    ),
+    );
+  const runtime = createPlatformHistoricalMemory({
+    config: options.participantGreetingProfiles === undefined
+      ? baseConfig
+      : { ...baseConfig, participantGreetingProfiles: options.participantGreetingProfiles },
     logger: silentLogger,
     pool,
     profileMaintenance: {
@@ -156,7 +163,7 @@ class SyntheticCoverageRuntime implements SubscriptionRuntimeTransportPort {
     const claims = prompt.evidence.filter(({ text }) =>
       positionalQuestion
         ? /(?:ORCHID|CEDAR|MAPLE|NEBULA|QUARTZ|WILLOW|PINE)-[A-Z]+/u.test(text)
-        : /\bagreed\b|\bapproved\b|\brejected\b|\bcorrection\b|договорил|согласил/iu.test(text)
+        : /CURRENT-ANCHOR|PINE-GOLF|\bagreed\b|\bapproved\b|\brejected\b|\bcorrection\b|договорил|согласил/iu.test(text)
     ).map(({ evidenceId }) => ({
       evidenceIds: [evidenceId],
       relevance: "direct",
@@ -414,7 +421,11 @@ export async function persistPublishedMeeting(
   meeting.beginPublication();
   meeting.completePublication({
     externalPublicationId:
-      `discord:v2:channel:${resultsContainerId}:message:${meeting.meetingId}`,
+      `discord:v2:channel:${resultsContainerId}:message:${
+        meeting.meetingId === historicalMeetingId
+          ? "666666666666666661"
+          : "666666666666666662"
+      }`,
     idempotencyKey: meeting.publicationIdempotencyKey(),
     publisherIdentity: botApplicationIdentity,
   });
