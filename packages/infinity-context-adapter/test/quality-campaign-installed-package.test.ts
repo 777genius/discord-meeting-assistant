@@ -34,11 +34,9 @@ describe("packed production quality-campaign entrypoint", () => {
     const bin = join(consumerRoot, "node_modules", ".bin", "discord-meeting-quality-campaign");
     await expect(execute(bin, [], { timeout: 10_000 })).rejects.toMatchObject({ code: 1,
       stderr: "" });
-    const subpath = join(consumerRoot, "node_modules", "@discord-meeting",
-      "infinity-context-adapter", "dist", "quality-campaign", "production-cli.js");
     await expect(execute(process.execPath, ["--input-type=module", "--eval",
-      `const m=await import(${JSON.stringify(subpath)});if(typeof m.runQualityCampaignProductionCli!=="function")process.exit(2)`],
-    { timeout: 10_000 })).resolves.toMatchObject({ stderr: "" });
+      `const m=await import("@discord-meeting/infinity-context-adapter/quality-campaign/cli");if(typeof m.runQualityCampaignProductionCli!=="function")process.exit(2)`],
+    { cwd: consumerRoot, timeout: 10_000 })).resolves.toMatchObject({ stderr: "" });
   }, 180_000);
 
   it("uses the default HTTP factory and aborts an in-flight call", async () => {

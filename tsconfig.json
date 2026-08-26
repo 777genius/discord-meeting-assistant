@@ -4,5 +4,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["apps/**/*.ts", "packages/**/*.ts", "tooling/**/*.ts"]
+  "include": ["apps/**/*.ts", "packages/**/*.ts", "tooling/**/*.ts"],
+  "exclude": ["**/dist/**"]
 }

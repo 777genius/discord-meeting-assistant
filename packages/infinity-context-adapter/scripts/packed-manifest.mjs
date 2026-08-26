@@ -9,6 +9,10 @@ if (operation === "prepare") {
   await writeFile(backupPath, source, { flag: "wx" });
   const manifest = JSON.parse(source);
   delete manifest.dependencies;
+  manifest.exports["."].types = "./dist/index.d.ts";
+  manifest.exports["./quality-campaign"].types = "./dist/quality-campaign/index.d.ts";
+  manifest.exports["./quality-campaign/cli"].types =
+    "./dist/quality-campaign/production-cli.d.ts";
   manifest.optionalDependencies = {
     "@discord-meeting/meeting-core": "0.1.0",
     "@huggingface/tokenizers": "0.1.3",

@@ -8,15 +8,15 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./src/index.ts",
       "import": "./dist/index.js"
     },
     "./quality-campaign": {
-      "types": "./dist/quality-campaign/index.d.ts",
+      "types": "./src/quality-campaign/index.ts",
       "import": "./dist/quality-campaign/index.js"
     },
     "./quality-campaign/cli": {
-      "types": "./dist/quality-campaign/production-cli.d.ts",
+      "types": "./src/quality-campaign/production-cli.ts",
       "import": "./dist/quality-campaign/production-cli.js"
     },
     "./test-support": "./test/test-support.ts"
