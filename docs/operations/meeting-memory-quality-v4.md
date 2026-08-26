@@ -322,6 +322,14 @@ command executes a further 40 questions.
 The former `test:semantic-quality-v4:real-run` command is rejected. Each process
 owns one phase and one create-only monotonic transition:
 
+The production operator transport now lives under
+`packages/infinity-context-adapter/src/quality-campaign`. Its command vocabulary
+is `verify-bind`, `preflight`, `execute`, `resume`, `status`, `adjudicate`,
+`adjudicate-resume`, `retention`, `cleanup-absence`, `final-admission`, and the
+four isolated `holdout-*` phases. It emits only digest/count status receipts.
+Exit 0 is completed, 20 is a safe custodian pause, 21 is an outcome with unknown
+external effect, and 1 is invalid or failed. Private text is never a status field.
+
 | Durable stage | Command | Successful meaning |
 | --- | --- | --- |
 | `prepared_admitted` | `real-execute` pre-provider admission | Exact release/corpus/rubric/reviewer/runtime bindings and three spend authorizations are bound |

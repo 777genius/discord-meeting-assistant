@@ -72,6 +72,15 @@ export async function admitMainCampaign(input: {
   const manifest = decodeManifest(JSON.parse(manifestBytes.toString("utf8")) as unknown);
   const base = dirname(manifestPath);
   const inventory = await verifyInventory(base, manifest.checksumInventory);
+  const requiredInventoryPaths = [manifest.acceptanceReceiptPath,
+    manifest.executionAuthorizationPath, manifest.forbiddenLocatorManifestPath,
+    manifest.independentReviewQuestionsPath, manifest.sealedAutomaticQuestionsPath,
+    manifest.turnToBlockManifestPath, ...manifest.questionReviewReceiptPaths]
+    .map((path) => normalize(path)).toSorted();
+  if (canonicalJson(inventory.map(({ path }) => path).toSorted()) !==
+    canonicalJson(requiredInventoryPaths)) {
+    throw new Error("checksum inventory does not cover the exact sealed input set");
+  }
   const acceptance = await readSigned(base, manifest.acceptanceReceiptPath, input.authority);
   const acceptancePayload = exactRecord(acceptance.payload, ["corpusDigestSha256", "purpose",
     "reviewerDigestSha256", "schemaVersion", "sourceDigestSha256"], "acceptance receipt");
@@ -125,8 +134,10 @@ export async function admitMainCampaign(input: {
 
   const mapping = await readSigned(base, manifest.turnToBlockManifestPath, input.authority);
   const forbidden = await readSigned(base, manifest.forbiddenLocatorManifestPath, input.authority);
-  const snapshotSha256 = requireSnapshotManifest(mapping.payload, "turn-to-block");
-  if (requireSnapshotManifest(forbidden.payload, "forbidden-locator") !== snapshotSha256) {
+  const snapshotSha256 = requireSnapshotManifest(mapping.payload, "turn-to-block",
+    input.releaseRootSha256);
+  if (requireSnapshotManifest(forbidden.payload, "forbidden-locator",
+    input.releaseRootSha256) !== snapshotSha256) {
     throw new Error("locator authorities were not derived from one frozen snapshot");
   }
   const root = {
@@ -197,11 +208,13 @@ async function verifyInventory(base: string, entries: InputManifest["checksumInv
   return Object.freeze(output);
 }
 
-function requireSnapshotManifest(value: unknown, label: string): string {
+function requireSnapshotManifest(value: unknown, label: string, releaseRootSha256: string): string {
   const record = exactRecord(value, ["entriesSha256", "releaseRootSha256", "schemaVersion",
     "snapshotSha256"], label);
   digest(record.entriesSha256, `${label} entries`);
-  digest(record.releaseRootSha256, `${label} release`);
+  if (digest(record.releaseRootSha256, `${label} release`) !== releaseRootSha256) {
+    throw new Error(`${label} is bound to another release`);
+  }
   return digest(record.snapshotSha256, `${label} snapshot`);
 }
 

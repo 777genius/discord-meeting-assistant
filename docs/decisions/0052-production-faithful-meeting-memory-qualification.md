@@ -68,6 +68,10 @@ unknown-outcome handling and exact original/repair input accounting.
   and release root. The main workflow root binds exactly 200 sealed automatic
   and 40 independently reviewed questions plus two signed locator authorities
   derived from one frozen authoritative database snapshot.
+- A separately authorized 30-question holdout has its own root, key namespace,
+  receipts, report, and cleanup. Admission compares all question and locator
+  digests against the frozen main-run load inventory; the holdout report is
+  explicitly non-qualifying and cannot change main campaign metrics.
 - All 240 retrievals, canonical PostgreSQL rehydrations, capability/profile,
   structural, leakage, and retrieval thresholds pass before the production
   answer port is created. A create-only worst-case repetition spend reservation

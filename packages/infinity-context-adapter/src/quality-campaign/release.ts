@@ -30,6 +30,13 @@ export interface QualityCampaignRelease {
   readonly tokenizerSha256: string;
 }
 
+export function assertObservedRelease(expected: QualityCampaignRelease,
+  observed: QualityCampaignRelease): void {
+  if (canonicalJson(expected) !== canonicalJson(observed)) {
+    throw new Error("observed release, image, SDK, tokenizer, prompt, mapper, or policy drifted");
+  }
+}
+
 export function verifyReleaseRoot(input: { readonly authorityPublicKeyPem: string;
   readonly document: unknown }): { readonly release: QualityCampaignRelease;
     readonly releaseRootSha256: string } {
