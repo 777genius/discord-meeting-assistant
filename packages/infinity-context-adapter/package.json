@@ -25,7 +25,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc --project tsconfig.build.json --pretty false",
+    "build": "node scripts/clean-dist.mjs && tsc --project tsconfig.build.json --pretty false",
     "check": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared && pnpm run test:prepared",
     "prepare:official-sdk": "node ../../vendor/infinity-context/prepare-official-sdk.mjs",
     "prepack": "pnpm run build && node scripts/packed-manifest.mjs prepare",
