@@ -12,6 +12,7 @@ export * from "./qualification-metrics.js";
 export * from "./release.js";
 export * from "./retention.js";
 export * from "./production-checkpoints.js";
+export * from "./production-authentication.js";
 export * from "./production-cleanup.js";
 export * from "./production-cli.js";
 export * from "./production-composition.js";

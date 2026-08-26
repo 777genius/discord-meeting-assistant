@@ -1,7 +1,7 @@
 import { createDecipheriv } from "node:crypto";
 
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
-import { verifyExternalSignedValue } from "./execution.js";
+import { nodeCampaignAuthentication } from "./production-authentication.js";
 import type { ExactCampaignEvidence } from "./production-evidence.js";
 import type { CampaignEvidenceCustodyPort, RawAuthenticatedEvidence } from
   "./production-ports.js";
@@ -25,7 +25,7 @@ export function createLocalEvidenceCustody(input: { readonly authority: {
   if (input.key.byteLength !== 32) {throw new Error("evidence custody requires an AES-256 key");}
   safeId(input.keyId, "evidence custody key ID");
   return Object.freeze({ open: async (request: Parameters<CampaignEvidenceCustodyPort["open"]>[0]) => {
-    const receipt = verifyExternalSignedValue<EvidenceReceiptPayload>(request.delivery.signedReceipt,
+    const receipt = nodeCampaignAuthentication.verify<EvidenceReceiptPayload>(request.delivery.signedReceipt,
       input.authority.keyId, input.authority.publicKeyPem, "authenticated evidence receipt");
     const payload = decodeReceipt(receipt.payload);
     const expectedAttempts = sha256([...request.attemptIds].toSorted());
