@@ -220,6 +220,7 @@ boundaries:
       packages:
         - "@discord-meeting/meeting-routing-core"
         - "@discord-meeting/meeting-core"
+        - confusables
         - discord.js
         - zod
       builtins:

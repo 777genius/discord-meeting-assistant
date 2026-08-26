@@ -11,6 +11,17 @@ export interface RetrievalActorReferenceAuthorityV1 {
   readonly actorKeysForQuestion: (question: string) => readonly string[];
 }
 
+export interface IdentitySkeletonV1 {
+  readonly canonical: string;
+  readonly certainty: "certain" | "uncertain";
+  readonly skeleton: string;
+}
+
+/** Consumer-owned deterministic port implemented at the Discord boundary. */
+export interface IdentitySkeletonPortV1 {
+  readonly skeleton: (value: string) => IdentitySkeletonV1;
+}
+
 export interface RequestedSpeakerAliasV1 {
   readonly matchedAlias: string;
   readonly speakerId: string;
@@ -22,6 +33,7 @@ export interface RequestedRetrievalActorAliasV1 {
 }
 
 interface AliasQuestionSpan {
+  readonly certainty: "certain" | "uncertain";
   readonly end: number;
   readonly start: number;
   readonly text: string;
@@ -38,6 +50,12 @@ interface RetrievalAliasCandidate extends RequestedRetrievalActorAliasV1 {
   readonly start: number;
 }
 
+interface IdentityToken extends IdentitySkeletonV1 {
+  readonly end: number;
+  readonly start: number;
+  readonly text: string;
+}
+
 const ambiguousEnglishAliasTokens = new Set([
   "bill", "mark", "may", "will",
 ]);
@@ -45,8 +63,9 @@ const ambiguousEnglishAliasTokens = new Set([
 export function resolveRequestedSpeakerIds(
   question: string,
   aliases: SpeakerAliasMapV1 = {},
+  skeletons?: IdentitySkeletonPortV1,
 ): ReadonlySet<string> {
-  return new Set(resolveRequestedSpeakerAliases(question, aliases).map(
+  return new Set(resolveRequestedSpeakerAliases(question, aliases, skeletons).map(
     ({ speakerId }) => speakerId,
   ));
 }
@@ -54,12 +73,13 @@ export function resolveRequestedSpeakerIds(
 export function resolveRequestedSpeakerAliases(
   question: string,
   aliases: SpeakerAliasMapV1 = {},
+  skeletons?: IdentitySkeletonPortV1,
 ): readonly RequestedSpeakerAliasV1[] {
   const candidates: AliasCandidate[] = [];
   for (const [speakerId, values] of Object.entries(aliases)) {
     for (const alias of values) {
-      const match = matchAlias(question, alias);
-      if (match !== undefined) {
+      const match = matchAlias(question, alias, skeletons);
+      if (match?.certainty === "certain") {
         candidates.push(Object.freeze({
           end: match.end,
           matchedAlias: match.text,
@@ -87,8 +107,9 @@ export function resolveRequestedSpeakerAliases(
 export function resolveRequestedActorKeys(
   question: string,
   aliases: readonly RetrievalActorAliasOwnerV1[] = [],
+  skeletons?: IdentitySkeletonPortV1,
 ): ReadonlySet<string> {
-  return new Set(resolveRequestedActorAliases(question, aliases).flatMap(
+  return new Set(resolveRequestedActorAliases(question, aliases, skeletons).flatMap(
     ({ actorKeys }) => actorKeys,
   ));
 }
@@ -96,12 +117,13 @@ export function resolveRequestedActorKeys(
 export function resolveRequestedActorAliases(
   question: string,
   aliases: readonly RetrievalActorAliasOwnerV1[] = [],
+  skeletons?: IdentitySkeletonPortV1,
 ): readonly RequestedRetrievalActorAliasV1[] {
   const candidates: RetrievalAliasCandidate[] = [];
   for (const [ownerIndex, owner] of aliases.entries()) {
     for (const alias of owner.aliases) {
-      const match = matchAlias(question, alias);
-      if (match !== undefined) {
+      const match = matchAlias(question, alias, skeletons);
+      if (match?.certainty === "certain") {
         candidates.push(Object.freeze({ actorKeys: owner.actorKeys,
           end: match.end, matchedAlias: match.text, ownerIndex, start: match.start }));
       }
@@ -122,12 +144,13 @@ export function resolveRequestedActorAliases(
 export function hasAmbiguousRequestedActorAlias(
   question: string,
   aliases: readonly RetrievalActorAliasOwnerV1[] = [],
+  skeletons?: IdentitySkeletonPortV1,
 ): boolean {
   const candidates: RetrievalAliasCandidate[] = [];
   for (const [ownerIndex, owner] of aliases.entries()) {
     for (const alias of owner.aliases) {
-      const match = matchAlias(question, alias);
-      if (match !== undefined) {
+      const match = matchAlias(question, alias, skeletons);
+      if (match?.certainty === "certain") {
         candidates.push(Object.freeze({ actorKeys: owner.actorKeys,
           end: match.end, matchedAlias: match.text, ownerIndex, start: match.start }));
       }
@@ -137,30 +160,80 @@ export function hasAmbiguousRequestedActorAlias(
     hasConflictingRetrievalOwner(candidate, candidates));
 }
 
-function matchAlias(question: string, alias: string): AliasQuestionSpan | undefined {
-  const canonicalQuestion = canonicalIdentityText(question);
-  const aliasTokens = orderedTokens(alias);
-  const span = aliasTokens.length === 0
-    ? literalAliasSpan(canonicalQuestion, canonicalIdentityText(alias))
-    : contiguousAliasSpan(canonicalQuestion, aliasTokens);
-  return span !== undefined && aliasTokens.length > 0 &&
-      aliasMentionIsUnambiguous(canonicalQuestion, span.text, aliasTokens)
-    ? span
-    : aliasTokens.length === 0 ? span : undefined;
+export function hasUncertainRequestedActorAlias(
+  question: string,
+  aliases: readonly RetrievalActorAliasOwnerV1[] = [],
+  skeletons?: IdentitySkeletonPortV1,
+): boolean {
+  return aliases.some(({ aliases: values }) => values.some((alias) =>
+    matchAlias(question, alias, skeletons)?.certainty === "uncertain"
+  ));
 }
 
-function literalAliasSpan(
+export function identityAliasSpans(
   question: string,
   alias: string,
-): AliasQuestionSpan | undefined {
-  if (alias.length === 0) {
-    return undefined;
+  skeletons?: IdentitySkeletonPortV1,
+): readonly AliasQuestionSpan[] {
+  const canonicalQuestion = canonicalIdentityText(question);
+  const aliasTokens = identityTokens(canonicalIdentityText(alias), skeletons);
+  if (aliasTokens.length === 0) {
+    return literalAliasSpans(canonicalQuestion, canonicalIdentityText(alias));
   }
-  const match = new RegExp(`(${escapeRegExp(alias)})`, "u").exec(question);
-  const text = match?.[1];
-  return text === undefined || match === null
-    ? undefined
-    : Object.freeze({ end: match.index + text.length, start: match.index, text });
+  const questionTokens = identityTokens(canonicalQuestion, skeletons);
+  const spans: AliasQuestionSpan[] = [];
+  for (let start = 0; start + aliasTokens.length <= questionTokens.length; start += 1) {
+    const window = questionTokens.slice(start, start + aliasTokens.length);
+    const comparisons = window.map((token, index) =>
+      compareIdentityToken(token, aliasTokens[index]));
+    if (comparisons.some((comparison) => comparison === "different")) {
+      continue;
+    }
+    const first = window[0];
+    const last = window.at(-1);
+    if (first === undefined || last === undefined) {
+      continue;
+    }
+    const text = canonicalQuestion.slice(first.start, last.end);
+    if (!aliasMentionIsUnambiguous(canonicalQuestion, text,
+      aliasTokens.map(({ canonical }) => canonical))) {
+      continue;
+    }
+    spans.push(Object.freeze({
+      certainty: comparisons.includes("uncertain") ? "uncertain" : "certain",
+      end: last.end,
+      start: first.start,
+      text,
+    }));
+  }
+  return Object.freeze(spans);
+}
+
+function matchAlias(
+  question: string,
+  alias: string,
+  skeletons?: IdentitySkeletonPortV1,
+): AliasQuestionSpan | undefined {
+  return identityAliasSpans(question, alias, skeletons)[0];
+}
+
+function literalAliasSpans(
+  question: string,
+  alias: string,
+): readonly AliasQuestionSpan[] {
+  if (alias.length === 0) {
+    return Object.freeze([]);
+  }
+  return Object.freeze([...question.matchAll(new RegExp(`(${escapeRegExp(alias)})`, "gu"))]
+    .flatMap((match) => {
+      const text = match[1];
+      return text === undefined ? [] : [Object.freeze({
+        certainty: "certain" as const,
+        end: match.index + text.length,
+        start: match.index,
+        text,
+      })];
+    }));
 }
 
 function hasConflictingSpeakerOwner(
@@ -202,37 +275,46 @@ function aliasMentionIsUnambiguous(
   ).test(question);
 }
 
-function contiguousAliasSpan(
-  question: string,
-  aliasTokens: readonly string[],
-): AliasQuestionSpan | undefined {
-  if (aliasTokens.length === 0) {
-    return undefined;
-  }
-  const pattern = aliasTokens.map(escapeRegExp).join("[^\\p{L}\\p{N}]+");
-  const match = new RegExp(
-    `(?<![\\p{L}\\p{N}])(${pattern})(?![\\p{L}\\p{N}])`,
-    "iu",
-  ).exec(question);
-  const text = match?.[1];
-  if (text === undefined || match === null) {
-    return undefined;
-  }
-  return Object.freeze({
-    end: match.index + text.length,
-    start: match.index,
-    text,
-  });
-}
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
-function orderedTokens(value: string): readonly string[] {
-  return Object.freeze(
-    canonicalIdentityText(value).match(/[\p{L}\p{N}]+/gu) ?? [],
-  );
+function identityTokens(
+  value: string,
+  skeletons?: IdentitySkeletonPortV1,
+): readonly IdentityToken[] {
+  return Object.freeze([...value.matchAll(/[\p{L}\p{N}\p{M}\p{Cf}]+/gu)]
+    .flatMap((match) => {
+      const text = match[0];
+      if (!/[\p{L}\p{N}]/u.test(text)) {
+        return [];
+      }
+      const identity = skeletons?.skeleton(text) ?? Object.freeze({
+        canonical: canonicalIdentityText(text),
+        certainty: "certain" as const,
+        skeleton: canonicalIdentityText(text),
+      });
+      return [Object.freeze({ ...identity, end: match.index + text.length,
+        start: match.index, text })];
+    }));
+}
+
+function compareIdentityToken(
+  question: IdentityToken,
+  alias: IdentityToken | undefined,
+): "certain" | "different" | "uncertain" {
+  if (alias === undefined) {
+    return "different";
+  }
+  if (question.canonical === alias.canonical) {
+    return "certain";
+  }
+  if (question.skeleton !== alias.skeleton) {
+    return "different";
+  }
+  return question.certainty === "certain" && alias.certainty === "certain"
+    ? "certain"
+    : "uncertain";
 }
 
 function canonicalIdentityText(value: string): string {

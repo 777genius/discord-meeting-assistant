@@ -85,12 +85,15 @@ export {
 export { RequestHistoricalMeetingDeletion } from "./application/request-historical-meeting-deletion.js";
 export {
   hasAmbiguousRequestedActorAlias,
+  hasUncertainRequestedActorAlias,
   resolveRequestedActorAliases,
   resolveRequestedActorKeys,
   resolveRequestedSpeakerAliases,
   resolveRequestedSpeakerIds,
   type RequestedRetrievalActorAliasV1,
   type RequestedSpeakerAliasV1,
+  type IdentitySkeletonPortV1,
+  type IdentitySkeletonV1,
   type RetrievalActorAliasOwnerV1,
   type RetrievalActorReferenceAuthorityV1,
   type SpeakerAliasMapV1,

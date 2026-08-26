@@ -54,6 +54,9 @@ catalogs:
     bullmq:
       specifier: 5.81.3
       version: 5.81.3
+    confusables:
+      specifier: 1.1.1
+      version: 1.1.1
     discord.js:
       specifier: 14.27.0
       version: 14.27.0
@@ -418,6 +421,9 @@ importers:
       '@discord-meeting/meeting-routing-core':
         specifier: workspace:*
         version: link:../meeting-routing-core
+      confusables:
+        specifier: 'catalog:'
+        version: 1.1.1
       discord.js:
         specifier: 'catalog:'
         version: 14.27.0
@@ -2546,6 +2552,10 @@ packages:
 
   concat-map@0.0.1:
     resolution: {integrity: sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==}
+
+  confusables@1.1.1:
+    resolution: {integrity: sha512-BzFtzUrufackm00Wb2zvrZV0ItRqPdWaUprU5FXHeZiJRrOWxGmXmQl/muGTF9EQl+MdBXz+Irk99meskGZmXw==}
+    engines: {node: '>=10', npm: '>=6'}
 
   console-control-strings@1.1.0:
     resolution: {integrity: sha512-ty/fTekppD2fIwRvnZAVdeOiGd1c7YXEixbgJTNzqcxJWKQnjJ/V1bNEEE6hygpM3WjwHFUVK6HTjWSzV4a8sQ==}
@@ -5835,6 +5845,8 @@ snapshots:
       readable-stream: 4.7.0
 
   concat-map@0.0.1: {}
+
+  confusables@1.1.1: {}
 
   console-control-strings@1.1.0: {}
 

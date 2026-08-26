@@ -25,6 +25,9 @@ describe("Retrieval V2-only composition policy", () => {
     expect(meetingKnowledge).not.toHaveProperty("SameRoomFocusedMemoryRetrieval");
     expect(infinityAdapter.InfinityContextHistoricalMemoryAdapter.prototype)
       .not.toHaveProperty("searchRoom");
+    expect(infinityAdapter).not.toHaveProperty("createInfinitySemanticQualificationManifest");
+    expect(infinityAdapter.INFINITY_CONTEXT_PRODUCTION_QUALIFICATION
+      .productionSemanticQualification).toBe(false);
   });
 
   it("groups every rotated actor key under one collision-safe participant owner", () => {
@@ -43,8 +46,24 @@ describe("Retrieval V2-only composition policy", () => {
     expect([...meetingKnowledge.resolveRequestedActorKeys(
       `What did ${historicalActorA} decide?`,
       custody.speakerAliases,
+      custody.identitySkeletons,
     )]).toEqual(custody.speakerAliases[0]?.actorKeys);
   });
+
+  it.each(["Vlad", "Ｖｌａｄ", "𝐕𝐥𝐚𝐝", "Ѵӏаԁ"])(
+    "uses the Discord skeleton boundary for actor filtering: %s",
+    (identity) => {
+      const custody = createDiscordInfinityActorCustody(
+        platformConfig("http://127.0.0.1:1", false, false, "test"),
+        "t".repeat(32),
+      );
+      expect([...meetingKnowledge.resolveRequestedActorKeys(
+        `What did ${identity} decide?`,
+        custody.speakerAliases,
+        custody.identitySkeletons,
+      )]).toEqual(custody.speakerAliases[0]?.actorKeys);
+    },
+  );
 
   it.each([
     "<@987654321098765432>",

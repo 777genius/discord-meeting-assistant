@@ -14,6 +14,7 @@
   "dependencies": {
     "@discord-meeting/meeting-routing-core": "workspace:*",
     "@discord-meeting/meeting-core": "workspace:*",
+    "confusables": "catalog:",
     "discord.js": "catalog:",
     "zod": "catalog:"
   },

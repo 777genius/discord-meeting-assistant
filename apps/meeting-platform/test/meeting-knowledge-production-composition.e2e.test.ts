@@ -149,7 +149,7 @@ describe("Meeting Knowledge V2 production composition", () => {
 
         const live = await createLiveProjection(pool, current, controller.signal);
         const authorization = allowOnlySyntheticRoom();
-        const question = `How does <@${historicalActorA}> ＶＬＡＤ---Ｖｌａｄ, 🔥 / 🔥 ANCHOR connect to PINE-GOLF?`;
+        const question = `How does <@${historicalActorA}> ＶＬＡＤ---Ｖｌａｄ, Ѵӏаԁ, 𝐕𝐥𝐚𝐝, V̸lad, 🔥 / 🔥 ANCHOR connect to PINE-GOLF?`;
         const groundedFixture = compositionGroundedAnswers();
         const groundedAnswerUseCase = groundedFixture.answers;
         const platformBaseConfig = platformConfig(
@@ -562,7 +562,7 @@ function assertRetrievalRequestPrivacy(
     ]);
     expect(JSON.stringify(request.body)).not.toMatch(
       new RegExp([currentActor, historicalActorA, historicalActorB,
-        "Vlad", "Ｖｌａｄ", "🔥"].join("|"), "u"),
+        "Vlad", "Ｖｌａｄ", "Ѵӏаԁ", "𝐕𝐥𝐚𝐝", "V̸lad", "🔥"].join("|"), "u"),
     );
     expect(JSON.stringify(request.body)).toMatch(/anchor.*pine-golf/u);
     expect(projectedActorKeys).toEqual(expect.arrayContaining(
@@ -576,7 +576,7 @@ function assertRetrievalRequestPrivacy(
   for (const body of exactRetrievalBodies) {
     expect(body).not.toMatch(
       new RegExp([currentActor, historicalActorA, historicalActorB,
-        "Vlad", "Ｖｌａｄ", "🔥"].join("|"), "iu"),
+        "Vlad", "Ｖｌａｄ", "Ѵӏаԁ", "𝐕𝐥𝐚𝐝", "V̸lad", "🔥"].join("|"), "iu"),
     );
     expect(body).toMatch(/anchor.*pine-golf/u);
   }

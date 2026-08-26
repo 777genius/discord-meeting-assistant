@@ -1,4 +1,7 @@
 export {
+  DiscordConfusableIdentitySkeletons,
+} from "./discord-confusable-identity-skeletons.js";
+export {
   createMeetingDiscordFinalSummaryProjectionKey,
   createMeetingDiscordProjectionKey,
   decodeDiscordExternalPublicationId,

@@ -40,12 +40,6 @@ export {
   type InfinityContextPlanningCompatibilityInputV1,
 } from "./infinity-production-qualification.js";
 export {
-  createInfinitySemanticQualificationManifest,
-  infinitySemanticQualificationSchema,
-  type InfinitySemanticQualificationEvidenceV2,
-  type InfinitySemanticQualificationManifestV2,
-} from "./infinity-semantic-qualification.js";
-export {
   PINNED_HUGGINGFACE_TOKENIZERS_RUNTIME,
   infinityContextHistoricalIndexProfileId,
   PINNED_MULTILINGUAL_MINILM_EMBEDDING_PROFILE_ID,

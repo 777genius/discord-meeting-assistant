@@ -25,6 +25,7 @@ catalog:
   "@types/pg": 8.20.1
   "@types/ws": 8.18.1
   bullmq: 5.81.3
+  confusables: 1.1.1
   discord.js: 14.27.0
   fastify: 5.11.2
   fast-check: 4.9.0

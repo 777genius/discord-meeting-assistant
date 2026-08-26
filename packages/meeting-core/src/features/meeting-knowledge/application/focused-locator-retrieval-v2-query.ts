@@ -1,4 +1,5 @@
-import { type RetrievalActorAliasOwnerV1 } from
+import { identityAliasSpans, type IdentitySkeletonPortV1,
+  type RetrievalActorAliasOwnerV1 } from
   "./speaker-alias-resolution.js";
 
 export function relativeTimeFilter(question: string):
@@ -31,6 +32,7 @@ export function boundedRetrievalQuery(value: string): string {
 export function redactRetrievalQueryIdentities(
   question: string,
   aliases: readonly RetrievalActorAliasOwnerV1[],
+  skeletons?: IdentitySkeletonPortV1,
 ): string {
   let redacted = canonicalIdentityText(question)
     .replace(/<(?:@!?|@&|#)\d{17,20}>/gu, "participant")
@@ -40,33 +42,20 @@ export function redactRetrievalQueryIdentities(
       if (/^\d{17,20}$/u.test(alias)) {
         continue;
       }
-      redacted = redacted.replace(
-        identityAliasPattern(alias),
-        "participant",
-      );
+      const spans = identityAliasSpans(redacted, alias, skeletons)
+        .filter(({ certainty }) => certainty === "certain")
+        .toSorted((left, right) => right.start - left.start);
+      for (const span of spans) {
+        redacted = redacted.slice(0, span.start) + "participant" +
+          redacted.slice(span.end);
+      }
     }
   }
   return redacted;
 }
 
-function identityAliasPattern(alias: string): RegExp {
-  const canonicalAlias = canonicalIdentityText(alias);
-  const tokens = canonicalAlias.match(/[\p{L}\p{N}]+/gu) ?? [];
-  if (tokens.length === 0) {
-    return new RegExp(escapeRegExp(canonicalAlias), "gu");
-  }
-  return new RegExp(
-    `(?<![\\p{L}\\p{N}])${tokens.map(escapeRegExp).join("[^\\p{L}\\p{N}]+")}(?![\\p{L}\\p{N}])`,
-    "giu",
-  );
-}
-
 function canonicalIdentityText(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase("und");
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function clockMs(minutes: string | undefined, seconds: string | undefined): number {

@@ -4,7 +4,8 @@ import { compareRetrievalV2Utf8, retrievalV2ConsumerEvidenceByteLimit,
 import type { FocusedMemoryReference } from
   "../domain/grounding-plan.js";
 import { buildHistoricalRoomTopology } from "./historical-index-plan.js";
-import { hasAmbiguousRequestedActorAlias, resolveRequestedActorKeys,
+import { hasAmbiguousRequestedActorAlias, hasUncertainRequestedActorAlias,
+  resolveRequestedActorKeys, type IdentitySkeletonPortV1,
   type RetrievalActorAliasOwnerV1, type RetrievalActorReferenceAuthorityV1 } from
   "./speaker-alias-resolution.js";
 import { boundedRetrievalQuery, redactRetrievalQueryIdentities, relativeTimeFilter } from
@@ -48,6 +49,7 @@ export class PrepareFocusedLocatorRetrievalV2Request {
   public constructor(
     private readonly dependencies: {
       readonly ids: HistoricalOpaqueIdPort;
+      readonly identitySkeletons?: IdentitySkeletonPortV1;
       readonly providerBinding: FocusedLocatorRetrievalV2ProviderBinding;
       readonly actorReferences?: RetrievalActorReferenceAuthorityV1;
       readonly servingAuthorized?: () => boolean;
@@ -70,11 +72,14 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       return null;
     }
     const aliases = this.dependencies.speakerAliases ?? [];
-    if (hasAmbiguousRequestedActorAlias(input.question, aliases)) {
+    const skeletons = this.dependencies.identitySkeletons;
+    if ((aliases.length > 0 && skeletons === undefined) ||
+      hasUncertainRequestedActorAlias(input.question, aliases, skeletons) ||
+      hasAmbiguousRequestedActorAlias(input.question, aliases, skeletons)) {
       return null;
     }
     const requestedActorKeys = new Set([
-      ...resolveRequestedActorKeys(input.question, aliases),
+      ...resolveRequestedActorKeys(input.question, aliases, skeletons),
       ...(this.dependencies.actorReferences?.actorKeysForQuestion(input.question) ?? []),
     ]);
     const plans = (await this.dependencies.store.listCurrentRoomPlans(
@@ -106,6 +111,7 @@ export class PrepareFocusedLocatorRetrievalV2Request {
     const query = boundedRetrievalQuery(redactRetrievalQueryIdentities(
       input.question,
       aliases,
+      skeletons,
     ));
     if (query.length === 0) {
       return null;

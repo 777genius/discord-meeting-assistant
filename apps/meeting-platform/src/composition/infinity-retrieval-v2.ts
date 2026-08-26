@@ -5,6 +5,7 @@ import { HistoricalFocusedLocatorRetrievalV2,
   DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   type FocusedLocatorRetrievalV2ProviderBinding,
   type HistoricalAuthorizationPort, type HistoricalOpaqueIdPort,
+  type IdentitySkeletonPortV1,
   type RetrievalActorAliasOwnerV1,
   type RetrievalActorReferenceAuthorityV1,
   type TwoHourHistoricalRetrievalProfileV1 } from
@@ -26,6 +27,7 @@ export class InfinityRetrievalV2Composition {
     readonly requestTimeoutMs: number;
     readonly servingAuthorized: () => boolean;
     readonly ids: HistoricalOpaqueIdPort;
+    readonly identitySkeletons: IdentitySkeletonPortV1;
     readonly speakerAliases: readonly RetrievalActorAliasOwnerV1[];
     readonly token: string;
     readonly twoHourProfile: TwoHourHistoricalRetrievalProfileV1;
@@ -42,6 +44,7 @@ export class InfinityRetrievalV2Composition {
   public admission(binding: FocusedLocatorRetrievalV2ProviderBinding) {
     return new PrepareFocusedLocatorRetrievalV2Request({
       ids: this.#ids,
+      identitySkeletons: this.input.identitySkeletons,
       actorReferences: this.input.actorReferences,
       providerBinding: binding,
       servingAuthorized: this.input.servingAuthorized,
@@ -70,6 +73,7 @@ export function createInfinityRetrievalV2Composition(
   ids: HistoricalOpaqueIdPort,
   authority: {
     readonly actorReferences: RetrievalActorReferenceAuthorityV1;
+    readonly identitySkeletons: IdentitySkeletonPortV1;
     readonly servingAuthorized: () => boolean;
     readonly speakerAliases: readonly RetrievalActorAliasOwnerV1[];
   },
@@ -88,6 +92,7 @@ export function createInfinityRetrievalV2Composition(
       actorReferences: authority.actorReferences,
       operationTimeoutMs: infinity.operationTimeoutMs,
       ids,
+      identitySkeletons: authority.identitySkeletons,
       pool,
       requestTimeoutMs: infinity.requestTimeoutMs,
       servingAuthorized: authority.servingAuthorized,

@@ -1,4 +1,5 @@
 import {
+  DiscordConfusableIdentitySkeletons,
   DiscordInfinityActorKeys,
   decodeDiscordInfinityActorKeyring,
 } from "@discord-meeting/discord-adapter";
@@ -22,6 +23,7 @@ export function createDiscordInfinityActorCustody(
     decodeDiscordInfinityActorKeyring(encodedKeyring),
   );
   return Object.freeze({
+    identitySkeletons: new DiscordConfusableIdentitySkeletons(),
     actorReferences: Object.freeze({
       actorKeysForQuestion: (question: string): readonly string[] => Object.freeze(
         [...new Set(question.match(/(?<!\d)\d{17,20}(?!\d)/gu) ?? [])]

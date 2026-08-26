@@ -23,6 +23,13 @@ const providerBinding = Object.freeze({
   serviceRevision: "4".repeat(40),
 });
 
+const identitySkeletons = Object.freeze({
+  skeleton: (value: string) => {
+    const canonical = value.normalize("NFKC").toLocaleLowerCase("und");
+    return Object.freeze({ canonical, certainty: "certain" as const, skeleton: canonical });
+  },
+});
+
 function markerTurn(marker: string) {
   return [{
     endMs: 1_000,
@@ -46,6 +53,7 @@ function fixture() {
     remoteDocumentIds: {} }]);
   const prepare = new PrepareFocusedLocatorRetrievalV2Request({
     ids: new TestIds(),
+    identitySkeletons,
     providerBinding,
     speakerAliases: [{
       actorKeys: ["opaque-vlad"],
@@ -202,6 +210,7 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
       const { store } = fixture();
       const request = await new PrepareFocusedLocatorRetrievalV2Request({
         ids: new TestIds(),
+        identitySkeletons,
         providerBinding,
         speakerAliases: [{ actorKeys: ["opaque-alex"], aliases: ["Alex Smith"] }],
         store,
@@ -225,6 +234,7 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
       const { store } = fixture();
       const request = await new PrepareFocusedLocatorRetrievalV2Request({
         ids: new TestIds(),
+        identitySkeletons,
         providerBinding,
         speakerAliases: [{ actorKeys: ["opaque-alice"], aliases: [configuredAlias] }],
         store,
@@ -239,13 +249,89 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
       expect(JSON.stringify(request?.queries)).not.toMatch(/alice|Ａｌｉｃｅ/iu);
       expect(request?.queries[0]?.query).toBe("what did participant decide?");
     });
+});
 
+describe("focused locator Retrieval V2 confusable identity admission", () => {
+
+  it.each([
+    "Аlice",
+    "Αlice",
+    "Ａｌｉｃｅ",
+    "𝐀𝐥𝐢𝐜𝐞",
+    "аӏісе",
+    "АLІСЕ",
+    "A\u0338lice",
+  ])("filters and redacts the package-qualified Alice skeleton %s", async (variant) => {
+    const { store } = fixture();
+    const certainAliceSkeletons = Object.freeze({
+      skeleton: (value: string) => {
+        const canonical = value.normalize("NFKC").toLocaleLowerCase("und");
+        return Object.freeze({ canonical, certainty: "certain" as const,
+          skeleton: canonical === "alice" || canonical ===
+            variant.normalize("NFKC").toLocaleLowerCase("und") ? "alice" : canonical });
+      },
+    });
+    const request = await new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(), identitySkeletons: certainAliceSkeletons, providerBinding,
+      speakerAliases: [{ actorKeys: ["opaque-alice"], aliases: ["Alice"] }], store,
+    }).prepare({ currentMeetingId: "current-meeting",
+      question: `What did ${variant} decide about обычный релиз?`,
+      roomId: "room-1", scopeId: "scope-1" });
+
+    expect(request?.filters.actorKeys).toEqual(["opaque-alice"]);
+    expect(request?.queries[0]?.query).toBe(
+      "what did participant decide about обычный релиз?",
+    );
+  });
+
+  it.each(["Аli\u200Bce", "Αli\u202Ece", "Аli\u2063ce", "Аli\u034Fce"])(
+    "fails before I/O when an Alice-like mixed-script token is uncertain: %s",
+    async (variant) => {
+      const { store } = fixture();
+      const listPlans = vi.spyOn(store, "listCurrentRoomPlans");
+      const uncertainAliceSkeletons = Object.freeze({
+        skeleton: (value: string) => {
+          const canonical = value.normalize("NFKC").toLocaleLowerCase("und");
+          const alias = canonical === "alice";
+          const risky = /[\u034F\u200B\u202E\u2063]/u.test(canonical);
+          return Object.freeze({ canonical,
+            certainty: risky ? "uncertain" as const : "certain" as const,
+            skeleton: alias || risky ? "alice" : canonical });
+        },
+      });
+      const request = await new PrepareFocusedLocatorRetrievalV2Request({
+        ids: new TestIds(), identitySkeletons: uncertainAliceSkeletons, providerBinding,
+        speakerAliases: [{ actorKeys: ["opaque-alice"], aliases: ["Alice"] }], store,
+      }).prepare({ currentMeetingId: "current-meeting",
+        question: `What did ${variant} decide?`, roomId: "room-1", scopeId: "scope-1" });
+
+      expect(request).toBeNull();
+      expect(listPlans).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fails before I/O when configured aliases have no skeleton authority", async () => {
+    const { store } = fixture();
+    const listPlans = vi.spyOn(store, "listCurrentRoomPlans");
+    const request = await new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(), providerBinding,
+      speakerAliases: [{ actorKeys: ["opaque-alice"], aliases: ["Alice"] }], store,
+    }).prepare({ currentMeetingId: "current-meeting", question: "What did Alice decide?",
+      roomId: "room-1", scopeId: "scope-1" });
+
+    expect(request).toBeNull();
+    expect(listPlans).not.toHaveBeenCalled();
+  });
+});
+
+describe("focused locator Retrieval V2 privacy and serving authority continuation", () => {
   it.each(["🔥", "⚙️", "++", "...", "🧑🏽‍💻"])(
     "redacts literal-safe symbol-only alias %s including repetition",
     async (alias) => {
       const { store } = fixture();
       const request = await new PrepareFocusedLocatorRetrievalV2Request({
         ids: new TestIds(),
+        identitySkeletons,
         providerBinding,
         speakerAliases: [{ actorKeys: ["opaque-symbol"], aliases: [alias] }],
         store,
@@ -271,6 +357,7 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
     const request = await new PrepareFocusedLocatorRetrievalV2Request({
       actorReferences: { actorKeysForQuestion },
       ids: new TestIds(),
+      identitySkeletons,
       providerBinding,
       speakerAliases: [
         { actorKeys: ["opaque-alex-one"], aliases: ["Alex"] },
@@ -299,6 +386,7 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
       const listPlans = vi.spyOn(store, "listCurrentRoomPlans");
       const request = await new PrepareFocusedLocatorRetrievalV2Request({
         ids: new TestIds(),
+        identitySkeletons,
         providerBinding,
         speakerAliases: [
           { actorKeys: ["owner-one"], aliases: [firstAlias] },
@@ -321,6 +409,7 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
     const rawActorId = "123456789012345678";
     const request = await new PrepareFocusedLocatorRetrievalV2Request({
       ids: new TestIds(),
+      identitySkeletons,
       providerBinding,
       speakerAliases: [{
         actorKeys: ["dactor1.r1.retained", "dactor1.r2.active"],
@@ -355,6 +444,7 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
     const list = vi.spyOn(store, "listCurrentRoomPlans");
     const guarded = new PrepareFocusedLocatorRetrievalV2Request({
       ids: new TestIds(),
+      identitySkeletons,
       providerBinding,
       servingAuthorized: () => false,
       speakerAliases: [{ actorKeys: ["opaque-vlad"], aliases: ["Vlad"] }],
