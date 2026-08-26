@@ -28,7 +28,8 @@
     "build": "tsc --project tsconfig.build.json --pretty false",
     "check": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared && pnpm run test:prepared",
     "prepare:official-sdk": "node ../../vendor/infinity-context/prepare-official-sdk.mjs",
-    "prepack": "pnpm run build",
+    "prepack": "pnpm run build && node scripts/packed-manifest.mjs prepare",
+    "postpack": "node scripts/packed-manifest.mjs restore",
     "quality-campaign": "pnpm run build && node dist/quality-campaign/production-entrypoint.js",
     "test": "pnpm run prepare:official-sdk && pnpm run test:prepared",
     "test:quality-campaign:production-runner": "pnpm run build && vitest run test/quality-campaign-production-runner-structural.test.ts test/quality-campaign-installed-package.test.ts --no-file-parallelism --test-timeout=180000",
@@ -44,21 +45,13 @@
     "typecheck": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared",
     "typecheck:prepared": "pnpm run build && tsc --project tsconfig.json --noEmit --pretty false"
   },
-  "optionalDependencies": {
-    "@huggingface/tokenizers": "0.1.3",
-    "@infinity-context/sdk": "0.1.0",
-    "@infinity-context/sdk-v2": "0.2.0"
-  },
-  "peerDependencies": {
-    "@discord-meeting/meeting-core": "0.1.0"
-  },
-  "peerDependenciesMeta": {
-    "@discord-meeting/meeting-core": {
-      "optional": true
-    }
+  "dependencies": {
+    "@discord-meeting/meeting-core": "workspace:*",
+    "@huggingface/tokenizers": "catalog:",
+    "@infinity-context/sdk": "catalog:",
+    "@infinity-context/sdk-v2": "catalog:"
   },
   "devDependencies": {
-    "@discord-meeting/meeting-core": "workspace:*",
     "@discord-meeting/postgres-adapter": "workspace:*",
     "@discord-meeting/subscription-runtime-adapter": "workspace:*",
     "@types/node": "catalog:",
