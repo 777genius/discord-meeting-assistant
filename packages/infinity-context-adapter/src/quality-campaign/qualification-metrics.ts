@@ -1,0 +1,111 @@
+import type { CampaignQuestion } from "./admission.js";
+import type { ExpectedOutcomeInventory } from "./retention.js";
+
+export interface SpeakerTimeCheck {
+  readonly canonicalTurnId: string; readonly expectedSpeakerId: string;
+  readonly expectedStartMs: number; readonly observedSpeakerId: string;
+  readonly observedStartMs: number; readonly toleranceMs: number;
+}
+export interface CitationCheck {
+  readonly citedTurnId: string; readonly claimId: string; readonly entailed: boolean;
+}
+export interface ClaimCheck {
+  readonly claimId: string; readonly factual: boolean; readonly supported: boolean;
+}
+export interface QualificationOutcome extends ExpectedOutcomeInventory {
+  readonly campaignRootSha256: string; readonly citationChecks: readonly CitationCheck[];
+  readonly claimChecks: readonly ClaimCheck[]; readonly locale: CampaignQuestion["locale"];
+  readonly repetition: 1 | 2 | 3; readonly rootBindingSha256: string;
+  readonly source: CampaignQuestion["source"]; readonly speakerTimeChecks: readonly SpeakerTimeCheck[];
+}
+export interface QualificationMetricGroup {
+  readonly abstentionCheckCount: number; readonly abstentionPassedCount: number;
+  readonly applicableOutcomeCount: number; readonly citationCheckCount: number;
+  readonly citationPassedCount: number; readonly completeRecallAt5PassedCount: number;
+  readonly factualClaimCount: number; readonly firstRelevantReciprocalRankMillionthsTotal: number;
+  readonly group: "automatic" | "independent_review" | "locale:en" | "locale:mixed" |
+    "locale:ru" | "overall";
+  readonly ndcgAt10MillionthsTotal: number; readonly relevantLocatorCount: number;
+  readonly retrievalLatencyP95Us: number; readonly retrievedRelevantLocatorCountAt5: number;
+  readonly scopeLeakageCount: number; readonly speakerTimeCheckCount: number;
+  readonly speakerTimePassedCount: number; readonly supportedFactualClaimCount: number;
+  readonly thresholdPassed: boolean;
+}
+
+type Counters = Omit<QualificationMetricGroup, "applicableOutcomeCount" | "group" |
+  "retrievalLatencyP95Us" | "thresholdPassed">;
+
+export function reconstructMetrics(outcomes: readonly QualificationOutcome[]):
+readonly QualificationMetricGroup[] {
+  const groups: readonly [QualificationMetricGroup["group"],
+    (outcome: QualificationOutcome) => boolean][] = [
+    ["overall", () => true], ["automatic", ({ source }) => source === "automatic"],
+    ["independent_review", ({ source }) => source === "independent_review"],
+    ["locale:en", ({ locale }) => locale === "en"],
+    ["locale:mixed", ({ locale }) => locale === "mixed"],
+    ["locale:ru", ({ locale }) => locale === "ru"],
+  ];
+  return Object.freeze(groups.flatMap(([group, includes]) => {
+    const applicable = outcomes.filter(includes); if (applicable.length === 0) {return [];}
+    const counters = applicable.reduce((sum, outcome) => accumulateOutcome(sum, outcome),
+      emptyMetricCounters());
+    const latencies = applicable.map(({ retrievalLatencyUs }) => retrievalLatencyUs)
+      .toSorted((left, right) => left - right);
+    const retrievalLatencyP95Us = latencies[Math.ceil(latencies.length * 0.95) - 1]!;
+    const thresholdPassed = counters.completeRecallAt5PassedCount * 10 >= applicable.length * 9 &&
+      counters.retrievedRelevantLocatorCountAt5 * 10 >= counters.relevantLocatorCount * 9 &&
+      counters.firstRelevantReciprocalRankMillionthsTotal * 10 >= applicable.length * 9_000_000 &&
+      counters.citationPassedCount === counters.citationCheckCount &&
+      counters.supportedFactualClaimCount * 10 >= counters.factualClaimCount * 9 &&
+      counters.speakerTimePassedCount === counters.speakerTimeCheckCount &&
+      counters.abstentionPassedCount === counters.abstentionCheckCount &&
+      counters.scopeLeakageCount === 0 && retrievalLatencyP95Us <= 1_000_000;
+    return [Object.freeze({ ...counters, applicableOutcomeCount: applicable.length, group,
+      retrievalLatencyP95Us, thresholdPassed })];
+  }));
+}
+
+function emptyMetricCounters(): Counters {
+  return { abstentionCheckCount: 0, abstentionPassedCount: 0, citationCheckCount: 0,
+    citationPassedCount: 0, completeRecallAt5PassedCount: 0, factualClaimCount: 0,
+    firstRelevantReciprocalRankMillionthsTotal: 0, ndcgAt10MillionthsTotal: 0,
+    relevantLocatorCount: 0, retrievedRelevantLocatorCountAt5: 0, scopeLeakageCount: 0,
+    speakerTimeCheckCount: 0, speakerTimePassedCount: 0, supportedFactualClaimCount: 0 };
+}
+
+function accumulateOutcome(sum: Counters, outcome: QualificationOutcome): Counters {
+  const relevant = new Set(outcome.relevantLocatorIds); const topFive = outcome.rankedLocatorIds.slice(0, 5);
+  const retrievedRelevant = topFive.filter((id) => relevant.has(id)).length;
+  const firstRelevantIndex = outcome.rankedLocatorIds.findIndex((id) => relevant.has(id));
+  const complete = outcome.relevantLocatorIds.every((id) => topFive.includes(id));
+  const ideal = NDCG_DISCOUNTS.slice(0, Math.min(relevant.size, 10))
+    .reduce((value, score) => value + score, 0);
+  const observed = outcome.rankedLocatorIds.slice(0, 10).reduce((value, id, index) =>
+    value + (relevant.has(id) ? NDCG_DISCOUNTS[index]! : 0), 0);
+  const ndcg = ideal === 0 ? 0 : Math.floor(observed * 1_000_000 / ideal);
+  const speakerPassed = outcome.speakerTimeChecks.filter((check) =>
+    check.expectedSpeakerId === check.observedSpeakerId &&
+    Math.abs(check.expectedStartMs - check.observedStartMs) <= check.toleranceMs).length;
+  const factualClaims = outcome.claimChecks.filter(({ factual }) => factual);
+  return { abstentionCheckCount: sum.abstentionCheckCount + 1,
+    abstentionPassedCount: sum.abstentionPassedCount +
+      (outcome.abstention.expected === outcome.abstention.observed ? 1 : 0),
+    citationCheckCount: sum.citationCheckCount + outcome.citationChecks.length,
+    citationPassedCount: sum.citationPassedCount +
+      outcome.citationChecks.filter(({ entailed }) => entailed).length,
+    completeRecallAt5PassedCount: sum.completeRecallAt5PassedCount + (complete ? 1 : 0),
+    factualClaimCount: sum.factualClaimCount + factualClaims.length,
+    firstRelevantReciprocalRankMillionthsTotal: sum.firstRelevantReciprocalRankMillionthsTotal +
+      (firstRelevantIndex < 0 ? 0 : Math.floor(1_000_000 / (firstRelevantIndex + 1))),
+    ndcgAt10MillionthsTotal: sum.ndcgAt10MillionthsTotal + ndcg,
+    relevantLocatorCount: sum.relevantLocatorCount + relevant.size,
+    retrievedRelevantLocatorCountAt5: sum.retrievedRelevantLocatorCountAt5 + retrievedRelevant,
+    scopeLeakageCount: sum.scopeLeakageCount + outcome.scopeViolationLocatorIds.length,
+    speakerTimeCheckCount: sum.speakerTimeCheckCount + outcome.speakerTimeChecks.length,
+    speakerTimePassedCount: sum.speakerTimePassedCount + speakerPassed,
+    supportedFactualClaimCount: sum.supportedFactualClaimCount +
+      factualClaims.filter(({ supported }) => supported).length };
+}
+
+const NDCG_DISCOUNTS = Object.freeze([1_000_000, 630_930, 500_000, 430_677, 386_853,
+  356_207, 333_333, 315_465, 301_030, 289_065]);

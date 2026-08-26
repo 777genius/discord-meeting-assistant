@@ -103,6 +103,22 @@ unknown-outcome handling and exact original/repair input accounting.
   at an explicit deterministic time. The core checks provider/model/reasoning,
   exact attempt and call kind, expiry, and projected call/token/encrypted-byte
   totals before the effect port can be reached; digest strings are not authority.
+- Operator/composition constructs one immutable role-separated authority policy.
+  Requests carry only exact key-ID references and signed documents; they never
+  carry public keys. Release, spend, provider-result, main-review, repetition,
+  locator, inventory, cleanup, adjudicator, resolver, artifact-custody,
+  main-proof, and holdout keys have distinct IDs and canonical fingerprints, and
+  the signed release binds the complete policy digest.
+- The durable attempt journal appends one bounded create-only budget claim before
+  exchange. Append order atomically determines the one admitted claim per exact
+  attempt and cumulative call, call-kind, token, and encrypted-byte ceilings.
+  Unknown outcomes remain charged. Authenticated terminal reconciliation changes
+  outcome state but never refunds the claim; restart derives state from the claim
+  and attempt records without leases, wall-clock guesses, or orphan locks.
+- Each effect carries an explicit deadline bounded by the signed reservation and
+  an abort signal. The durable claim binds the exact request digest, campaign,
+  repetition, call kind, ordinal, spend reservation, and attempt before the
+  exchange port is reachable.
 - Final admission consumes signed repetition documents containing the exact
   3x240 outcomes rather than caller-attested pass booleans or opaque report
   digests. It reconstructs question membership, attempt identity, structural
@@ -115,6 +131,13 @@ unknown-outcome handling and exact original/repair input accounting.
   support, and abstention observations replace caller-supplied metric counts;
   Recall@5, complete Recall@5, MRR@10, citation, precision, speaker/time, and
   abstention thresholds are reconstructed from those closed bounded structures.
+- Final admission obtains the 200+40 question set from two identical independently
+  signed reviewer receipts and locator membership from a separate policy-pinned
+  signed inventory. Authenticated retrieval-response plaintext binds ordered
+  ranks, latency, and leakage; authenticated canonical-evidence plaintext binds
+  turn, speaker, and time observations. Recall@5, complete Recall@5, MRR@10,
+  nDCG@10, citation, precision, speaker/time, abstention, leakage, and latency are
+  deterministically reconstructed for each of the exact three repetitions.
 - Retained artifact kinds have one closed call-kind/ordinal ownership map. The
   final-adjudication digest is the SHA-256 of the authenticated retained
   plaintext. Final admission reads canonical envelope bytes and pinned key
@@ -129,6 +152,12 @@ unknown-outcome handling and exact original/repair input accounting.
 - A conflict resolver receives both complete independently signed decisions.
   The core reverifies them and requires the resolver result to bind their exact
   signed receipts, raw outcome, question, attempt, and encrypted evidence.
+- Adjudication never invokes a reviewer or resolver port. Those provider effects
+  must first traverse the same durable authorized-exchange boundary; adjudication
+  accepts and reverifies only their policy-pinned signed receipts. The retained
+  final-adjudication plaintext is closed-schema decoded and must contain the full
+  attempt, both decisions, and the complete resolver receipt exactly when they
+  conflict.
 - Holdout admission reconstructs its signed 30-question receipt, exact locator
   set, independently authorized root, and root-derived encryption namespace.
   The main-proof, holdout-question, and holdout-authorization keys are
@@ -152,12 +181,16 @@ counts, metrics, digests, versions, and signatures. This decision does not set
 quality pass.
 
 The production runner must adapt to the exported core contracts before it can
-claim this proof: pass the signed pinned release document, signed spend
-reservation, deterministic effect time, and authoritative usage totals into
-every exchange; give the resolver both signed decision receipts; provide
+claim this proof: construct the trusted role-separated authority policy outside
+request data; pass the signed pinned release document, signed spend reservation,
+deterministic effect time/deadline/cancellation, and requested budget reservation
+into every durable exchange; execute reviewers and the resolver through that
+same boundary and give adjudication their complete signed receipts; provide
 canonical envelope bytes and pinned AES key custody; emit signed repetition
-evidence with ordered locator/turn/claim structures and correct per-kind attempt
-identities; sign the authoritative campaign-created cleanup inventory and exact
-absence/presence receipt; and provide the separately signed holdout-question receipt.
+evidence backed by authenticated retrieval/canonical-evidence plaintext and
+correct per-kind attempt identities; provide the two signed main-question
+receipts and signed locator inventory; sign the authoritative campaign-created
+cleanup inventory and exact absence/presence receipt; and provide the separately
+signed holdout-question receipt.
 Until then, runner integration is intentionally unavailable rather than
 silently accepting legacy caller-attested evidence.

@@ -1,24 +1,86 @@
-import { mkdir, open, readFile, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { createPublicKey, verify } from "node:crypto";
 
+import type { DurableAttemptJournal } from "./attempt-journal.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
-import { type PinnedReleaseDocument, verifyPinnedReleaseDocument } from "./release.js";
-import { type SignedValue, verifyExternalSignedValue } from "./signatures.js";
-import { verifySpendReservation } from "./spend.js";
-
-export { type SignedValue, verifyExternalSignedValue } from "./signatures.js";
-export { type SpendReservation, type VerifiedSpendReservation, verifySpendReservation,
-  verifySpendReservations } from "./spend.js";
+import { FROZEN_ANSWER_EXECUTION, type PinnedReleaseDocument,
+  QualityCampaignAuthorityPolicy, verifyPinnedReleaseDocument } from "./release.js";
 
 export const EXIT_SAFE_PAUSE = 20, EXIT_OUTCOME_UNKNOWN = 21;
+
+export interface SpendReservation {
+  readonly allowedCallKinds: readonly CallKind[]; readonly campaignRootSha256: string;
+  readonly expiresAtEpochMs: number; readonly maxCalls: number; readonly maxEncryptedBytes: number;
+  readonly maxCallsByKind: Readonly<Record<CallKind, number>>;
+  readonly maximumEffectDurationMs: number;
+  readonly maxTokens: number;
+  readonly model: "gpt-5.6-sol"; readonly provider: string; readonly reasoning: "xhigh";
+  readonly releaseRootSha256: string; readonly repetition: 1 | 2 | 3;
+  readonly serviceTier: "default";
+}
+
+export interface SignedValue<T> {
+  readonly payload: T; readonly signatureBase64: string; readonly signerKeyId: string;
+}
+
+export type VerifiedSpendReservation = SignedValue<SpendReservation> & {
+  readonly spendReservationSha256: string;
+};
+
+export function verifySpendReservation(policy: QualityCampaignAuthorityPolicy, input: {
+  readonly campaignRootSha256: string;
+  readonly expectedRepetition: 1 | 2 | 3; readonly nowEpochMs: number;
+  readonly releaseRootSha256: string; readonly reservation: unknown }):
+VerifiedSpendReservation {
+  const authority = policy.authority("spend");
+  const signed = verifyExternalSignedValue<SpendReservation>(input.reservation,
+    authority.keyId, authority.publicKeyPem, "spend reservation");
+  const record = exactRecord(signed.payload, ["allowedCallKinds", "campaignRootSha256",
+    "expiresAtEpochMs", "maxCalls", "maxCallsByKind", "maxEncryptedBytes", "maximumEffectDurationMs",
+    "maxTokens", "model", "provider",
+    "reasoning", "releaseRootSha256", "repetition", "serviceTier"],
+  "spend reservation payload");
+  digest(record.campaignRootSha256, "reserved campaign root"); digest(record.releaseRootSha256,
+    "reserved release root");
+  const allowedCallKinds = decodeAllowedCallKinds(record.allowedCallKinds);
+  const maxCallsByKind = decodeCallKindCeilings(record.maxCallsByKind);
+  assertSpendIdentity(record, input);
+  assertSpendLimits(record, allowedCallKinds, maxCallsByKind, input.nowEpochMs);
+  return Object.freeze({ ...signed, payload: Object.freeze({ ...record,
+    allowedCallKinds, maxCallsByKind }) as unknown as SpendReservation,
+  spendReservationSha256: sha256(signed) });
+}
+
+function assertSpendIdentity(record: Record<string, unknown>, input: {
+  readonly campaignRootSha256: string; readonly expectedRepetition: 1 | 2 | 3;
+  readonly releaseRootSha256: string }): void {
+  if ([record.repetition !== input.expectedRepetition,
+    record.campaignRootSha256 !== input.campaignRootSha256,
+    record.releaseRootSha256 !== input.releaseRootSha256,
+    record.model !== FROZEN_ANSWER_EXECUTION.model,
+    record.reasoning !== FROZEN_ANSWER_EXECUTION.reasoning,
+    record.serviceTier !== FROZEN_ANSWER_EXECUTION.serviceTier,
+    typeof record.provider !== "string" || record.provider.trim() === ""].some(Boolean)) {
+    throw new Error("spend reservation binding is invalid");
+  }
+}
+
+function assertSpendLimits(record: Record<string, unknown>, allowedCallKinds: readonly CallKind[],
+  maxCallsByKind: Readonly<Record<CallKind, number>>, nowEpochMs: number): void {
+  const limits = [record.expiresAtEpochMs, record.maxCalls, record.maximumEffectDurationMs,
+    record.maxTokens, record.maxEncryptedBytes];
+  if (!Number.isSafeInteger(nowEpochMs) || !limits.every(Number.isSafeInteger) ||
+    Number(record.expiresAtEpochMs) <= nowEpochMs || Number(record.maxCalls) < 1 ||
+    Number(record.maxTokens) < 1 || Number(record.maximumEffectDurationMs) < 1 ||
+    Number(record.maxEncryptedBytes) < 1 ||
+    allowedCallKinds.some((kind) => maxCallsByKind[kind] < 1)) {
+    throw new Error("spend reservation binding is invalid");
+  }
+}
 
 export type CallKind = "adjudicator_1" | "adjudicator_2" | "answer" | "capability" |
   "resolver" | "retrieval";
 export type TerminalState = "terminal_failure" | "terminal_success" | "outcome_unknown";
 export type JournalState = "blocked_evidence" | "never_reserved" | "provider_reserved" | TerminalState;
-
-const CALL_KINDS: readonly CallKind[] = ["adjudicator_1", "adjudicator_2", "answer", "capability",
-  "resolver", "retrieval"];
 
 export interface AttemptIdentity {
   readonly attemptId: string; readonly callKind: CallKind; readonly callOrdinal: number;
@@ -45,171 +107,29 @@ export function attemptIdentity(input: Omit<AttemptIdentity, "attemptId">): Atte
     spendReservationSha256: input.spendReservationSha256 });
 }
 
-interface ReservationRecord extends AttemptIdentity {
-  readonly requestDigestSha256: string; readonly state: "provider_reserved";
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3";
-}
-
-export interface ProviderTerminalPayload extends Omit<ReservationRecord, "schemaVersion" | "state"> {
-  readonly resultDigestSha256: string; readonly state: Exclude<TerminalState, "outcome_unknown">;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4";
-}
-
-interface TerminalRecord {
-  readonly attemptId: string; readonly binding: ProviderTerminalPayload;
-  readonly reservationSha256: string; readonly signedResult: SignedValue<unknown>;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v4";
-  readonly state: Exclude<TerminalState, "outcome_unknown">;
-}
-
-interface BlockedRecord {
-  readonly attemptId: string; readonly reasonCode: "terminal_binding_invalid";
-  readonly reservationSha256: string; readonly state: "blocked_evidence";
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_blocked.v1";
-}
-
-export class DurableAttemptJournal {
-  private readonly root: string;
-  public constructor(root: string, private readonly resultAuthority: {
-    readonly keyId: string; readonly publicKeyPem: string }) {
-    if (!isAbsolute(root) || root.includes("\0")) {throw new Error("journal root must be absolute");}
-    this.root = resolve(root);
-  }
-
-  public async reserve(input: { readonly identity: AttemptIdentity;
-    readonly requestDigestSha256: string }):
-  Promise<ReservationRecord> {
-    assertAttemptIdentity(input.identity);
-    const record = Object.freeze({ ...input.identity, requestDigestSha256:
-      digest(input.requestDigestSha256, "request digest"),
-      schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3" as const,
-      state: "provider_reserved" as const });
-    await writeCreateOnly(this.path(input.identity.attemptId, "reserved"), canonicalJson(record));
-    return record;
-  }
-
-  public async terminal(input: { readonly identity: AttemptIdentity;
-    readonly reservation: ReservationRecord; readonly signedResult: unknown;
-    readonly state: TerminalState; readonly expectedResultDigestSha256: string }):
-  Promise<TerminalRecord> {
-    if (input.state === "outcome_unknown") {
-      throw new Error("outcome_unknown is inferred from uncertain effect, never asserted by a provider");
-    }
-    const signedResult = verifyExternalSignedValue(input.signedResult, this.resultAuthority.keyId,
-      this.resultAuthority.publicKeyPem, "provider result");
-    const reservation = await this.requireReservation(input.identity.attemptId);
-    assertAttemptIdentity(input.identity);
-    if (canonicalJson(reservation) !== canonicalJson(input.reservation)) {
-      throw new Error("terminal result reservation is stale");}
-    const result = decodeProviderTerminalPayload(signedResult.payload);
-    if (result.resultDigestSha256 !== digest(input.expectedResultDigestSha256,
-      "expected terminal result digest")) {
-      throw new Error("terminal result digest differs from the exact provider response");
-    }
-    const expected = { ...reservation, resultDigestSha256: result.resultDigestSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4" as const,
-      state: input.state };
-    if (canonicalJson(result) !== canonicalJson(expected)) {
-      throw new Error("terminal result does not bind the exact reserved exchange");}
-    const record = Object.freeze({ attemptId: input.identity.attemptId, binding: result,
-      reservationSha256: sha256(reservation),
-      schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v4" as const,
-      signedResult, state: input.state });
-    await writeCreateOnly(this.path(input.identity.attemptId, "terminal"), canonicalJson(record));
-    return record;
-  }
-
-  /** A durable reservation without an authenticated terminal is never retryable after restart. */
-  public async recoveredState(input: { readonly identity: AttemptIdentity;
-    readonly requestDigestSha256: string }):
-  Promise<JournalState> {
-    try {
-      assertAttemptIdentity(input.identity);
-      const [blockedValue, reservationValue, terminalValue] = await Promise.all([
-        readOptional(this.path(input.identity.attemptId, "blocked")),
-        readOptional(this.path(input.identity.attemptId, "reserved")),
-        readOptional(this.path(input.identity.attemptId, "terminal")),
-      ]);
-      if (reservationValue === null && terminalValue === null && blockedValue === null) {
-        return "never_reserved";}
-      if (reservationValue === null) {return "blocked_evidence";}
-      const reservation = decodeReservation(reservationValue);
-      const expectedReservation = { ...input.identity,
-        requestDigestSha256: digest(input.requestDigestSha256, "request digest"),
-        schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3" as const,
-        state: "provider_reserved" as const };
-      if (canonicalJson(reservation) !== canonicalJson(expectedReservation)) {
-        return "blocked_evidence";}
-      if (blockedValue !== null) {
-        const blocked = decodeBlocked(blockedValue);
-        if (blocked.attemptId !== input.identity.attemptId ||
-          blocked.reservationSha256 !== sha256(reservation)) {
-          throw new Error("blocked evidence membership is corrupt");
-        }
-      }
-      if (terminalValue === null) {
-        return blockedValue === null ? "outcome_unknown" : "blocked_evidence";}
-      const terminal = decodeTerminal(terminalValue);
-      const signed = verifyExternalSignedValue<ProviderTerminalPayload>(terminal.signedResult,
-        this.resultAuthority.keyId, this.resultAuthority.publicKeyPem, "provider result");
-      const payload = decodeProviderTerminalPayload(signed.payload);
-      if (blockedValue !== null) {return "blocked_evidence";}
-      if (terminal.attemptId !== input.identity.attemptId ||
-        terminal.reservationSha256 !== sha256(reservation) || terminal.state !== payload.state ||
-        canonicalJson(terminal.binding) !== canonicalJson(payload) ||
-        canonicalJson(payload) !== canonicalJson({ ...reservation,
-          resultDigestSha256: payload.resultDigestSha256,
-          schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
-          state: terminal.state })) {
-        return "blocked_evidence";
-      }
-      return terminal.state;
-    } catch {
-      return "blocked_evidence";
-    }
-  }
-
-  private async requireReservation(attemptId: string): Promise<ReservationRecord> {
-    const value = await readOptional(this.path(attemptId, "reserved"));
-    if (value === null) {throw new Error("provider terminal lacks a durable reservation");}
-    return decodeReservation(value);
-  }
-  public async blockEvidence(reservation: ReservationRecord): Promise<void> {
-    const record: BlockedRecord = { attemptId: reservation.attemptId,
-      reasonCode: "terminal_binding_invalid", reservationSha256: sha256(reservation),
-      schemaVersion: "meeting_knowledge.semantic_quality_provider_blocked.v1",
-      state: "blocked_evidence" };
-    await writeCreateOnly(this.path(reservation.attemptId, "blocked"), canonicalJson(record));
-  }
-  private path(attemptId: string, kind: "blocked" | "reserved" | "terminal"): string {
-    return join(this.root, attemptId, `${kind}.json`);
-  }
-}
 
 export interface ProviderExchangePort {
-  exchange(input: { readonly attempt: AttemptIdentity; readonly request: Uint8Array;
-    readonly deadlineEpochMs: number; readonly requestDigestSha256: string;
-    readonly signal: AbortSignal }): Promise<{
+  exchange(input: { readonly attempt: AttemptIdentity; readonly deadlineEpochMs: number;
+    readonly request: Uint8Array;
+    readonly signal: AbortSignal;
+    readonly requestDigestSha256: string }): Promise<{
     readonly effect: "certain_failure" | "certain_success" | "unknown";
     readonly resultDigestSha256?: string; readonly signedResult?: unknown;
   }>;
 }
 
-export interface ProviderEffectUsage {
-  readonly callsConsumed: number; readonly encryptedBytesConsumed: number;
+export interface ProviderEffectReservation {
   readonly requestedEncryptedBytes: number; readonly requestedTokens: number;
-  readonly tokensConsumed: number;
 }
 
 /** Exactly one call after a durable reservation. Ambiguous retrieval and answer effects are equal. */
 export async function executeReservedExchange(input: { readonly campaignRootSha256: string;
   readonly deadlineEpochMs: number;
-  readonly effectUsage: ProviderEffectUsage; readonly identity: AttemptIdentity;
+  readonly effectReservation: ProviderEffectReservation; readonly identity: AttemptIdentity;
   readonly journal: DurableAttemptJournal; readonly nowEpochMs: number;
   readonly port: ProviderExchangePort; readonly provider: string;
   readonly release: PinnedReleaseDocument; readonly request: Uint8Array;
   readonly signal: AbortSignal;
-  readonly spendAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly spendReservation: unknown }):
 Promise<JournalState> {
   const authorization = verifyEffectAuthorization(input);
@@ -220,13 +140,17 @@ Promise<JournalState> {
     await input.journal.recoveredState({ identity: input.identity,
     requestDigestSha256 });
   if (recovered !== "never_reserved") {return recovered;}
-  const reservation = await input.journal.reserve({ identity: input.identity,
-    requestDigestSha256 });
-  let result: Awaited<ReturnType<ProviderExchangePort["exchange"]>>;
-  try {result = await input.port.exchange({ attempt: input.identity,
+  const refreshed = verifyEffectAuthorization(input);
+  const admission = await input.journal.admit({ identity: input.identity,
+    requestDigestSha256, requestedEncryptedBytes:
+    refreshed.effectReservation.requestedEncryptedBytes,
+    requestedTokens: refreshed.effectReservation.requestedTokens, spend: refreshed.spend });
+  if (!admission.admitted || admission.reservation === undefined) {return admission.state;}
+  const reservation = admission.reservation;
+  if (input.signal.aborted) {return "outcome_unknown";}
+  const result = await input.port.exchange({ attempt: input.identity,
     deadlineEpochMs: input.deadlineEpochMs, request: input.request,
-    requestDigestSha256, signal: input.signal });}
-  catch {return "outcome_unknown";}
+    requestDigestSha256, signal: input.signal });
   if (result.effect === "unknown") {return "outcome_unknown";}
   if (result.signedResult === undefined || result.resultDigestSha256 === undefined) {
     await input.journal.blockEvidence(reservation).catch(() => null);
@@ -243,97 +167,70 @@ Promise<JournalState> {
 }
 
 function verifyEffectAuthorization(input: { readonly campaignRootSha256: string;
-  readonly effectUsage: ProviderEffectUsage; readonly identity: AttemptIdentity;
+  readonly deadlineEpochMs: number;
+  readonly effectReservation: ProviderEffectReservation; readonly identity: AttemptIdentity;
   readonly nowEpochMs: number; readonly provider: string;
-  readonly release: PinnedReleaseDocument;
-  readonly spendAuthority: { readonly keyId: string; readonly publicKeyPem: string };
+  readonly journal: DurableAttemptJournal; readonly release: PinnedReleaseDocument;
+  readonly signal: AbortSignal;
   readonly spendReservation: unknown }): { readonly releaseRootSha256: string;
-    readonly spendReservationSha256: string } {
-  const release = verifyPinnedReleaseDocument(input.release);
-  const spend = verifySpendReservation({ authorityKeyId: input.spendAuthority.keyId,
-    authorityPublicKeyPem: input.spendAuthority.publicKeyPem, campaignRootSha256:
+    readonly spendReservationSha256: string; readonly spend: VerifiedSpendReservation;
+    readonly effectReservation: ProviderEffectReservation } {
+  const release = verifyPinnedReleaseDocument(input.journal.authorityPolicy, input.release);
+  const spend = verifySpendReservation(input.journal.authorityPolicy, { campaignRootSha256:
     input.campaignRootSha256,
     expectedRepetition: input.identity.repetition, nowEpochMs: input.nowEpochMs,
     releaseRootSha256: release.releaseRootSha256, reservation: input.spendReservation });
-  const usage = exactRecord(input.effectUsage, ["callsConsumed", "encryptedBytesConsumed",
-    "requestedEncryptedBytes", "requestedTokens", "tokensConsumed"], "provider effect usage");
-  const values = Object.values(usage); if (input.provider !== spend.payload.provider ||
+  const reservation = exactRecord(input.effectReservation, ["requestedEncryptedBytes",
+    "requestedTokens"], "provider effect reservation");
+  const values = Object.values(reservation); if (input.provider !== spend.payload.provider ||
     !spend.payload.allowedCallKinds.includes(input.identity.callKind) ||
+    spend.payload.maxCallsByKind[input.identity.callKind] < 1 ||
     values.some((value) => !Number.isSafeInteger(value) || Number(value) < 0) ||
-    Number(usage.requestedTokens) < 1 ||
-    Number(usage.callsConsumed) + 1 > spend.payload.maxCalls ||
-    Number(usage.tokensConsumed) + Number(usage.requestedTokens) > spend.payload.maxTokens ||
-    Number(usage.encryptedBytesConsumed) + Number(usage.requestedEncryptedBytes) >
-      spend.payload.maxEncryptedBytes) {
+    Number(reservation.requestedTokens) < 1 ||
+    input.signal.aborted || !Number.isSafeInteger(input.deadlineEpochMs) ||
+    input.deadlineEpochMs <= input.nowEpochMs ||
+    input.deadlineEpochMs > spend.payload.expiresAtEpochMs ||
+    input.deadlineEpochMs - input.nowEpochMs > spend.payload.maximumEffectDurationMs ||
+    Number(reservation.requestedTokens) > spend.payload.maxTokens ||
+    Number(reservation.requestedEncryptedBytes) > spend.payload.maxEncryptedBytes) {
     throw new Error("provider effect exceeds its exact signed spend reservation");
   }
   return { releaseRootSha256: release.releaseRootSha256,
-    spendReservationSha256: spend.spendReservationSha256 };
+    spendReservationSha256: spend.spendReservationSha256, spend,
+    effectReservation: reservation as unknown as ProviderEffectReservation };
 }
 
-async function writeCreateOnly(path: string, bytes: string | Uint8Array): Promise<void> {
-  await ensureDirectory(dirname(path));
-  const handle = await open(path, "wx", 0o600).catch(async (error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {throw error;}
-    const existing = await readFile(path);
-    const requested = Buffer.from(bytes);
-    if (!existing.equals(requested)) {throw new Error("create-only artifact conflicts");}
-    return null;
-  });
-  if (handle === null) {return;}
-  try {await handle.writeFile(bytes); await handle.sync();} finally {await handle.close();}
-  const directory = await open(dirname(path), "r");
-  try {await directory.sync();} finally {await directory.close();}
-}
-
-async function ensureDirectory(path: string): Promise<void> {
-  await mkdir(path, { recursive: true, mode: 0o700 });
-  if (!(await stat(path)).isDirectory()) {throw new Error("durable path is not a directory");}
-}
-
-async function readOptional(path: string): Promise<unknown> {
-  try {return JSON.parse((await readFile(path)).toString("utf8")) as unknown;}
-  catch (error) {if ((error as NodeJS.ErrnoException).code === "ENOENT") {return null;} throw error;}
-}
-
-function decodeReservation(value: unknown): ReservationRecord {
-  const record = exactRecord(value, ["attemptId", "callKind", "callOrdinal", "campaignRootSha256",
-    "questionDigestSha256", "questionId", "releaseRootSha256", "repetition",
-    "requestDigestSha256", "schemaVersion", "spendReservationSha256", "state"], "reservation");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_provider_reservation.v3" ||
-    record.state !== "provider_reserved" || !CALL_KINDS.includes(record.callKind as CallKind) ||
-    !Number.isSafeInteger(record.callOrdinal) || Number(record.callOrdinal) < 0 ||
-    ![1, 2, 3].includes(record.repetition as number)) {
-    throw new Error("reservation is invalid");
+export function verifyExternalSignedValue<T>(value: unknown, keyId: string,
+  publicKeyPem: string, label: string):
+SignedValue<T> {
+  const record = exactRecord(value, ["payload", "signatureBase64", "signerKeyId"], label);
+  if (record.signerKeyId !== keyId || typeof record.signatureBase64 !== "string") {
+    throw new Error(`${label} signer is invalid`);
   }
-  safeId(record.attemptId, "reserved attempt ID"); safeId(record.questionId,
-    "reserved question ID"); digest(record.campaignRootSha256, "reserved campaign root");
-  digest(record.questionDigestSha256, "reserved question digest");
-  digest(record.releaseRootSha256, "reserved release root");
-  digest(record.requestDigestSha256, "reserved request digest");
-  digest(record.spendReservationSha256, "reserved spend reservation");
-  return record as unknown as ReservationRecord;
-}
-function decodeTerminal(value: unknown): TerminalRecord {
-  const record = exactRecord(value, ["attemptId", "binding", "reservationSha256",
-    "schemaVersion", "signedResult", "state"], "terminal result");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_provider_terminal.v4" ||
-    !["terminal_failure", "terminal_success"].includes(String(record.state))) {
-    throw new Error("terminal state is invalid");
-  }
-  safeId(record.attemptId, "terminal attempt ID"); digest(record.reservationSha256, "terminal reservation");
-  decodeProviderTerminalPayload(record.binding);
-  return record as unknown as TerminalRecord;
+  let valid = false;
+  try {valid = verify(null, Buffer.from(canonicalJson(record.payload)), createPublicKey(publicKeyPem),
+    Buffer.from(record.signatureBase64, "base64"));} catch {valid = false;}
+  if (!valid) {throw new Error(`${label} signature is invalid`);}
+  return Object.freeze(record as unknown as SignedValue<T>);
 }
 
-function decodeBlocked(value: unknown): BlockedRecord {
-  const record = exactRecord(value, ["attemptId", "reasonCode", "reservationSha256",
-    "schemaVersion", "state"], "blocked evidence");
-  if (record.reasonCode !== "terminal_binding_invalid" ||
-    record.schemaVersion !== "meeting_knowledge.semantic_quality_provider_blocked.v1" ||
-    record.state !== "blocked_evidence") {throw new Error("blocked evidence is invalid");}
-  safeId(record.attemptId, "blocked attempt ID"); digest(record.reservationSha256, "blocked reservation");
-  return record as unknown as BlockedRecord;
+
+export const CALL_KINDS: readonly CallKind[] = ["adjudicator_1", "adjudicator_2", "answer", "capability", "resolver", "retrieval"];
+
+function decodeAllowedCallKinds(value: unknown): readonly CallKind[] {
+  if (!Array.isArray(value) || value.length === 0 || value.some((kind) =>
+    !CALL_KINDS.includes(kind as CallKind)) || new Set(value).size !== value.length) {
+    throw new Error("spend reservation call kinds are invalid");
+  }
+  return Object.freeze(value as CallKind[]);
+}
+
+function decodeCallKindCeilings(value: unknown): Readonly<Record<CallKind, number>> {
+  const record = exactRecord(value, CALL_KINDS, "spend reservation call-kind ceilings");
+  if (Object.values(record).some((count) => !Number.isSafeInteger(count) || Number(count) < 0)) {
+    throw new Error("spend reservation call-kind ceilings are invalid");
+  }
+  return Object.freeze(record as unknown as Record<CallKind, number>);
 }
 
 export function assertAttemptIdentity(identity: AttemptIdentity, binding?: {
@@ -350,24 +247,4 @@ export function assertAttemptIdentity(identity: AttemptIdentity, binding?: {
       identity.spendReservationSha256 !== binding.spendReservationSha256)) {
     throw new Error("attempt identity does not reconstruct from the exact campaign binding");
   }
-}
-
-function decodeProviderTerminalPayload(value: unknown): ProviderTerminalPayload {
-  const record = exactRecord(value, ["attemptId", "callKind", "callOrdinal",
-    "campaignRootSha256", "questionDigestSha256", "questionId", "releaseRootSha256",
-    "repetition", "requestDigestSha256", "resultDigestSha256", "schemaVersion",
-    "spendReservationSha256", "state"],
-  "provider result payload");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_provider_terminal_payload.v4" ||
-    !["terminal_failure", "terminal_success"].includes(String(record.state))) {
-    throw new Error("provider terminal payload is invalid");
-  }
-  digest(record.resultDigestSha256, "terminal result digest");
-  const { resultDigestSha256, ...reservationFields } = record;
-  const reservation = decodeReservation({ ...reservationFields,
-    schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3",
-    state: "provider_reserved" });
-  return { ...reservation, resultDigestSha256: String(resultDigestSha256),
-    schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
-    state: record.state as ProviderTerminalPayload["state"] };
 }

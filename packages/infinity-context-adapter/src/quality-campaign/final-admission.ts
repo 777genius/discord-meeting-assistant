@@ -1,51 +1,14 @@
-import { MAIN_CARDINALITY, type AdmissionAuthority, type CampaignQuestion,
+import { MAIN_CARDINALITY, type CampaignQuestion,
   validateCampaignQuestion } from "./admission.js";
-import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256,
-  safeId, sha256 } from "./canonical.js";
+import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import { verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt } from "./cleanup-evidence.js";
 import { assertAttemptIdentity, type AttemptIdentity, verifyExternalSignedValue } from "./execution.js";
-import { type PinnedReleaseDocument, verifyPinnedReleaseDocument } from "./release.js";
+import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
+  verifyPinnedReleaseDocument } from "./release.js";
+import { type CitationCheck, type ClaimCheck, type QualificationMetricGroup,
+  type QualificationOutcome, reconstructMetrics, type SpeakerTimeCheck } from "./qualification-metrics.js";
 import { type ArtifactCustodyPort, type ExpectedOutcomeInventory, type RetainedArtifact,
-  verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt,
   verifyExactRetentionInventory } from "./retention.js";
-
-export interface SpeakerTimeCheck {
-  readonly canonicalTurnId: string; readonly expectedSpeakerId: string;
-  readonly expectedStartMs: number; readonly observedSpeakerId: string;
-  readonly observedStartMs: number; readonly toleranceMs: number;
-}
-
-export interface CitationCheck {
-  readonly citedTurnId: string; readonly claimId: string; readonly entailed: boolean;
-}
-
-export interface ClaimCheck {
-  readonly claimId: string; readonly factual: boolean; readonly supported: boolean;
-}
-
-export interface QualificationOutcome extends ExpectedOutcomeInventory {
-  readonly abstention: { readonly expected: boolean; readonly observed: boolean };
-  readonly campaignRootSha256: string; readonly citationChecks: readonly CitationCheck[];
-  readonly claimChecks: readonly ClaimCheck[]; readonly evidenceTurnIds: readonly string[];
-  readonly locale: CampaignQuestion["locale"]; readonly rankedLocatorIds: readonly string[];
-  readonly relevantLocatorIds: readonly string[]; readonly repetition: 1 | 2 | 3;
-  readonly rootBindingSha256: string; readonly source: CampaignQuestion["source"];
-  readonly speakerTimeChecks: readonly SpeakerTimeCheck[];
-  readonly structurePassed: boolean;
-}
-
-export interface QualificationMetricGroup {
-  readonly abstentionCheckCount: number; readonly abstentionPassedCount: number;
-  readonly applicableOutcomeCount: number; readonly citationCheckCount: number;
-  readonly citationPassedCount: number; readonly completeRecallAt5PassedCount: number;
-  readonly factualClaimCount: number;
-  readonly firstRelevantReciprocalRankMillionthsTotal: number;
-  readonly group: "automatic" | "independent_review" | "locale:en" | "locale:mixed" |
-    "locale:ru" | "overall";
-  readonly relevantLocatorCount: number; readonly retrievedRelevantLocatorCountAt5: number;
-  readonly speakerTimeCheckCount: number; readonly speakerTimePassedCount: number;
-  readonly supportedFactualClaimCount: number;
-  readonly thresholdPassed: boolean;
-}
 
 export interface RepetitionQualificationEvidence {
   readonly campaignRootSha256: string; readonly metrics: readonly QualificationMetricGroup[];
@@ -67,21 +30,41 @@ interface ExpectedRepetition {
   readonly spendReservationSha256: string;
 }
 
-export async function admitFinalCampaign(input: { readonly artifactCustody:
+interface AuthoritativeLocatorInventory {
+  readonly campaignRootSha256: string;
+  readonly locatorIds: readonly string[];
+  readonly releaseRootSha256: string;
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_locator_inventory.v1";
+}
+
+interface ReviewedMainQuestionSet {
+  readonly campaignRootSha256: string;
+  readonly questions: readonly CampaignQuestion[];
+  readonly releaseRootSha256: string;
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_reviewed_main_questions.v1";
+}
+
+export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
+  input: { readonly artifactCustody:
   ArtifactCustodyPort; readonly artifacts: readonly RetainedArtifact[];
-  readonly authorizedLocatorIds: readonly string[]; readonly campaignByteCeiling: number;
-  readonly campaignRootSha256: string; readonly cleanupAuthority: AdmissionAuthority;
-  readonly cleanupReceipt: unknown; readonly questions: readonly CampaignQuestion[];
-  readonly release: PinnedReleaseDocument; readonly repetitionAuthority: AdmissionAuthority;
+  readonly authorizedLocatorInventory: unknown; readonly campaignByteCeiling: number;
+  readonly campaignRootSha256: string; readonly cleanupAuthorityKeyId: string;
+  readonly cleanupReceipt: unknown;
+  readonly locatorAuthorityKeyId: string; readonly questionReviewReceipts: readonly [unknown, unknown];
+  readonly release: PinnedReleaseDocument; readonly repetitionAuthorityKeyId: string;
   readonly repetitionEvidence: readonly unknown[]; readonly rootBindingSha256: string;
   readonly spendReservationSha256ByRepetition: readonly [string, string, string];
-  readonly targetInventoryAuthority: AdmissionAuthority;
+  readonly targetInventoryAuthorityKeyId: string;
   readonly targetInventoryReceipt: unknown }): Promise<{
     readonly finalAdmissionSha256: string; readonly inventorySha256: string;
     readonly qualified: true }> {
   digest(input.campaignRootSha256, "final campaign root");
-  const release = verifyPinnedReleaseDocument(input.release); const questions = validateExactQuestionSet(input.questions);
-  const authorizedLocatorIds = decodeAuthorizedLocatorIds(input.authorizedLocatorIds);
+  const release = verifyPinnedReleaseDocument(policy, input.release);
+  const questions = verifyReviewedQuestionSet(policy, input.questionReviewReceipts,
+    input.campaignRootSha256, release.releaseRootSha256);
+  const authorizedLocatorIds = verifyAuthorizedLocatorInventory(policy,
+    input.locatorAuthorityKeyId, input.authorizedLocatorInventory, input.campaignRootSha256,
+    release.releaseRootSha256);
   const spendReservations = input.spendReservationSha256ByRepetition.map((value) =>
     digest(value, "final spend reservation"));
   const rootBindingSha256 = sha256({ authorizedLocatorSetSha256: sha256(authorizedLocatorIds),
@@ -97,8 +80,10 @@ export async function admitFinalCampaign(input: { readonly artifactCustody:
   }
   const expectedOutcomes: ExpectedOutcomeInventory[] = [];
   const evidenceReceipts = input.repetitionEvidence.map((unknownReceipt, index) => {
+    const repetitionAuthority = policy.assertReference("repetition",
+      input.repetitionAuthorityKeyId);
     const receipt = verifyExternalSignedValue<RepetitionQualificationEvidence>(unknownReceipt,
-      input.repetitionAuthority.keyId, input.repetitionAuthority.publicKeyPem,
+      repetitionAuthority.keyId, repetitionAuthority.publicKeyPem,
       "repetition qualification evidence");
     const evidence = decodeRepetitionEvidence(receipt.payload, { authorizedLocatorIds:
       new Set(authorizedLocatorIds), campaignRootSha256: input.campaignRootSha256, questions,
@@ -108,17 +93,17 @@ export async function admitFinalCampaign(input: { readonly artifactCustody:
     expectedOutcomes.push(...evidence.outcomes);
     return receipt;
   });
-  const inventory = await verifyExactRetentionInventory({ artifacts: input.artifacts,
+  const inventory = await verifyExactRetentionInventory(policy, { artifacts: input.artifacts,
     artifactKeyCustodySha256: release.release.artifactKeyCustodySha256,
     campaignByteCeiling: input.campaignByteCeiling, custody: input.artifactCustody,
     expectedOutcomes });
-  assertIndependentCleanupAuthorities(input.cleanupAuthority, input.targetInventoryAuthority);
-  const targetInventory = verifyCampaignCreatedTargetInventory({ authority:
-    input.targetInventoryAuthority, campaignRootSha256: input.campaignRootSha256,
+  policy.assertReference("cleanup", input.cleanupAuthorityKeyId);
+  const targetInventory = verifyCampaignCreatedTargetInventory(policy, { authorityKeyId:
+    input.targetInventoryAuthorityKeyId, campaignRootSha256: input.campaignRootSha256,
     receipt: input.targetInventoryReceipt, releaseRootSha256: release.releaseRootSha256,
     targetInventoryAuthorityKeySha256: release.release.targetInventoryAuthorityKeySha256 });
-  const cleanupReceipt = verifyCleanupAbsenceReceipt({ authorityKeyId:
-    input.cleanupAuthority.keyId, authorityPublicKeyPem: input.cleanupAuthority.publicKeyPem,
+  const cleanupReceipt = verifyCleanupAbsenceReceipt(policy, { authorityKeyId:
+    input.cleanupAuthorityKeyId,
     cleanupManifest: targetInventory.manifest, receipt: input.cleanupReceipt });
   const finalBinding = { campaignRootSha256: input.campaignRootSha256,
     cleanupManifestSha256: sha256(targetInventory.manifest), cleanupReceiptSha256:
@@ -129,6 +114,44 @@ export async function admitFinalCampaign(input: { readonly artifactCustody:
     targetInventoryReceiptSha256: sha256(targetInventory.receipt) };
   return Object.freeze({ finalAdmissionSha256: sha256(finalBinding),
     inventorySha256: inventory.inventorySha256, qualified: true });
+}
+
+function verifyReviewedQuestionSet(policy: QualityCampaignAuthorityPolicy,
+  receipts: readonly [unknown, unknown], campaignRootSha256: string,
+  releaseRootSha256: string): readonly CampaignQuestion[] {
+  const roles = ["reviewer_1", "reviewer_2"] as const;
+  const verified = receipts.map((receipt, index) => {
+    const authority = policy.authority(roles[index]!);
+    return verifyExternalSignedValue<ReviewedMainQuestionSet>(receipt, authority.keyId,
+      authority.publicKeyPem, "reviewed main question set");
+  });
+  if (canonicalJson(verified[0]!.payload) !== canonicalJson(verified[1]!.payload)) {
+    throw new Error("independent reviewers did not sign the same main question set");
+  }
+  const record = exactRecord(verified[0]!.payload, ["campaignRootSha256", "questions",
+    "releaseRootSha256", "schemaVersion"], "reviewed main question set payload");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_reviewed_main_questions.v1" ||
+    record.campaignRootSha256 !== campaignRootSha256 ||
+    record.releaseRootSha256 !== releaseRootSha256 || !Array.isArray(record.questions)) {
+    throw new Error("reviewed main question set is foreign");
+  }
+  return validateExactQuestionSet(record.questions as CampaignQuestion[]);
+}
+
+function verifyAuthorizedLocatorInventory(policy: QualityCampaignAuthorityPolicy,
+  authorityKeyId: string, receiptValue: unknown, campaignRootSha256: string,
+  releaseRootSha256: string): readonly string[] {
+  const authority = policy.assertReference("locator", authorityKeyId);
+  const receipt = verifyExternalSignedValue<AuthoritativeLocatorInventory>(receiptValue,
+    authority.keyId, authority.publicKeyPem, "authoritative locator inventory");
+  const record = exactRecord(receipt.payload, ["campaignRootSha256", "locatorIds",
+    "releaseRootSha256", "schemaVersion"], "authoritative locator inventory payload");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_locator_inventory.v1" ||
+    record.campaignRootSha256 !== campaignRootSha256 ||
+    record.releaseRootSha256 !== releaseRootSha256) {
+    throw new Error("authoritative locator inventory is foreign");
+  }
+  return decodeAuthorizedLocatorIds(record.locatorIds);
 }
 
 function validateExactQuestionSet(input: readonly CampaignQuestion[]): readonly CampaignQuestion[] {
@@ -204,14 +227,21 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
   const record = exactRecord(value, ["abstention", "artifactBindingSha256ByKind",
     "campaignRootSha256", "citationChecks", "claimChecks", "evidenceTurnIds",
     "finalAdjudicationSha256", "identity", "locale", "rankedLocatorIds",
-    "relevantLocatorIds", "repetition", "resolverRequired", "rootBindingSha256", "source",
-    "speakerTimeChecks", "structurePassed"], "qualification outcome");
+    "relevantLocatorIds", "repetition", "resolverRequired", "retrievalLatencyUs",
+    "rootBindingSha256", "scopeViolationLocatorIds", "source", "speakerTimeChecks"],
+  "qualification outcome");
   const identity = record.identity as AttemptIdentity;
   assertAttemptIdentity(identity, expected);
   const question = questionById.get(identity.questionId);
   assertOutcomeQuestionBinding(record, identity, expected, question);
   const rankedLocatorIds = decodeIdList(record.rankedLocatorIds, "ranked locator", 10, false);
   const relevantLocatorIds = decodeIdList(record.relevantLocatorIds, "relevant locator", 100, false);
+  const scopeViolationLocatorIds = decodeIdList(record.scopeViolationLocatorIds,
+    "scope violation locator", 100, true);
+  if (!Number.isSafeInteger(record.retrievalLatencyUs) || Number(record.retrievalLatencyUs) < 0 ||
+    Number(record.retrievalLatencyUs) > 60_000_000) {
+    throw new Error("retrieval latency is invalid");
+  }
   if ([...rankedLocatorIds, ...relevantLocatorIds].some((id) =>
     !expected.authorizedLocatorIds.has(id))) {
     throw new Error("qualification outcome contains a foreign locator ID");
@@ -241,9 +271,10 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
   citationChecks, claimChecks, evidenceTurnIds,
   finalAdjudicationSha256: String(record.finalAdjudicationSha256), identity,
   locale: question.locale, rankedLocatorIds, relevantLocatorIds,
+  retrievalLatencyUs: Number(record.retrievalLatencyUs),
   repetition: expected.repetition, resolverRequired: record.resolverRequired,
-  rootBindingSha256: expected.rootBindingSha256, source: question.source,
-  speakerTimeChecks, structurePassed: true });
+  rootBindingSha256: expected.rootBindingSha256, scopeViolationLocatorIds,
+  source: question.source, speakerTimeChecks });
 }
 
 function assertOutcomeQuestionBinding(record: Record<string, unknown>, identity: AttemptIdentity,
@@ -254,7 +285,7 @@ CampaignQuestion {
     identity.repetition !== expected.repetition || record.repetition !== expected.repetition ||
     record.campaignRootSha256 !== expected.campaignRootSha256 ||
     record.rootBindingSha256 !== expected.rootBindingSha256 || record.locale !== question.locale ||
-    record.source !== question.source || record.structurePassed !== true) {
+    record.source !== question.source) {
     throw new Error("qualification outcome does not reconstruct from authoritative inputs");
   }
 }
@@ -341,82 +372,4 @@ function decodeAbstention(value: unknown): QualificationOutcome["abstention"] {
     throw new Error("abstention check is invalid");
   }
   return Object.freeze({ expected: record.expected, observed: record.observed });
-}
-
-export function reconstructMetrics(outcomes: readonly QualificationOutcome[]):
-readonly QualificationMetricGroup[] {
-  const groups: readonly [QualificationMetricGroup["group"],
-    (outcome: QualificationOutcome) => boolean][] = [
-    ["overall", () => true], ["automatic", ({ source }) => source === "automatic"],
-    ["independent_review", ({ source }) => source === "independent_review"],
-    ["locale:en", ({ locale }) => locale === "en"],
-    ["locale:mixed", ({ locale }) => locale === "mixed"],
-    ["locale:ru", ({ locale }) => locale === "ru"],
-  ];
-  return Object.freeze(groups.flatMap(([group, includes]) => {
-    const applicable = outcomes.filter(includes);
-    if (applicable.length === 0) {return [];}
-    const counters = applicable.reduce((total, outcome) => accumulateOutcome(total, outcome),
-      emptyMetricCounters());
-    const thresholdPassed = counters.completeRecallAt5PassedCount * 10 >=
-      applicable.length * 9 && counters.retrievedRelevantLocatorCountAt5 * 10 >=
-      counters.relevantLocatorCount * 9 &&
-      counters.firstRelevantReciprocalRankMillionthsTotal * 10 >= applicable.length * 9_000_000 &&
-      counters.citationPassedCount === counters.citationCheckCount &&
-      counters.supportedFactualClaimCount * 10 >= counters.factualClaimCount * 9 &&
-      counters.speakerTimePassedCount === counters.speakerTimeCheckCount &&
-      counters.abstentionPassedCount === counters.abstentionCheckCount;
-    return [Object.freeze({ ...counters, applicableOutcomeCount: applicable.length, group,
-      thresholdPassed })];
-  }));
-}
-
-function emptyMetricCounters(): Omit<QualificationMetricGroup, "applicableOutcomeCount" | "group" |
-  "thresholdPassed"> {
-  return { abstentionCheckCount: 0, abstentionPassedCount: 0, citationCheckCount: 0,
-    citationPassedCount: 0, completeRecallAt5PassedCount: 0, factualClaimCount: 0,
-    firstRelevantReciprocalRankMillionthsTotal: 0, relevantLocatorCount: 0,
-    retrievedRelevantLocatorCountAt5: 0, speakerTimeCheckCount: 0,
-    speakerTimePassedCount: 0, supportedFactualClaimCount: 0 };
-}
-
-function accumulateOutcome(total: ReturnType<typeof emptyMetricCounters>,
-  outcome: QualificationOutcome): ReturnType<typeof emptyMetricCounters> {
-  const relevant = new Set(outcome.relevantLocatorIds);
-  const topFive = outcome.rankedLocatorIds.slice(0, 5);
-  const retrievedRelevant = topFive.filter((id) => relevant.has(id)).length;
-  const firstRelevantIndex = outcome.rankedLocatorIds.findIndex((id) => relevant.has(id));
-  const complete = outcome.relevantLocatorIds.every((id) => topFive.includes(id));
-  const speakerPassed = outcome.speakerTimeChecks.filter((check) =>
-    check.expectedSpeakerId === check.observedSpeakerId &&
-    Math.abs(check.expectedStartMs - check.observedStartMs) <= check.toleranceMs).length;
-  const factualClaims = outcome.claimChecks.filter(({ factual }) => factual);
-  return {
-    abstentionCheckCount: total.abstentionCheckCount + 1,
-    abstentionPassedCount: total.abstentionPassedCount +
-      (outcome.abstention.expected === outcome.abstention.observed ? 1 : 0),
-    citationCheckCount: total.citationCheckCount + outcome.citationChecks.length,
-    citationPassedCount: total.citationPassedCount +
-      outcome.citationChecks.filter(({ entailed }) => entailed).length,
-    completeRecallAt5PassedCount: total.completeRecallAt5PassedCount + (complete ? 1 : 0),
-    factualClaimCount: total.factualClaimCount + factualClaims.length,
-    firstRelevantReciprocalRankMillionthsTotal:
-      total.firstRelevantReciprocalRankMillionthsTotal + (firstRelevantIndex < 0 ? 0 :
-        Math.floor(1_000_000 / (firstRelevantIndex + 1))),
-    relevantLocatorCount: total.relevantLocatorCount + relevant.size,
-    retrievedRelevantLocatorCountAt5: total.retrievedRelevantLocatorCountAt5 + retrievedRelevant,
-    speakerTimeCheckCount: total.speakerTimeCheckCount + outcome.speakerTimeChecks.length,
-    speakerTimePassedCount: total.speakerTimePassedCount + speakerPassed,
-    supportedFactualClaimCount: total.supportedFactualClaimCount +
-      factualClaims.filter(({ supported }) => supported).length,
-  };
-}
-
-function assertIndependentCleanupAuthorities(cleanup: AdmissionAuthority,
-  inventory: AdmissionAuthority): void {
-  if (cleanup.keyId === inventory.keyId || publicKeyFingerprintSha256(cleanup.publicKeyPem,
-    "cleanup authority") === publicKeyFingerprintSha256(inventory.publicKeyPem,
-    "target inventory authority")) {
-    throw new Error("cleanup absence and target inventory authorities are not independent");
-  }
 }

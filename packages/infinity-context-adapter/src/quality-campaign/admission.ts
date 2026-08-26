@@ -2,8 +2,8 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 
-import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256, safeId,
-  sha256 } from "./canonical.js";
+import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import { QualityCampaignAuthorityPolicy } from "./release.js";
 
 export const MAIN_CARDINALITY = Object.freeze({
   automatic: 200,
@@ -62,17 +62,21 @@ type InputManifest = {
 };
 
 /** Admits only exact sealed files. It never returns question or rubric text. */
-export async function admitMainCampaign(input: {
-  readonly authority: AdmissionAuthority;
+export async function admitMainCampaign(policy: QualityCampaignAuthorityPolicy, input: {
+  readonly authorityKeyId: string;
   readonly manifestPath: string;
+  readonly nowEpochMs: number;
   readonly releaseRootSha256: string;
-  readonly reviewerAuthorities: readonly [AdmissionAuthority, AdmissionAuthority];
+  readonly reviewerAuthorityKeyIds: readonly [string, string];
 }): Promise<AdmittedMainCampaign> {
+  const authority = policy.assertReference("artifact_custody", input.authorityKeyId);
+  const reviewerAuthorities = [policy.assertReference("reviewer_1",
+    input.reviewerAuthorityKeyIds[0]), policy.assertReference("reviewer_2",
+    input.reviewerAuthorityKeyIds[1])] as const;
   digest(input.releaseRootSha256, "release root");
   const manifestPath = absolute(input.manifestPath, "input manifest");
   const manifestBytes = await readFile(manifestPath);
   const manifest = decodeManifest(JSON.parse(manifestBytes.toString("utf8")) as unknown);
-  assertIndependentReviewers(input.reviewerAuthorities);
   if (manifest.questionReviewReceiptPaths.length !== 2) {
     throw new Error("exactly two question review receipts are required");
   }
@@ -87,7 +91,7 @@ export async function admitMainCampaign(input: {
     canonicalJson(requiredInventoryPaths)) {
     throw new Error("checksum inventory does not cover the exact sealed input set");
   }
-  const acceptance = await readSigned(base, manifest.acceptanceReceiptPath, input.authority);
+  const acceptance = await readSigned(base, manifest.acceptanceReceiptPath, authority);
   const acceptancePayload = exactRecord(acceptance.payload, ["corpusDigestSha256", "purpose",
     "reviewerDigestSha256", "schemaVersion", "sourceDigestSha256"], "acceptance receipt");
   if (acceptancePayload.schemaVersion !== "meeting_knowledge.semantic_quality_acceptance.v1" ||
@@ -98,11 +102,12 @@ export async function admitMainCampaign(input: {
     throw new Error("custody receipt does not seal this immutable input");
   }
   const authorization = await readSigned(base, manifest.executionAuthorizationPath,
-    input.authority);
+    authority);
   const authPayload = exactRecord(authorization.payload, ["acceptanceReceiptSha256",
     "authorizedProviderExecution", "corpusDigestSha256", "expiresAtEpochMs",
     "releaseRootSha256", "schemaVersion"], "execution authorization");
-  assertExecutionAuthorization(authPayload, acceptance, manifest, input.releaseRootSha256);
+  assertExecutionAuthorization(authPayload, acceptance, manifest, input.releaseRootSha256,
+    input.nowEpochMs);
 
   const automatic = await readQuestions(base, manifest.sealedAutomaticQuestionsPath,
     "automatic", MAIN_CARDINALITY.automatic);
@@ -116,7 +121,7 @@ export async function admitMainCampaign(input: {
   }
   const questionSetSha256 = sha256(questions);
   const reviewReceipts = await Promise.all(manifest.questionReviewReceiptPaths.map(async (path,
-    index) => await readSigned(base, path, input.reviewerAuthorities[index]!)));
+    index) => await readSigned(base, path, reviewerAuthorities[index]!)));
   if (reviewReceipts.some(({ payload }) => {
       const record = exactRecord(payload, ["corpusDigestSha256", "questionSetSha256",
         "reviewerDigestSha256", "rubricSetSha256", "schemaVersion"], "review receipt");
@@ -129,8 +134,8 @@ export async function admitMainCampaign(input: {
         })));
     })) {throw new Error("questions lack two independent exact-binding reviews");}
 
-  const mapping = await readSigned(base, manifest.turnToBlockManifestPath, input.authority);
-  const forbidden = await readSigned(base, manifest.forbiddenLocatorManifestPath, input.authority);
+  const mapping = await readSigned(base, manifest.turnToBlockManifestPath, authority);
+  const forbidden = await readSigned(base, manifest.forbiddenLocatorManifestPath, authority);
   const snapshotSha256 = requireSnapshotManifest(mapping.payload, "turn-to-block",
     input.releaseRootSha256);
   if (requireSnapshotManifest(forbidden.payload, "forbidden-locator",
@@ -155,25 +160,16 @@ export async function admitMainCampaign(input: {
     turnToBlockManifestSha256: root.turnToBlockManifestSha256 });
 }
 
-function assertIndependentReviewers(authorities: readonly AdmissionAuthority[]): void {
-  const keyIds = authorities.map(({ keyId }) => safeId(keyId, "reviewer key ID"));
-  const fingerprints = authorities.map(({ publicKeyPem }, index) =>
-    publicKeyFingerprintSha256(publicKeyPem, `reviewer ${index + 1}`));
-  if (new Set(keyIds).size !== authorities.length ||
-    new Set(fingerprints).size !== authorities.length) {
-    throw new Error("question reviewers are not cryptographically independent");
-  }
-}
-
 function assertExecutionAuthorization(authPayload: Record<string, unknown>, acceptance: unknown,
-  manifest: InputManifest, releaseRootSha256: string): void {
+  manifest: InputManifest, releaseRootSha256: string, nowEpochMs: number): void {
   if (authPayload.schemaVersion !== "meeting_knowledge.semantic_quality_execution_authorization.v1" ||
     authPayload.authorizedProviderExecution !== true ||
     authPayload.acceptanceReceiptSha256 !== sha256(acceptance) ||
     authPayload.corpusDigestSha256 !== manifest.corpusDigestSha256 ||
     authPayload.releaseRootSha256 !== releaseRootSha256 ||
     typeof authPayload.expiresAtEpochMs !== "number" ||
-    !Number.isSafeInteger(authPayload.expiresAtEpochMs) || authPayload.expiresAtEpochMs <= Date.now()) {
+    !Number.isSafeInteger(nowEpochMs) || !Number.isSafeInteger(authPayload.expiresAtEpochMs) ||
+    authPayload.expiresAtEpochMs <= nowEpochMs) {
     throw new Error("provider execution is not separately authorized");
   }
 }

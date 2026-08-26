@@ -1,6 +1,7 @@
-import { digest, exactRecord, publicKeyFingerprintSha256, safeId, sha256 } from "./canonical.js";
+import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { assertAttemptIdentity, type AttemptIdentity, type SignedValue,
   verifyExternalSignedValue } from "./execution.js";
+import { type QualityAuthorityRole, QualityCampaignAuthorityPolicy } from "./release.js";
 
 export interface CanonicalClaimDecision {
   readonly abstentionCorrect: boolean;
@@ -34,7 +35,6 @@ export type DecisionReceipt = SignedValue<DecisionReceiptPayload>;
 
 export interface AdjudicationRequest {
   readonly attemptId: string;
-  readonly deadlineEpochMs: number;
   readonly encryptedEvidenceSha256: string;
   readonly firstDecisionDigestSha256: string | null;
   readonly firstDecisionReceipt: DecisionReceipt | null;
@@ -43,30 +43,24 @@ export interface AdjudicationRequest {
   readonly resolverBindingSha256: string | null;
   readonly secondDecisionDigestSha256: string | null;
   readonly secondDecisionReceipt: DecisionReceipt | null;
-  readonly signal: AbortSignal;
-}
-
-export interface AdjudicationAuthorityPort {
-  readonly authorityId: string;
-  readonly publicKeyPem: string;
-  readonly signerKeyId: string;
-  adjudicate(input: AdjudicationRequest): Promise<unknown>;
 }
 
 export interface RawOutcomeVaultPort {
   /** Implementations decrypt inside the private runner; plaintext must never cross logs/status. */
-  reconstruct(input: { readonly attempt: AttemptIdentity; readonly deadlineEpochMs: number;
-    readonly envelopeSha256: string; readonly signal: AbortSignal }):
+  reconstruct(input: { readonly attempt: AttemptIdentity; readonly envelopeSha256: string }):
   Promise<{ readonly encryptedEvidenceSha256: string; readonly outcomeDigestSha256: string }>;
 }
 
 export interface FinalAdjudicationEnvelope {
+  readonly attempt: AttemptIdentity;
   readonly decision: CanonicalAdjudicationDecision;
   readonly decisionDigestSha256: string;
-  readonly firstReceiptSha256: string;
+  readonly encryptedEvidenceSha256: string;
+  readonly firstReceipt: DecisionReceipt;
   readonly outcomeDigestSha256: string;
-  readonly resolverReceiptSha256: string | null;
-  readonly secondReceiptSha256: string;
+  readonly resolverReceipt: DecisionReceipt | null;
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_final_adjudication.v2";
+  readonly secondReceipt: DecisionReceipt;
 }
 
 export interface ExpectedAdjudicationAttempt {
@@ -78,37 +72,34 @@ export interface ExpectedAdjudicationAttempt {
   readonly spendReservationSha256: string;
 }
 
-/** Calls two authorities always and the independent resolver only on canonical disagreement. */
-export async function adjudicateOutcome(input: { readonly attempt: AttemptIdentity;
-  readonly deadlineEpochMs: number;
+/** Verifies already-executed reviewer evidence; provider effects use the durable exchange boundary. */
+export async function adjudicateOutcome(policy: QualityCampaignAuthorityPolicy,
+  input: { readonly attempt: AttemptIdentity;
   readonly expectedAttempt: ExpectedAdjudicationAttempt;
-  readonly first: AdjudicationAuthorityPort; readonly rawOutcomeEnvelopeSha256: string;
-  readonly resolver: AdjudicationAuthorityPort; readonly second: AdjudicationAuthorityPort;
-  readonly signal: AbortSignal; readonly vault: RawOutcomeVaultPort }):
-Promise<FinalAdjudicationEnvelope> {
+  readonly firstReceipt: unknown; readonly rawOutcomeEnvelopeSha256: string;
+  readonly resolverReceipt: unknown; readonly secondReceipt: unknown;
+  readonly vault: RawOutcomeVaultPort }): Promise<FinalAdjudicationEnvelope> {
   assertAdjudicationAttempt(input.attempt, input.expectedAttempt);
-  assertIndependentAuthorities([input.first, input.second, input.resolver]);
+  verifyReceiptAuthority(policy, "reviewer_1", input.firstReceipt);
+  verifyReceiptAuthority(policy, "reviewer_2", input.secondReceipt);
+  if (input.resolverReceipt !== null) {
+    verifyReceiptAuthority(policy, "resolver", input.resolverReceipt);
+  }
   const raw = await input.vault.reconstruct({ attempt: input.attempt,
-    deadlineEpochMs: input.deadlineEpochMs,
-    envelopeSha256: digest(input.rawOutcomeEnvelopeSha256, "raw outcome envelope"),
-    signal: input.signal });
+    envelopeSha256: digest(input.rawOutcomeEnvelopeSha256, "raw outcome envelope") });
   const request = { attemptId: input.attempt.attemptId,
-    deadlineEpochMs: input.deadlineEpochMs,
     encryptedEvidenceSha256: digest(raw.encryptedEvidenceSha256, "encrypted evidence"),
     firstDecisionDigestSha256: null, firstDecisionReceipt: null,
     outcomeDigestSha256: digest(raw.outcomeDigestSha256, "raw outcome"),
     questionId: input.attempt.questionId, resolverBindingSha256: null,
-    secondDecisionDigestSha256: null, secondDecisionReceipt: null, signal: input.signal };
-  const [firstRaw, secondRaw] = await Promise.all([
-    input.first.adjudicate(request), input.second.adjudicate(request),
-  ]);
-  const first = verifyDecisionReceipt(firstRaw, input.first, request);
-  const second = verifyDecisionReceipt(secondRaw, input.second, request);
+    secondDecisionDigestSha256: null, secondDecisionReceipt: null };
+  const first = verifyDecisionReceipt(policy, "reviewer_1", input.firstReceipt, request);
+  const second = verifyDecisionReceipt(policy, "reviewer_2", input.secondReceipt, request);
   let decision = first.payload.decision;
-  let resolverReceiptSha256: string | null = null;
+  let resolverReceipt: DecisionReceipt | null = null;
   if (first.payload.decisionDigestSha256 !== second.payload.decisionDigestSha256) {
-    verifyDecisionReceipt(first, input.first, request);
-    verifyDecisionReceipt(second, input.second, request);
+    verifyDecisionReceipt(policy, "reviewer_1", first, request);
+    verifyDecisionReceipt(policy, "reviewer_2", second, request);
     const resolverBindingSha256 = sha256({ attemptId: request.attemptId,
       encryptedEvidenceSha256: request.encryptedEvidenceSha256,
       firstDecisionReceipt: first, outcomeDigestSha256: request.outcomeDigestSha256,
@@ -120,14 +111,72 @@ Promise<FinalAdjudicationEnvelope> {
       firstDecisionReceipt: first, resolverBindingSha256,
       secondDecisionDigestSha256: second.payload.decisionDigestSha256,
       secondDecisionReceipt: second };
-    const resolverRaw = await input.resolver.adjudicate(resolverRequest);
-    const resolver = verifyDecisionReceipt(resolverRaw, input.resolver, resolverRequest);
+    if (input.resolverReceipt === null) {throw new Error("conflicting reviews lack resolver evidence");}
+    const resolver = verifyDecisionReceipt(policy, "resolver", input.resolverReceipt,
+      resolverRequest);
     decision = resolver.payload.decision;
-    resolverReceiptSha256 = sha256(resolver);
+    resolverReceipt = resolver;
+  } else if (input.resolverReceipt !== null) {throw new Error("resolver evidence is orphaned");}
+  return Object.freeze({ attempt: input.attempt, decision, decisionDigestSha256: sha256(decision),
+    encryptedEvidenceSha256: raw.encryptedEvidenceSha256, firstReceipt: first,
+    outcomeDigestSha256: raw.outcomeDigestSha256, resolverReceipt,
+    schemaVersion: "meeting_knowledge.semantic_quality_final_adjudication.v2", secondReceipt: second });
+}
+
+export function verifyRetainedFinalAdjudication(policy: QualityCampaignAuthorityPolicy,
+  value: unknown, expectedAttempt: AttemptIdentity, resolverRequired: boolean):
+FinalAdjudicationEnvelope {
+  const record = exactRecord(value, ["attempt", "decision", "decisionDigestSha256",
+    "encryptedEvidenceSha256", "firstReceipt", "outcomeDigestSha256", "resolverReceipt",
+    "schemaVersion", "secondReceipt"], "retained final adjudication");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_final_adjudication.v2" ||
+    typeof resolverRequired !== "boolean") {throw new Error("final adjudication schema is invalid");}
+  const attempt = record.attempt as AttemptIdentity;
+  assertAttemptIdentity(attempt);
+  if (canonicalJson(attempt) !== canonicalJson(expectedAttempt)) {
+    throw new Error("final adjudication attempt is foreign");
   }
-  return Object.freeze({ decision, decisionDigestSha256: sha256(decision),
-    firstReceiptSha256: sha256(first), outcomeDigestSha256: raw.outcomeDigestSha256,
-    resolverReceiptSha256, secondReceiptSha256: sha256(second) });
+  const encryptedEvidenceSha256 = digest(record.encryptedEvidenceSha256,
+    "final adjudication encrypted evidence");
+  const outcomeDigestSha256 = digest(record.outcomeDigestSha256,
+    "final adjudication outcome");
+  const baseRequest: AdjudicationRequest = { attemptId: attempt.attemptId,
+    encryptedEvidenceSha256, firstDecisionDigestSha256: null, firstDecisionReceipt: null,
+    outcomeDigestSha256, questionId: attempt.questionId, resolverBindingSha256: null,
+    secondDecisionDigestSha256: null, secondDecisionReceipt: null };
+  const first = verifyDecisionReceipt(policy, "reviewer_1", record.firstReceipt,
+    baseRequest);
+  const second = verifyDecisionReceipt(policy, "reviewer_2", record.secondReceipt,
+    baseRequest);
+  const disagrees = first.payload.decisionDigestSha256 !== second.payload.decisionDigestSha256;
+  let selected = first.payload.decision; let resolverReceipt: DecisionReceipt | null = null;
+  if (disagrees) {
+    if (record.resolverReceipt === null) {throw new Error("conflict lacks a complete resolver receipt");}
+    const resolverBindingSha256 = sha256({ attemptId: baseRequest.attemptId,
+      encryptedEvidenceSha256, firstDecisionReceipt: first, outcomeDigestSha256,
+      questionId: baseRequest.questionId,
+      schemaVersion: "meeting_knowledge.semantic_quality_resolver_binding.v1",
+      secondDecisionReceipt: second });
+    const resolverRequest = { ...baseRequest,
+      firstDecisionDigestSha256: first.payload.decisionDigestSha256,
+      firstDecisionReceipt: first, resolverBindingSha256,
+      secondDecisionDigestSha256: second.payload.decisionDigestSha256,
+      secondDecisionReceipt: second };
+    resolverReceipt = verifyDecisionReceipt(policy, "resolver", record.resolverReceipt,
+      resolverRequest);
+    selected = resolverReceipt.payload.decision;
+  } else if (record.resolverReceipt !== null) {
+    throw new Error("unconflicted adjudication contains an orphan resolver receipt");
+  }
+  const decision = decodeDecision(record.decision);
+  if (resolverRequired !== disagrees || canonicalJson(decision) !== canonicalJson(selected) ||
+    record.decisionDigestSha256 !== sha256(decision)) {
+    throw new Error("final adjudication does not bind its complete signed decisions");
+  }
+  return Object.freeze({ attempt, decision, decisionDigestSha256: record.decisionDigestSha256,
+    encryptedEvidenceSha256, firstReceipt: first, outcomeDigestSha256, resolverReceipt,
+    schemaVersion: "meeting_knowledge.semantic_quality_final_adjudication.v2",
+    secondReceipt: second });
 }
 
 function assertAdjudicationAttempt(attempt: AttemptIdentity,
@@ -145,10 +194,12 @@ function assertAdjudicationAttempt(attempt: AttemptIdentity,
   }
 }
 
-function verifyDecisionReceipt(value: unknown, authority: AdjudicationAuthorityPort,
-  request: AdjudicationRequest): DecisionReceipt {
+function verifyDecisionReceipt(policy: QualityCampaignAuthorityPolicy,
+  role: Extract<QualityAuthorityRole, "reviewer_1" | "reviewer_2" | "resolver">,
+  value: unknown, request: AdjudicationRequest): DecisionReceipt {
+  const pin = policy.authority(role);
   const receipt = verifyExternalSignedValue<DecisionReceiptPayload>(value,
-      authority.signerKeyId, authority.publicKeyPem,
+      pin.keyId, pin.publicKeyPem,
       "adjudication receipt");
   const payload = exactRecord(receipt.payload, ["attemptId", "decision",
     "decisionDigestSha256", "encryptedEvidenceSha256", "firstDecisionDigestSha256",
@@ -171,16 +222,11 @@ function verifyDecisionReceipt(value: unknown, authority: AdjudicationAuthorityP
   return receipt;
 }
 
-function assertIndependentAuthorities(authorities: readonly AdjudicationAuthorityPort[]): void {
-  const authorityIds = authorities.map(({ authorityId }) => safeId(authorityId, "authority ID"));
-  const signerKeyIds = authorities.map(({ signerKeyId }) => safeId(signerKeyId, "signer key ID"));
-  const fingerprints = authorities.map(({ publicKeyPem }, index) =>
-    publicKeyFingerprintSha256(publicKeyPem, `authority ${index + 1}`));
-  if (new Set(authorityIds).size !== authorities.length ||
-    new Set(signerKeyIds).size !== authorities.length ||
-    new Set(fingerprints).size !== authorities.length) {
-    throw new Error("adjudication authorities are not cryptographically independent");
-  }
+function verifyReceiptAuthority(policy: QualityCampaignAuthorityPolicy,
+  role: Extract<QualityAuthorityRole, "reviewer_1" | "reviewer_2" | "resolver">,
+  value: unknown): void {
+  const pin = policy.authority(role);
+  verifyExternalSignedValue(value, pin.keyId, pin.publicKeyPem, "adjudication receipt");
 }
 
 function decodeDecision(value: unknown): CanonicalAdjudicationDecision {

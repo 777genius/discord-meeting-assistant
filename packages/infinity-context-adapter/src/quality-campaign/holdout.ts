@@ -1,8 +1,8 @@
-import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256, safeId,
-  sha256 } from "./canonical.js";
-import { HOLDOUT_CARDINALITY, type AdmissionAuthority, type CampaignQuestion,
+import { canonicalJson, digest, exactRecord, sha256 } from "./canonical.js";
+import { HOLDOUT_CARDINALITY, type CampaignQuestion,
   validateCampaignQuestion } from "./admission.js";
 import { verifyExternalSignedValue } from "./execution.js";
+import { QualityCampaignAuthorityPolicy } from "./release.js";
 
 export interface FrozenMainInputProof {
   readonly loadedLocatorDigests: readonly string[];
@@ -41,21 +41,25 @@ export interface AdmittedHoldout {
 }
 
 /** Enforces that main admission was frozen first and never loaded holdout identities. */
-export function admitIsolatedHoldout(input: { readonly authorization: unknown;
-  readonly authorizationAuthority: AdmissionAuthority;
+export function admitIsolatedHoldout(policy: QualityCampaignAuthorityPolicy,
+  input: { readonly authorization: unknown;
+  readonly authorizationAuthorityKeyId: string;
   readonly holdoutLocatorDigests: readonly string[]; readonly main: unknown;
-  readonly mainAuthority: AdmissionAuthority;
-  readonly questionAuthority: AdmissionAuthority; readonly questionReceipt: unknown;
+  readonly mainAuthorityKeyId: string;
+  readonly questionAuthorityKeyId: string; readonly questionReceipt: unknown;
   readonly questions: readonly CampaignQuestion[] }): AdmittedHoldout {
-  assertIndependentAuthorities([input.authorizationAuthority, input.mainAuthority,
-    input.questionAuthority]);
+  const authorizationAuthority = policy.assertReference("holdout_authorization",
+    input.authorizationAuthorityKeyId);
+  const mainAuthority = policy.assertReference("main_proof", input.mainAuthorityKeyId);
+  const questionAuthority = policy.assertReference("holdout_question",
+    input.questionAuthorityKeyId);
   const authorizationReceipt = verifyExternalSignedValue<HoldoutAuthorization>(input.authorization,
-    input.authorizationAuthority.keyId, input.authorizationAuthority.publicKeyPem,
+    authorizationAuthority.keyId, authorizationAuthority.publicKeyPem,
     "holdout authorization");
   const mainReceipt = verifyExternalSignedValue<FrozenMainInputProof>(input.main,
-    input.mainAuthority.keyId, input.mainAuthority.publicKeyPem, "main input proof");
+    mainAuthority.keyId, mainAuthority.publicKeyPem, "main input proof");
   const questionReceipt = verifyExternalSignedValue<HoldoutQuestionReceipt>(input.questionReceipt,
-    input.questionAuthority.keyId, input.questionAuthority.publicKeyPem,
+    questionAuthority.keyId, questionAuthority.publicKeyPem,
     "holdout question receipt");
   const authorization = decodeAuthorization(authorizationReceipt.payload);
   const main = decodeMainProof(mainReceipt.payload);
@@ -155,17 +159,6 @@ function canonicalQuestions(questions: readonly CampaignQuestion[]): string {
 function validateDigestArray(value: unknown): void {
   if (!Array.isArray(value)) {throw new Error("main loaded input inventory is invalid");}
   for (const loadedDigest of value as unknown[]) {digest(loadedDigest, "main loaded input");}
-}
-
-function assertIndependentAuthorities(authorities: readonly AdmissionAuthority[]): void {
-  const keyIds = authorities.map(({ keyId }, index) =>
-    safeId(keyId, `holdout authority ${index + 1} key ID`));
-  const fingerprints = authorities.map(({ publicKeyPem }, index) =>
-    publicKeyFingerprintSha256(publicKeyPem, `holdout authority ${index + 1}`));
-  if (new Set(keyIds).size !== authorities.length ||
-    new Set(fingerprints).size !== authorities.length) {
-    throw new Error("holdout and main proof authorities are not cryptographically independent");
-  }
 }
 
 export function createHoldoutReport(input: { readonly cleanupReceiptSha256: string;

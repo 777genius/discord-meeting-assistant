@@ -1,12 +1,12 @@
 import { createDecipheriv } from "node:crypto";
 
-import { MAIN_CARDINALITY, type AdmissionAuthority } from "./admission.js";
+import { MAIN_CARDINALITY } from "./admission.js";
+import { verifyRetainedFinalAdjudication } from "./adjudication.js";
 import { artifactAttemptIdentity, type ArtifactAad, type ArtifactReceipt,
 } from "./artifacts.js";
-import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256,
-  safeId, sha256 } from "./canonical.js";
-import { assertAttemptIdentity, type AttemptIdentity, type SignedValue,
-  verifyExternalSignedValue } from "./execution.js";
+import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import { assertAttemptIdentity, type AttemptIdentity } from "./execution.js";
+import { QualityCampaignAuthorityPolicy } from "./release.js";
 
 export const REQUIRED_RETAINED_KINDS = Object.freeze([
   "capability_request", "capability_response", "retrieval_request", "retrieval_response",
@@ -30,14 +30,26 @@ export interface RetainedArtifact {
 }
 
 export interface ExpectedOutcomeInventory {
+  readonly abstention: { readonly expected: boolean; readonly observed: boolean };
   readonly artifactBindingSha256ByKind: Readonly<Partial<Record<RetainedArtifactKind, string>>>;
+  readonly citationChecks: readonly { readonly claimId: string; readonly entailed: boolean }[];
+  readonly claimChecks: readonly { readonly claimId: string; readonly factual: boolean;
+    readonly supported: boolean }[];
+  readonly evidenceTurnIds: readonly string[];
   readonly finalAdjudicationSha256: string;
   readonly identity: AttemptIdentity;
+  readonly rankedLocatorIds: readonly string[];
+  readonly relevantLocatorIds: readonly string[];
   readonly resolverRequired: boolean;
+  readonly retrievalLatencyUs: number;
+  readonly scopeViolationLocatorIds: readonly string[];
+  readonly speakerTimeChecks: readonly unknown[];
 }
 
 export interface ArtifactCustodyPort {
   loadKey(input: { readonly keyId: string }): Promise<{
+    readonly authorityKeyId: string;
+    readonly authorityPublicKeyFingerprintSha256: string;
     readonly key: Uint8Array;
     readonly keyCustodySha256: string;
   } | null>;
@@ -53,7 +65,8 @@ export function retainedArtifactFromReceipt(receipt: ArtifactReceipt): RetainedA
     storedBytes: receipt.storedBytes });
 }
 
-export async function verifyExactRetentionInventory(input: { readonly artifacts:
+export async function verifyExactRetentionInventory(policy: QualityCampaignAuthorityPolicy,
+  input: { readonly artifacts:
   readonly RetainedArtifact[]; readonly artifactKeyCustodySha256: string;
   readonly campaignByteCeiling: number; readonly custody: ArtifactCustodyPort;
   readonly expectedOutcomes: readonly ExpectedOutcomeInventory[] }): Promise<{
@@ -63,10 +76,11 @@ export async function verifyExactRetentionInventory(input: { readonly artifacts:
   const expected = buildExpectedMembership(input.expectedOutcomes);
   const seen: RetentionSeen = { aadDigests: new Set(), artifactBindings: new Set(),
     envelopeDigests: new Set(), keyBindings: new Set(), memberships: new Set() };
+  const context = { artifactKeyCustodySha256: input.artifactKeyCustodySha256,
+    custody: input.custody, expected, seen };
   let totalStoredBytes = 0;
   for (const artifact of input.artifacts) {
-    await admitRetainedArtifact(artifact, expected, seen, input.custody,
-      input.artifactKeyCustodySha256);
+    await admitRetainedArtifact(policy, artifact, context);
     totalStoredBytes += artifact.storedBytes;
     if (!Number.isSafeInteger(totalStoredBytes)) {
       throw new Error("retained inventory byte count is invalid");
@@ -90,6 +104,8 @@ interface ExpectedArtifactMembership {
   readonly finalAdjudicationSha256: string;
   readonly identity: AttemptIdentity;
   readonly kind: RetainedArtifactKind;
+  readonly outcome: ExpectedOutcomeInventory;
+  readonly resolverRequired: boolean;
 }
 
 interface RetentionSeen {
@@ -98,6 +114,10 @@ interface RetentionSeen {
   readonly envelopeDigests: Set<string>;
   readonly keyBindings: Set<string>;
   readonly memberships: Set<string>;
+}
+interface RetentionContext {
+  readonly artifactKeyCustodySha256: string; readonly custody: ArtifactCustodyPort;
+  readonly expected: ReadonlyMap<string, ExpectedArtifactMembership>; readonly seen: RetentionSeen;
 }
 
 function buildExpectedMembership(outcomes: readonly ExpectedOutcomeInventory[]):
@@ -131,7 +151,8 @@ Map<string, ExpectedArtifactMembership> {
       const artifactBindingSha256 = digest(outcome.artifactBindingSha256ByKind[kind],
         "expected artifact binding");
       expected.set(`${identity.attemptId}:${kind}`, { artifactBindingSha256,
-        finalAdjudicationSha256: outcome.finalAdjudicationSha256, identity, kind });
+        finalAdjudicationSha256: outcome.finalAdjudicationSha256, identity, kind,
+        outcome, resolverRequired: outcome.resolverRequired });
     }
   }
   const questionSets = [1, 2, 3].map((repetition) =>
@@ -143,14 +164,13 @@ Map<string, ExpectedArtifactMembership> {
   return expected;
 }
 
-async function admitRetainedArtifact(artifact: RetainedArtifact,
-  expected: ReadonlyMap<string, ExpectedArtifactMembership>, seen: RetentionSeen,
-  custody: ArtifactCustodyPort, artifactKeyCustodySha256: string): Promise<void> {
+async function admitRetainedArtifact(policy: QualityCampaignAuthorityPolicy,
+  artifact: RetainedArtifact, context: RetentionContext): Promise<void> {
   exactRecord(artifact, ["aadSha256", "artifactBindingSha256", "attemptId", "envelopeSha256",
     "keyBindingSha256", "keyId", "kind", "plaintextSha256", "questionId", "repetition",
     "storedBytes"], "retained artifact");
   const membership = `${artifact.attemptId}:${artifact.kind}`;
-  const expectedArtifact = expected.get(membership);
+  const expectedArtifact = context.expected.get(membership);
   for (const [label, value] of [["AAD", artifact.aadSha256],
     ["artifact binding", artifact.artifactBindingSha256], ["envelope", artifact.envelopeSha256],
     ["key binding", artifact.keyBindingSha256], ["plaintext", artifact.plaintextSha256]]) {
@@ -170,13 +190,17 @@ async function admitRetainedArtifact(artifact: RetainedArtifact,
     throw new Error("retained inventory contains an orphan artifact");
   }
   assertArtifactBinding(artifact, expectedArtifact, keyBindingSha256, artifactBindingSha256);
-  assertArtifactUnique(artifact, membership, seen);
+  assertArtifactUnique(artifact, membership, context.seen);
   const [envelopeBytes, keyMaterial] = await Promise.all([
-    custody.readEnvelope({ envelopeSha256: artifact.envelopeSha256 }),
-    custody.loadKey({ keyId: artifact.keyId }),
+    context.custody.readEnvelope({ envelopeSha256: artifact.envelopeSha256 }),
+    context.custody.loadKey({ keyId: artifact.keyId }),
   ]);
+  const custodyAuthority = policy.authority("artifact_custody");
   if (envelopeBytes === null || keyMaterial === null ||
-    keyMaterial.keyCustodySha256 !== artifactKeyCustodySha256 ||
+    keyMaterial.authorityKeyId !== custodyAuthority.keyId ||
+    keyMaterial.authorityPublicKeyFingerprintSha256 !==
+      custodyAuthority.publicKeyFingerprintSha256 ||
+    keyMaterial.keyCustodySha256 !== context.artifactKeyCustodySha256 ||
     keyMaterial.key.byteLength !== 32 || envelopeBytes.byteLength !== artifact.storedBytes ||
     sha256(envelopeBytes) !== artifact.envelopeSha256) {
     throw new Error("retained envelope or pinned key custody does not exist");
@@ -191,11 +215,72 @@ async function admitRetainedArtifact(artifact: RetainedArtifact,
     sha256(plaintext) !== expectedArtifact.finalAdjudicationSha256) {
     throw new Error("retained plaintext does not bind the exact final adjudication");
   }
-  seen.memberships.add(membership);
-  seen.aadDigests.add(artifact.aadSha256);
-  seen.artifactBindings.add(artifact.artifactBindingSha256);
-  seen.envelopeDigests.add(artifact.envelopeSha256);
-  seen.keyBindings.add(artifact.keyBindingSha256);
+  validateAuthenticatedPlaintext(policy, artifact, expectedArtifact, plaintext);
+  context.seen.memberships.add(membership); context.seen.aadDigests.add(artifact.aadSha256);
+  context.seen.artifactBindings.add(artifact.artifactBindingSha256);
+  context.seen.envelopeDigests.add(artifact.envelopeSha256);
+  context.seen.keyBindings.add(artifact.keyBindingSha256);
+}
+
+function validateAuthenticatedPlaintext(policy: QualityCampaignAuthorityPolicy,
+  artifact: RetainedArtifact, expectedArtifact: ExpectedArtifactMembership,
+  plaintext: Uint8Array): void {
+  if (artifact.kind === "final_adjudication") {
+    const value = decodeCanonicalPlaintext(plaintext, "final adjudication");
+    const final = verifyRetainedFinalAdjudication(policy, value, expectedArtifact.identity,
+      expectedArtifact.resolverRequired);
+    const expectedClaims = expectedArtifact.outcome.claimChecks;
+    const claims = final.decision.claims.map(({ claimFactual, claimId, claimSupported }) =>
+      ({ claimId, factual: claimFactual, supported: claimSupported }));
+    const citations = final.decision.claims.filter(({ claimFactual }) => claimFactual)
+      .map(({ citationEntailed, claimId }) => ({ claimId, entailed: citationEntailed }));
+    const expectedCitations = expectedArtifact.outcome.citationChecks
+      .map(({ claimId, entailed }) => ({ claimId, entailed }));
+    const abstentionPassed = expectedArtifact.outcome.abstention.expected ===
+      expectedArtifact.outcome.abstention.observed;
+    if (canonicalJson(claims) !== canonicalJson(expectedClaims) ||
+      canonicalJson(citations) !== canonicalJson(expectedCitations) ||
+      final.decision.claims.some(({ abstentionCorrect }) =>
+        abstentionCorrect !== abstentionPassed)) {
+      throw new Error("final adjudication decisions differ from admitted metric evidence");
+    }
+  } else if (artifact.kind === "retrieval_response") {
+    const value = exactRecord(decodeCanonicalPlaintext(plaintext, "retrieval response"),
+      ["attempt", "latencyUs", "rankedLocatorIds", "schemaVersion", "scopeViolationLocatorIds"],
+      "retained retrieval response");
+    if (value.schemaVersion !== "meeting_knowledge.semantic_quality_retrieval_evidence.v1" ||
+      canonicalJson(value.attempt) !== canonicalJson(expectedArtifact.identity) ||
+      value.latencyUs !== expectedArtifact.outcome.retrievalLatencyUs ||
+      canonicalJson(value.rankedLocatorIds) !==
+        canonicalJson(expectedArtifact.outcome.rankedLocatorIds) ||
+      canonicalJson(value.scopeViolationLocatorIds) !==
+        canonicalJson(expectedArtifact.outcome.scopeViolationLocatorIds)) {
+      throw new Error("authenticated retrieval evidence differs from admitted ranking");
+    }
+  } else if (artifact.kind === "evidence") {
+    const value = exactRecord(decodeCanonicalPlaintext(plaintext, "canonical evidence"),
+      ["attempt", "evidenceTurnIds", "schemaVersion", "speakerTimeChecks"],
+      "retained canonical evidence");
+    if (value.schemaVersion !== "meeting_knowledge.semantic_quality_canonical_evidence.v1" ||
+      canonicalJson(value.attempt) !== canonicalJson(expectedArtifact.identity) ||
+      canonicalJson(value.evidenceTurnIds) !==
+        canonicalJson(expectedArtifact.outcome.evidenceTurnIds) ||
+      canonicalJson(value.speakerTimeChecks) !==
+        canonicalJson(expectedArtifact.outcome.speakerTimeChecks)) {
+      throw new Error("authenticated canonical evidence differs from admitted turn observations");
+    }
+  }
+}
+
+function decodeCanonicalPlaintext(plaintext: Uint8Array, label: string): unknown {
+  let value: unknown;
+  try {value = JSON.parse(Buffer.from(plaintext).toString("utf8")) as unknown;} catch {
+    throw new Error(`${label} plaintext is not canonical JSON`);
+  }
+  if (canonicalJson(value) !== Buffer.from(plaintext).toString("utf8")) {
+    throw new Error(`${label} plaintext is not canonical JSON`);
+  }
+  return value;
 }
 
 function expectedAad(artifact: RetainedArtifact, identity: AttemptIdentity): ArtifactAad {
@@ -276,144 +361,4 @@ function authenticateEnvelope(envelope: StoredEnvelope, key: Uint8Array): Uint8A
   } catch {
     throw new Error("retained envelope AES-256-GCM authentication failed");
   }
-}
-
-export const DELETABLE_CAMPAIGN_KINDS = Object.freeze(["derived_index", "temporary_prompt",
-  "temporary_projection"] as const);
-export const PROTECTED_SOURCE_KINDS = Object.freeze(["authoritative_transcript", "final_transcript",
-  "meeting_database", "original_craig_recording", "summary"] as const);
-
-type CleanupTarget = { readonly artifactId: string;
-  readonly kind: typeof DELETABLE_CAMPAIGN_KINDS[number] };
-type ProtectedOriginal = { readonly artifactId: string;
-  readonly kind: typeof PROTECTED_SOURCE_KINDS[number] };
-
-export interface CampaignCreatedTargetInventory {
-  readonly campaignRootSha256: string;
-  readonly protectedOriginals: readonly ProtectedOriginal[];
-  readonly releaseRootSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v1";
-  readonly targets: readonly CleanupTarget[];
-}
-
-export interface CleanupManifest {
-  readonly campaignRootSha256: string;
-  readonly inventoryReceiptSha256: string;
-  readonly protectedOriginals: readonly ProtectedOriginal[];
-  readonly releaseRootSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_cleanup_manifest.v4";
-  readonly targets: readonly CleanupTarget[];
-}
-
-export function verifyCampaignCreatedTargetInventory(input: { readonly authority:
-  AdmissionAuthority; readonly campaignRootSha256: string; readonly receipt: unknown;
-  readonly releaseRootSha256: string;
-  readonly targetInventoryAuthorityKeySha256: string }): { readonly manifest: CleanupManifest;
-    readonly receipt: SignedValue<CampaignCreatedTargetInventory> } {
-  if (publicKeyFingerprintSha256(input.authority.publicKeyPem, "target inventory authority") !==
-    digest(input.targetInventoryAuthorityKeySha256, "target inventory authority key")) {
-    throw new Error("campaign target inventory authority is not pinned by release");
-  }
-  const receipt = verifyExternalSignedValue<CampaignCreatedTargetInventory>(input.receipt,
-    input.authority.keyId, input.authority.publicKeyPem, "campaign-created target inventory");
-  const inventory = decodeTargetInventory(receipt.payload);
-  if (inventory.campaignRootSha256 !== input.campaignRootSha256 ||
-    inventory.releaseRootSha256 !== input.releaseRootSha256) {
-    throw new Error("campaign target inventory is foreign");
-  }
-  return Object.freeze({ manifest: Object.freeze({ campaignRootSha256: input.campaignRootSha256,
-    inventoryReceiptSha256: sha256(receipt), protectedOriginals: inventory.protectedOriginals,
-    releaseRootSha256: input.releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_cleanup_manifest.v4",
-    targets: inventory.targets }), receipt });
-}
-
-export function verifyCleanupAbsenceReceipt(input: { readonly authorityKeyId: string;
-  readonly authorityPublicKeyPem: string; readonly cleanupManifest: CleanupManifest;
-  readonly receipt: unknown }): SignedValue<unknown> {
-  const receipt = verifyExternalSignedValue(input.receipt, input.authorityKeyId,
-    input.authorityPublicKeyPem, "cleanup absence receipt");
-  const cleanupManifest = decodeCleanupManifest(input.cleanupManifest);
-  const payload = exactRecord(receipt.payload, ["absentArtifactIds", "absentArtifactIdsSha256",
-    "campaignRootSha256", "cleanupManifestSha256", "presentProtectedArtifactIds",
-    "presentProtectedArtifactIdsSha256", "releaseRootSha256", "schemaVersion"],
-  "cleanup absence payload");
-  const targetIds = cleanupManifest.targets.map(({ artifactId }) => artifactId).toSorted();
-  const protectedIds = cleanupManifest.protectedOriginals.map(({ artifactId }) => artifactId)
-    .toSorted();
-  const absentIds = decodeArtifactIds(payload.absentArtifactIds, "cleanup absence");
-  const presentIds = decodeArtifactIds(payload.presentProtectedArtifactIds, "protected presence");
-  if (payload.schemaVersion !== "meeting_knowledge.semantic_quality_cleanup_absence.v4" ||
-    payload.campaignRootSha256 !== cleanupManifest.campaignRootSha256 ||
-    payload.releaseRootSha256 !== cleanupManifest.releaseRootSha256 ||
-    payload.cleanupManifestSha256 !== sha256(cleanupManifest) ||
-    canonicalJson(absentIds) !== canonicalJson(targetIds) ||
-    payload.absentArtifactIdsSha256 !== sha256(targetIds) ||
-    canonicalJson(presentIds) !== canonicalJson(protectedIds) ||
-    payload.presentProtectedArtifactIdsSha256 !== sha256(protectedIds)) {
-    throw new Error("cleanup absence and protected presence receipt is not authoritative");
-  }
-  return receipt;
-}
-
-function decodeTargetInventory(value: unknown): CampaignCreatedTargetInventory {
-  const record = exactRecord(value, ["campaignRootSha256", "protectedOriginals",
-    "releaseRootSha256", "schemaVersion", "targets"], "campaign target inventory");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_campaign_target_inventory.v1") {
-    throw new Error("campaign target inventory schema is invalid");
-  }
-  const targets = decodeTypedArtifacts(record.targets, DELETABLE_CAMPAIGN_KINDS,
-    "campaign target") as readonly CleanupTarget[];
-  const protectedOriginals = decodeTypedArtifacts(record.protectedOriginals,
-    PROTECTED_SOURCE_KINDS, "protected original") as readonly ProtectedOriginal[];
-  if (targets.length === 0 || protectedOriginals.length === 0) {
-    throw new Error("campaign target inventory is incomplete");
-  }
-  return Object.freeze({ campaignRootSha256: digest(record.campaignRootSha256,
-    "target inventory campaign root"), protectedOriginals,
-  releaseRootSha256: digest(record.releaseRootSha256, "target inventory release root"),
-  schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v1", targets });
-}
-
-function decodeCleanupManifest(value: unknown): CleanupManifest {
-  const record = exactRecord(value, ["campaignRootSha256", "inventoryReceiptSha256",
-    "protectedOriginals", "releaseRootSha256", "schemaVersion", "targets"],
-  "cleanup manifest");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_cleanup_manifest.v4") {
-    throw new Error("cleanup manifest is invalid");
-  }
-  const targets = decodeTypedArtifacts(record.targets, DELETABLE_CAMPAIGN_KINDS,
-    "cleanup target") as readonly CleanupTarget[];
-  const protectedOriginals = decodeTypedArtifacts(record.protectedOriginals,
-    PROTECTED_SOURCE_KINDS, "protected original") as readonly ProtectedOriginal[];
-  if (targets.length === 0 || protectedOriginals.length === 0) {
-    throw new Error("cleanup manifest is incomplete");
-  }
-  return Object.freeze({ campaignRootSha256: digest(record.campaignRootSha256,
-    "cleanup campaign root"), inventoryReceiptSha256: digest(record.inventoryReceiptSha256,
-    "cleanup inventory receipt"), protectedOriginals,
-  releaseRootSha256: digest(record.releaseRootSha256, "cleanup release root"),
-  schemaVersion: "meeting_knowledge.semantic_quality_cleanup_manifest.v4", targets });
-}
-
-function decodeTypedArtifacts(value: unknown, kinds: readonly string[], label: string):
-readonly { readonly artifactId: string; readonly kind: string }[] {
-  if (!Array.isArray(value)) {throw new Error(`${label} inventory is invalid`);}
-  const items = value.map((entry) => {
-    const item = exactRecord(entry, ["artifactId", "kind"], label);
-    if (!kinds.includes(String(item.kind))) {throw new Error(`${label} kind is invalid`);}
-    return Object.freeze({ artifactId: safeId(item.artifactId, `${label} ID`),
-      kind: String(item.kind) });
-  });
-  if (new Set(items.map(({ artifactId }) => artifactId)).size !== items.length) {
-    throw new Error(`${label} membership is duplicated`);
-  }
-  return Object.freeze(items);
-}
-
-function decodeArtifactIds(value: unknown, label: string): readonly string[] {
-  if (!Array.isArray(value)) {throw new Error(`${label} inventory is invalid`);}
-  const ids = value.map((artifactId) => safeId(artifactId, `${label} artifact ID`));
-  if (new Set(ids).size !== ids.length) {throw new Error(`${label} inventory is duplicated`);}
-  return ids.toSorted();
 }
