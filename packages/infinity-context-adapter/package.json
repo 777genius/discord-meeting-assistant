@@ -17,6 +17,7 @@
     "prepare:official-sdk": "node ../../vendor/infinity-context/prepare-official-sdk.mjs",
     "quality-campaign": "node --import tsx/esm src/quality-campaign/production-entrypoint.ts",
     "test": "pnpm run prepare:official-sdk && pnpm run test:prepared",
+    "test:quality-campaign:production-runner": "vitest run test/quality-campaign-production-runner-structural.test.ts --no-file-parallelism --test-timeout=60000",
     "test:semantic-quality-v4:gate": "vitest run test/semantic-quality-v4-evaluation.test.ts test/semantic-quality-v4-p0.test.ts test/semantic-quality-v4-qualification-tooling.test.ts test/semantic-quality-v4-workflow.test.ts --no-file-parallelism --test-timeout=30000",
     "test:semantic-quality-v4": "node --import tsx/esm test/run-semantic-quality-v4.ts",
     "test:semantic-quality-v4:real-preflight": "node --import tsx/esm test/run-semantic-quality-v4.ts --real-preflight",

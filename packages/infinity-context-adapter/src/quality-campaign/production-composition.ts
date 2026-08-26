@@ -129,6 +129,12 @@ export async function runQualityCampaignProductionComposition(input: {
   if (input.command === "cleanup-absence") {
     const retentionCheckpointSha256 = await checkpoints.requirePhase(
       admitted.rootBindingSha256, "retained");
+    const retained = await input.ports.qualification.retention({ campaignRootSha256:
+      admitted.rootBindingSha256 });
+    if (retained.outcomeCount !== 720 || sha256(safeReceipt("retention",
+      admitted.rootBindingSha256, retained)) !== retentionCheckpointSha256) {
+      throw new Error("retention evidence changed before cleanup");
+    }
     const cleanupPlan = await loadCleanupPlan(config.cleanupPlanPath);
     const cleanup = await executeDerivedCleanup({ absenceAuthority,
       campaignRootSha256: admitted.rootBindingSha256, deletion: input.ports.deletion,
@@ -144,7 +150,7 @@ export async function runQualityCampaignProductionComposition(input: {
         thresholdsPassed: true as const };
     }));
     const final = admitFinalCampaign({ cleanupReceiptSha256: cleanup.absenceReceiptSha256,
-      independentRepetitionPasses: passes, inventorySha256: retentionCheckpointSha256,
+      independentRepetitionPasses: passes, inventorySha256: retained.inventorySha256,
       outcomeCount: 720, rootBindingSha256: admitted.rootBindingSha256 });
     const receipt = safeReceipt("final-admission", admitted.rootBindingSha256, {
       cleanupReceiptSha256: cleanup.absenceReceiptSha256,

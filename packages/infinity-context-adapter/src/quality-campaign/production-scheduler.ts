@@ -80,7 +80,10 @@ async function executeSchedule(input: {
       } finally {active -= 1;}
     }
   };
-  await Promise.all(Array.from({ length: input.concurrency }, worker));
+  const settled = await Promise.allSettled(Array.from({ length: input.concurrency }, worker));
+  const failure = settled.find((value): value is PromiseRejectedResult =>
+    value.status === "rejected");
+  if (failure !== undefined) {throw failure.reason;}
   return Object.freeze({ completedOutcomes: terminalAttemptIds.length,
     maximumObservedConcurrency, outcomeUnknown,
     terminalAttemptIds: Object.freeze(terminalAttemptIds.toSorted()) });

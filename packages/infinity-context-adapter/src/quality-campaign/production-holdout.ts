@@ -1,5 +1,5 @@
 import type { CampaignQuestion } from "./admission.js";
-import { admitIsolatedHoldout, createHoldoutReport, type FrozenMainInputProof,
+import { admitIsolatedHoldout, type FrozenMainInputProof,
   type HoldoutAuthorization } from "./holdout.js";
 import { sha256 } from "./canonical.js";
 import type { QualityCampaignRelease } from "./release.js";
@@ -25,8 +25,10 @@ export async function executeIsolatedProductionHoldout(input: {
   if (scheduled.outcomeUnknown || scheduled.completedOutcomes !== 30) {
     throw new Error("holdout execution is incomplete or outcome-unknown");
   }
-  return createHoldoutReport({ cleanupReceiptSha256: sha256({ pending:
-    "separate_holdout_cleanup_required" }), holdoutRootSha256:
-    input.authorization.holdoutRootSha256, outcomeCount: scheduled.completedOutcomes,
-  reportMetricsSha256: sha256({ terminalAttemptIds: scheduled.terminalAttemptIds }) });
+  return Object.freeze({ affectsMainQualification: false,
+    holdoutQuestionSetSha256: admitted.holdoutQuestionSetSha256,
+    holdoutRootSha256: input.authorization.holdoutRootSha256,
+    outcomeCount: scheduled.completedOutcomes,
+    schemaVersion: "meeting_knowledge.semantic_quality_holdout_execution.v1",
+    terminalAttemptSetSha256: sha256(scheduled.terminalAttemptIds) });
 }
