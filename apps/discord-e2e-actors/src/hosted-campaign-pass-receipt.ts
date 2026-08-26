@@ -3,6 +3,8 @@ import { z } from "zod";
 import { validateActionEvidence } from "./hosted-campaign-actions.js";
 import type {
   HostedCampaignInput,
+  HostedCampaignLeaseCleanupProof,
+  HostedCampaignLeaseHandle,
   HostedCampaignPassReceipt,
 } from "./hosted-campaign-coordinator.js";
 import { campaignActions } from "./hosted-campaign-execution-graph.js";
@@ -37,6 +39,16 @@ const hostedCampaignPassReceiptV2Schema = z.object({
   artifactsSha256: sha256Schema,
   bindingsSha256: sha256Schema,
   campaignId: identifierSchema,
+  campaignLease: z.object({
+    campaignRoot: z.string().startsWith("/"),
+    device: z.number().int().nonnegative(),
+    inode: z.number().int().nonnegative(),
+    leaseSha256: sha256Schema,
+    planSha256: sha256Schema,
+    receiptSha256: sha256Schema,
+  }).strict(),
+  craigStack: z.object({ projectName: identifierSchema, receiptSha256: sha256Schema }).strict(),
+  createdAt: z.iso.datetime(),
   definitionSha256: sha256Schema,
   kind: z.literal("hosted-campaign-pass-receipt"),
   planSha256: sha256Schema,
@@ -46,8 +58,9 @@ const hostedCampaignPassReceiptV2Schema = z.object({
   runIds: z.tuple([identifierSchema, identifierSchema, identifierSchema]).readonly(),
   schemaVersion: z.literal(2),
   teardown: z.object({
-    campaignLeaseReleased: z.literal(true),
+    campaignLeaseHeldAtVerification: z.literal(true),
     childrenStopped: z.literal(true),
+    destructiveTeardownAuthorized: z.literal(true),
   }).strict(),
 }).strict();
 
@@ -60,10 +73,53 @@ export interface HostedCampaignPassReceiptExpectation {
   readonly admissionReceiptSha256: string;
   readonly artifacts: HostedCampaignPassReceiptV2["artifacts"];
   readonly bindingsSha256: string;
+  readonly campaignLease: HostedCampaignPassReceiptV2["campaignLease"];
+  readonly craigStack: HostedCampaignPassReceiptV2["craigStack"];
   readonly definitionSha256: string;
   readonly plan: HostedCampaignInput;
   readonly release: HostedCampaignReleaseReferenceV1;
   readonly revisions: HostedCampaignPassReceiptV2["revisions"];
+}
+
+export function createCampaignLeaseReceipt(lease: HostedCampaignLeaseHandle) {
+  const content = { campaignId: lease.campaignId, campaignRoot: lease.campaignRoot,
+    device: lease.device, hostedPlanSha256: lease.planSha256, inode: lease.inode,
+    kind: "campaign-lease-receipt" as const, leaseSha256: lease.leaseSha256, schemaVersion: 1 as const };
+  return Object.freeze({ ...content, receiptSha256: digestCanonical(content) });
+}
+
+export function createCraigStackTeardownReceipt(input: Readonly<{
+  completedAt: string; leaseReceiptSha256: string; lease: HostedCampaignLeaseHandle;
+  passReceiptSha256: string; projectName: string; stackReceiptSha256: string;
+}>) {
+  const content = { campaignLeaseReceiptSha256: input.leaseReceiptSha256,
+    campaignLeaseSha256: input.lease.leaseSha256, completedAt: input.completedAt,
+    hostedPlanSha256: input.lease.planSha256, kind: "craig-stack-teardown" as const,
+    passReceiptSha256: input.passReceiptSha256, projectName: input.projectName,
+    schemaVersion: 1 as const, stackReceiptSha256: input.stackReceiptSha256 };
+  return Object.freeze({ ...content, receiptSha256: digestCanonical(content) });
+}
+
+export function createCampaignLeaseCleanupReceipt(input: Readonly<{
+  cleanup: HostedCampaignLeaseCleanupProof; lease: HostedCampaignLeaseHandle;
+  leaseReceiptSha256: string; passReceiptSha256: string; projectName: string;
+  stackReceiptSha256: string; teardownReceiptSha256: string;
+}>) {
+  const { cleanup, lease } = input;
+  const leasePath = `${lease.campaignRoot}/barriers/campaign.lease`;
+  if (cleanup.leasePath !== leasePath || cleanup.campaignId !== lease.campaignId
+    || cleanup.campaignRoot !== lease.campaignRoot || cleanup.device !== lease.device
+    || cleanup.inode !== lease.inode || cleanup.leaseSha256 !== lease.leaseSha256
+    || cleanup.planSha256 !== lease.planSha256) {
+    throw new Error("Hosted campaign lease cleanup proof contradicts the exact held lease");
+  }
+  const content = { campaignId: lease.campaignId, campaignRoot: lease.campaignRoot, deleted: true as const,
+    device: lease.device, hostedPlanSha256: lease.planSha256, inode: lease.inode,
+    kind: "campaign-lease-cleanup" as const, leasePath,
+    leaseReceiptSha256: input.leaseReceiptSha256, leaseSha256: lease.leaseSha256,
+    passReceiptSha256: input.passReceiptSha256, projectName: input.projectName, schemaVersion: 1 as const,
+    stackReceiptSha256: input.stackReceiptSha256, teardownReceiptSha256: input.teardownReceiptSha256 };
+  return Object.freeze({ ...content, receiptSha256: digestCanonical(content) });
 }
 
 export function createHostedCampaignPassReceiptV2(
@@ -83,6 +139,9 @@ export function createHostedCampaignPassReceiptV2(
     artifactsSha256: digestCanonical(expectation.artifacts),
     bindingsSha256: expectation.bindingsSha256,
     campaignId: execution.campaignId,
+    campaignLease: expectation.campaignLease,
+    craigStack: expectation.craigStack,
+    createdAt: new Date().toISOString(),
     definitionSha256: expectation.definitionSha256,
     kind: "hosted-campaign-pass-receipt" as const,
     planSha256,
@@ -91,8 +150,9 @@ export function createHostedCampaignPassReceiptV2(
     runIds: execution.runIds,
     schemaVersion: 2 as const,
     teardown: {
-      campaignLeaseReleased: true as const,
+      campaignLeaseHeldAtVerification: true as const,
       childrenStopped: true as const,
+      destructiveTeardownAuthorized: true as const,
     },
   };
   return verifyHostedCampaignPassReceiptV2({
@@ -110,6 +170,10 @@ export function verifyHostedCampaignPassReceiptV2(
   if (digestCanonical(content) !== receiptSha256) {
     throw new Error("Hosted campaign pass receipt digest is invalid");
   }
+  const createdAt = Date.parse(receipt.createdAt);
+  if (!Number.isSafeInteger(createdAt) || createdAt > Date.now() || Date.now() - createdAt > 15 * 60_000) {
+    throw new Error("Hosted campaign pass receipt is stale or from the future");
+  }
   if (digestCanonical(receipt.actionEvidence) !== receipt.actionEvidenceSha256) {
     throw new Error("Hosted campaign pass action evidence digest is invalid");
   }
@@ -120,6 +184,9 @@ export function verifyHostedCampaignPassReceiptV2(
   if (new Set(receipt.runIds).size !== 3) {
     throw new Error("Hosted campaign pass run IDs must be unique");
   }
+  if (receipt.campaignLease.planSha256 !== receipt.planSha256) {
+    throw new Error("Hosted campaign pass lease does not match its exact plan");
+  }
   if (expectation !== undefined) {
     assertMatchesExpectation(receipt, expectation);
   }
@@ -127,6 +194,7 @@ export function verifyHostedCampaignPassReceiptV2(
     ...receipt,
     actionEvidence: Object.freeze(receipt.actionEvidence),
     artifacts: Object.freeze(receipt.artifacts),
+    campaignLease: Object.freeze(receipt.campaignLease),
     release: Object.freeze(receipt.release),
     revisions: Object.freeze(receipt.revisions),
     runIds: Object.freeze(receipt.runIds),
@@ -168,6 +236,10 @@ function assertMandatoryQualificationArtifacts(receipt: HostedCampaignPassReceip
   const retained = new Set(receipt.artifacts.map(({ path }) => path));
   const mandatory = [
     "campaign-proof.json",
+    "control/campaign-lease-receipt.json",
+    "control/craig-stack-mutation-start.json",
+    "control/craig-stack-receipt.json",
+    "control/craig-stack-input.json",
     "greeting-ledger.json",
     "late-greeting.json",
     "historical-reply.json",
@@ -203,6 +275,8 @@ function assertMatchesExpectation(
     || JSON.stringify(receipt.artifacts) !== JSON.stringify(expectation.artifacts)
     || receipt.admission.receiptSha256 !== expectation.admissionReceiptSha256
     || receipt.bindingsSha256 !== expectation.bindingsSha256
+    || JSON.stringify(receipt.campaignLease) !== JSON.stringify(expectation.campaignLease)
+    || JSON.stringify(receipt.craigStack) !== JSON.stringify(expectation.craigStack)
     || receipt.definitionSha256 !== expectation.definitionSha256
     || JSON.stringify(receipt.revisions) !== JSON.stringify(expectation.revisions)
     || JSON.stringify(receipt.release) !== JSON.stringify(expectation.release)) {

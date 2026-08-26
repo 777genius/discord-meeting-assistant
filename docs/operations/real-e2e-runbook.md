@@ -224,8 +224,14 @@ and the runner; absence fails with `RELEASE_BINDING_REQUIRED`. It must match the
 compiled trust root, pin the candidate source revisions and full immutable Craig
 and Meeting Platform image digests, and configure typed probes for clock,
 deployment, Discord/Craig identity, container provenance, and the Voicetext
-semantic canary. Missing or mutable digest data blocks preflight. Supplied
-remote-capability files remain untrusted diagnostic declarations and never grant
+semantic canary. Missing or mutable digest data blocks preflight.
+The same trust root pins canonical disposable-stack Compose bytes/digest, exact
+Craig/PostgreSQL/migration image IDs and repository digests, the ordered
+migration ledger/checksums, and the real Craig protocol/source identity. The
+runner rejects an operator-selected mismatch before its first credential or
+Docker effect. Docker Compose receives those admitted bytes over stdin and an
+exact child environment, never by reopening a checked mutable Compose/env path.
+Supplied remote-capability files remain untrusted diagnostic declarations and never grant
 authority. Do not bypass admission, run against production, or present local
 coordinator coverage as real-provider qualification.
 
@@ -279,7 +285,18 @@ the host-side runner. Run preflight immediately before the bounded command. The
 coordinator performs a second fresh authorization after acquiring its exclusive
 lease and refuses to start the first child when readiness expired:
 
+Set the same admitted release reference in the campaign definition's
+`craigRelease` and the private Craig stack input's `release`. This derives the
+dynamic Compose project before a container exists; the observed container ID
+never feeds back into the release or project digest. Store the mode-0600 stack
+input directly in the campaign control directory. The compiled pre-Docker check
+compares the same release and derived project, and the strict rendered Compose
+schema rejects every unbound field or external resolution path. Docker Compose
+runs with retained stdin, a closed environment, source-owned arguments, and the
+fixed `/` working directory.
+
 ```sh
+DISCORD_E2E_CRAIG_STACK_INPUT=/absolute/private/campaign/control/craig-stack-input.json \
 pnpm --filter @discord-meeting/discord-e2e-actors run:hosted-campaign -- \
   /absolute/private/plans/campaign-plan.json \
   /absolute/private/campaign-pass.json \
@@ -290,7 +307,21 @@ pnpm --filter @discord-meeting/discord-e2e-actors run:hosted-campaign -- \
   --release-binding /absolute/private/release-binding.json
 ```
 
-The hosted campaign pass receipt is published only after successful teardown.
+Provisioning runs under the canonical create-only campaign lease. Failed
+campaign infrastructure and partial evidence are retained. Only a fully
+admitted successful campaign can invoke the fixed 30-second Compose teardown.
+The stack receipt and finite evidence are retained first. The hosted campaign
+pass receipt is then published create-only, reread, and independently verified
+while the exact plan-bound lease is still held. Only that verification permits
+teardown; Compose, credential, rendered-config, volume, and image identities are
+revalidated immediately before the Docker mutation. Successful teardown writes
+the separate create-only `control/craig-stack-teardown.json`, bound to both the
+pass receipt and stack receipt. The exact live lease is then unlinked and proved
+absent before create-only `control/campaign-lease-cleanup.json` is published.
+That cleanup receipt cross-binds the lease path, device, inode, digest, campaign
+root, plan, stack, pass, and teardown identities. Standalone verification fails
+if the live lease remains, deletion failed, the cleanup receipt is absent, or
+any retained receipt contradicts that identity.
 Publication is create-only and atomic: a completed, synced temporary file in the
 receipt directory is linked into its final name without replacing anything, and
 the directory entry is synced before the temporary name is removed. A retry must
@@ -652,13 +683,15 @@ Qualification does not change rollout admission: Retrieval V2 serving remains at
 zero basis points and the compiled trust root remains unadmitted until a separate,
 authorized release decision.
 
-### Remaining Discord/voice/live-memory coverage ledger
+### Remaining Discord/voice/live-memory coverage archive
 
 The compiled definition requires an absolute `privateCoverageSourcePath`. Only
-the reviewed private-test scenario driver may create that mode-0600 ledger. Do
-not hand-author, copy from another campaign, or patch it after a failed run.
-The coordinator validates it only after the existing historical-reply and
-live-memory children settle, writes a separate create-only
+the reviewed private-test observation producer may create that mode-0600
+archive. Do not hand-author, copy from another campaign, or patch it after a
+failed run. The coordinator invokes the scenario driver only after the existing
+historical-reply and live-memory children settle. The driver uses a create-only
+monotonic journal, reconciles incomplete operations, validates exact frozen
+question/answer and canonical turn/citation digests, and writes the separate create-only
 `private-coverage.json`, embeds that exact artifact in the remediation bundle,
 and includes it in the hosted pass manifest.
 

@@ -84,7 +84,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
   acquireCampaignLease(_campaignId: string, bounded: HostedCampaignBoundedSignal): Promise<HostedCampaignLeaseHandle> {
     return this.#options.artifactStore.acquireLease(bounded);
   }
-  releaseCampaignLease(): Promise<void> { return this.#options.artifactStore.releaseLease(); }
+  releaseCampaignLease(handle: HostedCampaignLeaseHandle) { return this.#options.artifactStore.releaseLease(handle); }
   async publishReleaseGate(
     spec: HostedCampaignExecutableSpec,
     phaseOrBounded: HostedActorGatePhase | HostedCampaignBoundedSignal,

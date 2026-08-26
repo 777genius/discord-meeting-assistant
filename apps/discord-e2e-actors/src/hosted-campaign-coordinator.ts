@@ -171,7 +171,22 @@ export interface HostedCampaignChildHandle {
 declare const campaignLeaseHandleBrand: unique symbol;
 export interface HostedCampaignLeaseHandle {
   readonly campaignId: string;
+  readonly campaignRoot: string;
+  readonly device: number;
+  readonly inode: number;
+  readonly leaseSha256: string;
+  readonly planSha256: string;
   readonly [campaignLeaseHandleBrand]: true;
+}
+export interface HostedCampaignLeaseCleanupProof {
+  readonly campaignId: string;
+  readonly campaignRoot: string;
+  readonly deleted: true;
+  readonly device: number;
+  readonly inode: number;
+  readonly leasePath: string;
+  readonly leaseSha256: string;
+  readonly planSha256: string;
 }
 export type HostedCampaignBarrierAction =
   | { readonly kind: "provenance-before" }
@@ -231,7 +246,16 @@ interface HostedCampaignLaunchAuthorization {
 }
 export interface HostedCampaignRuntimeAuthorization {
   /** Invoked only after the exact campaign lease has been acquired. */
-  authorizeAfterLease(): Promise<HostedCampaignLaunchAuthorization>;
+  authorizeAfterLease(lease: HostedCampaignLeaseHandle): Promise<HostedCampaignLaunchAuthorization>;
+  /** Commits retained evidence and any success-only infrastructure action while the exact lease is still held. */
+  finalizeUnderLease?(execution: HostedCampaignPassReceipt, lease: HostedCampaignLeaseHandle): Promise<void>;
+  /** Publishes success only after the exact canonical lease has been unlinked and proven absent. */
+  readonly finalizeAfterLeaseCleanup?: (
+    cleanup: HostedCampaignLeaseCleanupProof,
+    lease: HostedCampaignLeaseHandle,
+  ) => Promise<void>;
+  /** Failed provisioned stacks quarantine their lease and evidence root. */
+  retainLeaseOnFailure?(): boolean;
 }
 export interface HostedCampaignPorts {
   acquireCampaignLease(
@@ -261,7 +285,7 @@ export interface HostedCampaignPorts {
     phase: "connection" | "playback",
     bounded: HostedCampaignBoundedSignal,
   ): Promise<void>;
-  releaseCampaignLease(handle: HostedCampaignLeaseHandle): Promise<void>;
+  releaseCampaignLease(handle: HostedCampaignLeaseHandle): Promise<HostedCampaignLeaseCleanupProof | void>;
   stopChild(handle: HostedCampaignChildHandle): Promise<void>;
 }
 export interface HostedCampaignInput {

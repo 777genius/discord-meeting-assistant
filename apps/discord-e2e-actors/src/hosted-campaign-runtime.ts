@@ -10,6 +10,7 @@ import type {
   HostedCampaignExecutableSpec,
   HostedCampaignInput,
   HostedCampaignLeaseHandle,
+  HostedCampaignLeaseCleanupProof,
   HostedCampaignRuntimeAuthorization,
   HostedCampaignPassReceipt,
   HostedCampaignPorts,
@@ -197,12 +198,18 @@ async function executeActions(
 }
 
 async function cleanupCampaign(
-  handles: HostedCampaignChildHandle[],
-  lease: HostedCampaignLeaseHandle | undefined,
-  ports: HostedCampaignPorts,
-  leaseQuarantined: boolean,
-  failure: unknown,
+  input: Readonly<{
+    failure: unknown;
+    handles: HostedCampaignChildHandle[];
+    lease: HostedCampaignLeaseHandle | undefined;
+    leaseQuarantined: boolean;
+    ports: HostedCampaignPorts;
+    retainLeaseOnFailure: boolean;
+    finalizeAfterLeaseCleanup?: ((cleanup: HostedCampaignLeaseCleanupProof,
+      lease: HostedCampaignLeaseHandle) => Promise<void>) | undefined;
+  }>,
 ): Promise<void> {
+  const { failure, finalizeAfterLeaseCleanup, handles, lease, leaseQuarantined, ports, retainLeaseOnFailure } = input;
   const cleanupFailures: unknown[] = [];
   let childrenStopped = false;
   try {
@@ -215,8 +222,17 @@ async function cleanupCampaign(
   if (leaseQuarantined) {
     cleanupFailures.push(new Error("Hosted campaign barrier poll teardown did not settle after abort"));
   }
-  if (lease !== undefined && childrenStopped && !leaseQuarantined) {
-    try { await ports.releaseCampaignLease(lease); } catch (error) { cleanupFailures.push(error); }
+  if (lease !== undefined && childrenStopped && !leaseQuarantined
+    && (failure === undefined || !retainLeaseOnFailure)) {
+    try {
+      const cleanup = await ports.releaseCampaignLease(lease);
+      if (failure === undefined && finalizeAfterLeaseCleanup !== undefined) {
+        if (cleanup === undefined) {
+          throw new Error("Hosted campaign lease cleanup did not return an exact deletion proof");
+        }
+        await finalizeAfterLeaseCleanup(cleanup, lease);
+      }
+    } catch (error) { cleanupFailures.push(error); }
   }
   if (cleanupFailures.length > 0) {
     throw new AggregateError(cleanupFailures, failure === undefined
@@ -246,14 +262,27 @@ export async function runHostedCampaign(
     lease = await ports.acquireCampaignLease(campaignId, bounded);
     if (lease.campaignId !== campaignId) { throw new Error("Acquired campaign lease does not match the campaign"); }
     if (authorization !== undefined) {
-      const launchAuthorization = await authorization.authorizeAfterLease();
+      const launchAuthorization = await authorization.authorizeAfterLease(lease);
       state.firstChildAuthorization = () => { launchAuthorization.assertReadyForFirstChild(); };
     }
     await startChildren(input, ports, bounded, state, { kind: "campaign" });
     await executeActions(input, ports, bounded, state, evidence);
     await Promise.all(state.completionTasks);
+    const completedHandles = state.handles.splice(0);
+    try { await stopEveryChild(completedHandles, ports); } catch (error) {
+      state.barrierTeardownIncomplete = true;
+      throw error;
+    }
+    await authorization?.finalizeUnderLease?.(Object.freeze({
+      actionEvidence: Object.freeze(evidence), campaignId: input.runs[0]!.campaignId,
+      runIds: [input.runs[0]!.runId, input.runs[1]!.runId, input.runs[2]!.runId] as const,
+      schemaVersion: 1, teardownComplete: true,
+    }), lease);
   } catch (error) { failure = error; }
-  await cleanupCampaign(state.handles, lease, ports, state.barrierTeardownIncomplete, failure);
+  await cleanupCampaign({ failure, handles: state.handles, lease,
+    finalizeAfterLeaseCleanup: authorization?.finalizeAfterLeaseCleanup,
+    leaseQuarantined: state.barrierTeardownIncomplete, ports,
+    retainLeaseOnFailure: authorization?.retainLeaseOnFailure?.() === true });
   if (failure !== undefined) {throw failure instanceof Error
     ? failure : new Error("Hosted campaign failed", { cause: failure });}
   return Object.freeze({

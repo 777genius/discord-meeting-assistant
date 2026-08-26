@@ -459,6 +459,39 @@ describe("hosted campaign coordinator", () => {
 
 });
 
+describe("hosted campaign retained evidence finalization", () => {
+  it("retains the campaign lease when create-only evidence publication fails", async () => {
+    const events: string[] = [];
+    const fakePorts = ports(events);
+    await expect(runHostedCampaign(input(), fakePorts, bounded(), {
+      authorizeAfterLease: async () => ({ assertReadyForFirstChild: () => {} }),
+      finalizeUnderLease: async () => { throw new Error("evidence publication failed"); },
+      retainLeaseOnFailure: () => true,
+    })).rejects.toThrow("evidence publication failed");
+    expect(events.some((event) => event.startsWith("stop:"))).toBe(true);
+    expect(events).not.toContain("release:campaign-1");
+  });
+
+  it("publishes final cleanup evidence only after exact lease deletion succeeds", async () => {
+    const events: string[] = [];
+    const fakePorts = ports(events);
+    const lease = { campaignId: "campaign-1", campaignRoot: "/private/campaign-1", device: 7, inode: 8,
+      leaseSha256: "a".repeat(64), planSha256: "b".repeat(64) } as HostedCampaignLeaseHandle;
+    fakePorts.acquireCampaignLease = async () => lease;
+    fakePorts.releaseCampaignLease = async () => {
+      events.push("lease-deleted");
+      return { campaignId: lease.campaignId, campaignRoot: lease.campaignRoot, deleted: true,
+        device: lease.device, inode: lease.inode, leasePath: `${lease.campaignRoot}/barriers/campaign.lease`,
+        leaseSha256: lease.leaseSha256, planSha256: lease.planSha256 };
+    };
+    await runHostedCampaign(input(), fakePorts, bounded(), {
+      authorizeAfterLease: async () => ({ assertReadyForFirstChild: () => {} }),
+      finalizeAfterLeaseCleanup: async (cleanup) => { events.push(`cleanup:${cleanup.deleted}`); },
+    });
+    expect(events.slice(-2)).toEqual(["lease-deleted", "cleanup:true"]);
+  });
+});
+
 describe("hosted campaign coordinator lifecycle", () => {
   it("binds every action and observer dependency to the exact causal run", () => {
     const references = campaignActions(input());

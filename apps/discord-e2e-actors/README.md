@@ -24,20 +24,23 @@ Never reuse the output path. The runner initializes the fresh campaign artifact
 layout separately; compiling a plan does not create run or barrier artifacts.
 
 The definition also requires `privateCoverageSourcePath`. It is a private,
-create-only observation ledger emitted by the reviewed test-only scenario
-driver after the Discord/provider run; it is not a template and must not be
-authored or repaired by an operator. The finite `private-coverage-observer`
-validates that ledger, binds it to the compiled campaign/reconnect run and the
-pinned official bot identities, then publishes `private-coverage.json`. The
+create-only observation archive emitted after the Discord/provider run; it is
+not a template and must not be authored or repaired by an operator. The finite
+`private-coverage-observer` composes the reviewed scenario driver, validates the
+archive against its digest-pinned frozen fixture authority and the pinned
+official-bot target, and publishes the existing `private-coverage.json`
+qualification contract. Its adjacent `.driver-journal` directory is append-only;
+an incomplete reservation is reconciled and is never blindly executed again. The
 hosted pass requires that artifact and the remediation bundle embeds its exact
 bytes. Provider-free structural output is rejected whenever it claims
 production evidence.
 
-The V1 coverage ledger has one ordered record for every supported, abstention,
+The V1 source archive has one ordered record for every supported, abstention,
 withdrawal, duplicate, crash, and ambiguous-outcome scenario. Every record
-retains run, actor, question, projection, effect, provider attempt, source
-generation, authorization epoch, Discord-permission epoch, and durable external
-receipt identities. Its governed surface inventory covers the target parent,
+retains campaign, run, release, deployment, fixture, guild, channel/thread,
+meeting/scope, question, projection generation, effect, provider attempt,
+canonical transcript/turn/citation, and durable external receipt identities.
+Its governed surface inventory covers the target parent,
 all private-test child threads, other enumerated private-test channels, and the
 wrong-scope control surface. The total Discord answer creates must equal the
 number of admitted questions in the one governed target; every other surface
@@ -71,6 +74,36 @@ revisions, and fresh remote probe results. Inputs and receipts are private
 create-only files; a retry uses a new campaign ID, artifact root, and output
 paths.
 
+For a disposable Craig stack, put the admitted release reference in both the
+definition's `craigRelease` field and the private stack input's `release` field.
+The compiler derives the same campaign-only Compose project in every child.
+Keep the stack input mode 0600 inside the campaign control directory; it pins
+the Compose/PostgreSQL/migration/Craig identities and the canonical credential
+path. The filename is exactly `craig-stack-input.json`. It declares exact
+repository digests and image IDs for PostgreSQL, migration, and Craig, the
+complete ordered migration version/checksum set, and a source/version-bound
+Craig application-protocol readiness command with its expected response digest.
+It also carries the exact canonical Compose bytes and digest; both must match
+the build-generated trust root, admitted release reference, and derived project
+before the Docker executor is created. Compose
+may render exactly the admitted database, migration, and bot services only.
+The top level and all three service objects use exact strict field allowlists.
+Extra or unknown fields, services, dependencies, privilege, capabilities,
+external/custom networking or storage, runtimes, devices, non-null commands or
+entrypoints, build/config/secret inputs, namespace sharing, and mounts fail
+closed. Docker receives only the retained Compose stdin, a closed environment,
+fixed source-owned arguments, and the fixed `/` resolution context.
+Production accepts only the reviewed Craig V1 command
+`/app/bin/craig-control readiness --format=json`; the separately tagged
+`test-port-substitute` protocol exists only for the disposable local Compose
+integration and is rejected by `run:hosted-campaign`.
+
+Preflight is deliberately pre-stack: it validates the exact local plan,
+fixtures, secrets, disk, and release trust without looking for the legacy
+`craig-meeting-e2e` project. The runner then acquires the plan-bound canonical
+lease, provisions the dynamic `craig-e2e-…` project, and performs fresh full
+remote provenance and official-bot identity admission against that container.
+
 ```sh
 pnpm --filter @discord-meeting/discord-e2e-actors preflight:hosted-campaign -- \
   --definition /absolute/private/campaign-definition.json \
@@ -81,6 +114,7 @@ pnpm --filter @discord-meeting/discord-e2e-actors preflight:hosted-campaign -- \
   --remote-evidence /absolute/private/remote-evidence.json \
   --release-binding /absolute/private/release-binding.json
 
+DISCORD_E2E_CRAIG_STACK_INPUT=/absolute/private/campaign/control/craig-stack-input.json \
 pnpm --filter @discord-meeting/discord-e2e-actors run:hosted-campaign -- \
   /absolute/private/plans/campaign-plan.json \
   /absolute/private/campaign-pass.json \
@@ -98,6 +132,25 @@ An absent binding fails with `RELEASE_BINDING_REQUIRED`; mutable/missing digests
 historical evidence, or an operator-authored `remote-evidence.json` cannot grant
 authority. Do not bypass admission or present deterministic coordinator tests
 as a real Discord/host pass.
+
+On success, children stop while the lease remains held. The stack receipt,
+finite artifact manifest, and create-only pass receipt are reread and
+independently verified before Compose teardown. Teardown revalidates the held
+lease and create-only stack receipt, rerenders from the same retained Compose
+stdin and exact child environment, and rechecks all image identities immediately
+before `down`. Every targeted Compose `up` or `run` uses `--no-deps`. The live
+`barriers/campaign.lease` path is excluded from the finite manifest; immutable
+`control/campaign-lease-receipt.json` remains after successful lease cleanup so
+the standalone verifier can still validate custody.
+The create-only `control/craig-stack-teardown.json` binds teardown to the pass
+and stack receipt. After the exact lease is unlinked and proved absent, the
+create-only `control/campaign-lease-cleanup.json` cross-binds its path,
+device/inode/digest/root/plan identity to the lease, stack, pass, and teardown
+receipts. Standalone verification requires both that receipt and live lease
+absence. Any earlier failure retains the stack, lease, and evidence.
+Before the first credential or Docker effect, provisioning durably writes
+`control/craig-stack-mutation-start.json`; every later failure quarantines the
+lease and any partially created stack even when no complete stack handle exists.
 
 ## Supplemental Speaker D playback
 

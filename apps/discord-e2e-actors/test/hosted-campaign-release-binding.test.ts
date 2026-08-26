@@ -9,12 +9,14 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import {
+  assertCraigStackInputMatchesCompiledTrustRoot,
   createHostedCampaignReleaseConfig,
   digestHostedCampaignReleaseTrustRootV1,
   hostedCampaignReleaseBindingV1Schema,
   hostedCampaignReleaseTrustRootV1Schema,
   resolveCompiledHostedCampaignReleaseTrustRoot,
 } from "../src/hosted-campaign-release-binding.js";
+import type { CraigCampaignStackInput } from "../src/craig-disposable-campaign-stack.js";
 import { HOSTED_VOICETEXT_CANARY_BINDING_V1 } from "../src/hosted-voicetext-canary-binding.js";
 
 const services = [
@@ -25,6 +27,8 @@ const services = [
 ] as const;
 const pinnedCanary = HOSTED_VOICETEXT_CANARY_BINDING_V1;
 const endpoint = pinnedCanary.endpoint;
+const stackCompose = "services:\n  database: {}\n  migrate: {}\n  bot: {}\n";
+const stackMigrations = [{ checksum: "e".repeat(64), version: "001" }];
 const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
   allowedNetworks: ["discord-meeting-e2e"],
   campaignRoot: "/srv/e2e/campaigns", campaignRootOwnerGid: 10_001, campaignRootOwnerUid: 10_001,
@@ -37,8 +41,23 @@ const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
   craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG_E2E",
     networkName: "discord-meeting-e2e", tcpDestinationPort: 443,
     udpDestinationPorts: { end: 65_535, start: 1_024 } },
+  craigStack: {
+    applicationId: "1533877611258708230", composeCanonical: stackCompose,
+    composeCanonicalSha256: createHash("sha256").update(stackCompose).digest("hex"),
+    databaseImageIdentity: { imageId: `sha256:${"f".repeat(64)}`,
+      repositoryDigest: `registry.test/postgres@sha256:${"f".repeat(64)}` }, databaseService: "database",
+    migrationImageIdentity: { imageId: `sha256:${"e".repeat(64)}`,
+      repositoryDigest: `registry.test/migrate@sha256:${"e".repeat(64)}` },
+    migrations: stackMigrations, migrationService: "migrate",
+    migrationSetSha256: createHash("sha256").update(JSON.stringify(stackMigrations)).digest("hex"),
+    protocol: { command: ["/app/bin/craig-control", "readiness", "--format=json"],
+      expectedResponseSha256: "9".repeat(64), kind: "craig-application",
+      name: "craig-control-readiness", version: "v1" }, service: "bot",
+    serviceImageIdentity: { imageId: `sha256:${"a".repeat(64)}`,
+      repositoryDigest: `registry.test/craig@sha256:${"a".repeat(64)}` }, sourceRevision: "a".repeat(40),
+  },
   environmentFile: "/srv/e2e/source.env", host: "codex-workers-eu-01",
-  remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 3,
+  remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 4,
   secretDirectory: "/run/secrets/discord-e2e",
   services: services.map(([component, composeProject, composeService, digit]) => ({
     component, composeProject, composeService, imageId: `sha256:${digit.repeat(64)}`,
@@ -71,13 +90,50 @@ const campaign = {
 const executeFile = promisify(execFile);
 
 describe("hosted campaign release binding", () => {
+  it("rejects an operator-selected stack mismatch at pre-mutation admission", () => {
+    const stack = trust.craigStack;
+    const input = {
+      campaignId: "campaign-1", campaignRoot: trust.campaignRoot,
+      composeCanonical: stack.composeCanonical, composeCanonicalSha256: stack.composeCanonicalSha256,
+      composeFile: "/srv/e2e/source/craig-compose.yaml",
+      credentialFile: "/srv/e2e/campaigns/campaign-1/control/craig.env",
+      database: { imageIdentity: stack.databaseImageIdentity, migrations: stack.migrations,
+        migrationTable: "migrations", name: "craig", password: "password-012345678901234567890123",
+        schema: "public", service: stack.databaseService, user: "craig", volume: "postgres-data" },
+      migrationImageIdentity: stack.migrationImageIdentity, migrationService: stack.migrationService,
+      readinessTimeoutSeconds: 45, release: { releaseBindingSha256: "1".repeat(64),
+        releaseId: "release-1", trustRootSha256: digestHostedCampaignReleaseTrustRootV1(trust) },
+      service: stack.service, serviceIdentity: { applicationId: stack.applicationId,
+        imageId: stack.serviceImageIdentity.imageId, protocol: stack.protocol,
+        repositoryDigest: stack.serviceImageIdentity.repositoryDigest, sourceRevision: stack.sourceRevision },
+    } as CraigCampaignStackInput;
+    const dockerCalls: string[] = [];
+    expect(() => { assertCraigStackInputMatchesCompiledTrustRoot({ ...input,
+      migrationImageIdentity: { ...input.migrationImageIdentity,
+        repositoryDigest: `registry.test/other@sha256:${"0".repeat(64)}` },
+    }, input.release, trust); }).toThrow("does not match the compiled release trust root");
+    expect(() => { assertCraigStackInputMatchesCompiledTrustRoot({ ...input,
+      serviceIdentity: { ...input.serviceIdentity, protocol: {
+        command: ["redis-cli", "ping"], expectedResponseSha256: "9".repeat(64),
+        kind: "test-port-substitute", name: "substitute", version: "v1",
+      } },
+    }, input.release, trust); }).toThrow("does not match the compiled release trust root");
+    expect(() => {
+      assertCraigStackInputMatchesCompiledTrustRoot({ ...input, release: {
+        ...input.release, releaseId: "operator-selected-release",
+      } }, input.release, trust);
+      dockerCalls.push("executor-created");
+    }).toThrow("does not match the compiled release trust root");
+    expect(dockerCalls).toEqual([]);
+  });
+
   it("rejects the serialized v2 trust root from before Craig policy binding", () => {
     const priorTrustRoot: unknown = JSON.parse(priorSerializedV2TrustRoot);
     expect(priorTrustRoot).not.toHaveProperty("craigNetworkPolicy");
     expect(() => hostedCampaignReleaseTrustRootV1Schema.parse(priorTrustRoot)).toThrow();
     expect(() => resolveCompiledHostedCampaignReleaseTrustRoot({
-      generatorVersion: 2,
-      schemaVersion: 2,
+      generatorVersion: 3,
+      schemaVersion: 3,
       status: "admitted",
       trustRoot: priorTrustRoot,
       trustRootSha256: "0".repeat(64),
@@ -170,20 +226,20 @@ describe("hosted campaign release binding", () => {
 
   it("keeps the checked-in build unadmitted and rejects tampered generated trust", () => {
     expect(resolveCompiledHostedCampaignReleaseTrustRoot({
-      generatorVersion: 2,
-      schemaVersion: 2,
+      generatorVersion: 3,
+      schemaVersion: 3,
       status: "unadmitted",
     })).toBeUndefined();
     expect(() => resolveCompiledHostedCampaignReleaseTrustRoot({
-      generatorVersion: 2,
-      schemaVersion: 2,
+      generatorVersion: 3,
+      schemaVersion: 3,
       status: "admitted",
       trustRoot: trust,
       trustRootSha256: "0".repeat(64),
     })).toThrow("digest is invalid");
     expect(resolveCompiledHostedCampaignReleaseTrustRoot({
-      generatorVersion: 2,
-      schemaVersion: 2,
+      generatorVersion: 3,
+      schemaVersion: 3,
       status: "admitted",
       trustRoot: trust,
       trustRootSha256: digestHostedCampaignReleaseTrustRootV1(trust),
@@ -214,8 +270,8 @@ describe("hosted campaign release binding", () => {
       ]);
     }
     expect(await readFile(firstOutput, "utf8")).toBe(await readFile(secondOutput, "utf8"));
-    expect(await readFile(firstOutput, "utf8")).toContain('"generatorVersion": 2');
-    expect(await readFile(firstOutput, "utf8")).toContain('"schemaVersion": 2');
+    expect(await readFile(firstOutput, "utf8")).toContain('"generatorVersion": 3');
+    expect(await readFile(firstOutput, "utf8")).toContain('"schemaVersion": 3');
     expect(await readFile(firstOutput, "utf8")).toContain(`"trustRootSha256": "${expectedDigest}"`);
     await expect(executeFile(process.execPath, [
       generator,

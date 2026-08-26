@@ -13,10 +13,23 @@ describe("hosted campaign artifact store", () => {
     const root = join(parent, "root");
     const store = new HostedCampaignArtifactStore(root, "campaign-1");
     await store.initialize();
-    await store.acquireLease(bounded());
-    expect(await readFile(join(root, "campaign.lease"), "utf8")).toBe("campaign-1\n");
+    const lease = await store.acquireLease(bounded());
+    expect(JSON.parse(await readFile(join(root, "campaign.lease"), "utf8"))).toEqual({
+      campaignId: "campaign-1", campaignRoot: parent, planSha256: "0".repeat(64),
+    });
     await expect(store.acquireLease(bounded())).rejects.toMatchObject({ code: "EEXIST" });
-    await store.releaseLease();
+    await store.releaseLease(lease);
+  });
+
+  it("fails closed and retains the live lease when exact deletion identity cannot be proven", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "hosted-artifacts-cleanup-failure-"));
+    const root = join(parent, "barriers");
+    const store = new HostedCampaignArtifactStore(root, "campaign-1");
+    await store.initialize();
+    const lease = await store.acquireLease(bounded());
+    await expect(store.releaseLease({ ...lease, inode: lease.inode + 1 }))
+      .rejects.toThrow(/identity changed/u);
+    expect(await lstat(join(root, "campaign.lease"))).toBeDefined();
   });
 
   it("creates one fresh campaign layout and refuses every stale retry", async () => {
@@ -31,8 +44,8 @@ describe("hosted campaign artifact store", () => {
 
     const action = { kind: "provenance-before" as const };
     await store.publishAction(action, { digestSha256: "a".repeat(64) });
-    await store.acquireLease(bounded());
-    await store.releaseLease();
+    const lease = await store.acquireLease(bounded());
+    await store.releaseLease(lease);
 
     const retry = new HostedCampaignArtifactStore(join(campaignRoot, "barriers"), "campaign-1");
     await expect(retry.initializeFreshCampaignLayout()).rejects.toMatchObject({ code: "EEXIST" });

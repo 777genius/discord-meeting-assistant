@@ -7,6 +7,7 @@ import { DiscordRestRoleIdentityProbe } from "./hosted-discord-identity-producer
 import type { HostedRemoteAdmissionCompositionConfig } from "./hosted-remote-admission-composition.js";
 import { HostedRemoteVoicetextCanaryRunnerV1 } from "./hosted-remote-voicetext-canary-runner.js";
 import type { HostedCampaignProductionCandidate } from "./hosted-campaign-production-policy.js";
+import type { HostedCampaignReleaseReferenceV1 } from "./hosted-campaign-release-reference.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-target.js";
 import { HOSTED_VOICETEXT_CANARY_BINDING_V1 } from "./hosted-voicetext-canary-binding.js";
 import { SshHostedServiceLevelRawProbe } from "./hosted-service-level-raw-probe.js";
@@ -16,6 +17,11 @@ import { FileSecretReader } from "./keychain.js";
 import { GENERATED_HOSTED_CAMPAIGN_COMPILED_RELEASE } from
   "./hosted-campaign-compiled-release.generated.js";
 import { hostedCraigNetworkPolicyV1Schema } from "./hosted-deployment-safety-receipt.js";
+import { assertCraigCampaignStackInputMatchesTrust, craigCampaignStackTrustSchema } from
+  "./craig-campaign-stack-release-trust.js";
+import { craigProjectName, verifyCraigCampaignStackReceiptV2, type CraigCampaignStackInput } from
+  "./craig-disposable-campaign-stack.js";
+import { hostedCampaignDefinitionV1Schema } from "./hosted-campaign-plan-builder.js";
 
 const sha256 = z.string().regex(/^[a-f\d]{64}$/u);
 const sourceRevision = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
@@ -79,26 +85,27 @@ export const hostedCampaignReleaseTrustRootV1Schema = z.object({
     transcriptExpectationSha256: sha256,
     expectedSegments: z.array(transcriptSegment).min(1).max(1_024),
   }).strict(),
-  clockMaximumSkewMs: z.number().int().nonnegative().max(60_000),
-  craigNetworkPolicy: hostedCraigNetworkPolicyV1Schema,
-  deployRoot: absolutePath,
-  discordReceiptTtlMs: z.number().int().positive().max(60_000),
-  environmentFile: absolutePath,
+  clockMaximumSkewMs: z.number().int().nonnegative().max(60_000), craigNetworkPolicy: hostedCraigNetworkPolicyV1Schema,
+  craigStack: craigCampaignStackTrustSchema, deployRoot: absolutePath,
+  discordReceiptTtlMs: z.number().int().positive().max(60_000), environmentFile: absolutePath,
   host: z.literal(HOSTED_CAMPAIGN_TARGET.host),
   remoteComposeFile: absolutePath,
-  schemaVersion: z.literal(3),
-  secretDirectory: absolutePath,
-  services: z.array(service.omit({ containerId: true })).length(4),
+  schemaVersion: z.literal(4),
+  secretDirectory: absolutePath, services: z.array(service.omit({ containerId: true })).length(4),
   sourceRoot: absolutePath,
   voicetextReceiptTtlMs: z.number().int().positive().max(60_000),
   voicetextTimeoutMs: z.number().int().positive().max(300_000),
 }).strict().superRefine((value, context) => {
-  if (new Set(value.services.map(({ component }) => component)).size !== 4) {
-    context.addIssue({ code: "custom", message: "Release trust root must pin each service exactly once" });
-  }
-  if (!matchesPinnedVoicetextCanary(value.canary)) {
-    context.addIssue({ code: "custom", message: "Release trust root must match the committed Voicetext canary binding" });
-  }
+  if (new Set(value.services.map(({ component }) => component)).size !== 4) { context.addIssue({
+    code: "custom", message: "Release trust root must pin each service exactly once" }); }
+  const craig = value.services.find(({ component }) => component === "craig");
+  if (craig === undefined || craig.composeService !== value.craigStack.service
+    || craig.imageId !== value.craigStack.serviceImageIdentity.imageId
+    || craig.repositoryDigest !== value.craigStack.serviceImageIdentity.repositoryDigest
+    || craig.sourceRevision !== value.craigStack.sourceRevision) { context.addIssue({ code: "custom",
+    message: "Craig stack trust must match the compiled Craig service identity" }); }
+  if (!matchesPinnedVoicetextCanary(value.canary)) { context.addIssue({ code: "custom",
+    message: "Release trust root must match the committed Voicetext canary binding" }); }
 });
 
 export type HostedCampaignReleaseTrustRootV1 = z.infer<typeof hostedCampaignReleaseTrustRootV1Schema>;
@@ -119,8 +126,8 @@ export function digestHostedCampaignReleaseTrustRootV1(value: HostedCampaignRele
 export function resolveCompiledHostedCampaignReleaseTrustRoot(
   generated: unknown,
 ): HostedCampaignReleaseTrustRootV1 | undefined {
-  if (!isRecord(generated) || generated.schemaVersion !== 2 ||
-    generated.generatorVersion !== 2) {
+  if (!isRecord(generated) || generated.schemaVersion !== 3 ||
+    generated.generatorVersion !== 3) {
     throw new Error("Compiled hosted campaign release metadata is malformed");
   }
   if (generated.status === "unadmitted") {
@@ -140,8 +147,23 @@ export function resolveCompiledHostedCampaignReleaseTrustRoot(
   return Object.freeze(trustRoot);
 }
 
+export function assertCraigStackInputMatchesCompiledTrustRoot(candidate: CraigCampaignStackInput, expectedRelease: HostedCampaignReleaseReferenceV1,
+  trustRoot: HostedCampaignReleaseTrustRootV1 | undefined = COMPILED_HOSTED_CAMPAIGN_RELEASE_TRUST_ROOT,
+): void {
+  if (trustRoot === undefined) { throw new Error("A build-admitted compiled hosted campaign release is required"); }
+  assertCraigCampaignStackInputMatchesTrust(candidate, trustRoot.craigStack, expectedRelease);
+}
+
 function digestHostedCampaignReleaseBindingV1(value: unknown): string {
-  return digestCanonical(hostedCampaignReleaseBindingV1Schema.parse(value));
+  const release = hostedCampaignReleaseBindingV1Schema.parse(value);
+  return digestCanonical({
+    ...release,
+    services: release.services.map((entry) => {
+      if (entry.component !== "craig") { return entry; }
+      const { containerId: _runtimeCraigContainerId, ...identity } = entry;
+      return identity;
+    }),
+  });
 }
 
 export function admitCompiledHostedCampaignReleaseBinding(
@@ -205,7 +227,14 @@ export function createHostedCampaignReleaseConfig(
     }
   }
   const platform = requiredService(byComponent, "meetingPlatform");
-  const craig = requiredService(byComponent, "craig");
+  const releaseCraig = requiredService(byComponent, "craig");
+  const releaseReference = {
+    releaseBindingSha256: digestHostedCampaignReleaseBindingV1(release),
+    releaseId: release.releaseId,
+    trustRootSha256: release.trustRootSha256,
+  };
+  const { craig, craigProject } = resolveCampaignCraig(campaign, releaseCraig, releaseReference);
+  const runtimeServices = release.services.map((entry) => entry.component === "craig" ? craig : entry);
   const campaignSource = `${definition.campaignRoot}/${campaign.campaignId}`;
   const greetingRunSource = `${campaignSource}/run-3`;
   const campaignContainerRoot = `/run/e2e-campaign/${campaign.campaignId}`;
@@ -227,12 +256,12 @@ export function createHostedCampaignReleaseConfig(
       runSiblingPath: `${campaignSource}/run-2`,
       sourcePath: definition.campaignRoot,
     },
-    services: release.services,
+    services: runtimeServices,
     sourceRoot: trust.sourceRoot,
   } as const;
   const ssh = {
     composeFile: trust.remoteComposeFile,
-    craigProjectName: HOSTED_CAMPAIGN_TARGET.craigProject,
+    craigProjectName: craigProject,
     craigServiceName: "bot",
     envFile: trust.environmentFile,
     host: trust.host,
@@ -257,11 +286,12 @@ export function createHostedCampaignReleaseConfig(
   return {
     campaignId: campaign.campaignId,
     clock: Object.assign(new SshHostedServiceLevelRawProbe({
-      composeFile: trust.remoteComposeFile, craigProjectName: HOSTED_CAMPAIGN_TARGET.craigProject,
+      composeFile: trust.remoteComposeFile, craigProjectName: craigProject,
       craigServiceName: "bot", environmentFile: trust.environmentFile, host: trust.host,
       mutationTarget: "test-only", projectName: HOSTED_CAMPAIGN_TARGET.project, sourceRoot: trust.sourceRoot,
     }), { maximumClockSkewBoundMs: trust.clockMaximumSkewMs }),
-    craig: { containerId: craig.containerId, imageDigestSha256: digestFromRepository(craig.repositoryDigest), sourceRevision: craig.sourceRevision },
+    craig: { containerId: craig.containerId, imageDigestSha256: digestFromRepository(craig.repositoryDigest),
+      projectName: craigProject, sourceRevision: craig.sourceRevision },
     deployment: {
       expectation,
       producer: createConcreteSshDeploymentSafetyProbe({
@@ -333,6 +363,48 @@ function requiredService(map: ReadonlyMap<string, z.infer<typeof service>>, comp
   if (value === undefined) { throw new Error(`Release binding is missing ${component}`); }
   return value;
 }
+
+function resolveCampaignCraig(
+  campaign: HostedCampaignProductionCandidate,
+  releaseCraig: z.infer<typeof service>,
+  releaseReference: HostedCampaignReleaseReferenceV1,
+): Readonly<{ craig: RuntimeCraigService; craigProject: string }> {
+  if (campaign.craigStack === undefined) {
+    return Object.freeze({ craig: releaseCraig, craigProject: releaseCraig.composeProject });
+  }
+  const expectedCampaignRoot = resolveCampaignRoot(campaign.definition, campaign.campaignId);
+  const stack = verifyCraigCampaignStackReceiptV2(campaign.craigStack, {
+    campaignId: campaign.campaignId, campaignRoot: expectedCampaignRoot,
+    hostedPlanSha256: campaign.planSha256, maximumAgeMs: 5 * 60_000, nowEpochMs: Date.now(),
+    projectName: craigProjectName(campaign.campaignId, releaseReference), release: releaseReference,
+  });
+  if (stack.campaignLease.sha256.length !== 64
+    || stack.composeFileIdentity.sha256.length !== 64
+    || stack.credentialFileIdentity.sha256.length !== 64
+    || stack.protocol.responseSha256.length !== 64
+    || stack.migrationSetSha256.length !== 64
+    || stack.campaignId !== campaign.campaignId
+    || stack.projectName !== craigProjectName(campaign.campaignId, releaseReference)
+    || JSON.stringify(stack.release) !== JSON.stringify(releaseReference)
+    || stack.imageId !== releaseCraig.imageId
+    || stack.repositoryDigest !== releaseCraig.repositoryDigest
+    || stack.sourceRevision !== releaseCraig.sourceRevision) {
+    throw new Error("Provisioned Craig stack does not match the one-way release plan");
+  }
+  return Object.freeze({
+    craig: { ...releaseCraig, composeProject: stack.projectName, containerId: stack.containerId },
+    craigProject: stack.projectName,
+  });
+}
+
+function resolveCampaignRoot(definition: unknown, campaignId: string): string {
+  const parsed = hostedCampaignDefinitionV1Schema.parse(definition);
+  return `${parsed.campaignRoot}/${campaignId}`.replaceAll("//", "/");
+}
+
+type RuntimeCraigService = Omit<z.infer<typeof service>, "composeProject"> & {
+  readonly composeProject: string;
+};
 
 function applicationIdFor(account: "conversation-observer" | "speaker-a" | "speaker-b" | "speaker-d" | "sut"): string {
   return ({ "conversation-observer": HOSTED_CAMPAIGN_TARGET.observerApplicationId,
