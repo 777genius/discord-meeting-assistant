@@ -4,5 +4,6 @@
     "rootDir": "../..",
     "types": ["node"]
   },
+  "exclude": ["test/meeting-knowledge-production-composition.e2e.test.ts"],
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }

@@ -43,8 +43,6 @@ import { TestOnlyAnswerDeliveryCrashInjection } from
   "../adapters/outbound/test-only-answer-delivery-crash-injection.js";
 
 import type { PlatformConfig } from "../config.js";
-import { participantSpeakerAliases } from
-  "../config/participant-greeting-profiles.js";
 import { classifyPlatformError } from "./observability.js";
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 import { createPersistedFocusedMemoryRoute } from
@@ -102,19 +100,11 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
   // orchestration slack inside the durable lease.
   jobLeaseSeconds: providerAttemptLeaseSeconds,
   maximumProviderAttempts: 2,
-  legacyRetrievalMigration: Object.freeze({
-    deleteAfter: "2026-10-31",
-    enabled: true,
-    minimumQualifiedReleases: 2,
-    requireDrainedJobs: true,
-    requireNoUnresolvedEffects: true,
-  }),
   policyVersion: "meeting-knowledge.focused-memory-final-reply.v3",
   retrieval: Object.freeze({ maximumCandidates: qualifiedFocusedEvidenceCandidateLimit, neighborTurns: 2 }),
   retrievalAdmission: Object.freeze({
-    cutoverEpoch: "retrieval-binding-prerequisite-r1", infinityRolloutBasisPoints: 0,
+    cutoverEpoch: "infinity-locator-v2-only-r1",
     infinityProfileFingerprint: "2e69df6bf22461ee8d6844c7e6699cfb099ad36d84b0aa15f1d3061754ff27be",
-    legacyProfileFingerprint: "3274bcd3dbbe20d913de335025d579614b3fec2531cf75b73dd8a7943aa95e2d",
   }),
 });
 
@@ -237,27 +227,19 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   const currentMemory = new PostgresFocusedMemoryRetrieval(
     input.pool,
     input.config.discordApplicationId,
-    participantSpeakerAliases(input.config.participantGreetingProfiles),
   );
   const historicalAuthorization = input.historicalMemory === undefined
     ? undefined
     : new DiscordHistoricalAuthorizationAdapter(input.client, principals);
   const memory = createPersistedFocusedMemoryRoute({
     current: currentMemory,
-    historicalServingAuthorized: () =>
-      input.historicalMemory?.servingAuthorized() === true,
     ...(input.historicalMemory === undefined || historicalAuthorization === undefined
       ? {} : {
-          legacyHistorical: input.historicalMemory.createFocusedRetrieval(
-            historicalAuthorization,
-          ),
           retrievalV2Historical:
             input.historicalMemory.createFocusedLocatorRetrievalV2(
               historicalAuthorization,
             ),
         }),
-    remoteSearchAvailable: () => input.historicalMemory?.searchEnabled() === true,
-    turnHashes: { hash: canonicalFinalReplyTurnHash },
   });
   const admission = new AdmitCurrentFinalReply(
     evidence,

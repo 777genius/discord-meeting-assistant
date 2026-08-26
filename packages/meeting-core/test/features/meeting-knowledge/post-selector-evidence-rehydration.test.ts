@@ -53,8 +53,6 @@ const policy: LocalFinalReplyPolicy = {
   retrievalAdmission: {
     cutoverEpoch: "test-cutover-r1",
     infinityProfileFingerprint: "e".repeat(64),
-    infinityRolloutBasisPoints: 0,
-    legacyProfileFingerprint: "f".repeat(64),
     retrievalV2ProviderBinding,
   },
 };

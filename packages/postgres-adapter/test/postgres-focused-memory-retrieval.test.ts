@@ -320,9 +320,6 @@ describe("PostgreSQL focused current-meeting memory", () => {
         expect.arrayContaining(["turn-0000", "turn-0180", "turn-0719"]),
       );
       expect(result.candidates.length).toBeLessThanOrEqual(input.maximumCandidates);
-      const scores = result.candidates.map(({ relevanceScore }) => relevanceScore ?? -1);
-      expect(scores.every((score) => score >= 0 && score <= 1)).toBe(true);
-      expect(scores).toEqual(scores.toSorted((left, right) => right - left));
       expect(JSON.stringify(result.candidates)).not.toContain("thirty days");
     }
   });
@@ -394,43 +391,22 @@ describe("PostgreSQL focused current-meeting memory", () => {
   });
 });
 
-describe("PostgreSQL focused retrieval cues", () => {
-  it("resolves configured real names without exposing them as evidence", async () => {
+describe("PostgreSQL bounded canonical exact lexical fallback", () => {
+  it("does not expand neighbors or apply speaker/time boosts", async () => {
     const snapshot = twoHourSnapshot();
     const { input } = retrievalInput(
       snapshot,
-      "Что Влад сказал latest about Atlas?",
+      "What was ORION-START?",
     );
     const result = await new PostgresFocusedMemoryRetrieval(
       snapshotPool(snapshot),
       botId,
-      { "speaker-b": ["Влад", "Vlad"] },
-    ).retrieve({ ...input, maximumCandidates: 6, neighborTurns: 1 });
+    ).retrieve({ ...input, maximumCandidates: 6, neighborTurns: 8 });
 
     expect(result.status).toBe("current");
     if (result.status === "current") {
-      expect(result.candidates[0]?.turnId).toBe("turn-0719");
-      expect(JSON.stringify(result.candidates)).not.toContain("Влад");
-    }
-  });
-
-  it("uses explicit speaker and timeline cues without widening the candidate set", async () => {
-    const snapshot = twoHourSnapshot();
-    const { input } = retrievalInput(
-      snapshot,
-      "What did speaker-b say latest about Atlas?",
-    );
-    const result = await new PostgresFocusedMemoryRetrieval(
-      snapshotPool(snapshot),
-      botId,
-    ).retrieve({ ...input, maximumCandidates: 6, neighborTurns: 1 });
-
-    expect(result.status).toBe("current");
-    if (result.status === "current") {
-      expect(result.candidates[0]?.turnId).toBe("turn-0719");
-      expect(result.candidates.length).toBeLessThanOrEqual(6);
-      expect(result.candidates.map(({ turnId }) => turnId))
-        .toEqual(expect.arrayContaining(["turn-0718", "turn-0719"]));
+      expect(result.candidates.map(({ turnId }) => turnId)).toEqual(["turn-0000"]);
+      expect(result.candidates[0]).not.toHaveProperty("relevanceScore");
     }
   });
 });

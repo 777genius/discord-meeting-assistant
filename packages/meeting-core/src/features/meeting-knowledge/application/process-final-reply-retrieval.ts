@@ -11,12 +11,7 @@ export function isComposedLocalBinding(
   policy: LocalFinalReplyPolicy,
 ): boolean {
   if (isLegacyQuestionBinding(binding)) {
-    return true;
-  }
-  if (binding.retrievalBinding.retrievalPath === "legacy_downstream_v1") {
-    return policy.legacyRetrievalMigration?.enabled !== false &&
-      binding.retrievalBinding.profileFingerprint ===
-        policy.retrievalAdmission.legacyProfileFingerprint;
+    return false;
   }
   if (binding.retrievalBinding.retrievalPath !== "infinity_locator_v2") {
     return false;

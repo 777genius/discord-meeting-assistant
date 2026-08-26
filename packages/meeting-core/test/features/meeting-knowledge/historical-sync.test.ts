@@ -234,7 +234,7 @@ describe("historical exact planning", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids: new TestIds(),
-      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting },
       planner: {
         prepareWindows: async () => {
           throw new HistoricalIndexPlannerUnavailableError("planner busy");
@@ -275,7 +275,6 @@ describe("historical projection sync worker", () => {
       indexFinalMeeting: vi.fn()
         .mockResolvedValueOnce({ code: "memory.network_error", retryable: true, status: "outcome_unknown" })
         .mockResolvedValueOnce({ code: "memory.contract_rejected", retryable: false, status: "rejected" }),
-      searchRoom: vi.fn(),
     };
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
@@ -315,7 +314,7 @@ describe("historical projection sync worker", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting, indexFinalMeeting: vi.fn(), searchRoom: vi.fn() },
+      memory: { deleteMeeting, indexFinalMeeting: vi.fn() },
       store,
     });
 
@@ -344,7 +343,7 @@ describe("historical projection sync worker", () => {
     const indexing = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting },
       store: indexingStore,
     });
 
@@ -362,7 +361,7 @@ describe("historical projection sync worker", () => {
     const deleting = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting, indexFinalMeeting: vi.fn(), searchRoom: vi.fn() },
+      memory: { deleteMeeting, indexFinalMeeting: vi.fn() },
       store: deletionStore,
     });
 
@@ -402,7 +401,7 @@ describe("historical projection sync worker", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting },
       store,
     });
 
@@ -427,7 +426,7 @@ describe("historical projection sync worker", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting },
       store,
     });
 
@@ -456,7 +455,7 @@ describe("historical projection sync worker", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting, indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting, indexFinalMeeting },
       store,
       tokenizer: () => exactTokenizer,
     });
@@ -545,7 +544,7 @@ describe("historical retrieval projection generation identity", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting, indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting, indexFinalMeeting },
       store,
     });
 
@@ -632,7 +631,7 @@ describe("historical profile rebuild retry", () => {
         authority: { loadAcceptedFinalMeeting: async () => accepted },
         ids,
         indexProfileId: "new-profile",
-        memory: { deleteMeeting, indexFinalMeeting, searchRoom: vi.fn() },
+        memory: { deleteMeeting, indexFinalMeeting },
         store,
         tokenizer: () => exactTokenizer,
       }, {
@@ -686,7 +685,6 @@ describe("historical projection sync worker recovery", () => {
           status: "absence_unverified",
         }),
         indexFinalMeeting: vi.fn(),
-        searchRoom: vi.fn(),
       },
       store,
     });
@@ -724,7 +722,6 @@ describe("historical projection sync worker recovery", () => {
           await provider;
           return { remoteDocumentIds: {}, status: "applied" };
         },
-        searchRoom: vi.fn(),
       };
       const worker = new HistoricalSyncWorker({
         authority: { loadAcceptedFinalMeeting: async () => accepted },

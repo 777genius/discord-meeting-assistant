@@ -27,12 +27,6 @@ export interface FocusedMemoryReference {
   /** Exact local historical plan identity. Current-meeting references omit it. */
   readonly historicalSource?: HistoricalEvidenceSource;
   readonly meetingId: string;
-  /**
-   * Deterministic, normalized retrieval relevance. This is ranking metadata,
-   * never evidence authority; canonical text and identity are still reloaded
-   * locally before generation.
-   */
-  readonly relevanceScore?: number;
   readonly sourceEndCodePoint?: number;
   readonly sourceStartCodePoint?: number;
   readonly transcriptId: string;

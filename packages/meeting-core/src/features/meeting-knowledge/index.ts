@@ -84,25 +84,11 @@ export {
 } from "./application/historical-sync-worker.js";
 export { RequestHistoricalMeetingDeletion } from "./application/request-historical-meeting-deletion.js";
 export {
-  DEFAULT_FOCUSED_RETRIEVAL_POLICY,
-  HistoricalFocusedRetrieval,
-  type FocusedGroundingPlanV1,
-  type FocusedRetrievalPolicyV1,
-  type FocusedRetrievalResultV1,
-} from "./application/historical-retrieval.js";
-export {
-  decomposeHistoricalQuery,
-} from "./application/historical-retrieval-ranking.js";
-export {
   resolveRequestedSpeakerAliases,
   resolveRequestedSpeakerIds,
   type RequestedSpeakerAliasV1,
   type SpeakerAliasMapV1,
 } from "./application/speaker-alias-resolution.js";
-export {
-  SameRoomFocusedMemoryRetrieval,
-  type CanonicalEvidenceTurnHashPort,
-} from "./application/same-room-focused-memory.js";
 export {
   AnswerGroundedMeetingQuestion,
   DEFAULT_GROUNDED_MEETING_QUESTION_POLICY,
@@ -181,7 +167,6 @@ export type {
 } from "./application/ports/historical-index-planner.js";
 export type {
   HistoricalBlockManifestV1,
-  HistoricalCandidateLocatorV1,
   HistoricalDeleteRequestV1,
   HistoricalDeleteResultV1,
   HistoricalEvidenceSliceV1,
@@ -191,8 +176,6 @@ export type {
   HistoricalMemoryPort,
   HistoricalMemoryOperationOptionsV1,
   HistoricalOpaqueIdPort,
-  HistoricalSearchRequestV1,
-  HistoricalSearchResultV1,
   HistoricalTopologyV1,
   HistoricalTurnSourceV1,
   LocallyRehydratedEvidenceBlockV1,
@@ -264,10 +247,7 @@ export {
 } from "./domain/question-job.js";
 export {
   RetrievalBinding,
-  retrievalRolloutBucket,
-  retrievalRolloutBucketCount,
   retrievalV2ConsumerEvidenceByteLimit,
-  retrievalV2Selected,
   sameFocusedLocatorRetrievalV2Value,
   selectRetrievalBinding,
   type RetrievalAdmissionRollout,
@@ -315,6 +295,7 @@ export type {
   AnswerEffectDeliveryResult,
   AnswerEffectReservation,
   AnswerPublicationPort,
+  CanonicalEvidenceTurnHashPort,
   CanonicalFinalReplyEvidenceResult,
   CurrentFinalReplyBindingResult,
   CurrentFinalReplyBinding,

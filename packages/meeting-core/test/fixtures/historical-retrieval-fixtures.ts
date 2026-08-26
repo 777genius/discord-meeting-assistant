@@ -1,18 +1,12 @@
 import {
-  DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-  HistoricalFocusedRetrieval,
   admitAcceptedFinalMeeting,
   createHistoricalReleaseBinding,
   type AcceptedFinalMeetingV1,
-  type FocusedRetrievalPolicyV1,
   type HistoricalAppliedPlanV1,
   type HistoricalCandidateRecordV1,
-  type HistoricalEvidenceAuthority,
-  type HistoricalMemoryPort,
   type HistoricalOpaqueIdPort,
   type HistoricalReleaseBindingV1,
   type HistoricalSyncStore,
-  type SpeakerAliasMapV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 export class TestIds implements HistoricalOpaqueIdPort {
@@ -34,19 +28,6 @@ export const blockPolicy = Object.freeze({
   maxTurnsPerBlock: 64,
   version: "meeting-knowledge.block-policy.v1",
 } as const);
-
-export const retrievalPolicy: FocusedRetrievalPolicyV1 = Object.freeze({
-  blockPolicy,
-  candidateLimitPerQuery: 8,
-  maximumDecomposedQueries: 4,
-  maximumEvidenceBytes: 16_000,
-  maximumLocalScanBlocks: 512,
-  minimumProviderScore: 0.01,
-  neighborRadius: 1,
-  rerankLimit: 5,
-  searchTimeoutMs: 100,
-  version: "meeting-knowledge.focused-retrieval.v1",
-});
 
 export function makeMeeting(input: {
   readonly authoritativeDurationMs?: number;
@@ -206,55 +187,4 @@ export class AppliedStore implements HistoricalSyncStore {
   ): Promise<boolean> {
     return this.currentSequence.shift() ?? this.current;
   }
-}
-
-function authority(
-  meetings: readonly AcceptedFinalMeetingV1[],
-): HistoricalEvidenceAuthority {
-  const byRelease = new Map(meetings.map((meeting) => [
-    meeting.binding.releaseId,
-    meeting,
-  ]));
-  return {
-    loadAcceptedFinalMeeting: async (binding) =>
-      byRelease.get(binding.releaseId) ?? null,
-  };
-}
-
-export function retrieval(input: {
-  readonly meetings: readonly AcceptedFinalMeetingV1[];
-  readonly memory: HistoricalMemoryPort;
-  readonly policy?: FocusedRetrievalPolicyV1;
-  readonly speakerAliases?: SpeakerAliasMapV1;
-  readonly store: AppliedStore;
-  readonly twoHourEnabled?: boolean;
-}) {
-  return new HistoricalFocusedRetrieval({
-    authority: authority(input.meetings),
-    authorization: {
-      authorize: async ({ authorizationPrincipalRef, roomId }) => ({
-        authorizationDigest: `${authorizationPrincipalRef}:${roomId}:v1`,
-        authorizationEpoch: "1",
-        authorized: authorizationPrincipalRef === "principal" &&
-          roomId === "room-1",
-        policyVersion: "room-policy.v1",
-      }),
-    },
-    ids: new TestIds(),
-    memory: input.memory,
-    ...(input.speakerAliases === undefined
-      ? {}
-      : { speakerAliases: input.speakerAliases }),
-    store: input.store,
-  }, input.policy ?? retrievalPolicy, {
-    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-    qualification: input.twoHourEnabled === true
-      ? {
-          evidenceSha256: "e".repeat(64),
-          releaseRevision: "f".repeat(40),
-          rolloutEpoch: "test-r1",
-          schemaVersion: 1,
-        }
-      : null,
-  });
 }

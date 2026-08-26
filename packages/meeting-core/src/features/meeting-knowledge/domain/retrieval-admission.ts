@@ -1,11 +1,9 @@
 import {
   MeetingKnowledgeInvariantError,
-  requireKnowledgeInteger,
   requireKnowledgeText,
   requireSha256,
 } from "./errors.js";
 
-export const retrievalRolloutBucketCount = 10_000;
 export const retrievalV2ConsumerEvidenceByteLimit = 24_000;
 
 export interface FocusedLocatorRetrievalV2ProviderBinding {
@@ -94,8 +92,6 @@ export type RetrievalBindingSnapshot =
 export interface RetrievalAdmissionRollout {
   readonly cutoverEpoch: string;
   readonly infinityProfileFingerprint: string;
-  readonly infinityRolloutBasisPoints: number;
-  readonly legacyProfileFingerprint: string;
   readonly retrievalV2ProviderBinding?: FocusedLocatorRetrievalV2ProviderBinding;
 }
 
@@ -204,98 +200,20 @@ export class RetrievalBinding {
   }
 }
 
-/**
- * FNV-1a over the exact UTF-16 code units of the length-framed epoch and job
- * identity. Math.imul and unsigned reduction make the result process-stable.
- */
-export function retrievalRolloutBucket(input: {
-  readonly cutoverEpoch: string;
-  readonly questionId: string;
-}): number {
-  const cutoverEpoch = requireCutoverEpoch(input.cutoverEpoch);
-  const questionId = requireKnowledgeText(input.questionId, "questionId", 128);
-  const identity = `${cutoverEpoch.length}:${cutoverEpoch}${questionId.length}:${questionId}`;
-  let hash = 2_166_136_261;
-  for (let index = 0; index < identity.length; index += 1) {
-    hash = Math.imul(hash ^ identity.charCodeAt(index), 16_777_619) >>> 0;
-  }
-  return hash % retrievalRolloutBucketCount;
-}
-
 export function selectRetrievalBinding(input: {
   readonly questionId: string;
-  readonly retrievalV2Request?: FocusedLocatorRetrievalV2RequestSnapshot;
+  readonly retrievalV2Request: FocusedLocatorRetrievalV2RequestSnapshot;
   readonly rollout: RetrievalAdmissionRollout;
 }): RetrievalBinding {
-  const selection = validateRetrievalSelection(input);
-  if (selection.useInfinity) {
-    if (input.retrievalV2Request === undefined) {
-      throw new MeetingKnowledgeInvariantError(
-        "INVALID_BINDING",
-        "Retrieval V2 rollout requires an admission-time request snapshot",
-      );
-    }
-    return RetrievalBinding.create({
-      cutoverEpoch: selection.cutoverEpoch,
-      profileFingerprint: selection.infinityProfileFingerprint,
-      request: input.retrievalV2Request,
-      retrievalPath: "infinity_locator_v2",
-    });
-  }
+  requireKnowledgeText(input.questionId, "questionId", 128);
   return RetrievalBinding.create({
-    cutoverEpoch: selection.cutoverEpoch,
-    profileFingerprint: selection.legacyProfileFingerprint,
-    retrievalPath: "legacy_downstream_v1",
-  });
-}
-
-export function retrievalV2Selected(input: {
-  readonly questionId: string;
-  readonly rollout: RetrievalAdmissionRollout;
-}): boolean {
-  return validateRetrievalSelection(input).useInfinity;
-}
-
-interface ValidatedRetrievalSelection {
-  readonly cutoverEpoch: string;
-  readonly infinityProfileFingerprint: string;
-  readonly legacyProfileFingerprint: string;
-  readonly useInfinity: boolean;
-}
-
-function validateRetrievalSelection(input: {
-  readonly questionId: string;
-  readonly rollout: RetrievalAdmissionRollout;
-}): ValidatedRetrievalSelection {
-  const questionId = requireKnowledgeText(input.questionId, "questionId", 128);
-  const cutoverEpoch = requireCutoverEpoch(input.rollout.cutoverEpoch);
-  const infinityProfileFingerprint = requireSha256(
-    input.rollout.infinityProfileFingerprint,
-    "retrievalRollout.infinityProfileFingerprint",
-  );
-  const legacyProfileFingerprint = requireSha256(
-    input.rollout.legacyProfileFingerprint,
-    "retrievalRollout.legacyProfileFingerprint",
-  );
-  const basisPoints = requireKnowledgeInteger(
-    input.rollout.infinityRolloutBasisPoints,
-    "retrievalRollout.infinityRolloutBasisPoints",
-  );
-  if (basisPoints > retrievalRolloutBucketCount) {
-    throw new MeetingKnowledgeInvariantError(
-      "INVALID_BINDING",
-      `retrievalRollout.infinityRolloutBasisPoints must not exceed ${retrievalRolloutBucketCount}`,
-    );
-  }
-  return Object.freeze({
-    cutoverEpoch,
-    infinityProfileFingerprint,
-    legacyProfileFingerprint,
-    useInfinity: basisPoints === retrievalRolloutBucketCount ||
-      (basisPoints > 0 && retrievalRolloutBucket({
-        cutoverEpoch,
-        questionId,
-      }) < basisPoints),
+    cutoverEpoch: requireCutoverEpoch(input.rollout.cutoverEpoch),
+    profileFingerprint: requireSha256(
+      input.rollout.infinityProfileFingerprint,
+      "retrievalAdmission.infinityProfileFingerprint",
+    ),
+    request: input.retrievalV2Request,
+    retrievalPath: "infinity_locator_v2",
   });
 }
 

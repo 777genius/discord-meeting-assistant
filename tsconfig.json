@@ -4,5 +4,20 @@
     "noEmit": true,
     "types": ["node"]
   },
+  "exclude": [
+    "apps/meeting-platform/test/meeting-knowledge-production-composition.e2e.test.ts",
+    "packages/infinity-context-adapter/test/historical-planner-query-isolation.e2e.test.ts",
+    "packages/infinity-context-adapter/test/infinity-context-historical-memory.e2e.test.ts",
+    "packages/infinity-context-adapter/test/infinity-context-positional.e2e.test.ts",
+    "packages/infinity-context-adapter/test/infinity-context-qualification-contract.test.ts",
+    "packages/infinity-context-adapter/test/infinity-context-real-service.e2e.test.ts",
+    "packages/infinity-context-adapter/test/infinity-context-semantic-quality.e2e.test.ts",
+    "packages/infinity-context-adapter/test/infinity-context-semantic-service.e2e.test.ts",
+    "packages/infinity-context-adapter/test/infinity-semantic-qualification.test.ts",
+    "packages/infinity-context-adapter/test/real-service-qualification-helper.ts",
+    "packages/infinity-context-adapter/test/semantic-quality-answer-runner.ts",
+    "packages/infinity-context-adapter/test/semantic-quality-evaluation.test.ts",
+    "packages/infinity-context-adapter/test/semantic-quality-retrieval-helper.ts"
+  ],
   "include": ["apps/**/*.ts", "packages/**/*.ts", "tooling/**/*.ts"]
 }

@@ -68,6 +68,25 @@ class RetrievalV2Endpoint implements HttpTransport {
 
 function response(): Record<string, unknown> {
   const candidate = (successFixture.candidates as Array<Record<string, unknown>>)[0];
+  const direct: Record<string, unknown> = structuredClone({
+    ...candidate,
+    neighbors: [],
+  });
+  direct.matched_query_ids = ["original-question"];
+  direct.source_requested_weight_micros = 0;
+  direct.source_matched_weight_micros = 0;
+  direct.actor_requested_weight_micros = 0;
+  direct.actor_matched_weight_micros = 0;
+  direct.time_requested_weight_micros = 0;
+  direct.time_matched_weight_micros = 0;
+  direct.preference_score_micros = 0;
+  direct.preference_boost_micros = 0;
+  direct.rerank_score_picos = direct.base_score_picos;
+  direct.contributions = (direct.contributions as Array<Record<string, unknown>>)
+    .map((contribution) => ({
+      ...contribution,
+      query_id: "original-question",
+    }));
   return structuredClone({
     ...successFixture,
     applied_bounds: {
@@ -79,7 +98,7 @@ function response(): Record<string, unknown> {
       returned_neighbors: 0,
       returned_seeds: 1,
     },
-    candidates: [{ ...candidate, neighbors: [] }],
+    candidates: [direct],
   });
 }
 
@@ -119,15 +138,15 @@ InfinityContextRetrievalV2Request {
       tagsNone: ["draft"],
       timeInterval: null,
     },
-    queries: [{ query: "approved launch decision", queryId: "q1", weightMicros: 1_000_000 }],
+    queries: [{ query: "approved launch decision", queryId: "original-question" }],
     schemaVersion: 2,
     scope: { memoryScopeId: "scope-a", spaceId: "space-a", threadId: null },
     softPreferences: {
-      actorPreferences: [{ key: "actor-a", weightMicros: 1_000_000 }],
-      relativeTimeInterval: { endMs: 480_000, startMs: 420_000 },
-      sourcePreferences: [{ key: "source-family-a", weightMicros: 1_000_000 }],
+      actorPreferences: [],
+      relativeTimeInterval: null,
+      sourcePreferences: [],
       timeInterval: null,
-      timeWeightMicros: 1_000_000,
+      timeWeightMicros: null,
     },
     ...overrides,
   };
@@ -143,16 +162,12 @@ function adapter(endpoint: RetrievalV2Endpoint, timeoutMs = 100) {
 }
 
 describe("Infinity Context locator-only Retrieval V2 adapter", () => {
-  it("maps exact scope, filters, preferences, binding, and budgets", async () => {
+  it("passes one original question and hard filters unchanged without ranking", async () => {
     const endpoint = new RetrievalV2Endpoint();
     const result = await adapter(endpoint).retrieve(request());
 
     expect(result).toEqual({
-      candidates: [{
-        locator: "candidate-007",
-        providerRank: 1,
-        providerScore: 0.032522474881,
-      }],
+      candidates: [{ locator: "candidate-007" }],
       status: "available",
     });
     const wire = endpoint.requests[1]?.body;
@@ -179,13 +194,12 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
         tags_none: ["draft"], time_interval: null,
       },
       profile_id: capability.profile_id,
-      queries: [{ query: "approved launch decision", query_id: "q1", weight_micros: 1_000_000 }],
+      queries: [{ query: "approved launch decision", query_id: "original-question",
+        weight_micros: 1_000_000 }],
       scope: { memory_scope_id: "scope-a", space_id: "space-a", thread_id: null },
       soft_preferences: {
-        actor_preferences: [{ key: "actor-a", weight_micros: 1_000_000 }],
-        relative_time_interval: { end_ms: 480_000, start_ms: 420_000 },
-        source_preferences: [{ key: "source-family-a", weight_micros: 1_000_000 }],
-        time_interval: null, time_weight_micros: 1_000_000,
+        actor_preferences: [], relative_time_interval: null,
+        source_preferences: [], time_interval: null, time_weight_micros: null,
       },
     });
     expect(JSON.stringify(result)).not.toMatch(/text|snippet|content/u);

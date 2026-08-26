@@ -118,7 +118,10 @@ describe("persisted focused locator Retrieval V2 request", () => {
         scopeId: "scope-1",
       });
       expect(request).not.toBeNull();
-      expect(request?.queries[0]?.query).toBe(question);
+      expect(request?.queries).toEqual([{
+        query: question,
+        queryId: "original-question",
+      }]);
       expect(request?.filters.actorKeys).toEqual(["opaque-vlad"]);
       expect(request?.filters.relativeTimeInterval).toEqual({
         endMs: 480_000,
@@ -137,6 +140,13 @@ describe("persisted focused locator Retrieval V2 request", () => {
         evidenceByteLimit: 24_000,
         neighborRadius: 0,
         resultLimit: 8,
+      });
+      expect(request?.softPreferences).toEqual({
+        actorPreferences: [],
+        relativeTimeInterval: null,
+        sourcePreferences: [],
+        timeInterval: null,
+        timeWeightMicros: null,
       });
     });
 
@@ -157,7 +167,7 @@ describe("persisted focused locator Retrieval V2 request", () => {
     }
     const retrieval: FocusedLocatorRetrievalV2Port = {
       retrieve: vi.fn().mockResolvedValue({
-        candidates: [{ locator, providerRank: 1, providerScore: 0.9 }],
+        candidates: [{ locator }],
         status: "available",
       }),
     };
@@ -204,7 +214,7 @@ describe("persisted focused locator Retrieval V2 request", () => {
     const result = await new HistoricalFocusedLocatorRetrievalV2({
       authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
       retrieval: { retrieve: async () => ({
-        candidates: [{ locator, providerRank: 1, providerScore: 0.9, [field]: value }],
+        candidates: [{ locator, [field]: value }],
         status: "available",
       }) },
       store,
@@ -231,7 +241,7 @@ describe("persisted focused locator Retrieval V2 request", () => {
     const result = await new HistoricalFocusedLocatorRetrievalV2({
       authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
       retrieval: { retrieve: async () => ({
-        candidates: [{ locator, providerRank: 1, providerScore: 0.9 }],
+        candidates: [{ locator }],
         status: "available",
       }) },
       store: duplicatedStore,
@@ -260,8 +270,7 @@ describe("persisted focused locator Retrieval V2 request", () => {
           authority: authority(meeting), authorization: authorized, ids: new TestIds(),
           retrieval: { retrieve: async (_request, options) => {
             options?.signal?.throwIfAborted();
-            return { candidates: [{ locator: candidateLocator, providerRank: 1,
-              providerScore: 0.9 }], status: "available" };
+            return { candidates: [{ locator: candidateLocator }], status: "available" };
           } },
           store,
           turnHashes: { hash: ({ turnId }) => `hash:${turnId}` },

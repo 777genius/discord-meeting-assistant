@@ -1,7 +1,7 @@
 # Meeting memory retrieval boundary migration
 
-Status: **NO-GO for behavior-changing implementation**; documentation-only
-decision and migration ledger
+Status: downstream deletion implemented; **deployment blocked pending the
+checked ADR-0049 step-7 drain receipt**
 
 Date: 2026-08-22
 
@@ -22,9 +22,27 @@ citations, answer validation, and abstention. Keep Publishing authoritative for
 durable Discord effects and Conversation authoritative for cancellation and
 playback.
 
-This plan does not authorize a production source, test, manifest, vendor,
-deployment, CI, or configuration change. Each implementation phase requires a
-separate reviewed slice after its stated gate is satisfied.
+The original plan did not itself authorize implementation or deployment. The
+2026-08-26 deletion slice is separately reviewed; deployment still requires the
+operational drain receipt below.
+
+## 2026-08-26 exact deletion disposition
+
+| Symbol/file | Disposition | Deletion status |
+| --- | --- | --- |
+| `HistoricalFocusedRetrieval`, `FocusedRetrievalPolicyV1`, `DEFAULT_FOCUSED_RETRIEVAL_POLICY`, `validateFocusedRetrievalPolicy` | Generic downstream historical query engine | Deleted from Meeting Core and public exports. |
+| `decomposeHistoricalQuery`, `mergeQualifiedHistoricalSearchResults`, `rerankHistoricalBlocks`, `normalizeProviderScore`, lexical/speaker/temporal score helpers and neighbor propagation | Query decomposition, score normalization/fusion and downstream reranking | Deleted. New V2 admission persists one unweighted `original-question`. |
+| `SameRoomFocusedMemoryRetrieval`, `crossSourceRank`, `scoreFor`, `normalizedScore` | Legacy current/historical score fusion | Deleted. V2 composition uses deterministic provider order and explicit current/historical interleave bounds. |
+| `HistoricalMemoryPort.searchRoom`, `InfinityContextHistoricalMemoryAdapter.searchRoom`, `validSearchRequest`, `candidateLocators`, `isHybridQualified` | Text-bearing `/v1/search` semantic read route and diagnostics qualification | Deleted from production ports and adapter. Indexing and deletion remain. |
+| `FocusedMemoryReference.relevanceScore`, `decodeRelevanceScore` | Downstream provider/local score propagation | Deleted. Canonical reference identity and order remain. |
+| `legacyRetrievalMigration`, rollout basis points, legacy profile selection, `PersistedRetrievalBindingRouter` | Constructible legacy migration routing for new jobs | Deleted. New admission is V2-only. |
+| persisted protocol-1 bindings and `infinity_locator_v1` / `legacy_downstream_v1` literals | Historical schema readability | Retained only in codecs/value objects; `isComposedLocalBinding` rejects them, so execution fails closed. Delete only after a checked drain and retention review. |
+| old `/v1/search` semantic qualification harnesses | Evidence for deleted behavior | Archived from default compilation/test discovery; retained evidence files are unchanged and do not qualify V2. |
+
+Deployment requires a retained check proving zero nonterminal or leased
+old-path jobs, zero unresolved old-path effects, expired rollback, and drained
+old-profile deletion. The repository snapshot contains no such operational
+receipt, so this is a hard deployment blocker rather than an inferred pass.
 
 ## PR #60 audit identity and completeness
 
@@ -222,10 +240,11 @@ Then delete `mergeQualifiedHistoricalSearchResults`,
 `relevantQueryTokens`, historical `lexicalScore`, `speakerScore` and
 `temporalScore`, historical neighbor propagation, `crossSourceRank`,
 diagnostics-derived `isHybridQualified`/`candidateLocators`, relevance-score
-persistence, and the adapter's `/v1/search` call. Keep alias resolution,
-meeting-specific `decomposeHistoricalQuery`, source selection, exhaustive
-routing, local current/hot selection, final composition, rehydration,
-citations, fallback/abstention, Publishing effects, and Conversation playback.
+persistence, and the adapter's `/v1/search` call. The 2026-08-26 slice deleted
+those symbols plus `decomposeHistoricalQuery`. Keep alias resolution, hard
+source selection, exhaustive routing, bounded exact-token current/hot fallback,
+deterministic final composition, rehydration, citations, abstention, Publishing
+effects, and Conversation playback.
 
 ## Security gates
 
@@ -252,8 +271,8 @@ citations, fallback/abstention, Publishing effects, and Conversation playback.
 ## Performance gates
 
 - Benchmark p50/p95/p99 and hard deadline/cancellation with real disposable
-  PostgreSQL, keyword retrieval, Qdrant, official SDK transport, four query
-  variants, neighbor expansion, and at least 40 meetings/500 blocks.
+  PostgreSQL, keyword retrieval, Qdrant, official SDK transport, one original
+  question, zero neighbor expansion, and at least 40 meetings/500 blocks.
 - Include concurrent Discord and voice load plus shadow doubling.
 - Bound CPU, memory, database calls, fan-out, pagination, and response bytes
   when most top candidates are stale or unauthorized.

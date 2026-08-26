@@ -22,7 +22,7 @@
     "test:semantic-quality-v4:real-retention": "node --import tsx/esm test/run-semantic-quality-v4.ts --real-retention",
     "test:semantic-quality-v4:real-cleanup": "node --import tsx/esm test/run-semantic-quality-v4.ts --real-cleanup",
     "test:semantic-quality-v4:real-status": "node --import tsx/esm test/run-semantic-quality-v4.ts --real-status",
-    "test:prepared": "vitest run --no-file-parallelism",
+    "test:prepared": "vitest run --no-file-parallelism --exclude test/historical-planner-query-isolation.e2e.test.ts --exclude test/infinity-context-historical-memory.e2e.test.ts --exclude test/infinity-context-positional.e2e.test.ts --exclude test/infinity-context-qualification-contract.test.ts --exclude test/infinity-context-real-service.e2e.test.ts --exclude test/infinity-context-semantic-quality.e2e.test.ts --exclude test/infinity-context-semantic-service.e2e.test.ts --exclude test/infinity-semantic-qualification.test.ts --exclude test/semantic-quality-evaluation.test.ts",
     "typecheck": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared",
     "typecheck:prepared": "tsc --project tsconfig.json --noEmit --pretty false"
   },

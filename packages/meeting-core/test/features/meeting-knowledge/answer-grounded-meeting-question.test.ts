@@ -248,49 +248,4 @@ describe("published grounded meeting question", () => {
     expect(observations).toBe(3);
   });
 
-  it("does not ignore a focused retriever route_required outcome", async () => {
-    const exhaustive = { buildPlan: vi.fn(async () => ({
-      plan: {
-        coverageBitmap: [true] as const,
-        coveragePlanDigest: "plan-1",
-        finalSynthesisAllowed: true as const,
-        reduction: {
-          evidenceLocators: [],
-          payload: {},
-          selectedTurns: [],
-          selectionStatus: "no_match" as const,
-          schemaVersion: 1 as const,
-        },
-        schemaVersion: 1 as const,
-        selectedBlocks: [],
-        strategy: "exhaustive_coverage" as const,
-        synthesisRequiresCanonicalRehydration: true as const,
-      },
-      status: "ready" as const,
-    })) };
-    const answer = new AnswerGroundedMeetingQuestion({
-      answers: new GroundedMeetingAnswer(generator(), limits),
-      exhaustive,
-      focusedHistorical: {
-        buildPlan: async () => ({
-          mode: "exhaustive_coverage" as const,
-          status: "route_required" as const,
-        }),
-      },
-      historicalSearchEnabled: () => true,
-      historicalServingAuthorized: () => true,
-      ids: { digest: () => "c".repeat(64) },
-      live: live(),
-      turnHashes: { hash: () => "b".repeat(64) },
-    });
-
-    await expect(answer.execute({
-      ...request,
-      authorizationPrincipalRef: "opaque",
-    }, { signal: new AbortController().signal })).resolves.toMatchObject({
-      reason: "active_meeting_not_final_for_exhaustive_claim",
-      status: "insufficient_evidence",
-    });
-    expect(exhaustive.buildPlan).toHaveBeenCalledOnce();
-  });
 });

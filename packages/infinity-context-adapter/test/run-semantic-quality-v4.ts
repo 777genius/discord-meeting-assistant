@@ -171,7 +171,7 @@ function runRealPreflight(): void {
       overall: authorities.overall.questions.length, real: authorities.real.questions.length },
     releaseCandidateRequest: { candidateLimit: policy.candidateLimit,
       deadlineMs: policy.deadlineMs, evidenceByteLimit: policy.evidenceByteLimit,
-      maximumQueries: policy.maximumQueries, neighborRadius: 0,
+      neighborRadius: 0,
       responseByteLimit: policy.responseByteLimit, resultLimit: policy.resultLimit },
     reviewReceiptDigests: realCorpus.reviewReceipts.map(({ digestSha256 }) => digestSha256),
     safeCounts: realCorpus.safeCounts,

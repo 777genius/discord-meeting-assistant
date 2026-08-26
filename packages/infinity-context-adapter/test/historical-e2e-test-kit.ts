@@ -1,14 +1,11 @@
 import {
-  SameRoomFocusedMemoryRetrieval,
   admitAcceptedFinalMeeting,
-  createFocusedRetrievalGroundingPlan,
   createHistoricalReleaseBinding,
   type AcceptedFinalMeetingV1,
   type CoverageCheckpointLeaseV1,
   type CoverageExtractV1,
   type CoverageReductionV1,
   type ExhaustiveCoverageStore,
-  type FocusedMemoryReference,
   type HistoricalAppliedPlanV1,
   type HistoricalCandidateRecordV1,
   type HistoricalEvidenceAuthority,
@@ -18,7 +15,6 @@ import {
   type HistoricalSyncLeaseV1,
   type HistoricalSyncOperationV1,
   type HistoricalSyncStore,
-  type HistoricalFocusedRetrieval,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 type RowState = "applied" | "dead_letter" | "deleted" | "deleting" | "in_flight" | "pending" | "retry_wait";
@@ -477,137 +473,4 @@ export class MemoryCoverageCheckpoints implements ExhaustiveCoverageStore {
 
 function compare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function focusedReferenceKey(reference: FocusedMemoryReference): string {
-  return [
-    reference.meetingId,
-    reference.transcriptId,
-    reference.transcriptVersion,
-    reference.turnId,
-    reference.turnHash,
-  ].join("\u0000");
-}
-
-export async function buildSameRoomFocusedPlan(input: {
-  readonly historical: Pick<
-    HistoricalFocusedRetrieval,
-    "buildPlan" | "reauthorizeRoom"
-  >;
-  readonly historicalMeeting: AcceptedFinalMeetingV1;
-  readonly turnHash: (
-    turn: AcceptedFinalMeetingV1["humanTurns"][number],
-  ) => string;
-}) {
-  const currentTurns = Object.freeze(Array.from({ length: 3 }, (_, index) =>
-    Object.freeze({
-      endMs: (index + 1) * 10_000,
-      speakerId: "human-current",
-      startMs: index * 10_000,
-      text: index === 2
-        ? "The current meeting confirms Cedar remains on the release agenda."
-        : `Current accepted meeting detail ${index}.`,
-      turnId: `current-turn-${index}`,
-    })
-  ));
-  const currentReferences = Object.freeze(currentTurns.map((turn) =>
-    Object.freeze({
-      meetingId: "fixture-current-meeting",
-      transcriptId: "fixture-current-transcript",
-      transcriptVersion: 1,
-      turnHash: input.turnHash(turn),
-      turnId: turn.turnId,
-    })
-  ));
-  const sameRoom = new SameRoomFocusedMemoryRetrieval({
-    current: {
-      retrieve: async () => ({
-        authorityGeneration: "current-authority-generation-v1",
-        candidates: currentReferences.slice(2, 3),
-        schemaVersion: 1,
-        status: "current",
-      }),
-    },
-    historical: input.historical,
-    turnHashes: { hash: input.turnHash },
-  }, {
-    historicalServingAuthorized: true,
-    remoteSearchAvailable: true,
-  });
-  const merged = await sameRoom.retrieve({
-    authorizationPrincipalRef: "principal",
-    canonicalEvidenceHash: "a".repeat(64),
-    expectedAuthorityGeneration: "current-authority-generation-v1",
-    finalProjectionReceipt: "fixture-current-final-receipt",
-    maximumCandidates: 5,
-    meetingId: "fixture-current-meeting",
-    meetingRevision: 1,
-    neighborTurns: 1,
-    projectionTargetContainerId: "fixture-current-container",
-    question: "What is the Project Cedar launch day?",
-    roomId: input.historicalMeeting.binding.roomId,
-    scopeId: input.historicalMeeting.binding.scopeId,
-    transcriptId: "fixture-current-transcript",
-    transcriptVersion: 1,
-  });
-  if (merged.status !== "current") {
-    throw new Error("same-room focused merge failed");
-  }
-  const hydrationReferences = [...new Map(merged.candidates.map((reference) => [
-    focusedReferenceKey(reference),
-    reference,
-  ])).values()];
-  const currentByTurn = new Map<string, (typeof currentTurns)[number]>(
-    currentTurns.map((turn) => [turn.turnId, turn]),
-  );
-  const historicalByTurn = new Map(input.historicalMeeting.humanTurns.map((turn) => [
-    turn.turnId,
-    turn,
-  ]));
-  const locallyRehydrated = hydrationReferences.map((reference) => {
-    const turn = reference.meetingId === "fixture-current-meeting"
-      ? currentByTurn.get(reference.turnId)
-      : historicalByTurn.get(reference.turnId);
-    if (turn === undefined || input.turnHash(turn) !== reference.turnHash) {
-      throw new Error("same-room candidate failed local rehydration");
-    }
-    return Object.freeze({
-      ...turn,
-      source: Object.freeze({
-        meetingId: reference.meetingId,
-        transcriptId: reference.transcriptId,
-        transcriptVersion: reference.transcriptVersion,
-      }),
-      turnHash: reference.turnHash,
-    });
-  });
-  const turnsByReference = new Map(hydrationReferences.map((reference, index) => [
-    focusedReferenceKey(reference),
-    locallyRehydrated[index],
-  ]));
-  const selectedTurns = (references: readonly FocusedMemoryReference[]) =>
-    references.map((reference) => {
-      const turn = turnsByReference.get(focusedReferenceKey(reference));
-      if (turn === undefined) {
-        throw new Error("same-room hydration omitted a selected reference");
-      }
-      return turn;
-    });
-  return Object.freeze({
-    currentTurnIds: Object.freeze(merged.candidates
-      .filter(({ meetingId }) => meetingId === "fixture-current-meeting")
-      .map(({ turnId }) => turnId)),
-    historicalMeetingIncluded: merged.candidates.some(({ meetingId }) =>
-      meetingId === input.historicalMeeting.binding.meetingId
-    ),
-    plan: createFocusedRetrievalGroundingPlan({
-      authorityGeneration: merged.authorityGeneration,
-      coverage: "sufficient",
-      humanActorIds: [
-        "human-current",
-        ...new Set(input.historicalMeeting.humanTurns.map(({ speakerId }) => speakerId)),
-      ],
-      turns: selectedTurns(merged.candidates),
-    }),
-  });
 }

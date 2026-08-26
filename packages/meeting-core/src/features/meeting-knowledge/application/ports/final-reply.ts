@@ -5,6 +5,7 @@ import type {
   GroundedAnswerCandidate,
 } from "../../domain/grounded-answer.js";
 import type {
+  CanonicalEvidenceTurn,
   FocusedMemoryReference,
   GroundingEvidence,
   GroundingPlan,
@@ -20,6 +21,10 @@ import type {
   QuestionBindingSnapshot,
   QuestionJobState,
 } from "../../domain/question-job.js";
+
+export interface CanonicalEvidenceTurnHashPort {
+  hash(turn: CanonicalEvidenceTurn): string;
+}
 
 /** Consumer-owned rendering boundary; transport-specific markup stays in adapters. */
 export interface FinalReplyRendererPort {
@@ -423,14 +428,6 @@ export interface LocalFinalReplyPolicy {
   readonly authorizationPolicyVersion: string;
   readonly groundingSafety: GroundingSafetyLimits;
   readonly jobLeaseSeconds: number;
-  /** Temporary V1 generic reranker rollback window; remove after the drain gate. */
-  readonly legacyRetrievalMigration?: {
-    readonly deleteAfter: string;
-    readonly enabled: boolean;
-    readonly minimumQualifiedReleases: 2;
-    readonly requireDrainedJobs: true;
-    readonly requireNoUnresolvedEffects: true;
-  };
   readonly maximumProviderAttempts: number;
   readonly policyVersion: string;
   readonly retrieval: {

@@ -8,8 +8,6 @@ export type {
 
 export interface FocusedLocatorRetrievalV2Candidate {
   readonly locator: string;
-  readonly providerRank: number;
-  readonly providerScore: number;
 }
 
 export type FocusedLocatorRetrievalV2Result =

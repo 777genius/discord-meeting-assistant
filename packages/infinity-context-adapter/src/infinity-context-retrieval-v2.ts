@@ -151,8 +151,6 @@ function locatorCandidates(
 ): readonly FocusedLocatorRetrievalV2Candidate[] {
   return Object.freeze(candidates.map((candidate) => Object.freeze({
     locator: candidate.locator,
-    providerRank: candidate.provider_rank,
-    providerScore: candidate.fused_score,
   })));
 }
 

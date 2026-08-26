@@ -2,11 +2,10 @@ import { requiresExhaustiveCoverage } from "../domain/question-scope.js";
 import { createFocusedRetrievalGroundingPlan, type RehydratedEvidenceTurn } from "../domain/grounding-plan.js";
 import type { ExhaustiveCoverage } from "./exhaustive-coverage.js";
 import { GroundedMeetingAnswer } from "./grounded-meeting-answer.js";
-import type { HistoricalFocusedRetrieval } from "./historical-retrieval.js";
 import type { HistoricalAuthorizationObservationV1, HistoricalAuthorizationPort } from "./ports/historical-grounding.js";
-import type { CanonicalEvidenceTurnHashPort } from "./same-room-focused-memory.js";
+import type { CanonicalEvidenceTurnHashPort } from "./ports/final-reply.js";
 import type { LiveFinalizedMemoryQueryPort } from "./ports/live-finalized-memory.js";
-import { crossSourceTurns, deduplicateEvidenceTurns, executeActiveExhaustiveCoverage,
+import { deduplicateEvidenceTurns, executeActiveExhaustiveCoverage,
   normalizedLocale, notAnswered, recheckGroundedPlaybackAuthority, sameAuthorization,
   sameLiveContext, type GroundedPlaybackAuthorityRequest,
   type GroundedPlaybackAuthorityResultV1 } from "./grounded-question-internals.js";
@@ -59,9 +58,6 @@ export class AnswerGroundedMeetingQuestion {
       readonly answers: GroundedMeetingAnswer;
       readonly authorization?: HistoricalAuthorizationPort;
       readonly exhaustive?: Pick<ExhaustiveCoverage, "buildPlan">;
-      readonly focusedHistorical?: Pick<HistoricalFocusedRetrieval, "buildPlan">;
-      readonly historicalSearchEnabled?: () => boolean;
-      readonly historicalServingAuthorized?: () => boolean;
       readonly ids: GroundedMeetingQuestionIdentityPort;
       readonly live: LiveFinalizedMemoryQueryPort;
       readonly turnHashes: CanonicalEvidenceTurnHashPort;
@@ -232,31 +228,9 @@ export class AnswerGroundedMeetingQuestion {
       signal,
       scopeId: context.scopeId,
     });
-    const historicalPromise = this.dependencies.focusedHistorical === undefined ||
-        input.authorizationPrincipalRef === undefined
-      ? Promise.resolve(null)
-      : this.dependencies.focusedHistorical.buildPlan({
-          authorizationPrincipalRef: input.authorizationPrincipalRef,
-          currentMeetingId: input.meetingId,
-          question: input.question,
-          roomId: input.roomId,
-          scopeId: context.scopeId,
-          searchEnabled: this.dependencies.historicalSearchEnabled?.() === true,
-          servingAuthorized:
-            this.dependencies.historicalServingAuthorized?.() === true,
-          signal,
-          sourceSet: "room",
-        });
-    const [liveResult, historicalResult] = await Promise.all([
-      livePromise,
-      historicalPromise,
-    ]);
+    const liveResult = await livePromise;
     signal.throwIfAborted();
-    if (historicalResult?.status === "route_required") {
-      return "route_required";
-    }
     const liveTurns: RehydratedEvidenceTurn[] = [];
-    const historicalTurns: RehydratedEvidenceTurn[] = [];
     const generationParts = [context.knowledgeEpoch];
     if (liveResult.status === "current") {
       const rehydrated = await this.dependencies.live.rehydrateHotTail({
@@ -273,47 +247,14 @@ export class AnswerGroundedMeetingQuestion {
         generationParts.push(rehydrated.context.knowledgeEpoch);
       }
     }
-    if (historicalResult?.status === "ready") {
-      for (const block of historicalResult.plan.blocks) {
-        generationParts.push(
-          block.binding.releaseId,
-          String(block.binding.desiredGeneration),
-          block.candidateLocator,
-        );
-        historicalTurns.push(...block.turns.map((turn) => Object.freeze({
-          ...turn,
-          source: Object.freeze({
-            historicalSource: Object.freeze({
-              candidateLocator: block.candidateLocator,
-              indexGeneration: block.indexGeneration,
-              releaseId: block.binding.releaseId,
-            }),
-            meetingId: block.binding.meetingId,
-            sourceEndCodePoint: turn.sourceEndCodePoint,
-            sourceStartCodePoint: turn.sourceStartCodePoint,
-            transcriptId: block.binding.transcriptId,
-            transcriptVersion: block.binding.transcriptVersion,
-          }),
-          turnHash: this.dependencies.turnHashes.hash(turn),
-        })));
-      }
-    }
     const fallbackSource = {
       meetingId: input.meetingId,
       transcriptId: `live-memory-v1:${input.meetingId}`,
       transcriptVersion: context.sourceGeneration,
     };
-    const rankedLive = [
+    const selected = [
       ...deduplicateEvidenceTurns(liveTurns, fallbackSource).values(),
-    ];
-    const rankedHistorical = [
-      ...deduplicateEvidenceTurns(historicalTurns, fallbackSource).values(),
-    ];
-    const selected = crossSourceTurns(
-      rankedLive,
-      rankedHistorical,
-      this.#policy.maximumCandidates,
-    );
+    ].slice(0, this.#policy.maximumCandidates);
     if (selected.length === 0) {
       return null;
     }

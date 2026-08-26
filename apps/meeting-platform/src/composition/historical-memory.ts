@@ -10,7 +10,7 @@ import {
 } from "@discord-meeting/infinity-context-adapter";
 import {
   DEFAULT_HISTORICAL_SYNC_POLICY,
-  DeterministicCoverageReducer, ExhaustiveCoverage, HistoricalFocusedRetrieval,
+  DeterministicCoverageReducer, ExhaustiveCoverage,
   type HistoricalFocusedLocatorRetrievalV2,
   HistoricalSyncWorker, RequestHistoricalMeetingDeletion,
   historicalEmbeddingTokenProfile, historicalSyncLeaseDurationMs,
@@ -30,8 +30,6 @@ import { SubscriptionRuntimeCoverageExtractorAdapter, subscriptionRuntimeCliEngi
 import type { Pool } from "pg";
 
 import type { PlatformConfig } from "../config.js";
-import { participantSpeakerAliases } from
-  "../config/participant-greeting-profiles.js";
 import { createInfinityRetrievalV2Composition } from
   "./infinity-retrieval-v2.js";
 import { semanticSearchQualified } from
@@ -173,9 +171,6 @@ export interface PlatformHistoricalMemoryRuntime {
   createExhaustiveCoverage(
     authorization: HistoricalAuthorizationPort,
   ): ExhaustiveCoverage;
-  createFocusedRetrieval(
-    authorization: HistoricalAuthorizationPort,
-  ): HistoricalFocusedRetrieval;
   createFocusedLocatorRetrievalV2(
     authorization: HistoricalAuthorizationPort,
   ): HistoricalFocusedLocatorRetrievalV2;
@@ -183,7 +178,6 @@ export interface PlatformHistoricalMemoryRuntime {
     binding: FocusedLocatorRetrievalV2ProviderBinding,
   ): PrepareFocusedLocatorRetrievalV2Request;
   embeddingTokenizer(): HistoricalEmbeddingTokenizerPort | undefined;
-  searchEnabled(): boolean;
   servingAuthorized(): boolean;
   requestMeetingDeletion(meetingId: string): Promise<void>;
   start(): Promise<void>;
@@ -397,23 +391,10 @@ export function createPlatformHistoricalMemory(
         topologyKey,
       });
     },
-    createFocusedRetrieval: (authorization) => new HistoricalFocusedRetrieval({
-      authority: new PostgresHistoricalEvidenceAuthority(input.pool),
-      authorization,
-      ids: new HmacHistoricalOpaqueIds(topologyKey),
-      memory,
-      speakerAliases: participantSpeakerAliases(
-        input.config.participantGreetingProfiles,
-      ),
-      store: new PostgresHistoricalMemoryStore(input.pool),
-      tokenizer: () => qualifiedTokenizer,
-    }, undefined, twoHourProfile),
     createFocusedLocatorRetrievalV2: (authorization) =>
       retrievalV2.retrieval(authorization),
     createRetrievalV2Admission: (binding) => retrievalV2.admission(binding),
     embeddingTokenizer: () => qualifiedTokenizer,
-    searchEnabled: () =>
-      config.activation.searchEnabled && transportQualified && searchQualified,
     servingAuthorized: () => config.activation.searchEnabled && searchQualified,
     requestMeetingDeletion: (meetingId) => deletion.execute(meetingId),
     start: reconciliation.start,

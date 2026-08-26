@@ -330,7 +330,7 @@ export async function qualifySupersessionAndDeletion(
 
   const deleting = requiredHistoricalRuntime(pool, infinity, false, false);
   expect(deleting.servingAuthorized()).toBe(false);
-  expect(deleting.searchEnabled()).toBe(false);
+  expect(deleting.servingAuthorized()).toBe(false);
   await deleting.requestMeetingDeletion(historicalMeetingId);
   const deletionRowCount = (await historicalRows(pool)).filter(
     ({ meeting_id }) => meeting_id === historicalMeetingId,

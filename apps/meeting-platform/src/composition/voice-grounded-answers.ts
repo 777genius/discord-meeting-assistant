@@ -75,15 +75,9 @@ export function createVoiceGroundedAnswers(
   const answers = new AnswerGroundedMeetingQuestion({
     answers: input.groundedAnswerUseCase,
     authorization,
-    ...(input.historicalMemory === undefined
-      ? {}
-      : {
-          exhaustive: input.historicalMemory.createExhaustiveCoverage(authorization),
-          focusedHistorical: input.historicalMemory.createFocusedRetrieval(authorization),
-          historicalSearchEnabled: () => input.historicalMemory?.searchEnabled() === true,
-          historicalServingAuthorized: () =>
-            input.historicalMemory?.servingAuthorized() === true,
-        }),
+    ...(input.historicalMemory === undefined ? {} : {
+      exhaustive: input.historicalMemory.createExhaustiveCoverage(authorization),
+    }),
     ids: {
       digest: (namespace, parts) =>
         principals.observationDigest(namespace, ...parts),

@@ -1,7 +1,7 @@
-import type { CanonicalEvidenceTurnHashPort } from "./same-room-focused-memory.js";
 import type {
   LiveFinalizedMemorySyncStore,
 } from "./ports/live-finalized-memory.js";
+import type { CanonicalEvidenceTurnHashPort } from "./ports/final-reply.js";
 
 export interface LiveFinalizedMemoryPolicyV1 {
   readonly leaseDurationMs: number;

@@ -91,7 +91,7 @@ describe("Infinity production semantic qualification composition", () => {
     try {
       // Retrieval/exhaustive adapters can be constructed before startup; only
       // execution-time authorization changes when readiness is established.
-      expect(runtime.createFocusedRetrieval({
+      expect(runtime.createFocusedLocatorRetrievalV2({
         authorize: async () => ({
           authorizationDigest: "synthetic",
           authorizationEpoch: "1",
@@ -99,19 +99,19 @@ describe("Infinity production semantic qualification composition", () => {
           policyVersion: "synthetic.v1",
         }),
       })).toBeDefined();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
       await runtime.assertReady();
-      expect(runtime.searchEnabled()).toBe(true);
+      expect(runtime.servingAuthorized()).toBe(true);
       expect(runtime.servingAuthorized()).toBe(true);
 
       infinity.endpoint.setCapabilitiesQualified(false);
       await runtime.assertReady();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
 
       await deletionOnly.assertReady();
-      expect(deletionOnly.searchEnabled()).toBe(false);
+      expect(deletionOnly.servingAuthorized()).toBe(false);
       expect(deletionOnly.servingAuthorized()).toBe(false);
     } finally {
       await runtime.close();
@@ -129,7 +129,7 @@ describe("Infinity production semantic qualification composition", () => {
     const runtime = requiredHistoricalRuntime(pool, infinity, true, true, "production");
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
     } finally {
       await runtime.close();
@@ -199,7 +199,7 @@ describe("Infinity deletion-only transport qualification", () => {
       expect(requests.length).toBeGreaterThanOrEqual(3);
       expect(requests.every((request) => request === "GET /v1/capabilities"))
         .toBe(true);
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
     } finally {
       await runtime.close();
@@ -246,7 +246,7 @@ describe("Infinity deletion-only transport qualification", () => {
       await vi.waitFor(() => {
         expect(connect).toHaveBeenCalled();
       });
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
       expect(infinity.endpoint.requests.every(({ path }) =>
         path === "/v1/capabilities"
@@ -297,12 +297,12 @@ describe("Infinity production semantic qualification continuation", () => {
     }
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
 
       infinity.endpoint.setCapabilitiesQualified(false);
       await runtime.assertReady();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
     } finally {
       await runtime.close();
@@ -349,7 +349,7 @@ describe("Infinity production semantic qualification continuation", () => {
     }
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(true);
+      expect(runtime.servingAuthorized()).toBe(true);
       expect(runtime.servingAuthorized()).toBe(true);
     } finally {
       await runtime.close();
@@ -380,7 +380,7 @@ describe("Infinity production semantic qualification continuation", () => {
     );
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
     } finally {
       await runtime.close();

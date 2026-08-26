@@ -32,7 +32,7 @@ These limits implement ADR-0034's bounded-only answer-model grounding.
 | Drift reservation | 32,768 units | Launcher/model/tokenizer drift headroom |
 | Focused answer request bytes | 1,572,864 | Bounds transport and measurement for focused evidence only; transcript size cannot widen it and no truncation is allowed |
 | Focused candidates | 24 references | Retrieval returns identities without text; every selected turn is locally rehydrated |
-| Canonical neighbors | 2 human turns per selected side | Bounded correction/context expansion before the 24-reference cap |
+| Canonical neighbors | 0 for focused historical V2 and local exact lexical fallback | Neighbor selection is not performed downstream; Infinity candidate order is locator-only and canonical blocks are rehydrated exactly |
 | Answer message | 2,000 characters | One Discord message, all-or-nothing |
 | Provider deadline | 180 seconds | One stateless answer call; two durable job attempts maximum |
 | Job expiry | 900 seconds | Bounds raw question and authorization-principal retention |

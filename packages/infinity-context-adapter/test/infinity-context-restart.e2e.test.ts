@@ -78,7 +78,6 @@ describe("Infinity Context durable restart convergence", () => {
           status: "outcome_unknown",
         };
       },
-      searchRoom: firstAdapter.searchRoom.bind(firstAdapter),
     };
     const syncPolicy = {
       blockPolicy: policy,

@@ -17,6 +17,7 @@ import {
   type GroundedAnswerGenerator,
   type LocalFinalReplyPolicy,
   type QuestionAdmissionCommitPort,
+  type QuestionBindingSnapshot,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
@@ -55,7 +56,6 @@ const policy: LocalFinalReplyPolicy = {
   retrieval: { maximumCandidates: 24, neighborTurns: 2 },
   retrievalAdmission: {
     cutoverEpoch: "test-cutover-r1", infinityProfileFingerprint: "e".repeat(64),
-    infinityRolloutBasisPoints: 0, legacyProfileFingerprint: "f".repeat(64),
   },
 };
 
@@ -184,7 +184,8 @@ describe("AdmitCurrentFinalReply", () => {
     const evidence = new EvidenceFake();
     const authorization = new AuthorizationFake();
     const admissions = new AdmissionFake();
-    const useCase = new AdmitCurrentFinalReply(evidence, authorization, admissions, policy);
+    const useCase = new AdmitCurrentFinalReply(evidence, authorization, admissions,
+      policy, { prepare: () => Promise.resolve(retrievalV2Request) });
 
     await expect(useCase.execute({
       authorizationPrincipalRef: "principal:v1:opaque",
@@ -207,23 +208,23 @@ describe("AdmitCurrentFinalReply", () => {
       memoryGeneration: authority.memoryGeneration,
       retrievalBinding: {
         cutoverEpoch: "test-cutover-r1",
-        profileFingerprint: "f".repeat(64),
-        retrievalPath: "legacy_downstream_v1",
+        profileFingerprint: "e".repeat(64),
+        request: retrievalV2Request,
+        retrievalPath: "infinity_locator_v2",
       },
       transcriptId: authority.transcriptId,
     });
   });
 
-  it("uses a rollback epoch only for admissions made under that policy", async () => {
+  it("persists the V2 epoch active at admission", async () => {
     const firstAdmissions = new AdmissionFake();
     const first = admissionWithRollout(firstAdmissions, {
-      ...policy.retrievalAdmission, infinityRolloutBasisPoints: 10_000,
+      ...policy.retrievalAdmission,
     });
     const rollbackAdmissions = new AdmissionFake();
     rollbackAdmissions.result = { jobId: "question-2", status: "committed" };
     const rollback = admissionWithRollout(rollbackAdmissions, {
-      ...policy.retrievalAdmission, cutoverEpoch: "rollback-r2",
-      infinityRolloutBasisPoints: 0,
+      ...policy.retrievalAdmission, cutoverEpoch: "next-epoch-r2",
     });
     const base = {
       authorizationPrincipalRef: "principal:v1:opaque",
@@ -241,7 +242,8 @@ describe("AdmitCurrentFinalReply", () => {
       request: retrievalV2Request, retrievalPath: "infinity_locator_v2",
     });
     expect(rollbackAdmissions.commits[0]?.binding.retrievalBinding).toEqual({
-      cutoverEpoch: "rollback-r2", profileFingerprint: "f".repeat(64), retrievalPath: "legacy_downstream_v1",
+      cutoverEpoch: "next-epoch-r2", profileFingerprint: "e".repeat(64),
+      request: retrievalV2Request, retrievalPath: "infinity_locator_v2",
     });
   });
 
@@ -343,14 +345,10 @@ describe("focused-memory boundary contract", () => {
       ...valid,
       candidates: [references[0], references[0]],
     })).toThrow("must be unique");
-    expect(decodeFocusedMemoryRetrievalResult({
-      ...valid,
-      candidates: [{ ...references[0], relevanceScore: 0.75 }],
-    })).toMatchObject({ candidates: [{ relevanceScore: 0.75 }] });
     expect(() => decodeFocusedMemoryRetrievalResult({
       ...valid,
-      candidates: [{ ...references[0], relevanceScore: 1.01 }],
-    })).toThrow("finite normalized score");
+      candidates: [{ ...references[0], relevanceScore: 0.75 }],
+    })).toThrow("unknown field");
     const historical = {
       ...references[0],
       historicalSource: {
@@ -404,7 +402,7 @@ function processingFixture(
   const jobs = new QuestionJobStoreFake({
     answerCandidate: null,
     attempts: 0,
-    binding: binding(),
+    binding: v2Binding(binding(), processorPolicy),
     generation: 1,
     groundingPlan: null,
     jobId: "question-1",
@@ -435,6 +433,23 @@ function processingFixture(
     memory,
     processor,
     publication,
+  };
+}
+
+function v2Binding(
+  base: QuestionBindingSnapshot,
+  processorPolicy: LocalFinalReplyPolicy,
+): QuestionBindingSnapshot {
+  return {
+    ...base,
+    bindingProtocolVersion: 2,
+    retrievalBinding: {
+      cutoverEpoch: processorPolicy.retrievalAdmission.cutoverEpoch,
+      profileFingerprint:
+        processorPolicy.retrievalAdmission.infinityProfileFingerprint,
+      request: retrievalV2Request,
+      retrievalPath: "infinity_locator_v2",
+    },
   };
 }
 
@@ -525,31 +540,6 @@ describe("ProcessFinalReplyJob", () => {
     expect(publication.reservations[0]?.content).toContain("Monday");
     expect(publication.reservations[0]?.content).toContain("turn-correction");
     expect(publication.sends).toHaveLength(1);
-  });
-
-  it("abstains before answer generation when focused selection finds no support", async () => {
-    const selector = focusedSelector({
-      schemaVersion: 1,
-      selectedCandidateIds: [],
-      status: "insufficient_evidence",
-    });
-    const { generator, jobs, processor, publication } = processingFixture(
-      undefined,
-      selector,
-    );
-
-    await expect(processor.executeOnce()).resolves.toMatchObject({
-      outcome: "insufficient_evidence",
-      status: "settled",
-    });
-    expect(generator.generationCalls).toBe(0);
-    expect(generator.requests).toEqual([]);
-    expect(jobs.providerReservations).toHaveLength(1);
-    expect(jobs.providerCompletions).toEqual([]);
-    expect(jobs.providerFailures).toEqual([]);
-    expect(publication.reservations[0]?.content).toContain(
-      "not enough confirmed",
-    );
   });
 
 });
@@ -820,6 +810,17 @@ describe("ProcessFinalReplyJob publication fences", () => {
 
     await expect(processor.executeOnce()).resolves.toMatchObject({ outcome: "stale_binding" });
     expect(publication.reservations).toEqual([]);
+  });
+
+  it("reads a persisted legacy binding but fails it closed before retrieval", async () => {
+    const legacy = processingFixture();
+    legacy.jobs.lease = { ...legacy.jobs.lease!, binding: binding() };
+
+    await expect(legacy.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "stale_binding",
+    });
+    expect(legacy.memory.calls).toEqual([]);
+    expect(legacy.publication.reservations).toEqual([]);
   });
 
   it("rejects sealed-roster drift before any answer effect", async () => {

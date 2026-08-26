@@ -96,35 +96,6 @@ export type HistoricalIndexResultV1 =
       readonly status: "outcome_unknown" | "rejected";
     };
 
-export interface HistoricalSearchRequestV1 {
-  readonly candidateLimit: number;
-  readonly query: string;
-  readonly roomScopeExternalRef: string;
-  readonly schemaVersion: 1;
-  readonly signal?: AbortSignal;
-  readonly spaceSlug: string;
-  readonly timeoutMs: number;
-}
-
-export interface HistoricalCandidateLocatorV1 {
-  readonly locator: string;
-  readonly providerRank: number;
-  /** Exact finite relevance score returned by the qualified SDK search. */
-  readonly providerScore: number;
-}
-
-export type HistoricalSearchResultV1 =
-  | {
-      readonly candidates: readonly HistoricalCandidateLocatorV1[];
-      readonly hybridQualified: true;
-      readonly status: "available";
-    }
-  | {
-      readonly code: string;
-      readonly retryable: boolean;
-      readonly status: "unavailable" | "unqualified";
-    };
-
 export interface HistoricalDeleteRequestV1 {
   readonly deleteMutationId: string;
   /** Exact release document identities used to reconcile an unknown ingest outcome. */
@@ -156,8 +127,6 @@ export interface HistoricalMemoryPort {
     request: HistoricalIndexPlanV1,
     options?: HistoricalMemoryOperationOptionsV1,
   ): Promise<HistoricalIndexResultV1>;
-
-  searchRoom(request: HistoricalSearchRequestV1): Promise<HistoricalSearchResultV1>;
 
   deleteMeeting(
     request: HistoricalDeleteRequestV1,

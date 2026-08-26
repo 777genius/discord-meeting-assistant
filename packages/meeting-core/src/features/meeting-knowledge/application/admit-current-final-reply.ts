@@ -4,7 +4,7 @@ import {
   requireSha256,
 } from "../domain/errors.js";
 import { QuestionBinding } from "../domain/question-job.js";
-import { retrievalV2Selected, selectRetrievalBinding } from
+import { selectRetrievalBinding } from
   "../domain/retrieval-admission.js";
 import type {
   FinalReplyEvidencePort,
@@ -125,19 +125,13 @@ export class AdmitCurrentFinalReply {
     if (!authorizedForBinding(authorization, current, deliveryContainerId)) {
       return { reason: "participant_not_eligible", status: "ignored" };
     }
-    const useRetrievalV2 = retrievalV2Selected({
-      questionId,
-      rollout: this.policy.retrievalAdmission,
+    const retrievalV2Request = await this.retrievalV2Admission?.prepare({
+      currentMeetingId: current.meetingId,
+      question: questionText,
+      roomId: current.roomId,
+      scopeId: current.scopeId,
     });
-    const retrievalV2Request = (useRetrievalV2
-      ? await this.retrievalV2Admission?.prepare({
-          currentMeetingId: current.meetingId,
-          question: questionText,
-          roomId: current.roomId,
-          scopeId: current.scopeId,
-        })
-      : undefined) ?? undefined;
-    if (useRetrievalV2 && retrievalV2Request === undefined) {
+    if (retrievalV2Request === undefined || retrievalV2Request === null) {
       return { reason: "binding_conflict", status: "ignored" };
     }
     const binding = QuestionBinding.create({
@@ -162,7 +156,7 @@ export class AdmitCurrentFinalReply {
       requesterSubject,
       retrievalBinding: selectRetrievalBinding({
         questionId,
-        ...(retrievalV2Request === undefined ? {} : { retrievalV2Request }),
+        retrievalV2Request,
         rollout: this.policy.retrievalAdmission,
       }).toSnapshot(),
       roomId: current.roomId,

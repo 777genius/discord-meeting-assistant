@@ -26,7 +26,7 @@ export const retrievalV2Request: FocusedLocatorRetrievalV2RequestSnapshot =
       sourceGenerations: Object.freeze([{ projectionGeneration: "generation-1",
         sourceKey: "source-1" }]), tagsAll: Object.freeze([]),
       tagsAny: Object.freeze([]), tagsNone: Object.freeze([]), timeInterval: null }),
-    queries: Object.freeze([{ query: "Question?", queryId: "question-01" }]),
+    queries: Object.freeze([{ query: "Question?", queryId: "original-question" }]),
     schemaVersion: 2 as const,
     scope: Object.freeze({ memoryScopeId: "scope-1", spaceId: "space-1",
       threadId: null }),
@@ -59,7 +59,6 @@ export function rollbackPolicy(
       ...base.retrievalAdmission,
       cutoverEpoch: "rollout-b",
       infinityProfileFingerprint: "b".repeat(64),
-      infinityRolloutBasisPoints: 0,
     },
   };
 }

@@ -38,7 +38,7 @@ describe("historical tokenizer lazy failure isolation", () => {
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
       expect(runtime.embeddingTokenizer()).toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime).toHaveProperty("requestMeetingDeletion");
     } finally {
       await runtime.close();
@@ -60,7 +60,7 @@ describe("historical tokenizer lazy failure isolation", () => {
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
       expect(runtime.embeddingTokenizer()).toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime).toHaveProperty("requestMeetingDeletion");
     } finally {

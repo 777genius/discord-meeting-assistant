@@ -36,11 +36,7 @@ export function mergeFocusedHydrationReferences(
   const merged = new Map<string, FocusedMemoryReference>();
   for (const reference of references) {
     const key = focusedMemoryReferenceKey(reference);
-    const previous = merged.get(key);
-    if (
-      previous === undefined ||
-      (reference.relevanceScore ?? 0) > (previous.relevanceScore ?? 0)
-    ) {
+    if (!merged.has(key)) {
       merged.set(key, reference);
     }
   }
@@ -193,7 +189,6 @@ function decodeCandidates(
       new Set([
         "historicalSource",
         "meetingId",
-        "relevanceScore",
         "sourceEndCodePoint",
         "sourceStartCodePoint",
         "transcriptId",
@@ -208,10 +203,6 @@ function decodeCandidates(
       candidate.historicalSource,
       `${field}[${index}].historicalSource`,
     );
-    const relevanceScore = decodeRelevanceScore(
-      candidate.relevanceScore,
-      `${field}[${index}].relevanceScore`,
-    );
     return Object.freeze({
       ...(historicalSource === undefined ? {} : { historicalSource }),
       meetingId: requireKnowledgeText(
@@ -219,7 +210,6 @@ function decodeCandidates(
         `${field}[${index}].meetingId`,
         1_024,
       ),
-      ...(relevanceScore === undefined ? {} : { relevanceScore }),
       ...range,
       transcriptId: requireKnowledgeText(
         candidate.transcriptId as string,
@@ -281,22 +271,6 @@ function decodeHistoricalSource(
       1_024,
     ),
   });
-}
-
-function decodeRelevanceScore(
-  value: unknown,
-  field: string,
-): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
-    throw new MeetingKnowledgeInvariantError(
-      "INVALID_GROUNDING_PLAN",
-      `${field} must be a finite normalized score`,
-    );
-  }
-  return value;
 }
 
 function decodeCandidateSourceRange(

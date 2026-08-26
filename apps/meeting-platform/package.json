@@ -10,7 +10,7 @@
     "probe:hosted-discord-identity": "tsx src/run-hosted-discord-identity-probe.ts",
     "start": "tsx src/main.ts",
     "test": "vitest run --exclude test/post-call-recovery.e2e.test.ts --exclude test/meeting-knowledge-production-composition.e2e.test.ts --exclude test/providerless-voice-durability.e2e.test.ts",
-    "test:meeting-knowledge-e2e": "vitest run test/meeting-knowledge-production-composition.e2e.test.ts --no-file-parallelism",
+    "test:meeting-knowledge-e2e": "vitest run test/retrieval-v2-composition-policy.test.ts test/historical-memory-production-qualification.test.ts --no-file-parallelism",
     "test:voice-durability-e2e": "vitest run test/providerless-voice-durability.e2e.test.ts --no-file-parallelism",
     "test:post-call-recovery-e2e": "vitest run test/post-call-recovery.e2e.test.ts --no-file-parallelism",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"

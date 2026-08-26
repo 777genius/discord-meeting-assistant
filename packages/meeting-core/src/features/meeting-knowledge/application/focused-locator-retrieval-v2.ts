@@ -6,13 +6,10 @@ import { compareRetrievalV2Utf8, retrievalV2ConsumerEvidenceByteLimit,
 import type { FocusedMemoryReference } from "../domain/grounding-plan.js";
 import { buildHistoricalRoomTopology, HistoricalIndexPlanError,
   rehydrateHistoricalBlock } from "./historical-index-plan.js";
-import { decomposeHistoricalQuery, isRequestedMeeting } from
-  "./historical-retrieval-ranking.js";
 import { resolveRequestedSpeakerIds, type SpeakerAliasMapV1 } from
   "./speaker-alias-resolution.js";
 import { boundedRetrievalQuery, relativeTimeFilter } from
   "./focused-locator-retrieval-v2-query.js";
-import type { CanonicalEvidenceTurnHashPort } from "./same-room-focused-memory.js";
 import type { FocusedLocatorRetrievalV2Port,
   FocusedLocatorRetrievalV2Candidate,
   FocusedLocatorRetrievalV2ProviderBinding,
@@ -23,13 +20,13 @@ import type { HistoricalOpaqueIdPort, LocallyRehydratedEvidenceBlockV1 } from
   "./ports/historical-memory.js";
 import type { HistoricalEvidenceAuthority, HistoricalSyncStore } from
   "./ports/historical-state.js";
-import type { FocusedMemoryRetrievalPort, FocusedMemoryRetrievalResult } from
+import type { CanonicalEvidenceTurnHashPort, FocusedMemoryRetrievalPort,
+  FocusedMemoryRetrievalResult } from
   "./ports/final-reply.js";
 export interface FocusedLocatorRetrievalV2Policy {
   readonly candidateLimit: number;
   readonly deadlineMs: number;
   readonly evidenceByteLimit: number;
-  readonly maximumQueries: number;
   readonly maximumSources: number;
   readonly responseByteLimit: number;
   readonly resultLimit: number;
@@ -40,7 +37,6 @@ FocusedLocatorRetrievalV2Policy = Object.freeze({
   candidateLimit: 100,
   deadlineMs: 1_000,
   evidenceByteLimit: retrievalV2ConsumerEvidenceByteLimit,
-  maximumQueries: 4,
   maximumSources: 100,
   responseByteLimit: 16_384,
   resultLimit: 8,
@@ -89,12 +85,10 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       input.roomId,
       this.dependencies.ids,
     );
-    const queries = decomposeHistoricalQuery(input.question, this.policy.maximumQueries)
-      .map((query, index) => Object.freeze({
-        query: boundedRetrievalQuery(query),
-        queryId: `question-${String(index + 1).padStart(2, "0")}`,
-        weightMicros: index === 0 ? 1_000_000 : 750_000,
-      }));
+    const query = boundedRetrievalQuery(input.question);
+    if (query.length === 0) {
+      return null;
+    }
     const actorKeys = Object.freeze([...resolveRequestedSpeakerIds(
       input.question,
       this.dependencies.speakerAliases,
@@ -130,7 +124,10 @@ export class PrepareFocusedLocatorRetrievalV2Request {
         tagsNone: Object.freeze([]),
         timeInterval: null,
       }),
-      queries: Object.freeze(queries),
+      queries: Object.freeze([Object.freeze({
+        query,
+        queryId: "original-question",
+      })]),
       schemaVersion: 2 as const,
       scope: Object.freeze({
         memoryScopeId: topology.roomScopeExternalRef,
@@ -138,14 +135,11 @@ export class PrepareFocusedLocatorRetrievalV2Request {
         threadId: null,
       }),
       softPreferences: Object.freeze({
-        actorPreferences: Object.freeze(actorKeys.map((key) => Object.freeze({
-          key,
-          weightMicros: 1_000_000,
-        }))),
-        relativeTimeInterval,
+        actorPreferences: Object.freeze([]),
+        relativeTimeInterval: null,
         sourcePreferences: Object.freeze([]),
         timeInterval: null,
-        timeWeightMicros: relativeTimeInterval === null ? null : 1_000_000,
+        timeWeightMicros: null,
       }),
     });
   }
@@ -247,10 +241,9 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     for (const locator of locators) {
       input.signal?.throwIfAborted();
       const record = recordsByLocator.get(locator);
-      if (record === undefined || !isRequestedMeeting(record.binding.meetingId, {
-        currentMeetingId: input.currentMeetingId,
-        sourceSet: "historical",
-      }) || allowedSources.get(record.plan.topology.releaseRef) !==
+      if (record === undefined ||
+        record.binding.meetingId === input.currentMeetingId ||
+        allowedSources.get(record.plan.topology.releaseRef) !==
           record.plan.topology.indexGeneration ||
         !await this.dependencies.store.isCurrentGeneration(
           record.binding,
@@ -282,14 +275,13 @@ export class HistoricalFocusedLocatorRetrievalV2 {
       if (evidenceBytes > input.request.budgets.evidenceByteLimit) {
         return null;
       }
-      references.push(...block.turns.map((turn, turnIndex) => Object.freeze({
+      references.push(...block.turns.map((turn) => Object.freeze({
         historicalSource: Object.freeze({
           candidateLocator: block.candidateLocator,
           indexGeneration: block.indexGeneration,
           releaseId: block.binding.releaseId,
         }),
         meetingId: block.binding.meetingId,
-        relevanceScore: 1 / (references.length + turnIndex + 1),
         sourceEndCodePoint: turn.sourceEndCodePoint,
         sourceStartCodePoint: turn.sourceStartCodePoint,
         transcriptId: block.binding.transcriptId,
@@ -386,10 +378,7 @@ function unavailable(): FocusedMemoryRetrievalResult {
 
 function isExactLocatorCandidate(value: FocusedLocatorRetrievalV2Candidate): boolean {
   const keys = Object.keys(value).toSorted();
-  return keys.length === 3 &&
-    keys[0] === "locator" &&
-    keys[1] === "providerRank" &&
-    keys[2] === "providerScore";
+  return keys.length === 1 && keys[0] === "locator";
 }
 
 function sameAuthorization(left: Awaited<ReturnType<HistoricalAuthorizationPort["authorize"]>>,
