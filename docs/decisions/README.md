@@ -58,6 +58,7 @@
 - [ADR-0055: Deadline-bound durable participant greetings](0055-deadline-bound-durable-participant-greetings.md)
 - [ADR-0056: Terminal-evidence greeting reconciliation](0056-terminal-evidence-greeting-reconciliation.md)
 - [ADR-0059: Closed Craig recovery authority](0059-closed-craig-recovery-authority.md)
+- [ADR-0060: Authenticated quality-campaign runner boundaries](0060-authenticated-quality-campaign-runner-boundaries.md)
 
 ## Superseded
 

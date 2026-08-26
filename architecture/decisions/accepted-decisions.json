@@ -281,6 +281,11 @@
       "id": "ADR-0059",
       "path": "docs/decisions/0059-closed-craig-recovery-authority.md",
       "immutableDigest": "sha256:c5135c931aa44fd528cdcf57d745b9509cddc4321be498b153438f5305e9561a"
+    },
+    {
+      "id": "ADR-0060",
+      "path": "docs/decisions/0060-authenticated-quality-campaign-runner-boundaries.md",
+      "immutableDigest": "sha256:24aab848fc5b0d5f28220a9085733009a63b51eb01662af57e7c62f9a2946d9c"
     }
   ]
 }
