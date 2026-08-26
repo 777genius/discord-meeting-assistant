@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { CraigCampaignStackInput } from "./craig-disposable-campaign-stack.js";
+import { digestCraigCampaignStackCanonical as digestCanonical } from "./craig-campaign-stack-digest.js";
 
 const environment = z.record(z.string(), z.string());
 const healthcheck = z.object({
@@ -145,5 +146,38 @@ function validateCraigIdentity(rendered: RenderedCraigCompose, input: CraigCampa
     || rendered.services[input.service]?.environment?.E2E_SOURCE_REVISION !== input.serviceIdentity.sourceRevision
     || rendered.services[input.service]?.environment?.DISCORD_APPLICATION_ID !== input.serviceIdentity.applicationId) {
     throw new Error("Craig rendered service campaign/source/bot identity is invalid");
+  }
+}
+
+type ComposeExecute = (args: readonly string[]) => Promise<Readonly<{
+  exitCode: number; stderr: string; stdout: string;
+}>>;
+
+export async function inspectCraigComposeServiceConfigHashes(
+  execute: ComposeExecute, compose: readonly string[], input: CraigCampaignStackInput,
+): Promise<Readonly<Record<string, string>>> {
+  const result = await execute([...compose, "config", "--hash", "*"]);
+  if (result.exitCode !== 0) { throw new Error("Craig Compose service config-hash authority failed closed"); }
+  const entries = result.stdout.trim() === "" ? [] : result.stdout.trim().split("\n").map((line) => {
+    const match = /^(\S+) ([a-f\d]{64})$/u.exec(line.trim());
+    if (match === null) { throw new Error("Craig Compose service config-hash authority is malformed"); }
+    return [match[1]!, match[2]!] as const;
+  });
+  const expectedServices = [input.database.service, input.migrationService, input.service].toSorted();
+  const observedServices = entries.map(([service]) => service).toSorted();
+  if (new Set(observedServices).size !== observedServices.length
+    || JSON.stringify(observedServices) !== JSON.stringify(expectedServices)) {
+    throw new Error("Craig Compose service config-hash authority does not cover the exact service set");
+  }
+  return Object.freeze(Object.fromEntries(entries.toSorted(([left], [right]) => left.localeCompare(right))));
+}
+
+export async function assertCraigComposeServiceConfigHashes(
+  execute: ComposeExecute, compose: readonly string[], input: CraigCampaignStackInput,
+  expected: Readonly<Record<string, string>>,
+): Promise<void> {
+  const observed = await inspectCraigComposeServiceConfigHashes(execute, compose, input);
+  if (digestCanonical(observed) !== digestCanonical(expected)) {
+    throw new Error("Craig Compose service config-hash authority changed from mutation custody");
   }
 }

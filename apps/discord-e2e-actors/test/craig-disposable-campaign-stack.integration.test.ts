@@ -14,6 +14,7 @@ import {
   planCraigDisposableCampaignStack,
   provisionCraigDisposableCampaignStack,
   teardownSuccessfulCraigCampaignStack,
+  type CraigCampaignStackMutationStartV1,
 } from "../src/craig-disposable-campaign-stack.js";
 import { LocalDockerCommandExecutor } from "../src/craig-campaign-stack-local-adapters.js";
 import { recoverCraigFailedCampaignStack } from "../src/recover-craig-failed-campaign-stack.js";
@@ -158,16 +159,13 @@ networks:
         credentialFile: join(recoveryRoot, "control", "craig.env"), networkPolicy: recoveryPolicy };
       const recoveryPlan = planCraigDisposableCampaignStack(recoveryInput);
       retainedProject = recoveryPlan.projectName;
+      let recoveryMutationStart: CraigCampaignStackMutationStartV1 | undefined;
       await provisionCraigDisposableCampaignStack(recoveryInput, {
         commands, credentials: new FileCraigCampaignCredentialStore(),
-        mutationJournal: { markStarted: async () => {} },
+        mutationJournal: { markStarted: async (value) => { recoveryMutationStart = value; } },
       }, recoveryLease);
-      const mutationContent = { campaignId: recoveryCampaignId,
-        campaignLeaseSha256: recoveryLease.leaseSha256,
-        composeCanonicalSha256: recoveryInput.composeCanonicalSha256,
-        hostedPlanSha256: recoveryLease.planSha256, kind: "craig-stack-mutation-start" as const,
-        networkPolicy: recoveryPolicy, planSha256: recoveryPlan.planSha256,
-        projectName: recoveryPlan.projectName, release, schemaVersion: 1 as const,
+      if (recoveryMutationStart === undefined) { throw new Error("missing recovery mutation custody"); }
+      const mutationContent = { ...recoveryMutationStart,
         startedAt: "2026-08-26T12:00:00.000Z" };
       const mutation = { ...mutationContent, receiptSha256: digestCanonical(mutationContent) };
       const failureContent = { campaignId: recoveryCampaignId,

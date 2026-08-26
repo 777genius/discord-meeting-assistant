@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { craigCampaignNetworkPolicySchema } from "./craig-campaign-network-plan.js";
+import { craigCampaignNetworkPolicySchema, deriveCraigCampaignNetworkPolicy } from
+  "./craig-campaign-network-plan.js";
 import { craigAbsolutePathSchema, craigComposeCoordinateSchema, craigIdentifierSchema,
   craigSha256Schema } from "./craig-campaign-stack-schemas.js";
 import { digestCraigCampaignStackCanonical as digestCanonical } from "./craig-campaign-stack-digest.js";
@@ -8,7 +9,9 @@ import { hostedCampaignReleaseReferenceV1Schema } from "./hosted-campaign-releas
 
 export const craigStackMutationStartReceiptV1Schema = z.object({
   campaignId: craigIdentifierSchema, campaignLeaseSha256: craigSha256Schema,
-  composeCanonicalSha256: craigSha256Schema, hostedPlanSha256: craigSha256Schema,
+  composeCanonicalSha256: craigSha256Schema,
+  composeServiceConfigHashes: z.record(craigComposeCoordinateSchema, craigSha256Schema),
+  hostedPlanSha256: craigSha256Schema,
   kind: z.literal("craig-stack-mutation-start"), networkPolicy: craigCampaignNetworkPolicySchema,
   planSha256: craigSha256Schema, projectName: craigComposeCoordinateSchema,
   receiptSha256: craigSha256Schema, release: hostedCampaignReleaseReferenceV1Schema,
@@ -67,9 +70,12 @@ export function verifyCraigFailedStackReceipt(value: unknown, mutationValue: unk
 
 export function verifyCraigFailedStackRecoveryReceipt(value: unknown,
   failureValue: unknown, mutationValue: unknown): CraigFailedStackRecoveryReceiptV1 {
-  const failure = verifyCraigFailedStackReceipt(failureValue, mutationValue);
+  const mutation = verifyCraigMutationStartReceipt(mutationValue);
+  const failure = verifyCraigFailedStackReceipt(failureValue, mutation);
   const recovery = verifyDigest(craigFailedStackRecoveryReceiptV1Schema, value,
     "Craig failed-stack recovery receipt");
+  const expectedNetworkPolicy = deriveCraigCampaignNetworkPolicy(mutation.campaignId, mutation.release,
+    mutation.networkPolicy.udpDestinationPorts);
   if (recovery.campaignId !== failure.campaignId || recovery.failureReceiptSha256 !== failure.receiptSha256
     || recovery.hostedPlanSha256 !== failure.hostedPlanSha256
     || recovery.mutationReceiptSha256 !== failure.mutationReceiptSha256
@@ -77,6 +83,8 @@ export function verifyCraigFailedStackRecoveryReceipt(value: unknown,
     || recovery.absenceProof.campaignId !== failure.campaignId
     || recovery.absenceProof.planSha256 !== failure.planSha256
     || recovery.absenceProof.projectName !== failure.projectName
+    || recovery.absenceProof.absentNetworkName !== mutation.networkPolicy.name
+    || digestCanonical(mutation.networkPolicy) !== digestCanonical(expectedNetworkPolicy)
     || JSON.stringify(recovery.release) !== JSON.stringify(failure.release)
     || JSON.stringify(recovery.absenceProof.release) !== JSON.stringify(failure.release)) {
     throw new Error("Craig recovery receipt contradicts retained failure custody");

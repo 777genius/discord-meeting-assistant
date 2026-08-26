@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { assertUnsymlinkedParents } from "./craig-campaign-stack-local-adapters.js";
-import { validateRenderedCraigCompose } from "./craig-campaign-compose-validation.js";
+import { assertCraigComposeServiceConfigHashes, validateRenderedCraigCompose } from
+  "./craig-campaign-compose-validation.js";
 import { validateSourceCraigCompose } from "./craig-campaign-source-compose-validation.js";
 import { digestCraigCampaignStackCanonical as digestCanonical } from "./craig-campaign-stack-digest.js";
 import { craigSha256Schema } from "./craig-campaign-stack-schemas.js";
@@ -40,17 +41,15 @@ const imageInspectionSchema = z.array(z.object({
   Config: z.object({ Volumes: z.record(z.string(), z.unknown()).nullable().optional() }).loose(),
   Id: z.string(), RepoDigests: z.array(z.string()),
 }).loose()).length(1);
-
 export interface CraigRecoveryResourceCustody {
   readonly anonymousVolumeNames: readonly string[];
   readonly containers: readonly RetainedContainer[];
   readonly networkId: string | null;
   readonly volumePresent: boolean;
 }
-
 export async function inspectCraigRecoveryResourceCustody(value: Readonly<{
   compose: readonly string[]; execute: Execute; input: CraigCampaignStackInput;
-  projectName: string; volumeName: string;
+  expectedServiceConfigHashes: Readonly<Record<string, string>>; projectName: string; volumeName: string;
 }>): Promise<CraigRecoveryResourceCustody> {
   const imageVolumes = await inspectRecoveryImages(value.execute, value.input);
   const networkId = await inspectOwnedNetwork(value.execute, value.input, value.projectName);
@@ -67,10 +66,10 @@ export async function inspectCraigRecoveryResourceCustody(value: Readonly<{
     projectName: value.projectName, volumeName: value.volumeName, volumePresent });
   return Object.freeze({ anonymousVolumeNames: anonymousNames, containers, networkId, volumePresent });
 }
-
 async function inspectOwnedContainers(value: Readonly<{
   compose: readonly string[]; execute: Execute; imageVolumes: ReadonlyMap<string, ReadonlySet<string>>;
-  input: CraigCampaignStackInput; networkId: string | null; projectName: string; volumeName: string;
+  expectedServiceConfigHashes: Readonly<Record<string, string>>; input: CraigCampaignStackInput;
+  networkId: string | null; projectName: string; volumeName: string;
 }>): Promise<RetainedContainer[]> {
   const listed = await value.execute([...value.compose, "ps", "--all", "--quiet"]);
   requireSuccess(listed, "Craig failed-stack container enumeration");
@@ -82,9 +81,9 @@ async function inspectOwnedContainers(value: Readonly<{
   for (const id of ids) { observed.push(await inspectOwnedContainer(value, id, observed)); }
   return observed.toSorted((left, right) => left.id.localeCompare(right.id));
 }
-
 async function inspectOwnedContainer(value: Readonly<{
-  execute: Execute; imageVolumes: ReadonlyMap<string, ReadonlySet<string>>; input: CraigCampaignStackInput;
+  execute: Execute; expectedServiceConfigHashes: Readonly<Record<string, string>>;
+  imageVolumes: ReadonlyMap<string, ReadonlySet<string>>; input: CraigCampaignStackInput;
   networkId: string | null; projectName: string; volumeName: string;
 }>, id: string, observed: readonly RetainedContainer[]): Promise<RetainedContainer> {
   craigSha256Schema.parse(id);
@@ -94,23 +93,23 @@ async function inspectOwnedContainer(value: Readonly<{
     "Craig failed-stack container ownership inspection"))[0]!;
   const service = container.Config.Labels["com.docker.compose.service"] ?? "";
   const identity = expectedServiceIdentity(value.input, service);
-  assertContainerIdentity({ container, id, identity, input: value.input, observed,
+  assertContainerIdentity({ container, expectedConfigHash: value.expectedServiceConfigHashes[service],
+    id, identity, input: value.input, observed,
     projectName: value.projectName, service });
   assertContainerNetwork(container, service, value.input, value.networkId);
   const anonymousVolumeNames = assertContainerVolumes(container, service, value.input,
     value.volumeName, value.imageVolumes.get(service));
   return Object.freeze({ anonymousVolumeNames, id, service });
 }
-
 function expectedServiceIdentity(input: CraigCampaignStackInput, service: string) {
   if (service === input.service) { return input.serviceIdentity; }
   if (service === input.database.service) { return input.database.imageIdentity; }
   if (service === input.migrationService) { return input.migrationImageIdentity; }
   return;
 }
-
 function assertContainerIdentity(value: Readonly<{
   container: z.infer<typeof containerInspectionSchema>[number]; id: string;
+  expectedConfigHash: string | undefined;
   identity: { imageId: string; repositoryDigest: string } | undefined; input: CraigCampaignStackInput;
   observed: readonly RetainedContainer[]; projectName: string; service: string;
 }>): void {
@@ -119,12 +118,13 @@ function assertContainerIdentity(value: Readonly<{
   const expectedName = service === value.input.migrationService
     ? new RegExp(`^/${escapeRegex(value.projectName)}-${escapeRegex(service)}-run-[a-z0-9]+$`, "u")
     : new RegExp(`^/${escapeRegex(value.projectName)}-${escapeRegex(service)}-1$`, "u");
-  if (container.Id !== value.id || value.identity === undefined
+  if (container.Id !== value.id || value.identity === undefined || value.expectedConfigHash === undefined
     || value.observed.some((item) => item.service === service)
     || labels["com.docker.compose.project"] !== value.projectName
     || labels["com.docker.compose.oneoff"] !== (service === value.input.migrationService ? "True" : "False")
     || labels["com.docker.compose.container-number"] !== "1"
     || labels["com.docker.compose.image"] !== value.identity.imageId
+    || labels["com.docker.compose.config-hash"] !== value.expectedConfigHash
     || labels["com.docker.compose.project.config_files"] !== "-"
     || labels["com.docker.compose.project.working_dir"] !== "/"
     || container.Image !== value.identity.imageId || container.Config.Image !== value.identity.repositoryDigest
@@ -133,7 +133,6 @@ function assertContainerIdentity(value: Readonly<{
   }
   assertContainerEnvironment(container.Config.Env, service, value.input);
 }
-
 function assertContainerNetwork(container: z.infer<typeof containerInspectionSchema>[number], service: string,
   input: CraigCampaignStackInput, networkId: string | null): void {
   if (service !== input.service && service !== input.database.service) { return; }
@@ -143,7 +142,6 @@ function assertContainerNetwork(container: z.infer<typeof containerInspectionSch
     throw new Error("Craig recovery container has foreign network attachment custody");
   }
 }
-
 function assertContainerVolumes(container: z.infer<typeof containerInspectionSchema>[number], service: string,
   input: CraigCampaignStackInput, volumeName: string,
   expectedDestinations: ReadonlySet<string> | undefined): readonly string[] {
@@ -292,6 +290,7 @@ export async function revalidateCraigMutationInputs(input: Readonly<{
   databaseVolume: string;
   execute: Execute;
   expectedConfigSha256: string;
+  expectedServiceConfigHashes?: Readonly<Record<string, string>>;
   input: CraigCampaignStackInput;
   lease: HostedCampaignLeaseHandle;
   projectName: string;
@@ -307,6 +306,10 @@ export async function revalidateCraigMutationInputs(input: Readonly<{
   );
   if (digestCanonical(config) !== input.expectedConfigSha256) {
     throw new Error("Craig rendered Compose configuration changed before Docker mutation");
+  }
+  if (input.expectedServiceConfigHashes !== undefined) {
+    await assertCraigComposeServiceConfigHashes(input.execute, input.compose, input.input,
+      input.expectedServiceConfigHashes);
   }
 }
 

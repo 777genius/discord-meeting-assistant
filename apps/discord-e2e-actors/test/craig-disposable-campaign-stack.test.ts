@@ -22,7 +22,8 @@ import { validateRenderedCraigCompose } from "../src/craig-campaign-compose-vali
 import { digestCanonical } from "../src/hosted-campaign-local-admission.js";
 import type { HostedCampaignLeaseHandle } from "../src/hosted-campaign-coordinator.js";
 import { assertCraigFailedStackRetentionAdmission, MAX_UNRECOVERED_CRAIG_STACKS,
-  recoverCraigFailedCampaignStack } from "../src/recover-craig-failed-campaign-stack.js";
+  recoverCraigFailedCampaignStack, reverifyExistingCraigFailedStackRecovery } from
+  "../src/recover-craig-failed-campaign-stack.js";
 import { verifyCraigFailedStackRecoveryReceipt } from "../src/craig-campaign-stack-evidence.js";
 import { removeCraigCampaignFirewall } from "../src/craig-campaign-network-lifecycle.js";
 
@@ -137,6 +138,11 @@ function rendered(input: CraigCampaignStackInput) {
   };
 }
 
+function serviceConfigHashes(input: CraigCampaignStackInput): Readonly<Record<string, string>> {
+  return { [input.service]: "a".repeat(64), [input.database.service]: "b".repeat(64),
+    [input.migrationService]: "c".repeat(64) };
+}
+
 class Harness {
   readonly calls: CraigCampaignStackCommandRequest[] = [];
   migrationOutput = `001|${migrationChecksum}\n`;
@@ -155,6 +161,10 @@ class Harness {
     if (custodyResult !== undefined) { return custodyResult; }
     const lifecycleResult = this.#handleLifecycle(args);
     if (lifecycleResult !== undefined) { return lifecycleResult; }
+    if (args.includes("config") && args.includes("--hash")) {
+      return result(0, Object.entries(serviceConfigHashes(this.input))
+        .map(([service, hash]) => `${service} ${hash}`).join("\n") + "\n");
+    }
     if (args.includes("config")) { return result(0, JSON.stringify(rendered(this.input))); }
     if (args.includes("psql")) {
       return result(0, args.at(-1)?.includes("ORDER BY version") === true
@@ -174,6 +184,7 @@ class Harness {
         Config: { Env: ["POSTGRES_DB=craig", "POSTGRES_PASSWORD=fresh-campaign-password-0123456789",
           "POSTGRES_USER=craig"], Image: this.input.database.imageIdentity.repositoryDigest, Labels: {
           "com.docker.compose.container-number": "1", "com.docker.compose.image": image,
+          "com.docker.compose.config-hash": serviceConfigHashes(this.input)[this.input.database.service],
           "com.docker.compose.oneoff": "False", "com.docker.compose.project": project,
           "com.docker.compose.project.config_files": "-", "com.docker.compose.project.working_dir": "/",
           "com.docker.compose.service": this.input.database.service,
@@ -189,6 +200,7 @@ class Harness {
           `DISCORD_APPLICATION_ID=${this.input.serviceIdentity.applicationId}`,
           "DATABASE_URL=postgresql://craig:fresh-campaign-password-0123456789@database:5432/craig"],
         Labels: { "com.docker.compose.container-number": "1", "com.docker.compose.image": image,
+          "com.docker.compose.config-hash": serviceConfigHashes(this.input)[this.input.service],
           "com.docker.compose.oneoff": "False", "com.docker.compose.project": project,
           "com.docker.compose.project.config_files": "-", "com.docker.compose.project.working_dir": "/",
           "com.docker.compose.service": "bot", "e2e.compose-config-sha256": configDigest } },
@@ -375,7 +387,9 @@ describe("Craig disposable private-campaign stack", () => {
       { ...receipt, receiptSha256: "0".repeat(64) }, input, lease, harness.ports()))
       .rejects.toThrow(/digest is invalid/u);
   });
+});
 
+describe("Craig failed-stack recovery evidence", () => {
   it("recovers an exact retained failed stack and rejects mutated recovery evidence", async () => {
     const input = await fixture("campaign-failed-recovery");
     const harness = new Harness(input);
@@ -392,6 +406,73 @@ describe("Craig disposable private-campaign stack", () => {
     const mutatedRecovery = { ...recoveryContent, unexpected: true };
     expect(() => verifyCraigFailedStackRecoveryReceipt({ ...mutatedRecovery,
       receiptSha256: digestCanonical(mutatedRecovery) }, failure, mutation)).toThrow();
+    const foreignAbsenceContent = { ...recoveryContent, absenceProof: {
+      ...recovery.absenceProof, absentNetworkName: "foreign-network",
+    } };
+    expect(() => verifyCraigFailedStackRecoveryReceipt({ ...foreignAbsenceContent,
+      receiptSha256: digestCanonical(foreignAbsenceContent) }, failure, mutation))
+      .toThrow(/retained failure custody/u);
+
+    const idempotentStart = harness.calls.length;
+    await expect(reverifyExistingCraigFailedStackRecovery(input, mutation, failure, recovery,
+      { execute: harness.execute })).resolves.toEqual(recovery);
+    const idempotentCalls = harness.calls.slice(idempotentStart);
+    expect(idempotentCalls.some(({ executable, args }) => executable === "/usr/bin/docker"
+      && (args.includes("stop") || args.includes("down")))).toBe(false);
+    expect(idempotentCalls.some(({ executable, args }) => executable === "/usr/sbin/iptables"
+      && ["-D", "-F", "-X"].includes(args[0] ?? ""))).toBe(false);
+  });
+
+  it("rejects forged existing recovery custody and resources that reappear after a valid receipt", async () => {
+    const input = await fixture("campaign-existing-receipt");
+    const harness = new Harness(input);
+    const lease = await leaseFor(input);
+    await provisionCraigDisposableCampaignStack(input, harness.ports(), lease);
+    const evidence = failedStackEvidence(input, lease);
+    const recovery = await recoverCraigFailedCampaignStack(input, evidence.mutation, evidence.failure,
+      { execute: harness.execute });
+
+    const foreignInput = await fixture("campaign-foreign-existing-receipt");
+    const beforeForeign = harness.calls.length;
+    await expect(reverifyExistingCraigFailedStackRecovery(foreignInput, evidence.mutation,
+      evidence.failure, recovery, { execute: harness.execute })).rejects.toThrow(/exact retained/u);
+    expect(harness.calls).toHaveLength(beforeForeign);
+
+    const { receiptSha256: _mutationDigest, ...mutationContent } = evidence.mutation;
+    const forgedMutationContent = { ...mutationContent, composeServiceConfigHashes: {
+      ...mutationContent.composeServiceConfigHashes, bot: "f".repeat(64),
+    } };
+    const forgedMutation = { ...forgedMutationContent,
+      receiptSha256: digestCanonical(forgedMutationContent) };
+    const { receiptSha256: _failureDigest, ...failureContent } = evidence.failure;
+    const forgedFailureContent = { ...failureContent, mutationReceiptSha256: forgedMutation.receiptSha256 };
+    const forgedFailure = { ...forgedFailureContent, receiptSha256: digestCanonical(forgedFailureContent) };
+    const { receiptSha256: _recoveryDigest, ...forgedRecoveryBase } = recovery;
+    const forgedRecoveryContent = { ...forgedRecoveryBase, failureReceiptSha256: forgedFailure.receiptSha256,
+      mutationReceiptSha256: forgedMutation.receiptSha256 };
+    const forgedRecovery = { ...forgedRecoveryContent,
+      receiptSha256: digestCanonical(forgedRecoveryContent) };
+    const beforeForgedHash = harness.calls.length;
+    await expect(reverifyExistingCraigFailedStackRecovery(input, forgedMutation, forgedFailure,
+      forgedRecovery, { execute: harness.execute })).rejects.toThrow(/changed from mutation custody/u);
+    expect(harness.calls.slice(beforeForgedHash).some(({ executable, args }) =>
+      executable === "/usr/bin/docker" && (args.includes("stop") || args.includes("down")))).toBe(false);
+
+    const base = harness.execute.getMockImplementation();
+    if (base === undefined) { throw new Error("missing harness implementation"); }
+    const callsBeforeReappearance = harness.calls.length;
+    harness.execute.mockImplementation(async (request) => {
+      if (request.executable === "/usr/bin/docker" && request.args.includes("ps")
+        && request.args.includes("--all")) { return result(0, `${id}\n`); }
+      return base(request);
+    });
+    await expect(reverifyExistingCraigFailedStackRecovery(input, evidence.mutation,
+      evidence.failure, recovery, { execute: harness.execute })).rejects.toThrow(/left Compose containers/u);
+    const reappearanceCalls = harness.calls.slice(callsBeforeReappearance);
+    expect(reappearanceCalls.some(({ executable, args }) => executable === "/usr/bin/docker"
+      && (args.includes("stop") || args.includes("down")))).toBe(false);
+    expect(reappearanceCalls.some(({ executable, args }) => executable === "/usr/sbin/iptables"
+      && ["-D", "-F", "-X"].includes(args[0] ?? ""))).toBe(false);
   });
 
   it("refuses partial firewall custody after an exact dispatch was already deleted", async () => {
@@ -454,7 +535,9 @@ describe("Craig disposable private-campaign stack", () => {
       const networkPolicy = deriveCraigCampaignNetworkPolicy(campaignId, release,
         { end: 65_535, start: 1_024 });
       const content = { campaignId, campaignLeaseSha256: "3".repeat(64),
-        composeCanonicalSha256: "4".repeat(64), hostedPlanSha256: "5".repeat(64),
+        composeCanonicalSha256: "4".repeat(64), composeServiceConfigHashes: {
+          bot: "a".repeat(64), database: "b".repeat(64), migrate: "c".repeat(64),
+        }, hostedPlanSha256: "5".repeat(64),
         kind: "craig-stack-mutation-start" as const, networkPolicy, planSha256: "6".repeat(64),
         projectName: craigProjectName(campaignId, release), release, schemaVersion: 1 as const,
         startedAt: "2026-08-26T12:00:00.000Z" };
@@ -474,7 +557,9 @@ describe("Craig disposable private-campaign stack", () => {
     await expect(assertCraigFailedStackRetentionAdmission(root)).rejects.toThrow(/foreign campaign root/u);
     await expect(stat(receipts[0]!)).resolves.toBeDefined();
   });
+});
 
+describe("Craig failed-stack Docker custody", () => {
   it("rejects every foreign Docker custody mutation before stop, firewall removal, or down", async () => {
     const cases: readonly [string, (request: CraigCampaignStackCommandRequest,
       value: unknown) => unknown][] = [
@@ -485,6 +570,20 @@ describe("Craig disposable private-campaign stack", () => {
         && request.args[1] === "inspect" && request.args[2] === id
         ? mutateInspection(value, (item) => { item.Config!.Image = "evil.invalid/foreign@sha256:"
           + "e".repeat(64); }) : value],
+      ["missing Compose config hash", (request, value) => request.args[0] === "container"
+        && request.args[1] === "inspect" && request.args[2] === id
+        ? mutateInspection(value, (item) => { delete item.Config?.Labels?.["com.docker.compose.config-hash"]; })
+        : value],
+      ["foreign Compose config hash", (request, value) => request.args[0] === "container"
+        && request.args[1] === "inspect" && request.args[2] === id
+        ? mutateInspection(value, (item) => { if (item.Config?.Labels !== undefined) {
+          item.Config.Labels["com.docker.compose.config-hash"] = "f".repeat(64);
+        } }) : value],
+      ["mixed Compose config hash", (request, value) => request.args[0] === "container"
+        && request.args[1] === "inspect" && request.args[2] === databaseId
+        ? mutateInspection(value, (item) => { if (item.Config?.Labels !== undefined) {
+          item.Config.Labels["com.docker.compose.config-hash"] = "e".repeat(64);
+        } }) : value],
       ["host network", (request, value) => request.args[0] === "network" && request.args[1] === "inspect"
         ? mutateInspection(value, (item) => { item.Driver = "host"; }) : value],
       ["altered subnet", (request, value) => request.args[0] === "network" && request.args[1] === "inspect"
@@ -700,7 +799,8 @@ async function leaseFor(input: CraigCampaignStackInput): Promise<HostedCampaignL
 function failedStackEvidence(input: CraigCampaignStackInput, lease: HostedCampaignLeaseHandle) {
   const plan = planCraigDisposableCampaignStack(input);
   const mutationContent = { campaignId: input.campaignId, campaignLeaseSha256: lease.leaseSha256,
-    composeCanonicalSha256: input.composeCanonicalSha256, hostedPlanSha256: lease.planSha256,
+    composeCanonicalSha256: input.composeCanonicalSha256,
+    composeServiceConfigHashes: serviceConfigHashes(input), hostedPlanSha256: lease.planSha256,
     kind: "craig-stack-mutation-start" as const, networkPolicy: input.networkPolicy,
     planSha256: plan.planSha256, projectName: plan.projectName, release: input.release,
     schemaVersion: 1 as const, startedAt: "2026-08-26T12:00:00.000Z" };
@@ -715,7 +815,7 @@ function failedStackEvidence(input: CraigCampaignStackInput, lease: HostedCampai
 }
 
 type MutableInspection = {
-  Config?: { Image?: string };
+  Config?: { Image?: string; Labels?: Record<string, string> };
   Driver?: string;
   Image?: string;
   IPAM?: { Config?: { Subnet?: string }[] };

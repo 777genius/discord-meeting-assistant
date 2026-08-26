@@ -123,6 +123,19 @@ export async function removeCraigCampaignFirewall(input: CraigCampaignStackInput
   }
 }
 
+export async function proveCraigCampaignFirewallAbsent(
+  input: CraigCampaignStackInput,
+  executeRequest: ExecuteRequest,
+): Promise<void> {
+  const saved = await executeFirewall(executeRequest, "/usr/sbin/iptables-save", ["-c", "-t", "filter"]);
+  requireSuccess(saved, "Craig campaign firewall idempotent absence proof");
+  parseCraigFilterRulesForOwnership(saved.stdout);
+  const { chain, inputChain } = input.networkPolicy;
+  if (saved.stdout.split("\n").some((line) => line.includes(chain) || line.includes(inputChain))) {
+    throw new Error("Craig campaign firewall is not fully absent after retained recovery");
+  }
+}
+
 async function inspectNetwork(input: CraigCampaignStackInput, projectName: string,
   executeDocker: ExecuteDocker): Promise<string> {
   const result = await executeDocker(["network", "inspect", input.networkPolicy.name]);

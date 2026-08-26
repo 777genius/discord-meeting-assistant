@@ -6,7 +6,8 @@ import { hostedCampaignReleaseReferenceV1Schema, type HostedCampaignReleaseRefer
 import { trustedDockerEnvironment } from "./craig-campaign-stack-local-adapters.js";
 import { validateCraigRuntime } from "./craig-campaign-runtime-validation.js";
 import { digestCraigCampaignStackCanonical as digestCanonical } from "./craig-campaign-stack-digest.js";
-import { validateRenderedCraigCompose } from "./craig-campaign-compose-validation.js";
+import { inspectCraigComposeServiceConfigHashes, validateRenderedCraigCompose } from
+  "./craig-campaign-compose-validation.js";
 import { validateSourceCraigCompose } from "./craig-campaign-source-compose-validation.js";
 import type { HostedCampaignLeaseHandle } from "./hosted-campaign-coordinator.js";
 import {
@@ -40,41 +41,25 @@ export { FileCraigCampaignCredentialStore } from "./craig-campaign-stack-local-a
 export { craigCampaignComposeProjectSchema, craigProjectName, deriveCraigCampaignNetworkPolicy } from
   "./craig-campaign-network-plan.js";
 export type { CraigCampaignStackInput } from "./craig-campaign-stack-schemas.js";
-
 export interface CraigCampaignStackCommandRequest { readonly args: readonly string[];
   readonly environment: Readonly<Record<string, string>>; readonly executable: string; readonly standardInput?: string;
   readonly timeoutMilliseconds: number; readonly workingDirectory: string }
-
-export interface CraigCampaignStackCommandResult { readonly exitCode: number; readonly stderr: string;
-  readonly stdout: string }
-
+export interface CraigCampaignStackCommandResult { readonly exitCode: number; readonly stderr: string; readonly stdout: string }
 export interface CraigCampaignStackPorts {
-  readonly commands: {
-    execute(request: CraigCampaignStackCommandRequest): Promise<CraigCampaignStackCommandResult>;
-  };
-  readonly credentials: {
-    reserveCreateOnly(input: Readonly<{
-      campaignId: string;
-      contents: string;
-      path: string;
-      projectName: string;
-      release: HostedCampaignReleaseReferenceV1;
-    }>): Promise<CraigCredentialFileIdentityV1>;
-  };
+  readonly commands: { execute(request: CraigCampaignStackCommandRequest): Promise<CraigCampaignStackCommandResult> };
+  readonly credentials: { reserveCreateOnly(input: Readonly<{ campaignId: string; contents: string; path: string;
+    projectName: string; release: HostedCampaignReleaseReferenceV1 }>): Promise<CraigCredentialFileIdentityV1> };
   readonly mutationJournal: { markStarted(input: CraigCampaignStackMutationStartV1): Promise<void> };
   readonly now?: () => number;
 }
-
 export interface CraigCampaignStackMutationStartV1 {
   readonly campaignId: string; readonly campaignLeaseSha256: string; readonly composeCanonicalSha256: string;
-  readonly hostedPlanSha256: string; readonly kind: "craig-stack-mutation-start"; readonly planSha256: string;
-  readonly networkPolicy: z.infer<typeof networkPolicySchema>;
+  readonly composeServiceConfigHashes: Readonly<Record<string, string>>; readonly hostedPlanSha256: string;
+  readonly kind: "craig-stack-mutation-start"; readonly planSha256: string; readonly networkPolicy: z.infer<typeof networkPolicySchema>;
   readonly projectName: string; readonly release: HostedCampaignReleaseReferenceV1; readonly schemaVersion: 1;
 }
-
-export interface CraigCredentialFileIdentityV1 { readonly device: number; readonly gid: number;
-  readonly inode: number; readonly linkCount: 1; readonly mode: "0600"; readonly sha256: string; readonly uid: number }
-
+export interface CraigCredentialFileIdentityV1 { readonly device: number; readonly gid: number; readonly inode: number;
+  readonly linkCount: 1; readonly mode: "0600"; readonly sha256: string; readonly uid: number }
 export interface PlannedCraigCampaignStackV1 {
   readonly campaignId: string; readonly campaignRoot: string; readonly composeCanonicalSha256: string;
   readonly composeFile: string; readonly credentialFile: string;
@@ -85,23 +70,17 @@ export interface PlannedCraigCampaignStackV1 {
   readonly readinessTimeoutSeconds: number;
   readonly schemaVersion: 1;
 }
-
 export interface CraigCampaignStackReceiptV2 {
   readonly campaignId: string; readonly campaignLease: Readonly<{ device: number; inode: number; sha256: string }>;
   readonly campaignRoot: string; readonly composeConfigSha256: string; readonly composeFile: string;
-  readonly composeFileIdentity: PinnedFileIdentityV1;
-  readonly containerId: string; readonly createdAt: string; readonly credentialFile: string;
-  readonly credentialFileIdentity: CraigCredentialFileIdentityV1;
-  readonly databaseContainerId: string;
-  readonly database: Readonly<{ migrationTable: string; name: string; schema: string; user: string }>;
-  readonly databaseImage: Readonly<{ imageId: string; repositoryDigest: string }>;
+  readonly composeFileIdentity: PinnedFileIdentityV1; readonly containerId: string; readonly createdAt: string;
+  readonly credentialFile: string; readonly credentialFileIdentity: CraigCredentialFileIdentityV1;
+  readonly databaseContainerId: string; readonly database: Readonly<{ migrationTable: string; name: string;
+    schema: string; user: string }>; readonly databaseImage: Readonly<{ imageId: string; repositoryDigest: string }>;
   readonly databaseVolume: string; readonly imageId: string; readonly kind: "craig-disposable-campaign-stack";
-  readonly planSha256: string; readonly hostedPlanSha256: string; readonly projectName: string;
-  readonly receiptSha256: string;
-  readonly release: HostedCampaignReleaseReferenceV1;
-  readonly repositoryDigest: string;
-  readonly migrationImage: Readonly<{ imageId: string; repositoryDigest: string }>;
-  readonly migrationSetSha256: string;
+  readonly planSha256: string; readonly hostedPlanSha256: string; readonly projectName: string; readonly receiptSha256: string;
+  readonly release: HostedCampaignReleaseReferenceV1; readonly repositoryDigest: string;
+  readonly migrationImage: Readonly<{ imageId: string; repositoryDigest: string }>; readonly migrationSetSha256: string;
   readonly networkPolicy: Readonly<z.infer<typeof networkPolicySchema> & {
     containerId: string; databaseContainerId: string; networkId: string; semanticPolicySha256: string }>;
   readonly protocol: Readonly<{ kind: "craig-application" | "test-port-substitute";
@@ -110,7 +89,6 @@ export interface CraigCampaignStackReceiptV2 {
   readonly serviceHealth: "healthy";
   readonly sourceRevision: string;
 }
-
 export function planCraigDisposableCampaignStack(candidate: unknown): PlannedCraigCampaignStackV1 {
   const input = inputSchema.parse(candidate);
   if (createHash("sha256").update(input.composeCanonical).digest("hex") !== input.composeCanonicalSha256) {
@@ -151,7 +129,6 @@ export function planCraigDisposableCampaignStack(candidate: unknown): PlannedCra
   };
   return Object.freeze({ ...content, planSha256: digestCanonical(content) });
 }
-
 export async function provisionCraigDisposableCampaignStack(
   candidate: unknown,
   ports: CraigCampaignStackPorts,
@@ -170,17 +147,6 @@ export async function provisionCraigDisposableCampaignStack(
   const environment = Object.freeze({ ...trustedDockerEnvironment(), ...credentialEnvironment(input, plan.projectName) });
   const composeFileIdentity = Object.freeze({ device: 0, inode: 0, sha256: input.composeCanonicalSha256 });
   const credentialCanonical = credentialContents(input, plan.projectName);
-  await ports.mutationJournal.markStarted(Object.freeze({ campaignId: input.campaignId,
-    campaignLeaseSha256: campaignLease.sha256, composeCanonicalSha256: input.composeCanonicalSha256,
-    hostedPlanSha256: lease.planSha256, kind: "craig-stack-mutation-start", planSha256: plan.planSha256,
-    networkPolicy: input.networkPolicy, projectName: plan.projectName, release: input.release, schemaVersion: 1 }));
-  const credentialFileIdentity = await ports.credentials.reserveCreateOnly({
-    campaignId: input.campaignId,
-    contents: credentialCanonical,
-    path: input.credentialFile,
-    projectName: plan.projectName,
-    release: input.release,
-  });
   const compose = [
     "compose", "--project-name", plan.projectName,
     "--file", "-",
@@ -192,7 +158,9 @@ export async function provisionCraigDisposableCampaignStack(
   });
   const revalidate = () => revalidateCraigMutationInputs({
     compose, databaseVolume, execute,
-    expectedConfigSha256: composeConfigSha256, input, lease, projectName: plan.projectName,
+    expectedConfigSha256: composeConfigSha256,
+    expectedServiceConfigHashes: composeServiceConfigHashes,
+    input, lease, projectName: plan.projectName,
     verifyPinnedImages: () => verifyCraigPinnedImages(execute, input),
   });
 
@@ -200,7 +168,20 @@ export async function provisionCraigDisposableCampaignStack(
   requireSuccess(rendered, "Craig rendered Compose configuration");
   const composeConfig = validateRenderedCraigCompose(rendered.stdout, input, plan.projectName, databaseVolume);
   const composeConfigSha256 = digestCanonical(composeConfig);
+  const composeServiceConfigHashes = await inspectCraigComposeServiceConfigHashes(execute, compose, input);
   await verifyCraigPinnedImages(execute, input);
+  await ports.mutationJournal.markStarted(Object.freeze({ campaignId: input.campaignId,
+    campaignLeaseSha256: campaignLease.sha256, composeCanonicalSha256: input.composeCanonicalSha256,
+    composeServiceConfigHashes, hostedPlanSha256: lease.planSha256,
+    kind: "craig-stack-mutation-start", planSha256: plan.planSha256,
+    networkPolicy: input.networkPolicy, projectName: plan.projectName, release: input.release, schemaVersion: 1 }));
+  const credentialFileIdentity = await ports.credentials.reserveCreateOnly({
+    campaignId: input.campaignId,
+    contents: credentialCanonical,
+    path: input.credentialFile,
+    projectName: plan.projectName,
+    release: input.release,
+  });
   await assertCraigResourcesAbsent(execute, compose, composeConfig, plan.projectName);
   await revalidate();
 
