@@ -264,7 +264,9 @@ boundaries:
       builtins:
         - node:crypto
         - node:fs
+        - node:fs/promises
         - node:module
+        - node:path
       runtimeReferences: []
   - id: adapters.pipecat-runtime
     roots:

@@ -58,11 +58,16 @@ unknown-outcome handling and exact original/repair input accounting.
   requires an independently signed receipt over its exact attempt, provider run,
   request/response digests, ordinal, process, endpoint, service generation, and
   measured model/prompt/tokenizer identity before the corresponding brand exists.
-- The bounded-context owner is Discord's qualification tooling. Its one
-  executable composition is
-  `packages/infinity-context-adapter/test/semantic-quality-v4-production-composition.ts`; it
+- The bounded-context owner is the quality-campaign module in Discord's Infinity
+  adapter. Its operational sources live under
+  `packages/infinity-context-adapter/src/quality-campaign`; they
   orchestrates the already classified `adapters.infinity-context` production
   runner and exact consumer-owned ports without adding a generic platform.
+- The custody seal never authorizes provider execution. A separate signed,
+  expiring execution authorization binds the exact acceptance receipt, corpus,
+  and release root. The main workflow root binds exactly 200 sealed automatic
+  and 40 independently reviewed questions plus two signed locator authorities
+  derived from one frozen authoritative database snapshot.
 - All 240 retrievals, canonical PostgreSQL rehydrations, capability/profile,
   structural, leakage, and retrieval thresholds pass before the production
   answer port is created. A create-only worst-case repetition spend reservation
