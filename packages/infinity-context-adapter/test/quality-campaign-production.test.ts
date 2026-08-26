@@ -25,6 +25,7 @@ import {
   type AdjudicationAuthorityPort,
   type CampaignQuestion,
   type ExpectedOutcomeInventory,
+  type QualityCampaignRelease,
   type RetainedArtifact,
 } from "../src/quality-campaign/index.js";
 
@@ -43,7 +44,8 @@ function signer(keyId: string) {
 describe("production quality campaign", () => {
   it("rejects model, reasoning, tier, SDK, image, and signature substitutions", () => {
     const authority = signer("release");
-    const release = { answerImageSha256: d("1"), answerProcessIdentitySha256: d("2"),
+    const release: QualityCampaignRelease = { answerImageSha256: d("1"),
+      answerProcessIdentitySha256: d("2"),
       answerReleaseSha256: d("3"), discordCommitSha256: d("4"), discordImageSha256: d("5"),
       discordReleaseSha256: d("6"), infinityCapabilitySha256: d("7"),
       infinityCommitSha256: d("8"), infinityImageSha256: d("9"),
@@ -57,10 +59,11 @@ describe("production quality campaign", () => {
       expect(() => verifyReleaseRoot({ authorityPublicKeyPem: authority.publicKeyPem,
         document: authority.signed({ ...release, ...mutation }) })).toThrow();
     }
-    for (const mutation of [{ sdkArchiveSha256: d("0") }, { infinityImageSha256: d("0") },
-      { tokenizerSha256: d("1") }, { promptSha256: d("2") }]) {
-      expect(() => assertObservedRelease(release,
-        { ...release, ...mutation } as typeof release)).toThrow(/drifted/u);
+    const provenanceMutations: readonly Partial<QualityCampaignRelease>[] = [
+      { sdkArchiveSha256: d("0") }, { infinityImageSha256: d("0") },
+      { tokenizerSha256: d("1") }, { promptSha256: d("2") }];
+    for (const mutation of provenanceMutations) {
+      expect(() => {assertObservedRelease(release, { ...release, ...mutation });}).toThrow(/drifted/u);
     }
     const tampered = authority.signed(release);
     expect(() => verifyReleaseRoot({ authorityPublicKeyPem: authority.publicKeyPem,
@@ -83,7 +86,7 @@ describe("production quality campaign", () => {
       expect(() => verifySpendReservations({ authorityKeyId: authority.keyId,
         authorityPublicKeyPem: authority.publicKeyPem, campaignRootSha256: d("1"),
         nowEpochMs: 1_000, releaseRootSha256: d("2"),
-        reservations: reservations as readonly unknown[] })).toThrow();
+        reservations })).toThrow();
     }
   });
 
@@ -124,10 +127,10 @@ describe("production quality campaign", () => {
     const authority = (keyId: string, selected = decision): AdjudicationAuthorityPort => {
       const value = signer(keyId);
       return { authorityId: keyId, publicKeyPem: value.publicKeyPem,
-        adjudicate: vi.fn(async (request) => value.signed({ attemptId: request.attemptId,
+        adjudicate: async (request) => value.signed({ attemptId: request.attemptId,
           decision: selected, decisionDigestSha256: sha256(selected),
           encryptedEvidenceSha256: request.encryptedEvidenceSha256,
-          outcomeDigestSha256: request.outcomeDigestSha256 })) };
+          outcomeDigestSha256: request.outcomeDigestSha256 }) };
     };
     const first = authority("one"); const second = authority("two");
     const resolver = authority("three");

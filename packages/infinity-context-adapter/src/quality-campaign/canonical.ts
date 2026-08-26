@@ -46,12 +46,12 @@ function canonical(value: unknown, path: string): unknown {
     return value;
   }
   if (Array.isArray(value)) {return value.map((item, index) => canonical(item, `${path}[${index}]`));}
-  if (typeof value !== "object" || value === undefined) {
+  if (typeof value !== "object") {
     throw new Error(`${path} contains a non-canonical value`);
   }
   const output: Record<string, unknown> = {};
-  for (const key of Object.keys(value as Record<string, unknown>).toSorted()) {
-    const item = (value as Record<string, unknown>)[key];
+  for (const [key, item] of Object.entries(value).toSorted(([left], [right]) =>
+    left.localeCompare(right))) {
     if (item === undefined) {throw new Error(`${path}.${key} is undefined`);}
     output[key] = canonical(item, `${path}.${key}`);
   }

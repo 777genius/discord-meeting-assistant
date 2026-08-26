@@ -56,15 +56,15 @@ export function verifyReleaseRoot(input: { readonly authorityPublicKeyPem: strin
     "infinityProfileSha256", "infinityReleaseSha256", "mapperSha256", "model",
     "policySha256", "promptSha256", "reasoning", "sdkArchiveSha256", "serviceTier",
     "tokenizerSha256"];
-  const release = exactRecord(document.payload, keys, "release binding") as unknown as
-    QualityCampaignRelease;
-  for (const [key, value] of Object.entries(release)) {
+  const record = exactRecord(document.payload, keys, "release binding");
+  for (const [key, value] of Object.entries(record)) {
     if (key.endsWith("Sha256")) {digest(value, key);}
   }
-  if (release.model !== FROZEN_ANSWER_EXECUTION.model ||
-    release.reasoning !== FROZEN_ANSWER_EXECUTION.reasoning ||
-    release.serviceTier !== FROZEN_ANSWER_EXECUTION.serviceTier) {
+  if (record.model !== FROZEN_ANSWER_EXECUTION.model ||
+    record.reasoning !== FROZEN_ANSWER_EXECUTION.reasoning ||
+    record.serviceTier !== FROZEN_ANSWER_EXECUTION.serviceTier) {
     throw new Error("answer execution is not frozen to gpt-5.6-sol/xhigh/default");
   }
-  return Object.freeze({ release, releaseRootSha256: sha256(document) });
+  return Object.freeze({ release: record as unknown as QualityCampaignRelease,
+    releaseRootSha256: sha256(document) });
 }

@@ -43,17 +43,19 @@ export function verifySpendReservations(input: {
     const keys = ["campaignRootSha256", "expiresAtEpochMs", "maxCalls", "maxEncryptedBytes",
       "maxTokens", "model", "provider", "reasoning", "releaseRootSha256", "repetition",
       "serviceTier"];
-    const payload = exactRecord(signed.payload, keys, "spend reservation payload") as unknown as
-      SpendReservation;
-    if (payload.repetition !== index + 1 || payload.campaignRootSha256 !==
-      input.campaignRootSha256 || payload.releaseRootSha256 !== input.releaseRootSha256 ||
-      payload.expiresAtEpochMs <= input.nowEpochMs || payload.maxCalls < 240 ||
-      payload.maxTokens < 1 || payload.maxEncryptedBytes < 1 || payload.provider.trim() === "" ||
-      payload.model !== FROZEN_ANSWER_EXECUTION.model ||
-      payload.reasoning !== FROZEN_ANSWER_EXECUTION.reasoning ||
-      payload.serviceTier !== FROZEN_ANSWER_EXECUTION.serviceTier ||
-      ![payload.expiresAtEpochMs, payload.maxCalls, payload.maxTokens,
-        payload.maxEncryptedBytes].every(Number.isSafeInteger)) {
+    const record = exactRecord(signed.payload, keys, "spend reservation payload");
+    if (record.repetition !== index + 1 || record.campaignRootSha256 !==
+      input.campaignRootSha256 || record.releaseRootSha256 !== input.releaseRootSha256 ||
+      typeof record.expiresAtEpochMs !== "number" || record.expiresAtEpochMs <= input.nowEpochMs ||
+      typeof record.maxCalls !== "number" || record.maxCalls < 240 ||
+      typeof record.maxTokens !== "number" || record.maxTokens < 1 ||
+      typeof record.maxEncryptedBytes !== "number" || record.maxEncryptedBytes < 1 ||
+      typeof record.provider !== "string" || record.provider.trim() === "" ||
+      record.model !== FROZEN_ANSWER_EXECUTION.model ||
+      record.reasoning !== FROZEN_ANSWER_EXECUTION.reasoning ||
+      record.serviceTier !== FROZEN_ANSWER_EXECUTION.serviceTier ||
+      ![record.expiresAtEpochMs, record.maxCalls, record.maxTokens,
+        record.maxEncryptedBytes].every(Number.isSafeInteger)) {
       throw new Error("spend reservation binding is invalid");
     }
     return signed;
@@ -300,7 +302,7 @@ async function ensureDirectory(path: string): Promise<void> {
   if (!value.isDirectory()) {throw new Error("durable path is not a directory");}
 }
 
-async function readOptional(path: string): Promise<unknown | null> {
+async function readOptional(path: string): Promise<unknown> {
   try {return JSON.parse((await readFile(path)).toString("utf8")) as unknown;}
   catch (error) {if ((error as NodeJS.ErrnoException).code === "ENOENT") {return null;} throw error;}
 }
