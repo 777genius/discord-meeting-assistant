@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines, max-lines-per-function -- one production-scale fixture proves the closed 3x240 graph */
 import { createCipheriv, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -92,7 +93,7 @@ describe("installed production quality-campaign CLI", () => {
 
     expect(fixture.holdoutCalls).toHaveLength(0);
     expect(await fixture.cli("holdout-execute", "holdout-execute-status.json")).toBe(20);
-    expect(fixture.holdoutCalls).toHaveLength(30 * 3);
+    expect(fixture.holdoutCalls).toHaveLength(30 * 3 * 3);
     expect(new Set(fixture.holdoutCalls.map(({ questionId }) => questionId)).size).toBe(30);
     expect(fixture.mainCalls.some(({ questionId }) => questionId.startsWith("h-"))).toBe(false);
     expect(await fixture.cli("holdout-adjudicate", "holdout-adjudicate-status.json")).toBe(20);
@@ -143,7 +144,8 @@ async function createFixture() {
     return startedAt;
   } };
   const custody = signer("custody"); const absence = signer("absence");
-  const deletion = signer("deletion"); const locator = signer("locator");
+  const deletion = signer("deletion"); const goldRelevance = signer("gold-relevance");
+  const locator = signer("locator");
   const mainProofAuthority = signer("main-proof"); const holdoutQuestion = signer("holdout-question");
   const reviewer1 = signer("reviewer-1"); const reviewer2 = signer("reviewer-2");
   const judge1 = signer("judge-1"); const judge2 = signer("judge-2");
@@ -153,6 +155,7 @@ async function createFixture() {
   const repetitionAuthority = signer("repetition-evidence");
   const holdoutAuthority = signer("holdout-custody");
   const policyAuthorities = { artifact_custody: custody, cleanup: absence,
+    gold_relevance: goldRelevance,
     holdout_authorization: holdoutAuthority, holdout_provider_result: holdoutProvider,
     holdout_question: holdoutQuestion,
     inventory: deletion, locator, main_proof: mainProofAuthority, provider_result: provider,
@@ -180,7 +183,7 @@ async function createFixture() {
   const releaseDocument = releaseAuthority.signed(release);
   const releaseRootSha256 = verifyReleaseRoot(policy, { authorityKeyId: releaseAuthority.keyId,
     document: releaseDocument }).releaseRootSha256;
-  const authorities = { absence, custody, deletion, holdoutAuthority, holdoutProvider, judge1,
+  const authorities = { absence, custody, deletion, goldRelevance, holdoutAuthority, holdoutProvider, judge1,
     judge2, resolver, holdoutQuestion, locator, mainProofAuthority, provider, releaseAuthority,
     repetitionAuthority, reviewer1, reviewer2, spend };
   const authorityPaths = Object.fromEntries(await Promise.all(Object.entries(authorities).map(
@@ -194,6 +197,7 @@ async function createFixture() {
     QUALITY_AUTHORITY_ROLES.map((role) => [role, authorityPaths[role === "artifact_custody" ?
       "custody" : role === "cleanup" ? "absence" : role === "holdout_authorization" ?
       "holdoutAuthority" : role === "holdout_provider_result" ? "holdoutProvider" :
+      role === "gold_relevance" ? "goldRelevance" :
       role === "holdout_question" ? "holdoutQuestion" :
       role === "inventory" ? "deletion" : role === "main_proof" ? "mainProofAuthority" :
       role === "provider_result" ? "provider" : role === "release" ? "releaseAuthority" :
@@ -304,13 +308,14 @@ async function createFixture() {
   await writeFile(holdoutTuningPath, canonicalJson(holdoutTuningEvidence));
   await writeFile(mainProofPath, canonicalJson(mainProof));
   await writeFile(questionReceiptPath, canonicalJson(questionReceipt));
-  await writeFile(holdoutSpendPath, canonicalJson(spend.signed({ allowedCallKinds:
+  await writeFile(holdoutSpendPath, canonicalJson(([1, 2, 3] as const).map((repetition) =>
+    spend.signed({ allowedCallKinds:
     ["answer", "capability", "retrieval"], campaignRootSha256: holdoutRootSha256,
-  expiresAtEpochMs: 4_000_000_000_000, maxCalls: 90, maxEncryptedBytes: 100_000_000,
-  maxCallsByKind: { adjudicator_1: 0, adjudicator_2: 0, answer: 30, capability: 30,
-    resolver: 0, retrieval: 30 }, maximumEffectDurationMs: 120_000,
+  expiresAtEpochMs: 4_000_000_000_000, maxCalls: 270, maxEncryptedBytes: 100_000_000,
+  maxCallsByKind: { adjudicator_1: 0, adjudicator_2: 0, answer: 90, capability: 90,
+    resolver: 0, retrieval: 90 }, maximumEffectDurationMs: 120_000,
   maxTokens: 1_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
-  releaseRootSha256, repetition: 1 })));
+  releaseRootSha256, repetition }))));
   const holdoutInputPath = join(root, "holdout-input.json");
   await writeFile(holdoutInputPath, canonicalJson({ authorizationReceiptPath:
     holdoutAuthorizationPath, locatorDigestsPath: holdoutLocatorsPath,
@@ -350,9 +355,9 @@ async function createFixture() {
     connectionsPath }, schemaVersion: "meeting_knowledge.semantic_quality_production_phase.v1" }));
 
   const runtime = createRuntimeFixture({ absence, artifactCustody: custody, clock, deletion, holdoutProvider,
-    judge1: reviewer1, judge2: reviewer2, locator, protectedEvidence, protectedOriginals,
-    provider, questions: allQuestions, release, releaseRootSha256, repetitionAuthority,
-    resolver, reviewer1, reviewer2 });
+    goldRelevance, judge1: reviewer1, judge2: reviewer2, locator, protectedEvidence, protectedOriginals,
+    provider, questions: allQuestions, release, releaseDocument, releaseRootSha256,
+    repetitionAuthority, resolver, reviewer1, reviewer2, spend });
   const { ports } = runtime;
   const cli = async (command: string, statusName: string) =>
     await runQualityCampaignProductionCli({ argv: [command, phasePath, join(root, statusName)],
@@ -381,13 +386,19 @@ async function createFixture() {
 
 async function writeSpendReservations(path: string, spend: ReturnType<typeof signer>,
   campaignRootSha256: string, releaseRootSha256: string): Promise<void> {
-  await writeFile(path, canonicalJson(([1, 2, 3] as const).map((repetition) => spend.signed({
+  await writeFile(path, canonicalJson(([1, 2, 3] as const).map((repetition) =>
+    spendDocument(spend, campaignRootSha256, releaseRootSha256, repetition))));
+}
+
+function spendDocument(spend: ReturnType<typeof signer>, campaignRootSha256: string,
+  releaseRootSha256: string, repetition: 1 | 2 | 3) {
+  return spend.signed({
     allowedCallKinds: ["answer", "capability", "retrieval", "adjudicator_1", "adjudicator_2",
       "resolver"], campaignRootSha256, expiresAtEpochMs: 4_000_000_000_000, maxCalls: 720,
     maxEncryptedBytes: 100_000_000, maxCallsByKind: { adjudicator_1: 1, adjudicator_2: 1,
       answer: 240, capability: 240, resolver: 1, retrieval: 240 }, maximumEffectDurationMs: 120_000,
     maxTokens: 10_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
-    releaseRootSha256, repetition }))));
+    releaseRootSha256, repetition });
 }
 
 interface ProviderCall {
@@ -402,13 +413,15 @@ interface RuntimeFixtureInput { readonly absence: ReturnType<typeof signer>;
   readonly deletion: ReturnType<typeof signer>; readonly holdoutProvider: ReturnType<typeof signer>;
   readonly judge1: ReturnType<typeof signer>; readonly judge2: ReturnType<typeof signer>;
   readonly locator: ReturnType<typeof signer>;
+  readonly goldRelevance: ReturnType<typeof signer>;
   readonly protectedEvidence: readonly unknown[]; readonly provider: ReturnType<typeof signer>;
   readonly protectedOriginals: readonly { readonly artifactId: string; readonly kind: string }[];
   readonly questions: readonly CampaignQuestion[];
-  readonly release: QualityCampaignRelease; readonly releaseRootSha256: string;
+  readonly release: QualityCampaignRelease; readonly releaseDocument: unknown;
+  readonly releaseRootSha256: string;
   readonly repetitionAuthority: ReturnType<typeof signer>;
   readonly resolver: ReturnType<typeof signer>; readonly reviewer1: ReturnType<typeof signer>;
-  readonly reviewer2: ReturnType<typeof signer> }
+  readonly reviewer2: ReturnType<typeof signer>; readonly spend: ReturnType<typeof signer> }
 
 function createRuntimeFixture(input: RuntimeFixtureInput) {
   const mainCalls: ProviderCall[] = []; const holdoutCalls: ProviderCall[] = [];
@@ -471,6 +484,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
     return { attempt, attemptId, campaignRootSha256: String(request.campaignRootSha256),
       decision: firstDecision, decisionDigestSha256: sha256(firstDecision),
       encryptedEvidenceSha256, firstReceipt: first, outcomeDigestSha256, questionId,
+      predecessorPlaintextSha256: digest(`predecessor:${attemptId}`),
       repetition: Number(request.repetition) as 1 | 2 | 3,
       resolverReceipt, schemaVersion:
       "meeting_knowledge.semantic_quality_final_adjudication.v2", secondReceipt: second };
@@ -484,10 +498,8 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
   const artifactBindingsByAttempt = new Map<string, Record<string, string>>();
   const finalAdjudicationByAttempt = new Map<string, string>();
   const encodeArtifact = (answer: AttemptIdentity,
-    kind: typeof REQUIRED_RETAINED_KINDS[number] | "resolver_result") => {
+    kind: typeof REQUIRED_RETAINED_KINDS[number] | "resolver_result", plaintext: Buffer) => {
     const identity = artifactAttemptIdentity(answer, kind); const keyId = "retention-key";
-    const plaintext = artifactPlaintext(answer, identity, kind,
-      adjudicationFor(answer.attemptId));
     const plaintextSha256 = sha256(plaintext);
     const aad = { artifactKind: kind, attemptId: identity.attemptId,
       callKind: identity.callKind, callOrdinal: identity.callOrdinal,
@@ -516,28 +528,119 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       questionId: String(request.questionId), releaseRootSha256:
       String(request.releaseRootSha256), repetition: Number(request.repetition) as 1 | 2 | 3,
       spendReservationSha256: String(request.spendReservationSha256) });
-    const finalPlaintext = Buffer.from(canonicalJson(retainedFinalAdjudication(adjudication)));
-    finalAdjudicationByAttempt.set(attemptId, sha256(finalPlaintext));
     const bindings: Record<string, string> = {};
-    const artifacts = [...REQUIRED_RETAINED_KINDS,
-      ...(adjudication.resolverReceipt === null ? [] : ["resolver_result" as const])]
+    let predecessorPlaintextSha256: string | null = null;
+    const kinds = adjudication.resolverReceipt === null ? REQUIRED_RETAINED_KINDS :
+      [...REQUIRED_RETAINED_KINDS.slice(0, -1), "resolver_result" as const,
+        "final_adjudication" as const];
+    const artifacts = kinds
       .map((kind) => {
-        const { aad, envelope, identity, keyId, plaintextSha256 } =
-          encodeArtifact(answerIdentity, kind);
+        const identity = artifactAttemptIdentity(answerIdentity, kind);
+        const providerRequestBytes = Buffer.from(canonicalJson({ callKind: identity.callKind,
+          questionDigestSha256: identity.questionDigestSha256,
+          schemaVersion: "meeting_knowledge.semantic_quality_test_provider_request.v1" }));
+        const providerResultBytes = Buffer.from(canonicalJson({ callKind: identity.callKind,
+          questionId: identity.questionId,
+          schemaVersion: "meeting_knowledge.semantic_quality_test_provider_result.v1" }));
+        const decisionReceipt = kind === "adjudicator_1_result" ? adjudication.firstReceipt :
+          kind === "adjudicator_2_result" ? adjudication.secondReceipt :
+          kind === "resolver_result" ? adjudication.resolverReceipt : undefined;
+        const adjudicationRequest = { attemptId: answerIdentity.attemptId,
+          encryptedEvidenceSha256: adjudication.encryptedEvidenceSha256,
+          firstDecisionDigestSha256: null, firstDecisionReceipt: null,
+          outcomeDigestSha256: adjudication.outcomeDigestSha256,
+          questionId: answerIdentity.questionId, resolverBindingSha256: null,
+          secondDecisionDigestSha256: null, secondDecisionReceipt: null };
+        const resolverRequest = { ...adjudicationRequest,
+          firstDecisionDigestSha256: adjudication.firstReceipt.payload.decisionDigestSha256,
+          firstDecisionReceipt: adjudication.firstReceipt, resolverBindingSha256:
+          adjudication.resolverReceipt?.payload.resolverBindingSha256 ?? null,
+          secondDecisionDigestSha256: adjudication.secondReceipt.payload.decisionDigestSha256,
+          secondDecisionReceipt: adjudication.secondReceipt };
+        const requestDigestSha256 = kind === "adjudicator_1_result" ||
+          kind === "adjudicator_2_result" ? sha256(adjudicationRequest) :
+          kind === "resolver_result" ? sha256(resolverRequest) :
+          ["capability_request", "capability_response", "retrieval_request",
+            "retrieval_response", "answer_request", "answer_response", "raw_outcome"]
+            .includes(kind) ? sha256(providerRequestBytes) : digest(`request:${identity.attemptId}`);
+        const resultDigestSha256 = ["capability_response", "retrieval_response",
+          "answer_response", "raw_outcome"].includes(kind) ? sha256(providerResultBytes) :
+          decisionReceipt === undefined ? null : sha256(decisionReceipt);
+        const terminal = resultDigestSha256 !== null;
+        let signedProviderTerminal: unknown = null;
+        let signedDurableExchange: unknown = null;
+        if (terminal) {
+          if (["adjudicator_1_result", "adjudicator_2_result", "resolver_result"].includes(kind)) {
+            const effect = reviewerEffect(answerIdentity, kind as "adjudicator_1_result" |
+              "adjudicator_2_result" | "resolver_result", requestDigestSha256,
+            decisionReceipt, input);
+            signedProviderTerminal = effect.signedProviderTerminal;
+            signedDurableExchange = effect.signedDurableExchange;
+          } else {
+            signedProviderTerminal = input.provider.signed({ ...identity, requestDigestSha256,
+              resultDigestSha256, schemaVersion:
+              "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+            state: "terminal_success" });
+          }
+        }
+        const chain = { artifactKind: kind, cancellationBoundary: "not_cancelled",
+          deadlineEpochMs: terminal ? 11_000 : null, predecessorPlaintextSha256,
+          releaseDocumentSha256: sha256(input.releaseDocument), requestDigestSha256,
+          resultDigestSha256, signedDurableExchange, signedProviderTerminal,
+          spendReservationSha256: identity.spendReservationSha256 };
+        const base = { attempt: identity, chain,
+          schemaVersion: `meeting_knowledge.semantic_quality_${kind}.v1` };
+        const finalValue = { ...retainedFinalAdjudication(adjudication) as Record<string, unknown>,
+          predecessorPlaintextSha256 };
+        const turnId = `turn-${answerIdentity.repetition}-${answerIdentity.questionId}`;
+        const plaintext = kind === "final_adjudication" ? Buffer.from(canonicalJson(finalValue)) :
+          kind === "retrieval_response" ? Buffer.from(canonicalJson({ ...base,
+            latencyUs: 200_000, rankedLocatorIds: [digest(`locator:${answerIdentity.questionId}`)],
+            responseBytesBase64: providerResultBytes.toString("base64"),
+            schemaVersion: "meeting_knowledge.semantic_quality_retrieval_evidence.v1",
+            scopeViolationLocatorIds: [] })) : kind === "evidence" ? Buffer.from(canonicalJson({
+              ...base, evidenceTurnIds: [turnId], schemaVersion:
+              "meeting_knowledge.semantic_quality_canonical_evidence.v1",
+              speakerTimeChecks: [{ canonicalTurnId: turnId,
+                expectedSpeakerId: "speaker-1", expectedStartMs: 1_000,
+                observedSpeakerId: "speaker-1", observedStartMs: 1_000, toleranceMs: 0 }] })) :
+            kind === "raw_outcome" ? Buffer.from(canonicalJson({ ...base,
+              encryptedEvidenceSha256: adjudication.encryptedEvidenceSha256,
+              outcomeDigestSha256: adjudication.outcomeDigestSha256,
+              responseBytesBase64: providerResultBytes.toString("base64") })) :
+            kind === "adjudication_input" ? Buffer.from(canonicalJson({ ...base,
+              encryptedEvidenceSha256: adjudication.encryptedEvidenceSha256,
+              outcomeDigestSha256: adjudication.outcomeDigestSha256 })) :
+            kind === "answer_response" ? Buffer.from(canonicalJson({ ...base,
+              answerDigestSha256: resultDigestSha256,
+              responseBytesBase64: providerResultBytes.toString("base64") })) :
+            ["capability_request", "retrieval_request", "answer_request"].includes(kind) ?
+              Buffer.from(canonicalJson({ ...base,
+                requestBytesBase64: providerRequestBytes.toString("base64") })) :
+            kind === "capability_response" ? Buffer.from(canonicalJson({ ...base,
+              responseBytesBase64: providerResultBytes.toString("base64") })) :
+            Buffer.from(canonicalJson({ ...base,
+              ...(decisionReceipt === undefined ? {} : { decisionReceipt }) }));
+        const { aad, envelope, identity: storedIdentity, keyId, plaintextSha256 } =
+          encodeArtifact(answerIdentity, kind, plaintext);
         const aadSha256 = sha256(aad); const envelopeSha256 = sha256(envelope);
-        const keyBindingSha256 = sha256({ attemptId: identity.attemptId, keyId, kind,
-          questionId: identity.questionId, repetition: identity.repetition,
+        const keyBindingSha256 = sha256({ attemptId: storedIdentity.attemptId, keyId, kind,
+          questionId: storedIdentity.questionId, repetition: storedIdentity.repetition,
           schemaVersion: "meeting_knowledge.semantic_quality_retained_key_binding.v1" });
         const storedBytes = envelope.byteLength;
-        const artifactBindingSha256 = sha256({ aadSha256, attemptId: identity.attemptId,
+        const artifactBindingSha256 = sha256({ aadSha256, attemptId: storedIdentity.attemptId,
           envelopeSha256, keyBindingSha256, keyId, kind, plaintextSha256,
-          questionId: identity.questionId, repetition: identity.repetition, storedBytes,
+          questionId: storedIdentity.questionId, repetition: storedIdentity.repetition, storedBytes,
           schemaVersion: "meeting_knowledge.semantic_quality_retained_artifact_binding.v1" });
         envelopeByDigest.set(envelopeSha256, envelope);
         bindings[kind] = artifactBindingSha256;
-        return { aadSha256, artifactBindingSha256, attemptId: identity.attemptId,
+        predecessorPlaintextSha256 = plaintextSha256;
+        if (kind === "final_adjudication") {
+          finalAdjudicationByAttempt.set(attemptId, plaintextSha256);
+        }
+        return { aadSha256, artifactBindingSha256, attemptId: storedIdentity.attemptId,
           envelopeSha256, keyBindingSha256, keyId, kind, plaintextSha256,
-          questionId: identity.questionId, repetition: identity.repetition, storedBytes };
+          questionId: storedIdentity.questionId, repetition: storedIdentity.repetition, storedBytes };
       });
     artifactBindingsByAttempt.set(attemptId, bindings);
     artifactsByAttempt.set(attemptId, artifacts);
@@ -554,10 +657,23 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
     const spendDigests = ([1, 2, 3] as const).map((repetition) => outcomes.find((outcome) =>
       outcome.repetition === repetition)!.identity.spendReservationSha256) as
       [string, string, string];
+    const goldRelevanceEntries = input.questions.map((question) => {
+      const outcome = outcomes.find((candidate) => candidate.questionId === question.questionId)!;
+      return { ...question, campaignRootSha256: outcomes[0]!.campaignRootSha256,
+        expectedAbstention: outcome.expectedAnswer === "abstain",
+        releaseRootSha256: input.releaseRootSha256,
+        relevantLocatorIds: outcome.expectedAnswer === "abstain" ? [] :
+          outcome.relevantLocatorDigests };
+    });
+    const goldRelevanceReceipt = input.goldRelevance.signed({ campaignRootSha256:
+      outcomes[0]!.campaignRootSha256, entries: goldRelevanceEntries,
+      releaseRootSha256: input.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" });
     const rootBindingSha256 = sha256({ authorizedLocatorSetSha256: sha256(authorizedLocatorIds),
       campaignRootSha256: outcomes[0]!.campaignRootSha256,
-      questionSetSha256: sha256(input.questions), releaseRootSha256: input.releaseRootSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v2",
+      questionSetSha256: sha256(input.questions), relevanceAuthoritySha256:
+      sha256(goldRelevanceEntries), releaseRootSha256: input.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v3",
       spendReservationSetSha256: sha256(spendDigests) });
     const qualification = outcomes.map((outcome): QualificationOutcome => {
       const adjudication = adjudications.find(({ attemptId }) => attemptId === outcome.attemptId)!;
@@ -573,7 +689,8 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       evidenceTurnIds: [turnId],
       finalAdjudicationSha256: outcome.finalAdjudicationSha256, identity: outcome.identity,
       locale: question.locale, rankedLocatorIds: outcome.rankedLocatorDigests,
-      relevantLocatorIds: outcome.relevantLocatorDigests, repetition: outcome.repetition,
+      relevantLocatorIds: outcome.expectedAnswer === "abstain" ? [] :
+        outcome.relevantLocatorDigests, repetition: outcome.repetition,
       resolverRequired: adjudication.resolverReceipt !== null, retrievalLatencyUs:
       outcome.retrievalLatencyUs, rootBindingSha256,
       scopeViolationLocatorIds: outcome.scopeViolationLocatorIds,
@@ -597,10 +714,12 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       releaseRootSha256: input.releaseRootSha256, schemaVersion:
       "meeting_knowledge.semantic_quality_locator_inventory.v1" });
     const reviewedQuestions = { campaignRootSha256: outcomes[0]!.campaignRootSha256,
-      questions: input.questions, releaseRootSha256: input.releaseRootSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_reviewed_main_questions.v1" } as const;
+      goldRelevanceReceiptSha256: sha256(goldRelevanceReceipt), questions: input.questions,
+      releaseRootSha256: input.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_reviewed_main_questions.v2" } as const;
     return { adjudications, artifacts, authorizedLocatorIds, authorizedLocatorInventory,
-      campaignByteCeiling: 100_000_000, outcomes, questionReviewReceipts:
+      campaignByteCeiling: 100_000_000, finalRootBindingSha256: rootBindingSha256,
+      goldRelevanceReceipt, outcomes, questionReviewReceipts:
       [input.reviewer1.signed(reviewedQuestions), input.reviewer2.signed(reviewedQuestions)] as const,
       repetitionEvidence };
   };
@@ -630,7 +749,8 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       signedReceipt: {} }) }, evidenceCustody: { open: async ({ attemptIds, kind }) => kind ===
       "main" ? mainEvidence(attemptIds) : ({ adjudications: attemptIds.map(adjudicationFor),
         artifacts: [], authorizedLocatorIds: [], authorizedLocatorInventory: {},
-        campaignByteCeiling: 1, outcomes: outcomesFor(attemptIds, input.holdoutProvider), questionReviewReceipts:
+        campaignByteCeiling: 1, finalRootBindingSha256: digest("holdout-final-root"),
+        goldRelevanceReceipt: {}, outcomes: outcomesFor(attemptIds, input.holdoutProvider), questionReviewReceipts:
         [{}, {}], repetitionEvidence: [] }) },
     holdoutProvider: { answer: holdoutExchange, capability: holdoutExchange,
       resultAuthority: input.holdoutProvider, retrieval: holdoutExchange },
@@ -640,8 +760,28 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       receipts: async (attemptId) => {const evidence = adjudicationFor(attemptId);
         reviewCalls.first += 1; reviewCalls.second += 1;
         if (evidence.resolverReceipt !== null) {reviewCalls.resolver += 1;}
-        return { firstReceipt: evidence.firstReceipt, rawOutcomeEnvelopeSha256:
-          digest(`envelope:${attemptId}`), resolverReceipt: evidence.resolverReceipt,
+        const baseRequest = { attemptId: evidence.attemptId,
+          encryptedEvidenceSha256: evidence.encryptedEvidenceSha256,
+          firstDecisionDigestSha256: null, firstDecisionReceipt: null,
+          outcomeDigestSha256: evidence.outcomeDigestSha256, questionId: evidence.questionId,
+          resolverBindingSha256: null, secondDecisionDigestSha256: null,
+          secondDecisionReceipt: null };
+        const firstEffectEvidence = reviewerEffect(evidence.attempt, "adjudicator_1_result",
+          sha256(baseRequest), evidence.firstReceipt, input);
+        const secondEffectEvidence = reviewerEffect(evidence.attempt, "adjudicator_2_result",
+          sha256(baseRequest), evidence.secondReceipt, input);
+        const resolverRequest = evidence.resolverReceipt === null ? null : { ...baseRequest,
+          firstDecisionDigestSha256: evidence.firstReceipt.payload.decisionDigestSha256,
+          firstDecisionReceipt: evidence.firstReceipt, resolverBindingSha256:
+          evidence.resolverReceipt.payload.resolverBindingSha256,
+          secondDecisionDigestSha256: evidence.secondReceipt.payload.decisionDigestSha256,
+          secondDecisionReceipt: evidence.secondReceipt };
+        return { firstEffectEvidence, firstReceipt: evidence.firstReceipt,
+          predecessorPlaintextSha256: evidence.predecessorPlaintextSha256,
+          rawOutcomeEnvelopeSha256: digest(`envelope:${attemptId}`),
+          resolverEffectEvidence: resolverRequest === null ? null : reviewerEffect(evidence.attempt,
+            "resolver_result", sha256(resolverRequest), evidence.resolverReceipt, input),
+          resolverReceipt: evidence.resolverReceipt, secondEffectEvidence,
           secondReceipt: evidence.secondReceipt };},
       vault: { reconstruct: async ({ attempt }) => ({ encryptedEvidenceSha256:
         digest(`evidence:${attempt.attemptId}`), outcomeDigestSha256:
@@ -655,22 +795,39 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       envelopeByDigest.clear(); finalAdjudicationByAttempt.clear();}, reviewCalls };
 }
 
-function artifactPlaintext(answer: AttemptIdentity, identity: AttemptIdentity,
-  kind: typeof REQUIRED_RETAINED_KINDS[number] | "resolver_result",
-  finalAdjudication: unknown): Buffer {
-  const locator = digest(`locator:${answer.questionId}`);
-  const speakerTimeChecks = [{ canonicalTurnId: `turn-${answer.repetition}-${answer.questionId}`,
-    expectedSpeakerId: "speaker-1", expectedStartMs: 1_000, observedSpeakerId: "speaker-1",
-    observedStartMs: 1_000, toleranceMs: 0 }];
-  const value = kind === "final_adjudication" ? retainedFinalAdjudication(finalAdjudication) :
-    kind === "retrieval_response" ? { attempt: identity, latencyUs: 200_000,
-      rankedLocatorIds: [locator], schemaVersion:
-      "meeting_knowledge.semantic_quality_retrieval_evidence.v1",
-      scopeViolationLocatorIds: [] } : kind === "evidence" ? { attempt: identity,
-      evidenceTurnIds: [`turn-${answer.repetition}-${answer.questionId}`], schemaVersion:
-      "meeting_knowledge.semantic_quality_canonical_evidence.v1", speakerTimeChecks } :
-      `${identity.attemptId}:${kind}`;
-  return Buffer.from(typeof value === "string" ? value : canonicalJson(value));
+function reviewerEffect(answer: AttemptIdentity,
+  kind: "adjudicator_1_result" | "adjudicator_2_result" | "resolver_result",
+  requestDigestSha256: string, result: unknown, input: RuntimeFixtureInput) {
+  const attempt = artifactAttemptIdentity(answer, kind);
+  const resultDigestSha256 = sha256(result);
+  const signedProviderTerminal = input.provider.signed({ ...attempt, requestDigestSha256,
+    resultDigestSha256, schemaVersion:
+    "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+  state: "terminal_success" });
+  const budgetClaim = { admissionId: `admission-${attempt.attemptId}`,
+    attemptId: attempt.attemptId, callKind: attempt.callKind,
+    campaignRootSha256: attempt.campaignRootSha256, repetition: attempt.repetition,
+    requestedEncryptedBytes: 4_096, requestedTokens: 64, requestDigestSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_budget_claim.v1",
+    spendReservationSha256: attempt.spendReservationSha256 };
+  const reservation = { ...attempt, requestDigestSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3",
+    state: "provider_reserved" };
+  const terminalRecord = { attemptId: attempt.attemptId,
+    binding: signedProviderTerminal.payload, reservationSha256: sha256(reservation),
+    schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v4",
+    signedResult: signedProviderTerminal, state: "terminal_success" };
+  const signedDurableExchange = input.provider.signed({ budgetClaim,
+    budgetClaimSha256: sha256(budgetClaim), cancellationBoundary: "not_cancelled",
+    deadlineEpochMs: 11_000, effectState: "certain_success",
+    journalReconciliationState: "terminal_success",
+    releaseDocumentSha256: sha256(input.releaseDocument), reservation,
+    reservationSha256: sha256(reservation), resultDigestSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_durable_exchange_attestation.v1",
+    signedProviderTerminalSha256: sha256(signedProviderTerminal),
+    terminalRecordSha256: sha256(terminalRecord) });
+  return { attempt, cancellationBoundary: "not_cancelled" as const, deadlineEpochMs: 11_000,
+    requestDigestSha256, resultDigestSha256, signedDurableExchange, signedProviderTerminal };
 }
 
 function retainedFinalAdjudication(value: unknown): unknown {

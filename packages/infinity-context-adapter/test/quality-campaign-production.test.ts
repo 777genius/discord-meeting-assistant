@@ -46,6 +46,7 @@ function authorityFixture() {
     cleanup: signer("cleanup-authority"),
     gold_relevance: signer("gold-relevance-authority"),
     holdout_authorization: signer("holdout-authorization-authority"),
+    holdout_provider_result: signer("holdout-provider-result-authority"),
     holdout_question: signer("holdout-question-authority"),
     inventory: signer("target-inventory-authority"), locator: signer("locator-authority"),
     main_proof: signer("main-proof-authority"),
@@ -1304,7 +1305,7 @@ describe("production quality campaign final evidence", () => {
     expect(() => admitIsolatedHoldout(FINAL.authorities.policy, { ...input,
       authorizationAuthorityKeyId: questionSigner.keyId })).toThrow(/not trusted/u);
     expect(createHoldoutReport({ cleanupReceiptSha256: d("1"), holdoutRootSha256,
-      outcomeCount: 30, reportMetricsSha256: d("2") }).affectsMainQualification).toBe(false);
+      outcomeCount: 90, reportMetricsSha256: d("2") }).affectsMainQualification).toBe(false);
   });
 
 });

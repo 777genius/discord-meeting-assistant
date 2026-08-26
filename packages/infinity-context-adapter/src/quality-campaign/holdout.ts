@@ -164,8 +164,8 @@ function validateDigestArray(value: unknown): void {
 export function createHoldoutReport(input: { readonly cleanupReceiptSha256: string;
   readonly holdoutRootSha256: string; readonly outcomeCount: number;
   readonly reportMetricsSha256: string }): Readonly<Record<string, unknown>> {
-  if (input.outcomeCount !== HOLDOUT_CARDINALITY) {
-    throw new Error("holdout report requires exactly 30 outcomes");
+  if (input.outcomeCount !== HOLDOUT_CARDINALITY * 3) {
+    throw new Error("holdout report requires exactly 30 questions by three repetitions");
   }
   for (const value of [input.cleanupReceiptSha256, input.holdoutRootSha256,
     input.reportMetricsSha256]) {digest(value, "holdout report digest");}

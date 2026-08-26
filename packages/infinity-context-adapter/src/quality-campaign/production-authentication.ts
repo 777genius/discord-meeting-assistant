@@ -1,7 +1,12 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 
 import { canonicalJson, exactRecord } from "./canonical.js";
-import type { CampaignAuthenticationPort, SignedValue } from "./execution.js";
+import type { SignedValue } from "./execution.js";
+
+export interface CampaignAuthenticationPort {
+  publicKeyFingerprint(publicKeyPem: string): string;
+  verify<T>(value: unknown, keyId: string, publicKeyPem: string, label: string): SignedValue<T>;
+}
 
 /** Node cryptography adapter. Deterministic application reconstruction receives only this port. */
 export const nodeCampaignAuthentication: CampaignAuthenticationPort = Object.freeze({

@@ -70,7 +70,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     () => {resolve();});}); const address = server.address();
   if (address === null || typeof address === "string") {throw new Error("fake HTTP bind failed");}
   const base = `http://127.0.0.1:${address.port}`;
-  const authorities = Object.fromEntries(["absence", "custody", "deletion", "evidence",
+  const authorities = Object.fromEntries(["absence", "custody", "deletion", "evidence", "gold-relevance",
     "execution", "holdout", "holdout-evidence", "holdout-result", "holdout-spend-call", "judge1",
     "judge2", "main-result", "release", "resolver", "reviewer1", "reviewer2", "spend", "spend-call"]
     .map((name) => [name, localSigner(name)]));
@@ -82,6 +82,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const releaseSigner = authorities.release!; const releasePublicKeyPath = join(root,
     "release.pem");
   const roleNames = { artifact_custody: "custody", cleanup: "absence",
+    gold_relevance: "gold-relevance",
     holdout_authorization: "holdout", holdout_provider_result: "holdout-result",
     holdout_question: "holdout-evidence",
     inventory: "deletion", locator: "evidence", main_proof: "execution",

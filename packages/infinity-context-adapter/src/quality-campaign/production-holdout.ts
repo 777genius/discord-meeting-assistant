@@ -10,18 +10,24 @@ export async function executeIsolatedProductionHoldout(input: {
   readonly journalRoot: string; readonly ports: CampaignProviderPorts;
   readonly provider: string; readonly release: PinnedReleaseDocument;
   readonly policy: QualityCampaignAuthorityPolicy;
-  readonly spendReservation: unknown; readonly spendReservationSha256: string;
+  readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
+  readonly spendReservations: readonly [unknown, unknown, unknown];
 }): Promise<Readonly<Record<string, unknown>>> {
   const admitted = admitIsolatedHoldout(input.policy, input.admission);
   const scheduled = await executeHoldoutSchedule({ binding: { campaignRootSha256:
-    admitted.authorization.holdoutRootSha256, provider: input.provider, release: input.release,
-    policy: input.policy, releaseRootSha256: admitted.authorization.mainReleaseRootSha256,
-    spendReservation: input.spendReservation,
-    spendReservationSha256: input.spendReservationSha256 }, clock: input.clock,
+    admitted.authorization.holdoutRootSha256, release: input.release,
+    policy: input.policy, releaseRootSha256: admitted.authorization.mainReleaseRootSha256 },
+  clock: input.clock,
   concurrency: input.concurrency, deadlineEpochMs: input.deadlineEpochMs,
-  journalRoot: input.journalRoot, ports: input.ports, questions: admitted.questions });
+  journalRoot: input.journalRoot, ports: input.ports, questions: admitted.questions,
+  spendByRepetition: { 1: { provider: input.provider, reservation: input.spendReservations[0],
+    reservationSha256: input.spendReservationSha256ByRepetition[1] },
+  2: { provider: input.provider, reservation: input.spendReservations[1],
+    reservationSha256: input.spendReservationSha256ByRepetition[2] },
+  3: { provider: input.provider, reservation: input.spendReservations[2],
+    reservationSha256: input.spendReservationSha256ByRepetition[3] } } });
   if (scheduled.outcomeUnknown) {return Object.freeze({ outcomeUnknown: true });}
-  if (scheduled.completedOutcomes !== 30) {throw new Error("holdout execution is incomplete");}
+  if (scheduled.completedOutcomes !== 90) {throw new Error("holdout execution is incomplete");}
   return Object.freeze({ affectsMainQualification: false,
     holdoutQuestionSetSha256: admitted.holdoutQuestionSetSha256,
     holdoutRootSha256: admitted.authorization.holdoutRootSha256,

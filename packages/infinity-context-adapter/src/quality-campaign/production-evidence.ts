@@ -1,8 +1,7 @@
 import type { CampaignQuestion } from "./admission.js";
 import type { FinalAdjudicationEnvelope } from "./adjudication.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
-import type { AttemptIdentity } from "./execution.js";
-import type { VerifiedSpendReservation } from "./execution.js";
+import type { AttemptIdentity, VerifiedSpendReservation } from "./execution.js";
 import type { QualityCampaignAuthorityPolicy } from "./release.js";
 import { assertTerminalChain } from "./production-evidence-terminals.js";
 import { verifyExactRetentionInventory, type ArtifactCustodyPort,
@@ -153,24 +152,26 @@ export function reconstructExactHoldoutEvidence(input: {
   readonly outcomes: readonly ExactOutcomeEvidence[];
   readonly providerResultAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly questions: readonly CampaignQuestion[]; readonly releaseRootSha256: string;
-  readonly spendReservationSha256: string;
-}): { readonly metrics: LocallyComputedMetrics; readonly metricsSha256: string } {
-  const expected = input.questions.map((question) => {
-    const outcome = input.outcomes.find((candidate) => candidate.questionId === question.questionId);
+  readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
+}): { readonly metrics: readonly LocallyComputedMetrics[]; readonly metricsSha256: string } {
+  const expected = ([1, 2, 3] as const).flatMap((repetition) => input.questions.map((question) => {
+    const outcome = input.outcomes.find((candidate) => candidate.questionId === question.questionId &&
+      candidate.repetition === repetition);
     if (outcome === undefined) {throw new Error("exact holdout outcome identity is missing");}
     return { question, attempt: outcome.identity };
-  });
+  }));
   assertExactMembership(input.campaignRootSha256, expected, input.outcomes,
     input.adjudications);
   for (const outcome of input.outcomes) {
     const question = input.questions.find(({ questionId }) => questionId === outcome.questionId)!;
     assertTerminalChain({ authority: input.providerResultAuthority, outcome, question,
       releaseRootSha256: input.releaseRootSha256, root: input.campaignRootSha256,
-      spendReservationSha256: input.spendReservationSha256 });
+      spendReservationSha256: input.spendReservationSha256ByRepetition[outcome.repetition] });
   }
-  const metrics = computeMetrics({ adjudications: input.adjudications, outcomes: input.outcomes,
-    repetition: 1 });
-  assertThresholds(metrics);
+  const metrics = ([1, 2, 3] as const).map((repetition) => computeMetrics({ adjudications:
+    input.adjudications.filter((value) => value.repetition === repetition), outcomes:
+    input.outcomes.filter((value) => value.repetition === repetition), repetition }));
+  for (const value of metrics) {assertThresholds(value);}
   return Object.freeze({ metrics, metricsSha256: sha256(metrics) });
 }
 

@@ -170,21 +170,31 @@ export async function loadProductionHoldout(input: { readonly admitted: Admitted
   "holdout tuning evidence") as string[];
   const spendAuthority = await loadProductionAuthority(absolute(String(record.spendAuthorityPath),
     "holdout spend authority"));
-  const spendReservation = await readProductionJson(absolute(String(record.spendReservationPath),
+  const spendReservations = await readProductionJson(absolute(String(record.spendReservationPath),
     "holdout spend reservation"), "holdout spend reservation");
   input.policy.assertReference("spend", spendAuthority.keyId);
-  const verifiedSpend = verifySpendReservation(input.policy, {
-    campaignRootSha256: authorizationReceipt.payload.holdoutRootSha256,
-    expectedRepetition: 1, nowEpochMs: input.nowEpochMs,
-    releaseRootSha256: input.releaseRootSha256, reservation: spendReservation });
+  if (!Array.isArray(spendReservations) || spendReservations.length !== 3) {
+    throw new Error("holdout requires three repetition-scoped spend reservations");
+  }
+  const verifiedSpends = ([1, 2, 3] as const).map((expectedRepetition, index) =>
+    verifySpendReservation(input.policy, { campaignRootSha256:
+      authorizationReceipt.payload.holdoutRootSha256, expectedRepetition,
+      nowEpochMs: input.nowEpochMs, releaseRootSha256: input.releaseRootSha256,
+      reservation: spendReservations[index] }));
+  if (new Set(verifiedSpends.map(({ payload }) => payload.provider)).size !== 1) {
+    throw new Error("holdout repetition providers are inconsistent");
+  }
   assertHoldoutIsolation({ authorization: authorizationReceipt.payload, holdoutLocatorDigests, input,
     questions, tuningEvidenceDigests });
   return { admission: { authorization, authorizationAuthorityKeyId: input.authority.keyId,
     holdoutLocatorDigests, main, mainAuthorityKeyId: mainAuthority.keyId,
     questionAuthorityKeyId: questionAuthority.keyId, questionReceipt, questions },
   authorization: authorizationReceipt.payload, holdoutLocatorDigests, main, questions,
-  provider: verifiedSpend.payload.provider, spendAuthority, spendReservation, spendReservationSha256:
-    verifiedSpend.spendReservationSha256 };
+  provider: verifiedSpends[0]!.payload.provider, spendAuthority,
+  spendReservationSha256ByRepetition: Object.freeze({ 1: verifiedSpends[0]!.spendReservationSha256,
+    2: verifiedSpends[1]!.spendReservationSha256, 3: verifiedSpends[2]!.spendReservationSha256 }),
+  spendReservations: [spendReservations[0], spendReservations[1], spendReservations[2]] as const,
+  verifiedSpends };
 }
 
 function assertHoldoutIsolation(value: { readonly authorization: HoldoutAuthorization;

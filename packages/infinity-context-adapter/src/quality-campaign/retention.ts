@@ -276,12 +276,15 @@ function validateAuthenticatedPlaintext(policy: QualityCampaignAuthorityPolicy,
       ["attempt", "chain", "latencyUs", "rankedLocatorIds", "responseBytesBase64",
         "schemaVersion", "scopeViolationLocatorIds"],
       "retained retrieval response");
-    if (value.schemaVersion !== "meeting_knowledge.semantic_quality_retrieval_evidence.v1" ||
-      canonicalJson(value.attempt) !== canonicalJson(expectedArtifact.identity) ||
-      value.latencyUs !== expectedArtifact.outcome.retrievalLatencyUs ||
-      canonicalJson(value.rankedLocatorIds) !==
-        canonicalJson(expectedArtifact.outcome.rankedLocatorIds) ||
-      canonicalJson(value.scopeViolationLocatorIds) !==
+    if (value.schemaVersion !== "meeting_knowledge.semantic_quality_retrieval_evidence.v1") {
+      throw new Error("authenticated retrieval evidence schema is invalid");
+    }
+    if (canonicalJson(value.attempt) !== canonicalJson(expectedArtifact.identity)) {
+      throw new Error("authenticated retrieval evidence attempt is foreign");
+    }
+    if (value.latencyUs !== expectedArtifact.outcome.retrievalLatencyUs ||
+      canonicalJson(value.rankedLocatorIds) !== canonicalJson(
+        expectedArtifact.outcome.rankedLocatorIds) || canonicalJson(value.scopeViolationLocatorIds) !==
         canonicalJson(expectedArtifact.outcome.scopeViolationLocatorIds)) {
       throw new Error("authenticated retrieval evidence differs from admitted ranking");
     }

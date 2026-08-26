@@ -50,15 +50,22 @@ export async function executeMainCampaignSchedule(input: {
 }
 
 export async function executeHoldoutSchedule(input: {
-  readonly binding: FrozenExecutionBinding; readonly clock: CampaignClockPort;
+  readonly binding: Omit<FrozenExecutionBinding, "provider" | "spendReservation" |
+    "spendReservationSha256">; readonly clock: CampaignClockPort;
   readonly concurrency: number; readonly deadlineEpochMs: number; readonly journalRoot: string;
   readonly ports: CampaignProviderPorts; readonly questions: readonly CampaignQuestion[];
+  readonly spendByRepetition: Readonly<Record<1 | 2 | 3, { readonly provider: string;
+    readonly reservation: unknown; readonly reservationSha256: string }>>;
 }): Promise<ScheduledCampaignResult> {
   if (input.questions.length !== 30) {throw new Error("holdout schedule requires exactly 30 questions");}
-  return await executeSchedule({ bindingFor: () => input.binding, clock: input.clock,
+  return await executeSchedule({ bindingFor: (repetition) => ({ ...input.binding,
+    provider: input.spendByRepetition[repetition].provider,
+    spendReservation: input.spendByRepetition[repetition].reservation,
+    spendReservationSha256: input.spendByRepetition[repetition].reservationSha256 }),
+    clock: input.clock,
     concurrency: input.concurrency, deadlineEpochMs: input.deadlineEpochMs,
-    jobs: input.questions.map((question, questionIndex) =>
-      ({ question, questionIndex, repetition: 1 as const })),
+    jobs: ([1, 2, 3] as const).flatMap((repetition) => input.questions.map(
+      (question, questionIndex) => ({ question, questionIndex, repetition }))),
     journalRoot: input.journalRoot, ports: input.ports,
     resultAuthorityRole: "holdout_provider_result" });
 }

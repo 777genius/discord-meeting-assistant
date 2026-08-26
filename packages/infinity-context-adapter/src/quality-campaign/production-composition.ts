@@ -37,6 +37,7 @@ interface ProductionCompositionInput {
   readonly ports: QualityCampaignProductionPorts;
 }
 
+// oxlint-disable-next-line max-lines-per-function -- one closed dispatcher preserves one admission path
 export async function runQualityCampaignProductionComposition(input: ProductionCompositionInput):
 Promise<ProductionCompositionResult> {
   const config = await loadProductionConfiguration(input.configurationPath); const policy =
@@ -160,6 +161,7 @@ Promise<ProductionCompositionResult> {
       cleanupAuthorityKeyId: absenceAuthority.keyId,
       cleanupReceipt: cleanup.cleanupReceipt,
       effectVerificationEpochMs: input.ports.clock.nowEpochMs(),
+      goldRelevanceAuthorityKeyId: policy.authority("gold_relevance").keyId,
       goldRelevanceReceipt: evidence.goldRelevanceReceipt,
       locatorAuthorityKeyId: policy.authority("locator").keyId,
       authorizedLocatorInventory: evidence.authorizedLocatorInventory,
@@ -223,7 +225,7 @@ Promise<ProductionCompositionResult | null> {
       receipt: createOperatorSafeReceipt(holdoutRootSha256, {
         affectsMainQualification: false, outcomeUnknown: true }), status: "outcome_unknown" };}
     const receipt = createOperatorSafeReceipt(holdoutRootSha256, {
-      affectsMainQualification: false, holdoutExecutionSha256: sha256(report), outcomeCount: 30 });
+      affectsMainQualification: false, holdoutExecutionSha256: sha256(report), outcomeCount: 90 });
     await input.checkpoints.completePhase({ campaignRootSha256: input.admitted.rootBindingSha256,
       phase: "holdout-executed", receipt });
     return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
@@ -232,13 +234,11 @@ Promise<ProductionCompositionResult | null> {
     await input.checkpoints.requirePhase(input.admitted.rootBindingSha256, "holdout-executed");
     const adjudications = await adjudicateAttempts({ attempts: answerAttempts(holdout.questions,
       holdoutRootSha256, input.release.releaseRootSha256,
-      { 1: holdout.spendReservationSha256, 2: holdout.spendReservationSha256,
-        3: holdout.spendReservationSha256 }, [1]), campaignRootSha256: holdoutRootSha256,
+      holdout.spendReservationSha256ByRepetition), campaignRootSha256: holdoutRootSha256,
     concurrency: input.config.concurrency, deadlineEpochMs: input.deadlineEpochMs,
     effectVerificationEpochMs: input.ports.clock.nowEpochMs(), policy: input.policy,
     ports: input.ports, release: input.release,
-    spendReservations: [holdout.spendReservation, holdout.spendReservation,
-      holdout.spendReservation] });
+    spendReservations: holdout.spendReservations });
     const receipt = adjudicationReceipt(holdoutRootSha256, adjudications);
     await input.checkpoints.completePhase({ campaignRootSha256: input.admitted.rootBindingSha256,
       phase: "holdout-adjudicated", receipt });
@@ -251,13 +251,13 @@ Promise<ProductionCompositionResult | null> {
       campaignRootSha256: holdoutRootSha256, questions: holdout.questions,
       deadlineEpochMs: input.deadlineEpochMs, releaseRootSha256:
       input.release.releaseRootSha256,
-      spendReservationSha256: holdout.spendReservationSha256 });
+      spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition });
     assertAdjudicationCheckpoint(adjudicatedReceiptSha256, holdoutRootSha256,
       evidence.adjudications);
     const metrics = reconstructExactHoldoutEvidence({ campaignRootSha256: holdoutRootSha256,
       ...evidence, providerResultAuthority: input.ports.holdoutProvider.resultAuthority,
       questions: holdout.questions, releaseRootSha256: input.release.releaseRootSha256,
-      spendReservationSha256: holdout.spendReservationSha256 });
+      spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition });
     const targetInventoryAuthority = await loadProductionAuthority(
       input.config.deletionAuthorityPath);
     const cleanup = await withCallContext(input.deadlineEpochMs, async (context) =>
@@ -365,10 +365,9 @@ async function loadMainEvidence(input: { readonly ports: QualityCampaignProducti
 async function loadHoldoutEvidence(input: { readonly ports: QualityCampaignProductionPorts;
   readonly campaignRootSha256: string; readonly questions: readonly CampaignQuestion[];
   readonly deadlineEpochMs: number; readonly releaseRootSha256: string;
-  readonly spendReservationSha256: string }) {
+  readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>> }) {
   const attemptIds = answerAttempts(input.questions, input.campaignRootSha256,
-    input.releaseRootSha256, { 1: input.spendReservationSha256,
-      2: input.spendReservationSha256, 3: input.spendReservationSha256 }, [1])
+    input.releaseRootSha256, input.spendReservationSha256ByRepetition)
     .map(({ attemptId }) => attemptId);
   return await withCallContext(input.deadlineEpochMs, async (context) => {
     const delivery = await input.ports.evidence.holdout({ attemptIds, campaignRootSha256:
