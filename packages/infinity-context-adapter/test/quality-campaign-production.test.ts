@@ -848,6 +848,7 @@ describe("production quality campaign effect evidence", () => {
 // The single block shares one immutable full-campaign fixture across all authority mutations.
 // oxlint-disable-next-line max-lines-per-function
 describe("production quality campaign final evidence", () => {
+  // A cold run verifies and decrypts the complete 3 x 240 AES-GCM inventory before reconstruction.
   it("qualifies real AES-GCM evidence and reconstructs all bounded metric groups", async () => {
     const result = await admitFinalCampaign(FINAL.authorities.policy, FINAL.input);
     expect(result.qualified).toBe(true);
@@ -860,7 +861,7 @@ describe("production quality campaign final evidence", () => {
     expect(metrics.find(({ group }) => group === "overall")?.retrievalLatencyP95Us).toBe(200_000);
     expect(metrics.find(({ group }) => group === "overall")?.scopeLeakageCount).toBe(0);
     expect(metrics.every(({ thresholdPassed }) => thresholdPassed)).toBe(true);
-  }, 30_000);
+  }, 60_000);
 
   it("rejects caller-selected final-evidence authority references", async () => {
     await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
