@@ -3,6 +3,7 @@ export * from "./adjudication.js";
 export * from "./artifacts.js";
 export * from "./canonical.js";
 export * from "./execution.js";
+export * from "./final-admission.js";
 export * from "./holdout.js";
 export * from "./operator-cli.js";
 export * from "./release.js";

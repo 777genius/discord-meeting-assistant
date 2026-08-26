@@ -182,18 +182,28 @@ async function readQuestions(base: string, path: string, source: CampaignQuestio
   count: number): Promise<readonly CampaignQuestion[]> {
   const value = JSON.parse((await readFile(inside(base, path))).toString("utf8")) as unknown;
   if (!Array.isArray(value) || value.length !== count) {throw new Error("sealed corpus cardinality is invalid");}
-  return Object.freeze(value.map((item) => {
-    const record = exactRecord(item, ["locale", "questionDigestSha256", "questionId",
-      "rubricDigestSha256", "source"], "sealed question");
-    if (record.source !== source || !["en", "mixed", "ru"].includes(String(record.locale))) {
-      throw new Error("sealed question provenance is invalid");
-    }
-    return Object.freeze({ locale: record.locale as CampaignQuestion["locale"],
-      questionDigestSha256: digest(record.questionDigestSha256, "question digest"),
-      questionId: safeId(record.questionId, "question ID"),
-      rubricDigestSha256: digest(record.rubricDigestSha256, "rubric digest"), source });
-  }));
+  return Object.freeze(value.map((item) => validateCampaignQuestion(item, source)));
 }
+
+export function validateCampaignQuestion(value: unknown,
+  source?: CampaignQuestion["source"]): CampaignQuestion {
+  const record = exactRecord(value, ["locale", "questionDigestSha256", "questionId",
+    "rubricDigestSha256", "source"], "sealed question");
+  if (!ALLOWED_QUESTION_SOURCES.includes(record.source as CampaignQuestion["source"]) ||
+    source !== undefined && record.source !== source ||
+    !ALLOWED_QUESTION_LOCALES.includes(record.locale as CampaignQuestion["locale"])) {
+    throw new Error("sealed question provenance is invalid");
+  }
+  return Object.freeze({ locale: record.locale as CampaignQuestion["locale"],
+    questionDigestSha256: digest(record.questionDigestSha256, "question digest"),
+    questionId: safeId(record.questionId, "question ID"),
+    rubricDigestSha256: digest(record.rubricDigestSha256, "rubric digest"),
+    source: record.source as CampaignQuestion["source"] });
+}
+
+const ALLOWED_QUESTION_LOCALES: readonly CampaignQuestion["locale"][] = ["en", "mixed", "ru"];
+const ALLOWED_QUESTION_SOURCES: readonly CampaignQuestion["source"][] =
+  ["automatic", "independent_review"];
 
 async function readSigned(base: string, path: string, authority: AdmissionAuthority):
 Promise<SignedDocument<unknown>> {
@@ -232,6 +242,9 @@ function requireSnapshotManifest(value: unknown, label: string, releaseRootSha25
   const record = exactRecord(value, ["entriesSha256", "releaseRootSha256", "schemaVersion",
     "snapshotSha256"], label);
   digest(record.entriesSha256, `${label} entries`);
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_locator_authority.v1") {
+    throw new Error(`${label} schema version is unsupported`);
+  }
   if (digest(record.releaseRootSha256, `${label} release`) !== releaseRootSha256) {
     throw new Error(`${label} is bound to another release`);
   }

@@ -12,6 +12,10 @@ export const QUALITY_CAMPAIGN_COMMANDS = Object.freeze([
 export type QualityCampaignCommand = typeof QUALITY_CAMPAIGN_COMMANDS[number];
 
 export type OperatorExit = 0 | 1 | typeof EXIT_SAFE_PAUSE | typeof EXIT_OUTCOME_UNKNOWN;
+export const OPERATOR_STATUSES = Object.freeze([
+  "completed", "failed", "outcome_unknown", "paused",
+] as const);
+export type OperatorStatus = typeof OPERATOR_STATUSES[number];
 export const SAFE_OPERATOR_BLOCKER_CODES = Object.freeze([
   "authorization_missing", "cleanup_incomplete", "corrupt_evidence", "outcome_unknown",
   "retention_incomplete", "threshold_not_met",
@@ -40,7 +44,7 @@ export interface OperatorResult {
   readonly blockers: readonly SafeOperatorBlockerCode[];
   readonly command: QualityCampaignCommand;
   readonly receipt: OperatorSafeReceipt;
-  readonly status: "completed" | "failed" | "outcome_unknown" | "paused";
+  readonly status: OperatorStatus;
 }
 
 export interface QualityCampaignOperatorHandlers {
@@ -119,6 +123,7 @@ function isSafeBlockerSet(value: readonly string[]): value is readonly SafeOpera
 }
 
 function isConsistentResult(result: OperatorResult, receipt: OperatorSafeReceipt): boolean {
+  if (!OPERATOR_STATUSES.includes(result.status)) {return false;}
   if (result.status === "completed") {
     return result.blockers.length === 0 && receipt.errorCode === null;
   }

@@ -94,7 +94,22 @@ unknown-outcome handling and exact original/repair input accounting.
 - Terminal replay reconstructs the complete reserved exchange and accepts a
   terminal only when its signed inner payload and create-only wrapper bind the
   same attempt, call identity, campaign, question, repetition, request, state,
-  and result. Corrupt or foreign evidence is an explicit blocked state.
+  result, exact release root, and signed spend-reservation digest. Corrupt or
+  foreign evidence is an explicit blocked state, and replay never causes a new
+  provider effect.
+- Final admission consumes signed repetition documents containing the exact
+  3x240 outcomes rather than caller-attested pass booleans or opaque report
+  digests. It reconstructs question membership, attempt identity, structural
+  success, overall/corpus/locale Recall@5 thresholds, root bindings, the complete
+  retained-artifact inventory, authenticated stored-envelope AAD, and cleanup
+  absence for the exact deletion targets.
+- A conflict resolver receives both complete independently signed decisions.
+  The core reverifies them and requires the resolver result to bind their exact
+  signed receipts, raw outcome, question, attempt, and encrypted evidence.
+- Holdout admission reconstructs its signed 30-question receipt, exact locator
+  set, independently authorized root, and root-derived encryption namespace.
+  The main-proof, holdout-question, and holdout-authorization keys are
+  cryptographically independent; namespaces cannot be reused across roots.
 - Reviewer, adjudicator, and resolver independence is established by distinct
   signer key IDs and distinct canonical public-key fingerprints. Role labels do
   not establish independence.
@@ -108,3 +123,12 @@ path-injected encrypted create-only artifacts; public manifests contain safe
 counts, metrics, digests, versions, and signatures. This proposal does not set
 `ACCEPTED_TWO_HOUR_QUALIFICATION`, enable Retrieval V2 serving, or establish a
 quality pass.
+
+The production runner must adapt to the exported core contracts before it can
+claim this proof: pass the verified spend-reservation digest and release root
+into every attempt/exchange/seal operation; give the resolver both signed
+decision receipts; implement the authoritative envelope-opening port; emit
+signed repetition evidence with exact outcomes; emit cleanup absence IDs for
+the exact manifest; and provide the separately signed holdout-question receipt.
+Until then, runner integration is intentionally unavailable rather than
+silently accepting legacy caller-attested evidence.

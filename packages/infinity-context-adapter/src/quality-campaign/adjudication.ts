@@ -17,14 +17,37 @@ export interface CanonicalAdjudicationDecision {
   readonly questionId: string;
 }
 
+export interface DecisionReceiptPayload {
+  readonly attemptId: string;
+  readonly decision: CanonicalAdjudicationDecision;
+  readonly decisionDigestSha256: string;
+  readonly encryptedEvidenceSha256: string;
+  readonly firstDecisionDigestSha256: string | null;
+  readonly outcomeDigestSha256: string;
+  readonly questionId: string;
+  readonly resolverBindingSha256: string | null;
+  readonly secondDecisionDigestSha256: string | null;
+}
+
+export type DecisionReceipt = SignedValue<DecisionReceiptPayload>;
+
+export interface AdjudicationRequest {
+  readonly attemptId: string;
+  readonly encryptedEvidenceSha256: string;
+  readonly firstDecisionDigestSha256: string | null;
+  readonly firstDecisionReceipt: DecisionReceipt | null;
+  readonly outcomeDigestSha256: string;
+  readonly questionId: string;
+  readonly resolverBindingSha256: string | null;
+  readonly secondDecisionDigestSha256: string | null;
+  readonly secondDecisionReceipt: DecisionReceipt | null;
+}
+
 export interface AdjudicationAuthorityPort {
   readonly authorityId: string;
   readonly publicKeyPem: string;
   readonly signerKeyId: string;
-  adjudicate(input: { readonly attemptId: string; readonly encryptedEvidenceSha256: string;
-    readonly firstDecisionDigestSha256: string | null; readonly outcomeDigestSha256: string;
-    readonly questionId: string; readonly secondDecisionDigestSha256: string | null }):
-  Promise<unknown>;
+  adjudicate(input: AdjudicationRequest): Promise<unknown>;
 }
 
 export interface RawOutcomeVaultPort {
@@ -52,9 +75,10 @@ export async function adjudicateOutcome(input: { readonly attempt: AttemptIdenti
     envelopeSha256: digest(input.rawOutcomeEnvelopeSha256, "raw outcome envelope") });
   const request = { attemptId: input.attempt.attemptId,
     encryptedEvidenceSha256: digest(raw.encryptedEvidenceSha256, "encrypted evidence"),
-    firstDecisionDigestSha256: null,
+    firstDecisionDigestSha256: null, firstDecisionReceipt: null,
     outcomeDigestSha256: digest(raw.outcomeDigestSha256, "raw outcome"),
-    questionId: input.attempt.questionId, secondDecisionDigestSha256: null };
+    questionId: input.attempt.questionId, resolverBindingSha256: null,
+    secondDecisionDigestSha256: null, secondDecisionReceipt: null };
   const [firstRaw, secondRaw] = await Promise.all([
     input.first.adjudicate(request), input.second.adjudicate(request),
   ]);
@@ -63,9 +87,19 @@ export async function adjudicateOutcome(input: { readonly attempt: AttemptIdenti
   let decision = first.payload.decision;
   let resolverReceiptSha256: string | null = null;
   if (first.payload.decisionDigestSha256 !== second.payload.decisionDigestSha256) {
+    verifyDecisionReceipt(first, input.first, request);
+    verifyDecisionReceipt(second, input.second, request);
+    const resolverBindingSha256 = sha256({ attemptId: request.attemptId,
+      encryptedEvidenceSha256: request.encryptedEvidenceSha256,
+      firstDecisionReceipt: first, outcomeDigestSha256: request.outcomeDigestSha256,
+      questionId: request.questionId,
+      schemaVersion: "meeting_knowledge.semantic_quality_resolver_binding.v1",
+      secondDecisionReceipt: second });
     const resolverRequest = { ...request,
       firstDecisionDigestSha256: first.payload.decisionDigestSha256,
-      secondDecisionDigestSha256: second.payload.decisionDigestSha256 };
+      firstDecisionReceipt: first, resolverBindingSha256,
+      secondDecisionDigestSha256: second.payload.decisionDigestSha256,
+      secondDecisionReceipt: second };
     const resolverRaw = await input.resolver.adjudicate(resolverRequest);
     const resolver = verifyDecisionReceipt(resolverRaw, input.resolver, resolverRequest);
     decision = resolver.payload.decision;
@@ -77,23 +111,14 @@ export async function adjudicateOutcome(input: { readonly attempt: AttemptIdenti
 }
 
 function verifyDecisionReceipt(value: unknown, authority: AdjudicationAuthorityPort,
-  request: { readonly attemptId: string; readonly encryptedEvidenceSha256: string;
-    readonly firstDecisionDigestSha256: string | null; readonly outcomeDigestSha256: string;
-    readonly questionId: string; readonly secondDecisionDigestSha256: string | null }): SignedValue<{
-      readonly attemptId: string; readonly decision: CanonicalAdjudicationDecision;
-      readonly decisionDigestSha256: string; readonly encryptedEvidenceSha256: string;
-      readonly firstDecisionDigestSha256: string | null; readonly outcomeDigestSha256: string;
-      readonly questionId: string; readonly secondDecisionDigestSha256: string | null }> {
-  const receipt = verifyExternalSignedValue<{
-    readonly attemptId: string; readonly decision: CanonicalAdjudicationDecision;
-    readonly decisionDigestSha256: string; readonly encryptedEvidenceSha256: string;
-    readonly firstDecisionDigestSha256: string | null; readonly outcomeDigestSha256: string;
-    readonly questionId: string; readonly secondDecisionDigestSha256: string | null }>(value,
+  request: AdjudicationRequest): DecisionReceipt {
+  const receipt = verifyExternalSignedValue<DecisionReceiptPayload>(value,
       authority.signerKeyId, authority.publicKeyPem,
       "adjudication receipt");
   const payload = exactRecord(receipt.payload, ["attemptId", "decision",
     "decisionDigestSha256", "encryptedEvidenceSha256", "firstDecisionDigestSha256",
-    "outcomeDigestSha256", "questionId", "secondDecisionDigestSha256"],
+    "outcomeDigestSha256", "questionId", "resolverBindingSha256",
+    "secondDecisionDigestSha256"],
   "adjudication result");
   const decision = decodeDecision(payload.decision);
   if (payload.attemptId !== request.attemptId ||
@@ -101,6 +126,7 @@ function verifyDecisionReceipt(value: unknown, authority: AdjudicationAuthorityP
     payload.firstDecisionDigestSha256 !== request.firstDecisionDigestSha256 ||
     payload.outcomeDigestSha256 !== request.outcomeDigestSha256 ||
     payload.questionId !== request.questionId ||
+    payload.resolverBindingSha256 !== request.resolverBindingSha256 ||
     payload.secondDecisionDigestSha256 !== request.secondDecisionDigestSha256 ||
     decision.questionId !== request.questionId ||
     decision.outcomeDigestSha256 !== request.outcomeDigestSha256 ||

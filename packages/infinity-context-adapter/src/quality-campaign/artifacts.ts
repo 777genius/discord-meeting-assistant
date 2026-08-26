@@ -2,8 +2,8 @@ import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import { canonicalJson, digest, safeId, sha256 } from "./canonical.js";
-import type { AttemptIdentity } from "./execution.js";
+import { canonicalJson, safeId, sha256 } from "./canonical.js";
+import { assertAttemptIdentity, type AttemptIdentity } from "./execution.js";
 
 export type EncryptedArtifactKind = "adjudication_input" | "adjudicator_1_result" |
   "adjudicator_2_result" | "answer_request" | "answer_response" | "capability_request" |
@@ -25,6 +25,14 @@ export interface ArtifactReceipt {
   readonly storedBytes: number;
 }
 
+export interface ArtifactAad extends Omit<AttemptIdentity, "attemptId"> {
+  readonly artifactKind: EncryptedArtifactKind;
+  readonly attemptId: string;
+  readonly keyId: string;
+  readonly plaintextSha256: string;
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_artifact_aad.v3";
+}
+
 export class CampaignEncryptedArtifactStore {
   private consumedBytes = 0;
   private readonly root: string;
@@ -36,20 +44,25 @@ export class CampaignEncryptedArtifactStore {
   public async seal(input: { readonly artifactKind: EncryptedArtifactKind;
     readonly campaignRootSha256: string; readonly identity: AttemptIdentity;
     readonly key: Uint8Array; readonly keyId: string; readonly plaintext: Uint8Array;
-    readonly releaseRootSha256: string }): Promise<ArtifactReceipt> {
-    if (input.key.byteLength !== 32 || input.plaintext.byteLength < 1) {
+    readonly releaseRootSha256: string; readonly spendReservationSha256: string }):
+  Promise<ArtifactReceipt> {
+    assertAttemptIdentity(input.identity, { campaignRootSha256: input.campaignRootSha256,
+      releaseRootSha256: input.releaseRootSha256,
+      spendReservationSha256: input.spendReservationSha256 });
+    if (!ARTIFACT_KINDS.includes(input.artifactKind) || input.key.byteLength !== 32 ||
+      input.plaintext.byteLength < 1) {
       throw new Error("artifact encryption input is invalid");
     }
     safeId(input.keyId, "artifact key ID");
     const plaintextSha256 = createHash("sha256").update(input.plaintext).digest("hex");
-    const aad = { artifactKind: input.artifactKind, attemptId: input.identity.attemptId,
+    const aad: ArtifactAad = { artifactKind: input.artifactKind,
+      attemptId: input.identity.attemptId, callKind: input.identity.callKind,
       callOrdinal: input.identity.callOrdinal, campaignRootSha256: input.campaignRootSha256,
       keyId: input.keyId, plaintextSha256, questionDigestSha256:
       input.identity.questionDigestSha256, questionId: input.identity.questionId,
       releaseRootSha256: input.releaseRootSha256, repetition: input.identity.repetition,
-      schemaVersion: "meeting_knowledge.semantic_quality_artifact_aad.v2" };
-    digest(input.campaignRootSha256, "campaign root");
-    digest(input.releaseRootSha256, "release root");
+      schemaVersion: "meeting_knowledge.semantic_quality_artifact_aad.v3",
+      spendReservationSha256: input.spendReservationSha256 };
     const nonce = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", input.key, nonce);
     cipher.setAAD(Buffer.from(canonicalJson(aad)));
@@ -81,6 +94,11 @@ export class CampaignEncryptedArtifactStore {
       storedBytes: bytes.byteLength });
   }
 }
+
+const ARTIFACT_KINDS: readonly EncryptedArtifactKind[] = ["adjudication_input",
+  "adjudicator_1_result", "adjudicator_2_result", "answer_request", "answer_response",
+  "capability_request", "capability_response", "evidence", "final_adjudication", "raw_outcome",
+  "resolver_result", "retrieval_request", "retrieval_response"];
 
 async function writeCreateOnly(path: string, bytes: Uint8Array): Promise<void> {
   await ensureDirectory(dirname(path));

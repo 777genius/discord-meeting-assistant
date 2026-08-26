@@ -1,5 +1,7 @@
-import { digest, exactRecord, publicKeyFingerprintSha256, safeId, sha256 } from "./canonical.js";
-import { HOLDOUT_CARDINALITY, type AdmissionAuthority, type CampaignQuestion } from "./admission.js";
+import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256, safeId,
+  sha256 } from "./canonical.js";
+import { HOLDOUT_CARDINALITY, type AdmissionAuthority, type CampaignQuestion,
+  validateCampaignQuestion } from "./admission.js";
 import { verifyExternalSignedValue } from "./execution.js";
 
 export interface FrozenMainInputProof {
@@ -19,7 +21,15 @@ export interface HoldoutAuthorization {
   readonly mainInputRootSha256: string;
   readonly mainReleaseRootSha256: string;
   readonly questionReceiptSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_holdout_authorization.v1";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_holdout_authorization.v2";
+}
+
+export interface HoldoutQuestionReceipt {
+  readonly mainInputRootSha256: string;
+  readonly mainReleaseRootSha256: string;
+  readonly questionSetSha256: string;
+  readonly questions: readonly CampaignQuestion[];
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_holdout_questions.v1";
 }
 
 export interface AdmittedHoldout {
@@ -35,13 +45,18 @@ export function admitIsolatedHoldout(input: { readonly authorization: unknown;
   readonly authorizationAuthority: AdmissionAuthority;
   readonly holdoutLocatorDigests: readonly string[]; readonly main: unknown;
   readonly mainAuthority: AdmissionAuthority;
+  readonly questionAuthority: AdmissionAuthority; readonly questionReceipt: unknown;
   readonly questions: readonly CampaignQuestion[] }): AdmittedHoldout {
-  assertIndependentAuthorities(input.authorizationAuthority, input.mainAuthority);
+  assertIndependentAuthorities([input.authorizationAuthority, input.mainAuthority,
+    input.questionAuthority]);
   const authorizationReceipt = verifyExternalSignedValue<HoldoutAuthorization>(input.authorization,
     input.authorizationAuthority.keyId, input.authorizationAuthority.publicKeyPem,
     "holdout authorization");
   const mainReceipt = verifyExternalSignedValue<FrozenMainInputProof>(input.main,
     input.mainAuthority.keyId, input.mainAuthority.publicKeyPem, "main input proof");
+  const questionReceipt = verifyExternalSignedValue<HoldoutQuestionReceipt>(input.questionReceipt,
+    input.questionAuthority.keyId, input.questionAuthority.publicKeyPem,
+    "holdout question receipt");
   const authorization = decodeAuthorization(authorizationReceipt.payload);
   const main = decodeMainProof(mainReceipt.payload);
   for (const value of [authorization.holdoutLocatorSetSha256,
@@ -49,39 +64,50 @@ export function admitIsolatedHoldout(input: { readonly authorization: unknown;
     authorization.mainInputRootSha256, authorization.mainReleaseRootSha256,
     authorization.questionReceiptSha256, main.mainInputRootSha256,
     main.mainReleaseRootSha256, main.tuningCorpusSha256]) {digest(value, "holdout binding");}
-  safeId(authorization.keyNamespace, "holdout key namespace");
-  if (!authorization.keyNamespace.startsWith("holdout:")) {
-    throw new Error("holdout must use its own key namespace");
-  }
   if (authorization.mainInputRootSha256 !== main.mainInputRootSha256 ||
     authorization.mainReleaseRootSha256 !== main.mainReleaseRootSha256) {
     throw new Error("holdout cannot run before the main input/release root is frozen");
   }
-  if (input.questions.length !== HOLDOUT_CARDINALITY || input.questions.some(({ source }) =>
-    source !== "independent_review")) {throw new Error("holdout must contain exactly 30 sealed questions");}
-  const questionDigests = input.questions.map(({ questionDigestSha256 }) => questionDigestSha256);
-  const locatorDigests = [...input.holdoutLocatorDigests];
-  const holdoutQuestionSetSha256 = sha256(input.questions);
-  if (new Set(questionDigests).size !== HOLDOUT_CARDINALITY ||
+  const questions = decodeQuestionReceipt(questionReceipt.payload, main);
+  if (canonicalQuestions(input.questions) !== canonicalQuestions(questions)) {
+    throw new Error("holdout questions differ from the independently signed receipt");
+  }
+  const questionIds = questions.map(({ questionId }) => questionId);
+  const questionDigests = questions.map(({ questionDigestSha256 }) => questionDigestSha256);
+  const rubricDigests = questions.map(({ rubricDigestSha256 }) => rubricDigestSha256);
+  const locatorDigests = input.holdoutLocatorDigests.map((value) =>
+    digest(value, "holdout locator"));
+  const holdoutQuestionSetSha256 = sha256(questions);
+  if (locatorDigests.length === 0 || new Set(questionIds).size !== HOLDOUT_CARDINALITY ||
+    new Set(questionDigests).size !== HOLDOUT_CARDINALITY ||
+    new Set(rubricDigests).size !== HOLDOUT_CARDINALITY ||
     new Set(locatorDigests).size !== locatorDigests.length ||
     questionDigests.some((value) => main.loadedQuestionDigests.includes(value)) ||
     locatorDigests.some((value) => main.loadedLocatorDigests.includes(value))) {
     throw new Error("holdout is not disjoint from main tuning inputs");
   }
+  const questionReceiptSha256 = sha256(questionReceipt);
+  const holdoutRootSha256 = sha256({ holdoutLocatorSetSha256: sha256(locatorDigests),
+    holdoutQuestionSetSha256, mainInputRootSha256: main.mainInputRootSha256,
+    mainReleaseRootSha256: main.mainReleaseRootSha256, questionReceiptSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_holdout_root.v1" });
   if (authorization.holdoutQuestionSetSha256 !== holdoutQuestionSetSha256 ||
-    authorization.holdoutLocatorSetSha256 !== sha256(locatorDigests)) {
+    authorization.holdoutLocatorSetSha256 !== sha256(locatorDigests) ||
+    authorization.questionReceiptSha256 !== questionReceiptSha256 ||
+    authorization.holdoutRootSha256 !== holdoutRootSha256 ||
+    authorization.keyNamespace !== `holdout:${holdoutRootSha256}`) {
     throw new Error("holdout authorization does not bind the exact isolated inputs");
   }
   return Object.freeze({ authorization, authorizationReceiptSha256: sha256(authorizationReceipt),
     holdoutQuestionSetSha256, mainProofReceiptSha256: sha256(mainReceipt),
-    questions: Object.freeze([...input.questions]) });
+    questions });
 }
 
 function decodeAuthorization(value: unknown): HoldoutAuthorization {
   const record = exactRecord(value, ["holdoutLocatorSetSha256", "holdoutQuestionSetSha256",
     "holdoutRootSha256", "keyNamespace", "mainInputRootSha256", "mainReleaseRootSha256",
     "questionReceiptSha256", "schemaVersion"], "holdout authorization payload");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_authorization.v1") {
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_authorization.v2") {
     throw new Error("holdout authorization schema is invalid");
   }
   return record as unknown as HoldoutAuthorization;
@@ -97,7 +123,33 @@ function decodeMainProof(value: unknown): FrozenMainInputProof {
   }
   validateDigestArray(record.loadedLocatorDigests);
   validateDigestArray(record.loadedQuestionDigests);
+  if (new Set(record.loadedLocatorDigests).size !== record.loadedLocatorDigests.length ||
+    new Set(record.loadedQuestionDigests).size !== record.loadedQuestionDigests.length) {
+    throw new Error("main loaded input inventory is duplicated");
+  }
   return record as unknown as FrozenMainInputProof;
+}
+
+function decodeQuestionReceipt(value: unknown,
+  main: FrozenMainInputProof): readonly CampaignQuestion[] {
+  const record = exactRecord(value, ["mainInputRootSha256", "mainReleaseRootSha256",
+    "questionSetSha256", "questions", "schemaVersion"], "holdout question receipt payload");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_questions.v1" ||
+    record.mainInputRootSha256 !== main.mainInputRootSha256 ||
+    record.mainReleaseRootSha256 !== main.mainReleaseRootSha256 ||
+    !Array.isArray(record.questions) || record.questions.length !== HOLDOUT_CARDINALITY) {
+    throw new Error("holdout question receipt is invalid");
+  }
+  const questions = Object.freeze(record.questions.map((question) =>
+    validateCampaignQuestion(question, "independent_review")));
+  if (record.questionSetSha256 !== sha256(questions)) {
+    throw new Error("holdout question receipt does not reconstruct");
+  }
+  return questions;
+}
+
+function canonicalQuestions(questions: readonly CampaignQuestion[]): string {
+  return canonicalJson(questions.map((question) => validateCampaignQuestion(question)));
 }
 
 function validateDigestArray(value: unknown): void {
@@ -105,11 +157,13 @@ function validateDigestArray(value: unknown): void {
   for (const loadedDigest of value as unknown[]) {digest(loadedDigest, "main loaded input");}
 }
 
-function assertIndependentAuthorities(first: AdmissionAuthority, second: AdmissionAuthority): void {
-  if (safeId(first.keyId, "holdout authority key ID") ===
-    safeId(second.keyId, "main authority key ID") ||
-    publicKeyFingerprintSha256(first.publicKeyPem, "holdout authority") ===
-    publicKeyFingerprintSha256(second.publicKeyPem, "main authority")) {
+function assertIndependentAuthorities(authorities: readonly AdmissionAuthority[]): void {
+  const keyIds = authorities.map(({ keyId }, index) =>
+    safeId(keyId, `holdout authority ${index + 1} key ID`));
+  const fingerprints = authorities.map(({ publicKeyPem }, index) =>
+    publicKeyFingerprintSha256(publicKeyPem, `holdout authority ${index + 1}`));
+  if (new Set(keyIds).size !== authorities.length ||
+    new Set(fingerprints).size !== authorities.length) {
     throw new Error("holdout and main proof authorities are not cryptographically independent");
   }
 }
