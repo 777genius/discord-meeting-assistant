@@ -38,7 +38,7 @@ export function verifySpendReservations(input: {
 }): readonly SignedValue<SpendReservation>[] {
   if (input.reservations.length !== 3) {throw new Error("exactly three spend reservations are required");}
   return Object.freeze(input.reservations.map((value, index) => {
-    const signed = verifySigned<SpendReservation>(value, input.authorityKeyId,
+    const signed = verifyExternalSignedValue<SpendReservation>(value, input.authorityKeyId,
       input.authorityPublicKeyPem, "spend reservation");
     const keys = ["campaignRootSha256", "expiresAtEpochMs", "maxCalls", "maxEncryptedBytes",
       "maxTokens", "model", "provider", "reasoning", "releaseRootSha256", "repetition",
@@ -130,7 +130,7 @@ export class DurableAttemptJournal {
     if (input.state === "outcome_unknown") {
       throw new Error("outcome_unknown is inferred from uncertain effect, never asserted by a provider");
     }
-    const signedResult = verifySigned(input.signedResult, this.resultAuthority.keyId,
+    const signedResult = verifyExternalSignedValue(input.signedResult, this.resultAuthority.keyId,
       this.resultAuthority.publicKeyPem, "provider result");
     const result = exactRecord(signedResult.payload, ["attemptId", "resultDigestSha256",
       "state"], "provider result payload");
@@ -156,7 +156,7 @@ export class DurableAttemptJournal {
     if (terminal !== null) {
       const record = decodeTerminal(terminal);
       if (record.attemptId !== identity.attemptId) {throw new Error("terminal membership is corrupt");}
-      verifySigned(record.signedResult, this.resultAuthority.keyId,
+      verifyExternalSignedValue(record.signedResult, this.resultAuthority.keyId,
         this.resultAuthority.publicKeyPem, "provider result");
       return record.state;
     }
@@ -265,7 +265,8 @@ Promise<JournalState> {
       "terminal_success" : "terminal_failure" })).state;
 }
 
-function verifySigned<T>(value: unknown, keyId: string, publicKeyPem: string, label: string):
+export function verifyExternalSignedValue<T>(value: unknown, keyId: string,
+  publicKeyPem: string, label: string):
 SignedValue<T> {
   const record = exactRecord(value, ["payload", "signatureBase64", "signerKeyId"], label);
   if (record.signerKeyId !== keyId || typeof record.signatureBase64 !== "string") {
