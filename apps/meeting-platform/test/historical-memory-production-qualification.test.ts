@@ -109,10 +109,30 @@ describe("Infinity production semantic qualification composition", () => {
       await runtime.assertReady();
       expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
+      const binding = platformConfig(infinity.baseUrl, true, true, "test")
+        .meetingKnowledge?.retrievalV2ProviderBinding;
+      if (binding === undefined) {
+        throw new Error("synthetic Retrieval V2 binding is missing");
+      }
+      await expect(runtime.createRetrievalV2Admission(binding).prepare({
+        currentMeetingId: "meeting-current",
+        question: "What changed?",
+        roomId: "444444444444444444",
+        scopeId: "333333333333333333",
+      })).resolves.toBeNull();
 
       await deletionOnly.assertReady();
       expect(deletionOnly.servingAuthorized()).toBe(false);
       expect(deletionOnly.servingAuthorized()).toBe(false);
+      await expect(deletionOnly.createRetrievalV2Admission(binding).prepare({
+        currentMeetingId: "meeting-current",
+        question: "What changed?",
+        roomId: "444444444444444444",
+        scopeId: "333333333333333333",
+      })).resolves.toBeNull();
+      expect(infinity.endpoint.requests.some(({ path }) =>
+        path === "/v1/context/retrieve"
+      )).toBe(false);
     } finally {
       await runtime.close();
       await deletionOnly.close();
@@ -141,6 +161,54 @@ describe("Infinity production semantic qualification composition", () => {
 });
 
 describe("Infinity deletion-only transport qualification", () => {
+  it("keeps focused admission and provider I/O closed during profile rebuild", async () => {
+    const query = vi.fn(async () => ({ rowCount: 0, rows: [] }));
+    const pool = { query } as unknown as Pool;
+    const infinity = await startDisposableInfinityHttpService();
+    infinity.endpoint.setRuntimeQualificationReceipt({
+      embeddingProfileDigestSha256:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfileDigestSha256,
+      embeddingProfileId:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+      serviceRevision:
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
+    });
+    const config = platformConfig(infinity.baseUrl, true, true, "test");
+    const runtime = createPlatformHistoricalMemory({
+      config,
+      logger: silentLogger,
+      pool,
+      profileMaintenance: {
+        enqueueAppliedProfileRebuilds: async () => ({
+          enqueued: 1,
+          remaining: true,
+        }),
+      },
+      runtimeTransport: syntheticCoverageRuntime,
+    });
+    const binding = config.meetingKnowledge?.retrievalV2ProviderBinding;
+    if (runtime === undefined || binding === undefined) {
+      throw new Error("pending-rebuild Retrieval V2 fixture did not compose");
+    }
+    try {
+      await runtime.assertReady();
+      expect(runtime.servingAuthorized()).toBe(false);
+      await expect(runtime.createRetrievalV2Admission(binding).prepare({
+        currentMeetingId: "meeting-current",
+        question: "What changed?",
+        roomId: "444444444444444444",
+        scopeId: "333333333333333333",
+      })).resolves.toBeNull();
+      expect(query).not.toHaveBeenCalled();
+      expect(infinity.endpoint.requests.some(({ path }) =>
+        path === "/v1/context/retrieve"
+      )).toBe(false);
+    } finally {
+      await runtime.close();
+      await infinity.close();
+    }
+  });
+
   it.each([
     ["missing", null],
     ["wrong", {

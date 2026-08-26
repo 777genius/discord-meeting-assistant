@@ -84,9 +84,13 @@ export {
 } from "./application/historical-sync-worker.js";
 export { RequestHistoricalMeetingDeletion } from "./application/request-historical-meeting-deletion.js";
 export {
+  resolveRequestedActorAliases,
+  resolveRequestedActorKeys,
   resolveRequestedSpeakerAliases,
   resolveRequestedSpeakerIds,
+  type RequestedRetrievalActorAliasV1,
   type RequestedSpeakerAliasV1,
+  type RetrievalActorAliasOwnerV1,
   type SpeakerAliasMapV1,
 } from "./application/speaker-alias-resolution.js";
 export {

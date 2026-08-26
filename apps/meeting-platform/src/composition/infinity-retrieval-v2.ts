@@ -5,7 +5,7 @@ import { HistoricalFocusedLocatorRetrievalV2,
   DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   type FocusedLocatorRetrievalV2ProviderBinding,
   type HistoricalAuthorizationPort, type HistoricalOpaqueIdPort,
-  type SpeakerAliasMapV1,
+  type RetrievalActorAliasOwnerV1,
   type TwoHourHistoricalRetrievalProfileV1 } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
@@ -22,8 +22,9 @@ export class InfinityRetrievalV2Composition {
     readonly operationTimeoutMs: number;
     readonly pool: Pool;
     readonly requestTimeoutMs: number;
+    readonly servingAuthorized: () => boolean;
     readonly ids: HistoricalOpaqueIdPort;
-    readonly speakerAliases: SpeakerAliasMapV1;
+    readonly speakerAliases: readonly RetrievalActorAliasOwnerV1[];
     readonly token: string;
     readonly twoHourProfile: TwoHourHistoricalRetrievalProfileV1;
   }) {
@@ -40,6 +41,7 @@ export class InfinityRetrievalV2Composition {
     return new PrepareFocusedLocatorRetrievalV2Request({
       ids: this.#ids,
       providerBinding: binding,
+      servingAuthorized: this.input.servingAuthorized,
       speakerAliases: this.input.speakerAliases,
       store: new PostgresHistoricalMemoryStore(this.input.pool),
     });
@@ -51,6 +53,7 @@ export class InfinityRetrievalV2Composition {
       authorization,
       ids: this.#ids,
       retrieval: this.#retrieval,
+      servingAuthorized: this.input.servingAuthorized,
       store: new PostgresHistoricalMemoryStore(this.input.pool),
       turnHashes: { hash: canonicalFinalReplyTurnHash },
     }, this.input.twoHourProfile);
@@ -62,7 +65,10 @@ export function createInfinityRetrievalV2Composition(
   pool: Pool,
   token: string,
   ids: HistoricalOpaqueIdPort,
-  speakerAliases: SpeakerAliasMapV1,
+  authority: {
+    readonly servingAuthorized: () => boolean;
+    readonly speakerAliases: readonly RetrievalActorAliasOwnerV1[];
+  },
 ) {
   const infinity = config.infinityContext;
   if (infinity === undefined) {
@@ -79,7 +85,8 @@ export function createInfinityRetrievalV2Composition(
       ids,
       pool,
       requestTimeoutMs: infinity.requestTimeoutMs,
-      speakerAliases,
+      servingAuthorized: authority.servingAuthorized,
+      speakerAliases: authority.speakerAliases,
       token,
       twoHourProfile,
     }),

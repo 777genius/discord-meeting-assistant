@@ -261,12 +261,14 @@ export function createPlatformHistoricalMemory(
     INFINITY_CONTEXT_PRODUCTION_QUALIFICATION;
   let qualifiedTokenProfile: string | undefined;
   let qualifiedTokenizer: HistoricalEmbeddingTokenizerPort | undefined;
+  let searchQualified = false;
+  const servingAuthorized = (): boolean => config.activation.searchEnabled && searchQualified;
   const { retrievalV2, twoHourProfile } = createInfinityRetrievalV2Composition(
     input.config,
     input.pool,
     token,
     historicalIds,
-    speakerAliases,
+    { servingAuthorized, speakerAliases },
   );
   const memory = new InfinityContextHistoricalMemoryAdapter({
     actorKeys,
@@ -299,7 +301,6 @@ export function createPlatformHistoricalMemory(
   });
   let transportQualified = false;
   let projectionQualified = false;
-  let searchQualified = false;
   const deletion = new RequestHistoricalMeetingDeletion(store);
   const refreshQualification = async (signal?: AbortSignal): Promise<void> => {
     transportQualified = projectionQualified = searchQualified = false;
@@ -394,7 +395,7 @@ export function createPlatformHistoricalMemory(
       retrievalV2.retrieval(authorization),
     createRetrievalV2Admission: (binding) => retrievalV2.admission(binding),
     embeddingTokenizer: () => qualifiedTokenizer,
-    servingAuthorized: () => config.activation.searchEnabled && searchQualified,
+    servingAuthorized,
     requestMeetingDeletion: (meetingId) => deletion.execute(meetingId),
     start: reconciliation.start,
   };

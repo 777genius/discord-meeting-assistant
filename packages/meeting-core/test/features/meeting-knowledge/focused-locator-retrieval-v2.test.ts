@@ -47,7 +47,10 @@ function fixture() {
   const prepare = new PrepareFocusedLocatorRetrievalV2Request({
     ids: new TestIds(),
     providerBinding,
-    speakerAliases: { "opaque-vlad": ["Влад", "Vlad"] },
+    speakerAliases: [{
+      actorKeys: ["opaque-vlad"],
+      aliases: ["Влад", "Vlad"],
+    }],
     store,
   });
   return { meeting, plan, prepare, store };
@@ -119,7 +122,7 @@ describe("persisted focused locator Retrieval V2 request", () => {
       });
       expect(request).not.toBeNull();
       expect(request?.queries).toEqual([{
-        query: question,
+        query: question.replace(/Влад|Vlad/gu, "participant"),
         queryId: "original-question",
       }]);
       expect(request?.filters.actorKeys).toEqual(["opaque-vlad"]);
@@ -149,7 +152,88 @@ describe("persisted focused locator Retrieval V2 request", () => {
         timeWeightMicros: null,
       });
     });
+});
 
+describe("focused locator Retrieval V2 privacy and serving authority", () => {
+  it("keeps rotated actor keys under one alias owner and redacts every identity form", async () => {
+    const { plan, store } = fixture();
+    const rawActorId = "123456789012345678";
+    const request = await new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(),
+      providerBinding,
+      speakerAliases: [{
+        actorKeys: ["dactor1.r1.retained", "dactor1.r2.active"],
+        aliases: ["Vlad", "Vladimir", rawActorId],
+      }],
+      store,
+    }).prepare({
+      currentMeetingId: "current-meeting",
+      question: `What did <@${rawActorId}> Vlad and Vladimir decide between 07:00 and 08:00?`,
+      roomId: "room-1",
+      scopeId: "scope-1",
+    });
+
+    expect(request?.filters.actorKeys).toEqual([
+      "dactor1.r1.retained",
+      "dactor1.r2.active",
+    ]);
+    expect(request?.queries[0]?.query).toBe(
+      "What did participant participant and participant decide between 07:00 and 08:00?",
+    );
+    expect(JSON.stringify(request)).not.toMatch(
+      new RegExp(`${rawActorId}|Vlad|Vladimir`, "u"),
+    );
+    expect(request?.filters.sourceGenerations[0]).toEqual({
+      projectionGeneration: plan.topology.indexGeneration,
+      sourceKey: plan.topology.releaseRef,
+    });
+  });
+
+  it("fails admission before store I/O when serving authority is closed", async () => {
+    const { store } = fixture();
+    const list = vi.spyOn(store, "listCurrentRoomPlans");
+    const guarded = new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(),
+      providerBinding,
+      servingAuthorized: () => false,
+      speakerAliases: [{ actorKeys: ["opaque-vlad"], aliases: ["Vlad"] }],
+      store,
+    });
+
+    await expect(guarded.prepare({
+      currentMeetingId: "current-meeting",
+      question: "What did Vlad decide?",
+      roomId: "room-1",
+      scopeId: "scope-1",
+    })).resolves.toBeNull();
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it("rechecks serving authority immediately before provider I/O", async () => {
+    const { meeting, plan, prepare, store } = fixture();
+    const request = await prepare.prepare({ currentMeetingId: "current-meeting",
+      question: "What did Vlad decide?", roomId: "room-1", scopeId: "scope-1" });
+    const locator = plan.documents[0]?.manifest.candidateLocator;
+    if (request === null || locator === undefined) {
+      throw new Error("missing guarded retrieval fixture");
+    }
+    const retrieve = vi.fn<FocusedLocatorRetrievalV2Port["retrieve"]>(async () => ({
+      candidates: [{ locator }], status: "available",
+    }));
+    const result = await new HistoricalFocusedLocatorRetrievalV2({
+      authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
+      retrieval: { retrieve }, servingAuthorized: () => false, store,
+      turnHashes: { hash: ({ turnId }) => `hash:${turnId}` },
+    }).retrieve({ authorizationPrincipalRef: "principal",
+      currentMeetingId: "current-meeting", request, roomId: "room-1",
+      scopeId: "scope-1" });
+
+    expect(result).toMatchObject({ status: "unavailable" });
+    expect(retrieve).not.toHaveBeenCalled();
+  });
+});
+
+describe("focused locator Retrieval V2 rehydration", () => {
   it("returns only canonical local references in provider order", async () => {
     const { meeting, plan, prepare, store } = fixture();
     const request = await prepare.prepare({

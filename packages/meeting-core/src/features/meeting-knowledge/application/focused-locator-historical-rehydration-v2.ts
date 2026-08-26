@@ -47,6 +47,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     readonly authorization: HistoricalAuthorizationPort;
     readonly ids: HistoricalOpaqueIdPort;
     readonly retrieval: FocusedLocatorRetrievalV2Port;
+    readonly servingAuthorized?: () => boolean;
     readonly store: HistoricalSyncStore;
     readonly turnHashes: CanonicalEvidenceTurnHashPort;
   }, private readonly profile: TwoHourHistoricalRetrievalProfileV1 =
@@ -81,6 +82,10 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     readonly references: readonly FocusedMemoryReference[];
     readonly turns: readonly RehydratedEvidenceTurn[];
   } | null> {
+    input.signal?.throwIfAborted();
+    if (this.dependencies.servingAuthorized?.() === false) {
+      return null;
+    }
     const topology = buildHistoricalRoomTopology(input.scopeId, input.roomId,
       this.dependencies.ids);
     if (input.request.scope.memoryScopeId !== topology.roomScopeExternalRef ||
@@ -95,6 +100,10 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     };
     const before = await this.dependencies.authorization.authorize(authorizationRequest);
     if (!before.authorized) {
+      return null;
+    }
+    input.signal?.throwIfAborted();
+    if (this.dependencies.servingAuthorized?.() === false) {
       return null;
     }
     const remote = await this.dependencies.retrieval.retrieve(

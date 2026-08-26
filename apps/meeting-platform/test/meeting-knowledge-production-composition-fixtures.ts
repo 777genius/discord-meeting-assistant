@@ -269,7 +269,10 @@ export function platformConfig(
       infinityContextTopologyKey: "t".repeat(32),
       meetingKnowledgeActorKeyring: JSON.stringify({
         activeKeyId: "synthetic-r1",
-        keys: { "synthetic-r1": "ab".repeat(32) },
+        keys: {
+          "synthetic-r0": "cd".repeat(32),
+          "synthetic-r1": "ab".repeat(32),
+        },
         schemaVersion: 1,
       }),
       postgresUrl: "postgresql://synthetic.invalid/test",

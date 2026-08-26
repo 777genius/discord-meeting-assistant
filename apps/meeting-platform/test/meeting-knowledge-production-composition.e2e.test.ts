@@ -1,14 +1,7 @@
-import { createHash } from "node:crypto";
-
-import {
-  InfinityContextRetrievalV2Adapter,
-} from "@discord-meeting/infinity-context-adapter";
 import {
   startDisposableInfinityHttpService,
 } from "@discord-meeting/infinity-context-adapter/test-support";
 import {
-  AnswerGroundedMeetingQuestion,
-  FocusedHistoricalEvidenceV2,
   GroundedMeetingAnswer,
   LiveFinalizedMemoryWorker,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
@@ -24,13 +17,16 @@ import {
   PostgresMigrationRunner,
   canonicalFinalReplyTurnHash,
 } from "@discord-meeting/postgres-adapter";
+import type { Client } from "discord.js";
 import { Pool } from "pg";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { MeetingKnowledgeGroundedAnswerAcl } from
-  "../src/adapters/outbound/meeting-knowledge-grounded-answer-acl.js";
+import { createVoiceGroundedAnswers } from
+  "../src/composition/voice-grounded-answers.js";
 import { localFinalReplyPolicy } from "../src/composition/meeting-knowledge.js";
+import { createPersistedFocusedMemoryRoute } from
+  "../src/composition/meeting-knowledge-retrieval-router.js";
 import { proveComposedGroundedVoice } from "./meeting-knowledge-composed-voice-e2e.js";
 import {
   allowOnlySyntheticRoom,
@@ -100,7 +96,9 @@ describe("Meeting Knowledge V2 production composition", () => {
       const pool = requiredDatabase();
       const infinity = await startDisposableInfinityHttpService();
       const runtime = requiredHistoricalRuntime(pool, infinity, true, true);
+      let servingRuntime: typeof runtime | undefined;
       const controller = new AbortController();
+      let runtimeClosed = false;
       try {
         const repository = new PostgresMeetingRepository(pool);
         const historical = await persistPublishedMeeting(
@@ -118,57 +116,19 @@ describe("Meeting Knowledge V2 production composition", () => {
         );
         expect((await historicalRows(pool)).filter(({ state }) => state === "applied"))
           .toHaveLength(2);
+        await runtime.assertReady();
+        await runtime.close();
+        runtimeClosed = true;
+        servingRuntime = requiredHistoricalRuntime(pool, infinity, true, true);
+        await servingRuntime.assertReady();
 
         const live = await createLiveProjection(pool, current, controller.signal);
         const authorization = allowOnlySyntheticRoom();
-        const providerBinding = platformConfig(
-          infinity.baseUrl, true, true, "test",
-        ).meetingKnowledge?.retrievalV2ProviderBinding;
-        if (providerBinding === undefined) {
-          throw new Error("synthetic Retrieval V2 binding is missing");
-        }
-        const historicalEvidence = new FocusedHistoricalEvidenceV2({
-          admission: runtime.createRetrievalV2Admission(providerBinding),
-          retrieval: runtime.createFocusedLocatorRetrievalV2(authorization),
-        });
-        const question = "How does Vlad's ANCHOR connect to PINE-GOLF?";
-        const prepared = await runtime.createRetrievalV2Admission(providerBinding)
-          .prepare({
-            currentMeetingId,
-            question,
-            roomId,
-            scopeId,
-            signal: controller.signal,
-          });
-        if (prepared === null) {
-          throw new Error("V2 production admission was unavailable");
-        }
-        await expect(new InfinityContextRetrievalV2Adapter({
-          baseUrl: infinity.baseUrl,
-          operationTimeoutMs: 4_000,
-          requestTimeoutMs: 2_000,
-          token: () => "synthetic-infinity-token",
-        }).retrieve(prepared, { signal: controller.signal })).resolves.toMatchObject({
-          status: "available",
-        });
-        const historicalProbe = await historicalEvidence.retrieve({
-          authorizationPrincipalRef: "synthetic-principal",
-          currentMeetingId,
-          maximumCandidates: 24,
-          question,
-          roomId,
-          scopeId,
-          signal: controller.signal,
-        });
-        expect(historicalProbe).toMatchObject({ status: "current" });
-        if (historicalProbe.status === "current") {
-          expect(historicalProbe.turns.map(({ text }) => text).join("\n"))
-            .toContain("PINE-GOLF");
-        }
+        const question = `How does <@${historicalActorA}> Vlad's ANCHOR connect to PINE-GOLF?`;
         const observedEvidence: string[][] = [];
-        const answerUseCase = new AnswerGroundedMeetingQuestion({
-          answers: new GroundedMeetingAnswer({
-            generate: async (request) => {
+        let validatedAnswers = 0;
+        const groundedAnswerUseCase = new GroundedMeetingAnswer({
+          generate: async (request) => {
               observedEvidence.push(request.plan.evidence.map(({ source, text }) =>
                 `${source?.meetingId ?? "unknown"}:${text}`
               ));
@@ -179,6 +139,7 @@ describe("Meeting Knowledge V2 production composition", () => {
                 ({ source, text }) => source?.meetingId === historicalMeetingId &&
                   text.includes("PINE-GOLF"),
               );
+              validatedAnswers += 1;
               return {
                 answer: {
                   claims: [{
@@ -192,56 +153,80 @@ describe("Meeting Knowledge V2 production composition", () => {
                 },
                 status: "completed" as const,
               };
+          },
+          measure: async (request) => ({
+            inputTokens: Math.ceil(JSON.stringify(request).length / 4),
+            requestBytes: new TextEncoder().encode(JSON.stringify(request)).byteLength,
+            runtimeProfile: "production-composition-v2-fixture",
+          }),
+        }, localFinalReplyPolicy.groundingSafety);
+        const baseConfig = platformConfig(infinity.baseUrl, true, true, "test");
+        const providerBinding = baseConfig.meetingKnowledge?.retrievalV2ProviderBinding;
+        if (providerBinding === undefined) {
+          throw new Error("synthetic Retrieval V2 binding is missing");
+        }
+        const admittedRequest = await servingRuntime
+          .createRetrievalV2Admission(providerBinding)
+          .prepare({
+            currentMeetingId,
+            question,
+            roomId,
+            scopeId,
+            signal: controller.signal,
+          });
+        if (admittedRequest === null) {
+          throw new Error("production Retrieval V2 admission was unavailable");
+        }
+        const config = {
+          ...baseConfig,
+          conversation: {
+            farewellCueRoot: "/tmp/synthetic-farewell",
+            greetingCueRoot: "/tmp/synthetic-greeting",
+            runtimeAddress: "127.0.0.1:1",
+            systemPrompt: "Use only validated grounded evidence.",
+            thinkingCueRoot: "/tmp/synthetic-thinking",
+            voiceId: "synthetic",
+            voiceProfileId: "deterministic-e2e",
+          },
+          meetingKnowledge: {
+            ...baseConfig.meetingKnowledge,
+            groundedVoice: {
+              rolloutEpoch: "synthetic-composition-test-r1",
+              rolloutStateFile: "/tmp/not-read-through-authority-seam",
             },
-            measure: async (request) => ({
-              inputTokens: Math.ceil(JSON.stringify(request).length / 4),
-              requestBytes: new TextEncoder().encode(JSON.stringify(request)).byteLength,
-              runtimeProfile: "production-composition-v2-fixture",
-            }),
-          }, localFinalReplyPolicy.groundingSafety),
-          authorization,
-          historical: historicalEvidence,
-          ids: {
-            digest: (namespace, parts) => createHash("sha256")
-              .update(JSON.stringify([namespace, ...parts]), "utf8")
-              .digest("hex"),
           },
-          live,
-          turnHashes: { hash: canonicalFinalReplyTurnHash },
-        });
-        let validatedAnswers = 0;
-        const acl = new MeetingKnowledgeGroundedAnswerAcl({
-          execute: async (request, options) => {
-            const result = await answerUseCase.execute({
-              ...request,
-              authorizationPrincipalRef: "synthetic-principal",
-            }, options);
-            if (result.status === "answered") {
-              validatedAnswers += 1;
-            }
-            return result;
+          secrets: {
+            ...baseConfig.secrets,
+            meetingKnowledgePrincipalKey: "aa".repeat(32),
           },
-          recheckPlaybackAuthority: async (request, options) =>
-            answerUseCase.recheckPlaybackAuthority({
-              ...request,
-              authorizationPrincipalRef: "synthetic-principal",
-            }, options),
-        });
-        const direct = await answerUseCase.execute({
-          activeParticipantId: currentActor,
-          authorizationPrincipalRef: "synthetic-principal",
+        } as const;
+        const groundedAnswers = createVoiceGroundedAnswers({
+          authority: {
+            historicalAuthorization: authorization,
+            principalFor: async () => "synthetic-principal",
+            rolloutAuthorized: async () => true,
+          },
+          config,
+          groundedAnswerUseCase,
+          historicalMemory: servingRuntime,
+          liveFinalizedMemory: { query: live },
+        }, {} as Client);
+        if (groundedAnswers === undefined) {
+          throw new Error("production voice grounded answers did not compose");
+        }
+        await expect(groundedAnswers.answer({
           locale: "en-US",
           meetingId: currentMeetingId,
+          participantId: currentActor,
           question,
           roomId,
-        }, { signal: controller.signal });
-        expect(direct).toMatchObject({ status: "answered" });
-        expect(observedEvidence[0]).toEqual(expect.arrayContaining([
-          expect.stringContaining(`${currentMeetingId}:`),
-          expect.stringContaining(`${historicalMeetingId}:`),
-        ]));
+        }, { signal: controller.signal })).resolves.toMatchObject({
+          ok: true,
+          value: { status: "answered" },
+        });
+        validatedAnswers = 0;
         await proveComposedGroundedVoice({
-          groundedAnswers: acl,
+          groundedAnswers,
           meetingId: currentMeetingId,
           participantId: currentActor,
           question,
@@ -260,35 +245,96 @@ describe("Meeting Knowledge V2 production composition", () => {
         )).toBeLessThan(mixedEvidence?.findIndex((text) =>
           text.startsWith(`${historicalMeetingId}:`)
         ) ?? -1);
-        const retrievalRequests = infinity.endpoint.requests.filter(
+        const providerCallsBeforeRevocation = assertRetrievalRequestPrivacy(infinity);
+        infinity.endpoint.setCapabilitiesQualified(false);
+        await servingRuntime.assertReady();
+        expect(servingRuntime.servingAuthorized()).toBe(false);
+        await groundedAnswers.answer({
+          locale: "en-US",
+          meetingId: currentMeetingId,
+          participantId: currentActor,
+          question,
+          roomId,
+        }, { signal: controller.signal });
+        expect(infinity.endpoint.requests.filter(
           ({ path }) => path === "/v1/context/retrieve",
-        );
-        expect(retrievalRequests.length).toBeGreaterThanOrEqual(3);
-        for (const request of retrievalRequests) {
-          const actorKeys = (request.body as { readonly filters?: {
-            readonly actor_keys?: readonly string[] } })?.filters?.actor_keys ?? [];
-          expect(actorKeys.length).toBeGreaterThan(0);
-          expect(actorKeys.every((key) => key.startsWith("dactor1."))).toBe(true);
-          expect(JSON.stringify(actorKeys)).not.toMatch(
-            new RegExp([currentActor, historicalActorA, historicalActorB,
-              "Vlad", "Vladimir"].join("|"), "u"),
-          );
-          const projectedActorKeys = infinity.endpoint.requests
-            .filter(({ path }) => path === "/v1/documents")
-            .flatMap(({ body }) => (body as { readonly retrieval_projection?: {
-              readonly actor_keys?: readonly string[] } })
-              ?.retrieval_projection?.actor_keys ?? []);
-          expect(projectedActorKeys).toEqual(expect.arrayContaining([...actorKeys]));
-        }
+        )).toHaveLength(providerCallsBeforeRevocation);
+
+        const finalReplyMemory = createPersistedFocusedMemoryRoute({
+          current: { retrieve: async () => ({ schemaVersion: 1, status: "low_coverage" }) },
+          retrievalV2Historical:
+            servingRuntime.createFocusedLocatorRetrievalV2(authorization),
+        });
+        await expect(finalReplyMemory.retrieve({
+          authorizationPrincipalRef: "synthetic-principal",
+          canonicalEvidenceHash: "a".repeat(64),
+          expectedAuthorityGeneration: "generation-before-revocation",
+          finalProjectionReceipt: "synthetic-final-projection",
+          maximumCandidates: 24,
+          meetingId: currentMeetingId,
+          meetingRevision: 1,
+          neighborTurns: 0,
+          projectionTargetContainerId: resultsContainerId,
+          question,
+          retrievalBinding: {
+            cutoverEpoch: "synthetic-composition-test-r1",
+            profileFingerprint: providerBinding.capabilityFingerprint,
+            request: admittedRequest,
+            retrievalPath: "infinity_locator_v2",
+          },
+          roomId,
+          scopeId,
+          signal: controller.signal,
+          transcriptId: current.transcript?.transcriptId ?? "missing-transcript",
+          transcriptVersion: current.transcript?.version ?? 0,
+        })).resolves.toMatchObject({ status: "unavailable" });
+        expect(infinity.endpoint.requests.filter(
+          ({ path }) => path === "/v1/context/retrieve",
+        )).toHaveLength(providerCallsBeforeRevocation);
         expect(historical.transcript?.turns.at(-2)?.turnId)
           .toBe("history-turn-0719");
       } finally {
         controller.abort();
-        await runtime.close();
+        if (!runtimeClosed) {
+          await runtime.close();
+        }
+        await servingRuntime?.close();
         await infinity.close();
       }
     }, 600_000);
 });
+
+function assertRetrievalRequestPrivacy(
+  infinity: Awaited<ReturnType<typeof startDisposableInfinityHttpService>>,
+): number {
+  const retrievalRequests = infinity.endpoint.requests.filter(
+    ({ path }) => path === "/v1/context/retrieve",
+  );
+  expect(retrievalRequests.length).toBeGreaterThanOrEqual(2);
+  const projectedActorKeys = infinity.endpoint.requests
+    .filter(({ path }) => path === "/v1/documents")
+    .flatMap(({ body }) => (body as { readonly retrieval_projection?: {
+      readonly actor_keys?: readonly string[] } })
+      ?.retrieval_projection?.actor_keys ?? []);
+  for (const request of retrievalRequests) {
+    const actorKeys = (request.body as { readonly filters?: {
+      readonly actor_keys?: readonly string[] } })?.filters?.actor_keys ?? [];
+    expect(actorKeys).toHaveLength(2);
+    expect(actorKeys.map((key) => key.split(".")[1])).toEqual([
+      "synthetic-r0",
+      "synthetic-r1",
+    ]);
+    expect(JSON.stringify(request.body)).not.toMatch(
+      new RegExp([currentActor, historicalActorA, historicalActorB,
+        "Vlad", "Vladimir"].join("|"), "u"),
+    );
+    expect(JSON.stringify(request.body)).toMatch(/ANCHOR.*PINE-GOLF/u);
+    expect(projectedActorKeys).toEqual(expect.arrayContaining(
+      actorKeys.filter((key) => key.startsWith("dactor1.synthetic-r1.")),
+    ));
+  }
+  return retrievalRequests.length;
+}
 
 async function createLiveProjection(
   pool: Pool,

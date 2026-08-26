@@ -2,9 +2,19 @@ export interface SpeakerAliasMapV1 {
   readonly [speakerId: string]: readonly string[];
 }
 
+export interface RetrievalActorAliasOwnerV1 {
+  readonly actorKeys: readonly string[];
+  readonly aliases: readonly string[];
+}
+
 export interface RequestedSpeakerAliasV1 {
   readonly matchedAlias: string;
   readonly speakerId: string;
+}
+
+export interface RequestedRetrievalActorAliasV1 {
+  readonly actorKeys: readonly string[];
+  readonly matchedAlias: string;
 }
 
 interface AliasQuestionSpan {
@@ -15,6 +25,12 @@ interface AliasQuestionSpan {
 
 interface AliasCandidate extends RequestedSpeakerAliasV1 {
   readonly end: number;
+  readonly start: number;
+}
+
+interface RetrievalAliasCandidate extends RequestedRetrievalActorAliasV1 {
+  readonly end: number;
+  readonly ownerIndex: number;
   readonly start: number;
 }
 
@@ -53,11 +69,46 @@ export function resolveRequestedSpeakerAliases(
   for (const candidate of candidates) {
     if (
       !selected.has(candidate.speakerId) &&
-      !hasConflictingOwner(candidate, candidates)
+      !hasConflictingSpeakerOwner(candidate, candidates)
     ) {
       selected.set(candidate.speakerId, Object.freeze({
         matchedAlias: candidate.matchedAlias,
         speakerId: candidate.speakerId,
+      }));
+    }
+  }
+  return Object.freeze([...selected.values()]);
+}
+
+export function resolveRequestedActorKeys(
+  question: string,
+  aliases: readonly RetrievalActorAliasOwnerV1[] = [],
+): ReadonlySet<string> {
+  return new Set(resolveRequestedActorAliases(question, aliases).flatMap(
+    ({ actorKeys }) => actorKeys,
+  ));
+}
+
+export function resolveRequestedActorAliases(
+  question: string,
+  aliases: readonly RetrievalActorAliasOwnerV1[] = [],
+): readonly RequestedRetrievalActorAliasV1[] {
+  const candidates: RetrievalAliasCandidate[] = [];
+  for (const [ownerIndex, owner] of aliases.entries()) {
+    for (const alias of owner.aliases) {
+      const match = matchAlias(question, alias);
+      if (match !== undefined) {
+        candidates.push(Object.freeze({ actorKeys: owner.actorKeys,
+          end: match.end, matchedAlias: match.text, ownerIndex, start: match.start }));
+      }
+    }
+  }
+  const selected = new Map<number, RequestedRetrievalActorAliasV1>();
+  for (const candidate of candidates) {
+    if (!selected.has(candidate.ownerIndex) &&
+      !hasConflictingRetrievalOwner(candidate, candidates)) {
+      selected.set(candidate.ownerIndex, Object.freeze({
+        actorKeys: candidate.actorKeys, matchedAlias: candidate.matchedAlias,
       }));
     }
   }
@@ -73,12 +124,22 @@ function matchAlias(question: string, alias: string): AliasQuestionSpan | undefi
     : undefined;
 }
 
-function hasConflictingOwner(
+function hasConflictingSpeakerOwner(
   candidate: AliasCandidate,
   candidates: readonly AliasCandidate[],
 ): boolean {
   return candidates.some((other) =>
     other.speakerId !== candidate.speakerId &&
+    candidate.start < other.end && other.start < candidate.end
+  );
+}
+
+function hasConflictingRetrievalOwner(
+  candidate: RetrievalAliasCandidate,
+  candidates: readonly RetrievalAliasCandidate[],
+): boolean {
+  return candidates.some((other) =>
+    other.ownerIndex !== candidate.ownerIndex &&
     candidate.start < other.end && other.start < candidate.end
   );
 }

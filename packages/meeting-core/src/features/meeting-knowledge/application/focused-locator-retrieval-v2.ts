@@ -4,9 +4,9 @@ import { compareRetrievalV2Utf8, retrievalV2ConsumerEvidenceByteLimit,
 import type { FocusedMemoryReference } from
   "../domain/grounding-plan.js";
 import { buildHistoricalRoomTopology } from "./historical-index-plan.js";
-import { resolveRequestedSpeakerIds, type SpeakerAliasMapV1 } from
+import { resolveRequestedActorKeys, type RetrievalActorAliasOwnerV1 } from
   "./speaker-alias-resolution.js";
-import { boundedRetrievalQuery, relativeTimeFilter } from
+import { boundedRetrievalQuery, redactRetrievalQueryIdentities, relativeTimeFilter } from
   "./focused-locator-retrieval-v2-query.js";
 import type { FocusedHistoricalEvidenceV2Port,
   FocusedLocatorRetrievalV2ProviderBinding,
@@ -48,7 +48,8 @@ export class PrepareFocusedLocatorRetrievalV2Request {
     private readonly dependencies: {
       readonly ids: HistoricalOpaqueIdPort;
       readonly providerBinding: FocusedLocatorRetrievalV2ProviderBinding;
-      readonly speakerAliases?: SpeakerAliasMapV1;
+      readonly servingAuthorized?: () => boolean;
+      readonly speakerAliases?: readonly RetrievalActorAliasOwnerV1[];
       readonly store: HistoricalSyncStore;
     },
     private readonly policy: FocusedLocatorRetrievalV2Policy =
@@ -63,6 +64,9 @@ export class PrepareFocusedLocatorRetrievalV2Request {
     readonly signal?: AbortSignal;
   }): Promise<FocusedLocatorRetrievalV2RequestSnapshot | null> {
     input.signal?.throwIfAborted();
+    if (this.dependencies.servingAuthorized?.() === false) {
+      return null;
+    }
     const plans = (await this.dependencies.store.listCurrentRoomPlans(
       input.scopeId,
       input.roomId,
@@ -81,19 +85,28 @@ export class PrepareFocusedLocatorRetrievalV2Request {
         return null;
       }
     }
+    if (this.dependencies.servingAuthorized?.() === false) {
+      return null;
+    }
     const topology = buildHistoricalRoomTopology(
       input.scopeId,
       input.roomId,
       this.dependencies.ids,
     );
-    const query = boundedRetrievalQuery(input.question);
+    const requestedActorKeys = resolveRequestedActorKeys(
+      input.question,
+      this.dependencies.speakerAliases,
+    );
+    const query = boundedRetrievalQuery(redactRetrievalQueryIdentities(
+      input.question,
+      this.dependencies.speakerAliases ?? [],
+      requestedActorKeys,
+    ));
     if (query.length === 0) {
       return null;
     }
-    const actorKeys = Object.freeze([...resolveRequestedSpeakerIds(
-      input.question,
-      this.dependencies.speakerAliases,
-    )].toSorted(compareRetrievalV2Utf8));
+    const actorKeys = Object.freeze([...requestedActorKeys]
+      .toSorted(compareRetrievalV2Utf8));
     const relativeTimeInterval = relativeTimeFilter(input.question);
     return Object.freeze({
       binding: Object.freeze({ ...this.dependencies.providerBinding,
