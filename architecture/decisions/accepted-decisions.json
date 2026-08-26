@@ -253,6 +253,11 @@
       "immutableDigest": "sha256:3ce44eccffb3c99bef5c9bdfe3c64a9b3aa444c635c659ba4c6883285a6009aa"
     },
     {
+      "id": "ADR-0052",
+      "path": "docs/decisions/0052-production-faithful-meeting-memory-qualification.md",
+      "immutableDigest": "sha256:6f56cc7d3549463698c494f0cf73b2e8bc5f6dce73feeb65ab360df5e68b224c"
+    },
+    {
       "id": "ADR-0054",
       "path": "docs/decisions/0054-official-sdk-live-memory-projection.md",
       "immutableDigest": "sha256:ded5c7dd3363857ceecb27808ab154ff634e5700b304fc00bf77e4e11ccc889f"

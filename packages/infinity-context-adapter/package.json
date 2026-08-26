@@ -4,20 +4,34 @@
   "private": true,
   "type": "module",
   "bin": {
-    "discord-meeting-quality-campaign": "./src/quality-campaign/production-entrypoint.ts"
+    "discord-meeting-quality-campaign": "./dist/quality-campaign/production-entrypoint.js"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./quality-campaign": "./src/quality-campaign/index.ts",
-    "./quality-campaign/cli": "./src/quality-campaign/production-entrypoint.ts",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./quality-campaign": {
+      "types": "./dist/quality-campaign/index.d.ts",
+      "import": "./dist/quality-campaign/index.js"
+    },
+    "./quality-campaign/cli": {
+      "types": "./dist/quality-campaign/production-cli.d.ts",
+      "import": "./dist/quality-campaign/production-cli.js"
+    },
     "./test-support": "./test/test-support.ts"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
+    "build": "tsc --project tsconfig.build.json --pretty false",
     "check": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared && pnpm run test:prepared",
     "prepare:official-sdk": "node ../../vendor/infinity-context/prepare-official-sdk.mjs",
-    "quality-campaign": "node --import tsx/esm src/quality-campaign/production-entrypoint.ts",
+    "prepack": "pnpm run build",
+    "quality-campaign": "pnpm run build && node dist/quality-campaign/production-entrypoint.js",
     "test": "pnpm run prepare:official-sdk && pnpm run test:prepared",
-    "test:quality-campaign:production-runner": "vitest run test/quality-campaign-production-runner-structural.test.ts --no-file-parallelism --test-timeout=60000",
+    "test:quality-campaign:production-runner": "pnpm run build && vitest run test/quality-campaign-production-runner-structural.test.ts test/quality-campaign-installed-package.test.ts --no-file-parallelism --test-timeout=180000",
     "test:semantic-quality-v4:gate": "vitest run test/semantic-quality-v4-evaluation.test.ts test/semantic-quality-v4-p0.test.ts test/semantic-quality-v4-qualification-tooling.test.ts test/semantic-quality-v4-workflow.test.ts --no-file-parallelism --test-timeout=30000",
     "test:semantic-quality-v4": "node --import tsx/esm test/run-semantic-quality-v4.ts",
     "test:semantic-quality-v4:real-preflight": "pnpm run quality-campaign -- preflight",
@@ -26,17 +40,25 @@
     "test:semantic-quality-v4:real-retention": "pnpm run quality-campaign -- retention",
     "test:semantic-quality-v4:real-cleanup": "pnpm run quality-campaign -- cleanup-absence",
     "test:semantic-quality-v4:real-status": "pnpm run quality-campaign -- status",
-    "test:prepared": "vitest run --no-file-parallelism",
+    "test:prepared": "pnpm run build && vitest run --no-file-parallelism",
     "typecheck": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared",
-    "typecheck:prepared": "tsc --project tsconfig.json --noEmit --pretty false"
+    "typecheck:prepared": "pnpm run build && tsc --project tsconfig.json --noEmit --pretty false"
   },
-  "dependencies": {
-    "@discord-meeting/meeting-core": "workspace:*",
-    "@huggingface/tokenizers": "catalog:",
-    "@infinity-context/sdk": "catalog:",
-    "@infinity-context/sdk-v2": "catalog:"
+  "optionalDependencies": {
+    "@huggingface/tokenizers": "0.1.3",
+    "@infinity-context/sdk": "0.1.0",
+    "@infinity-context/sdk-v2": "0.2.0"
+  },
+  "peerDependencies": {
+    "@discord-meeting/meeting-core": "0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@discord-meeting/meeting-core": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@discord-meeting/meeting-core": "workspace:*",
     "@discord-meeting/postgres-adapter": "workspace:*",
     "@discord-meeting/subscription-runtime-adapter": "workspace:*",
     "@types/node": "catalog:",
