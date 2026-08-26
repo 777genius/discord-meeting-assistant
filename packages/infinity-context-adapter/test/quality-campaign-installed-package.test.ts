@@ -17,8 +17,9 @@ const execute = promisify(execFile);
 const servers: ReturnType<typeof createServer>[] = [];
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
-afterEach(async () => {await Promise.all(servers.splice(0).map(async (server) =>
-  await new Promise<void>((resolve) => {server.close(() => {resolve();});})))});
+afterEach(async () => {await Promise.all(servers.splice(0).map(async (server) => {
+  await new Promise<void>((resolve) => {server.close(() => {resolve();});});
+}));});
 
 describe("packed production quality-campaign entrypoint", () => {
   it("installs and launches without tsx or workspace-transitive dependencies", async () => {

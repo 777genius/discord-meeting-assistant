@@ -86,11 +86,14 @@ Promise<CanonicalCustodyEvidence> {
   const signed = verifyExternalSignedValue<CanonicalCustodyEvidence>(await readProductionJson(
     input.path, "authoritative custody inventory"), input.authority.keyId,
   input.authority.publicKeyPem, "authoritative custody inventory");
-  const record = exactRecord(signed.payload, ["loadedLocatorDigests", "loadedQuestionDigests",
+  const raw = exactRecord(signed.payload, ["loadedLocatorDigests", "loadedQuestionDigests",
     "mainInputRootSha256", "mainKeyNamespace", "protectedEvidence", "releaseRootSha256",
-    "schemaVersion", "tuningEvidenceDigests"], "authoritative custody inventory payload") as
-    unknown as CanonicalCustodyEvidence;
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_authoritative_custody.v1" ||
+    "schemaVersion", "tuningEvidenceDigests"], "authoritative custody inventory payload");
+  if (raw.schemaVersion !== "meeting_knowledge.semantic_quality_authoritative_custody.v1") {
+    throw new Error("canonical custody inventory does not reconstruct from admitted main inputs");
+  }
+  const record = raw as unknown as CanonicalCustodyEvidence;
+  if (
     record.mainInputRootSha256 !== input.mainInputRootSha256 ||
     record.releaseRootSha256 !== input.releaseRootSha256 ||
     record.mainKeyNamespace.startsWith("holdout:") ||
@@ -180,7 +183,8 @@ export async function readProductionJson(path: string, label: string): Promise<u
 export async function readProductionArray(path: string, label: string):
 Promise<readonly unknown[]> {
   const value = await readProductionJson(path, label);
-  if (!Array.isArray(value)) {throw new Error(`${label} is invalid`);} return value;
+  if (!Array.isArray(value)) {throw new Error(`${label} is invalid`);}
+  return value as readonly unknown[];
 }
 export async function readProductionText(path: string, label: string): Promise<string> {
   try {return await readFile(absolute(path, label), "utf8");}

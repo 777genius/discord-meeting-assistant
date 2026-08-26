@@ -22,14 +22,15 @@ export class ProductionCheckpointStore {
     const path = join(this.root, "campaign-deadline.json");
     const existing = await optional(path);
     if (existing !== null) {
-      const record = exactRecord(existing, ["campaignDeadlineEpochMs", "campaignRootSha256",
-        "createdAtEpochMs", "schemaVersion"], "campaign deadline") as unknown as
-        CampaignDeadlineCheckpoint;
-      if (record.campaignRootSha256 !== input.campaignRootSha256 ||
-        record.schemaVersion !== "meeting_knowledge.semantic_quality_deadline.v1") {
+      const raw = exactRecord(existing, ["campaignDeadlineEpochMs", "campaignRootSha256",
+        "createdAtEpochMs", "schemaVersion"], "campaign deadline");
+      if (raw.campaignRootSha256 !== input.campaignRootSha256 ||
+        raw.schemaVersion !== "meeting_knowledge.semantic_quality_deadline.v1" ||
+        typeof raw.campaignDeadlineEpochMs !== "number" ||
+        typeof raw.createdAtEpochMs !== "number") {
         throw new Error("campaign deadline checkpoint is bound to another campaign");
       }
-      return record;
+      return raw as unknown as CampaignDeadlineCheckpoint;
     }
     if (!Number.isSafeInteger(input.nowEpochMs) || input.nowEpochMs < 0) {
       throw new Error("campaign clock is invalid");
@@ -77,7 +78,7 @@ async function createOnly(path: string, bytes: string): Promise<void> {
   try {await directory.sync();} finally {await directory.close();}
 }
 
-async function optional(path: string): Promise<unknown | null> {
+async function optional(path: string): Promise<unknown> {
   try {return JSON.parse(await readFile(path, "utf8")) as unknown;}
   catch (error) {if ((error as NodeJS.ErrnoException).code === "ENOENT") {return null;} throw error;}
 }

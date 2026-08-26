@@ -7,7 +7,13 @@ const operation = process.argv[2];
 if (operation === "prepare") {
   const source = await readFile(manifestPath, "utf8");
   await writeFile(backupPath, source, { flag: "wx" });
-  const manifest = JSON.parse(source);
+  const parsed = /** @type {unknown} */ (JSON.parse(source));
+  if (typeof parsed !== "object" || parsed === null || !("exports" in parsed)) {
+    throw new Error("package manifest is invalid");
+  }
+  const manifest = /** @type {{dependencies?: unknown,
+   * exports: Record<string, {types?: string}>,
+   * optionalDependencies?: Record<string, string>}} */ (parsed);
   delete manifest.dependencies;
   manifest.exports["."].types = "./dist/index.d.ts";
   manifest.exports["./quality-campaign"].types = "./dist/quality-campaign/index.d.ts";

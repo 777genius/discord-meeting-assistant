@@ -148,16 +148,22 @@ function decodeOutcome(value: ExactOutcomeEvidence): void {
   digest(value.questionDigestSha256, "outcome question digest");
   if (typeof value.answerAbstained !== "boolean" ||
     !["answerable", "abstain"].includes(value.expectedAnswer) ||
-    !Number.isSafeInteger(value.retrievalLatencyUs) || value.retrievalLatencyUs < 0 ||
-    !Array.isArray(value.citationLocatorDigests) ||
-    !Array.isArray(value.evidenceLocatorDigests) ||
-    !Array.isArray(value.rankedLocatorDigests) || value.rankedLocatorDigests.length > 10 ||
-    !Array.isArray(value.relevantLocatorDigests) || !Array.isArray(value.forbiddenLocatorDigests)) {
+    !Number.isSafeInteger(value.retrievalLatencyUs) || value.retrievalLatencyUs < 0) {
     throw new Error("outcome contains a missing or unknown metric field");
   }
-  for (const item of [...value.citationLocatorDigests, ...value.evidenceLocatorDigests,
-    ...value.rankedLocatorDigests, ...value.relevantLocatorDigests,
-    ...value.forbiddenLocatorDigests]) {digest(item, "outcome locator");}
+  assertLocatorDigests(value.citationLocatorDigests);
+  assertLocatorDigests(value.evidenceLocatorDigests);
+  assertLocatorDigests(value.rankedLocatorDigests);
+  assertLocatorDigests(value.relevantLocatorDigests);
+  assertLocatorDigests(value.forbiddenLocatorDigests);
+  if (value.rankedLocatorDigests.length > 10) {
+    throw new Error("outcome contains a missing or unknown metric field");
+  }
+}
+
+function assertLocatorDigests(value: unknown): asserts value is readonly string[] {
+  if (!Array.isArray(value)) {throw new Error("outcome contains a missing or unknown metric field");}
+  for (const item of value as readonly unknown[]) {digest(item, "outcome locator");}
 }
 
 function computeMetrics(input: { readonly adjudications: readonly ExactAdjudicationEvidence[];
@@ -165,7 +171,7 @@ function computeMetrics(input: { readonly adjudications: readonly ExactAdjudicat
 LocallyComputedMetrics {
   const decisions = input.adjudications.flatMap(({ decision }) => decision.claims);
   const factual = decisions.filter(({ claimFactual }) => claimFactual);
-  const citations = factual.filter(() => true);
+  const citations = factual;
   const expectedAbstentions = input.outcomes.filter(({ expectedAnswer }) =>
     expectedAnswer === "abstain");
   const predictedAbstentions = input.outcomes.filter(({ answerAbstained }) => answerAbstained);

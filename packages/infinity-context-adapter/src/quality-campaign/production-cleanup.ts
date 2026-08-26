@@ -50,11 +50,17 @@ export async function executeDerivedCleanup(input: {
     payload.campaignRootSha256 !== input.campaignRootSha256 ||
     payload.cleanupManifestSha256 !== cleanupManifestSha256 ||
     !Array.isArray(payload.absentArtifactIds) || !Array.isArray(payload.protectedEvidence) ||
-    canonicalJson([...payload.absentArtifactIds].toSorted()) !== canonicalJson(targetIds) ||
+    !(payload.absentArtifactIds as readonly unknown[]).every((value) =>
+      typeof value === "string") ||
     canonicalJson(payload.protectedEvidence) !== canonicalJson(input.protectedEvidence)) {
     throw new Error("canonical absence observation does not prove exact cleanup and preservation");
   }
-  for (const id of payload.absentArtifactIds) {safeId(id, "absent artifact ID");}
+  const absentArtifactIds = payload.absentArtifactIds as readonly string[];
+  if (canonicalJson(absentArtifactIds.toSorted((a, b) => a.localeCompare(b))) !==
+    canonicalJson(targetIds)) {
+    throw new Error("canonical absence observation does not prove exact cleanup and preservation");
+  }
+  for (const id of absentArtifactIds) {safeId(id, "absent artifact ID");}
   for (const evidence of input.protectedEvidence) {digest(evidence.artifactSha256,
     "protected evidence digest");}
   return Object.freeze({ absenceReceiptSha256: sha256(signed),

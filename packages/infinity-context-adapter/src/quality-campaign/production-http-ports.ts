@@ -113,7 +113,7 @@ async function requestJson(endpoint: string, token: string, body: unknown,
       authorization: `Bearer ${token}`, "content-type": "application/json" }, method: "POST",
     signal: controller.signal });
     if (!response.ok) {throw new Error("production authority request failed");}
-    return await response.json() as unknown;
+    return JSON.parse(await response.text()) as unknown;
   } finally {
     clearTimeout(timeout); callContext.signal.removeEventListener("abort", abort);
   }
