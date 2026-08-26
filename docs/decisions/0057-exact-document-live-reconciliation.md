@@ -1,11 +1,11 @@
 ---
-id: ADR-0055
+id: ADR-0057
 status: proposed
 supersedes: []
 superseded_by: []
 ---
 
-# ADR-0055: Exact-document live-memory reconciliation
+# ADR-0057: Exact-document live-memory reconciliation
 
 ## Status
 
