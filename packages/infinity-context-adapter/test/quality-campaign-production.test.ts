@@ -15,7 +15,7 @@ import {
   type AttemptIdentity, type CampaignQuestion, type EncryptedArtifactKind,
   type PinnedReleaseDocument, type QualificationOutcome, type QualityCampaignRelease,
   type RepetitionQualificationEvidence, type RetainedArtifact,
-} from "../src/index.js";
+} from "../src/quality-campaign/index.js";
 
 const d = (character: string) => character.repeat(64);
 const CAMPAIGN_ROOT = d("1");
@@ -317,10 +317,12 @@ describe("production quality campaign authority", () => {
     const journal = new DurableAttemptJournal(await mkdtemp(join(tmpdir(), "quality-journal-")),
       providerAuthority);
     const exact = { campaignRootSha256: CAMPAIGN_ROOT,
+      deadlineEpochMs: 9_000,
       effectUsage: { callsConsumed: 0, encryptedBytesConsumed: 0,
         requestedEncryptedBytes: 100, requestedTokens: 100, tokensConsumed: 0 },
       identity: attempt, journal, nowEpochMs: 1_000, port, provider: PROVIDER,
-      release: FINAL.release.pinned, request, spendAuthority: FINAL.spendAuthority,
+      release: FINAL.release.pinned, request, signal: new AbortController().signal,
+      spendAuthority: FINAL.spendAuthority,
       spendReservation: FINAL.spends[0] };
     expect(await executeReservedExchange(exact)).toBe("terminal_success");
     expect(await executeReservedExchange(exact)).toBe("terminal_success");
@@ -399,7 +401,9 @@ describe("production quality campaign authority", () => {
       { ...decision, answerComplete: false });
     const resolver = makeAuthority("three"); const vault = { reconstruct: vi.fn(async () =>
       ({ encryptedEvidenceSha256: d("8"), outcomeDigestSha256: d("6") })) };
-    expect((await adjudicateOutcome({ attempt, expectedAttempt: expectedAttempt(attempt), first,
+    const context = { deadlineEpochMs: 9_000, signal: new AbortController().signal };
+    expect((await adjudicateOutcome({ attempt, ...context,
+      expectedAttempt: expectedAttempt(attempt), first,
       rawOutcomeEnvelopeSha256: d("7"), resolver, second, vault })).decision.answerComplete)
       .toBe(true);
     vi.mocked(first.adjudicate).mockClear(); vi.mocked(second.adjudicate).mockClear();
@@ -413,7 +417,7 @@ describe("production quality campaign authority", () => {
         spendReservationSha256: attempt.spendReservationSha256 }),
     ];
     for (const mutation of mutations) {
-      await expect(adjudicateOutcome({ attempt: mutation as AttemptIdentity,
+      await expect(adjudicateOutcome({ attempt: mutation as AttemptIdentity, ...context,
         expectedAttempt: expectedAttempt(attempt), first, rawOutcomeEnvelopeSha256: d("7"),
         resolver, second, vault })).rejects.toThrow();
       expect(vault.reconstruct).not.toHaveBeenCalled();

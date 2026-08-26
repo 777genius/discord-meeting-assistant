@@ -18,7 +18,7 @@ export const OPERATOR_STATUSES = Object.freeze([
 ] as const);
 export type OperatorStatus = typeof OPERATOR_STATUSES[number];
 export const SAFE_OPERATOR_BLOCKER_CODES = Object.freeze([
-  "authorization_missing", "cleanup_incomplete", "corrupt_evidence", "outcome_unknown",
+  "authorization_missing", "campaign_incomplete", "cleanup_incomplete", "corrupt_evidence", "outcome_unknown",
   "retention_incomplete", "threshold_not_met",
 ] as const);
 export const SAFE_OPERATOR_ERROR_CODES = Object.freeze([
@@ -27,16 +27,20 @@ export const SAFE_OPERATOR_ERROR_CODES = Object.freeze([
 ] as const);
 export const SAFE_OPERATOR_COUNTERS = Object.freeze([
   "artifactCount", "attemptsBlocked", "attemptsCompleted", "attemptsUnknown", "outcomeCount",
-  "repetition", "totalStoredBytes",
+  "completedOutcomes", "maximumObservedConcurrency", "providerCalls", "questionCount",
+  "repetition", "targetCount", "totalStoredBytes",
 ] as const);
 export const SAFE_OPERATOR_DIGESTS = Object.freeze([
-  "campaignRootSha256", "inventorySha256", "metricsSha256", "rootBindingSha256",
+  "adjudicationSetSha256", "campaignRootSha256", "cleanupReceiptSha256",
+  "finalAdmissionSha256", "holdoutCheckpointSha256", "holdoutExecutionSha256",
+  "inventorySha256", "metricsSha256", "qualifiedCheckpointSha256", "releaseRootSha256",
+  "rootBindingSha256", "separateReportSha256", "terminalAttemptSetSha256",
 ] as const);
 export type SafeOperatorBlockerCode = typeof SAFE_OPERATOR_BLOCKER_CODES[number];
 export type SafeOperatorErrorCode = typeof SAFE_OPERATOR_ERROR_CODES[number];
 export type SafeOperatorCounter = typeof SAFE_OPERATOR_COUNTERS[number];
 export type SafeOperatorDigest = typeof SAFE_OPERATOR_DIGESTS[number];
-export interface OperatorSafeReceipt {
+export interface OperatorSafeReceipt extends Readonly<Record<string, unknown>> {
   readonly counters: Readonly<Partial<Record<SafeOperatorCounter, number>>>;
   readonly digests: Readonly<Partial<Record<SafeOperatorDigest, string>>>;
   readonly errorCode: SafeOperatorErrorCode | null;

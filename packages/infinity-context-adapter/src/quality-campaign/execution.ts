@@ -1,66 +1,24 @@
-import { createPublicKey, verify } from "node:crypto";
 import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
-import { FROZEN_ANSWER_EXECUTION, type PinnedReleaseDocument, verifyPinnedReleaseDocument } from "./release.js";
+import { type PinnedReleaseDocument, verifyPinnedReleaseDocument } from "./release.js";
+import { type SignedValue, verifyExternalSignedValue } from "./signatures.js";
+import { verifySpendReservation } from "./spend.js";
+
+export { type SignedValue, verifyExternalSignedValue } from "./signatures.js";
+export { type SpendReservation, type VerifiedSpendReservation, verifySpendReservation,
+  verifySpendReservations } from "./spend.js";
 
 export const EXIT_SAFE_PAUSE = 20, EXIT_OUTCOME_UNKNOWN = 21;
-
-export interface SpendReservation {
-  readonly allowedCallKinds: readonly CallKind[]; readonly campaignRootSha256: string;
-  readonly expiresAtEpochMs: number; readonly maxCalls: number; readonly maxEncryptedBytes: number;
-  readonly maxTokens: number;
-  readonly model: "gpt-5.6-sol"; readonly provider: string; readonly reasoning: "xhigh";
-  readonly releaseRootSha256: string; readonly repetition: 1 | 2 | 3;
-  readonly serviceTier: "default";
-}
-
-export interface SignedValue<T> {
-  readonly payload: T; readonly signatureBase64: string; readonly signerKeyId: string;
-}
-
-export type VerifiedSpendReservation = SignedValue<SpendReservation> & {
-  readonly spendReservationSha256: string;
-};
-
-export function verifySpendReservation(input: { readonly authorityKeyId: string;
-  readonly authorityPublicKeyPem: string; readonly campaignRootSha256: string;
-  readonly expectedRepetition: 1 | 2 | 3; readonly nowEpochMs: number;
-  readonly releaseRootSha256: string; readonly reservation: unknown }):
-VerifiedSpendReservation {
-  const signed = verifyExternalSignedValue<SpendReservation>(input.reservation,
-    input.authorityKeyId, input.authorityPublicKeyPem, "spend reservation");
-  const record = exactRecord(signed.payload, ["allowedCallKinds", "campaignRootSha256",
-    "expiresAtEpochMs", "maxCalls", "maxEncryptedBytes", "maxTokens", "model", "provider",
-    "reasoning", "releaseRootSha256", "repetition", "serviceTier"],
-  "spend reservation payload");
-  digest(record.campaignRootSha256, "reserved campaign root"); digest(record.releaseRootSha256,
-    "reserved release root");
-  const allowedCallKinds = decodeAllowedCallKinds(record.allowedCallKinds); if (record.repetition !==
-    input.expectedRepetition || record.campaignRootSha256 !==
-    input.campaignRootSha256 || record.releaseRootSha256 !== input.releaseRootSha256 ||
-    !Number.isSafeInteger(input.nowEpochMs) || typeof record.expiresAtEpochMs !== "number" ||
-    record.expiresAtEpochMs <= input.nowEpochMs || typeof record.maxCalls !== "number" ||
-    record.maxCalls < 1 || typeof record.maxTokens !== "number" || record.maxTokens < 1 ||
-    typeof record.maxEncryptedBytes !== "number" || record.maxEncryptedBytes < 1 ||
-    typeof record.provider !== "string" || record.provider.trim() === "" ||
-    record.model !== FROZEN_ANSWER_EXECUTION.model || record.reasoning !==
-      FROZEN_ANSWER_EXECUTION.reasoning ||
-    record.serviceTier !== FROZEN_ANSWER_EXECUTION.serviceTier ||
-    ![record.expiresAtEpochMs, record.maxCalls, record.maxTokens,
-      record.maxEncryptedBytes].every(Number.isSafeInteger)) {
-    throw new Error("spend reservation binding is invalid");
-  }
-  return Object.freeze({ ...signed, payload: Object.freeze({ ...record,
-    allowedCallKinds }) as unknown as SpendReservation,
-  spendReservationSha256: sha256(signed) });
-}
 
 export type CallKind = "adjudicator_1" | "adjudicator_2" | "answer" | "capability" |
   "resolver" | "retrieval";
 export type TerminalState = "terminal_failure" | "terminal_success" | "outcome_unknown";
 export type JournalState = "blocked_evidence" | "never_reserved" | "provider_reserved" | TerminalState;
+
+const CALL_KINDS: readonly CallKind[] = ["adjudicator_1", "adjudicator_2", "answer", "capability",
+  "resolver", "retrieval"];
 
 export interface AttemptIdentity {
   readonly attemptId: string; readonly callKind: CallKind; readonly callOrdinal: number;
@@ -313,20 +271,6 @@ function verifyEffectAuthorization(input: { readonly campaignRootSha256: string;
     spendReservationSha256: spend.spendReservationSha256 };
 }
 
-export function verifyExternalSignedValue<T>(value: unknown, keyId: string,
-  publicKeyPem: string, label: string):
-SignedValue<T> {
-  const record = exactRecord(value, ["payload", "signatureBase64", "signerKeyId"], label);
-  if (record.signerKeyId !== keyId || typeof record.signatureBase64 !== "string") {
-    throw new Error(`${label} signer is invalid`);
-  }
-  let valid = false;
-  try {valid = verify(null, Buffer.from(canonicalJson(record.payload)), createPublicKey(publicKeyPem),
-    Buffer.from(record.signatureBase64, "base64"));} catch {valid = false;}
-  if (!valid) {throw new Error(`${label} signature is invalid`);}
-  return Object.freeze(record as unknown as SignedValue<T>);
-}
-
 async function writeCreateOnly(path: string, bytes: string | Uint8Array): Promise<void> {
   await ensureDirectory(dirname(path));
   const handle = await open(path, "wx", 0o600).catch(async (error: unknown) => {
@@ -390,16 +334,6 @@ function decodeBlocked(value: unknown): BlockedRecord {
     record.state !== "blocked_evidence") {throw new Error("blocked evidence is invalid");}
   safeId(record.attemptId, "blocked attempt ID"); digest(record.reservationSha256, "blocked reservation");
   return record as unknown as BlockedRecord;
-}
-
-const CALL_KINDS: readonly CallKind[] = ["adjudicator_1", "adjudicator_2", "answer", "capability", "resolver", "retrieval"];
-
-function decodeAllowedCallKinds(value: unknown): readonly CallKind[] {
-  if (!Array.isArray(value) || value.length === 0 || value.some((kind) =>
-    !CALL_KINDS.includes(kind as CallKind)) || new Set(value).size !== value.length) {
-    throw new Error("spend reservation call kinds are invalid");
-  }
-  return Object.freeze(value as CallKind[]);
 }
 
 export function assertAttemptIdentity(identity: AttemptIdentity, binding?: {

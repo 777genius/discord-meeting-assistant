@@ -1,7 +1,7 @@
 import { MAIN_CARDINALITY, type CampaignQuestion } from "./admission.js";
 import { canonicalJson, sha256 } from "./canonical.js";
 import { attemptIdentity, DurableAttemptJournal, executeReservedExchange } from "./execution.js";
-import type { QualityCampaignRelease } from "./release.js";
+import { type PinnedReleaseDocument, verifyPinnedReleaseDocument } from "./release.js";
 import type { CampaignClockPort, CampaignProviderPorts } from "./production-ports.js";
 
 const PER_CALL_DEADLINE_MS = 120_000;
@@ -9,8 +9,11 @@ const CALLS = Object.freeze(["capability", "retrieval", "answer"] as const);
 
 export interface FrozenExecutionBinding {
   readonly campaignRootSha256: string;
-  readonly release: QualityCampaignRelease;
+  readonly provider: string;
+  readonly release: PinnedReleaseDocument;
   readonly releaseRootSha256: string;
+  readonly spendAuthority: { readonly keyId: string; readonly publicKeyPem: string };
+  readonly spendReservation: unknown;
   readonly spendReservationSha256: string;
 }
 
@@ -22,20 +25,26 @@ export interface ScheduledCampaignResult {
 }
 
 export async function executeMainCampaignSchedule(input: {
-  readonly binding: Omit<FrozenExecutionBinding, "spendReservationSha256">;
+  readonly binding: Omit<FrozenExecutionBinding, "provider" | "spendReservation" |
+    "spendReservationSha256">;
   readonly clock: CampaignClockPort; readonly concurrency: number;
   readonly deadlineEpochMs: number; readonly journalRoot: string;
   readonly ports: CampaignProviderPorts; readonly questions: readonly CampaignQuestion[];
-  readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
+  readonly spendByRepetition: Readonly<Record<1 | 2 | 3, {
+    readonly provider: string; readonly reservation: unknown;
+    readonly reservationSha256: string }>>;
 }): Promise<ScheduledCampaignResult> {
   if (input.questions.length !== MAIN_CARDINALITY.perRepetition) {
     throw new Error("production schedule requires exactly 240 questions");
   }
   return await executeSchedule({ bindingFor: (repetition) => ({ ...input.binding,
-    spendReservationSha256: input.spendReservationSha256ByRepetition[repetition] }),
+    provider: input.spendByRepetition[repetition].provider,
+    spendReservation: input.spendByRepetition[repetition].reservation,
+    spendReservationSha256: input.spendByRepetition[repetition].reservationSha256 }),
   clock: input.clock, concurrency: input.concurrency, deadlineEpochMs: input.deadlineEpochMs,
-  jobs: ([1, 2, 3] as const).flatMap((repetition) => input.questions.map((question) =>
-    ({ question, repetition }))), journalRoot: input.journalRoot, ports: input.ports });
+    jobs: ([1, 2, 3] as const).flatMap((repetition) => input.questions.map((question,
+      questionIndex) => ({ question, questionIndex, repetition }))),
+  journalRoot: input.journalRoot, ports: input.ports });
 }
 
 export async function executeHoldoutSchedule(input: {
@@ -46,7 +55,8 @@ export async function executeHoldoutSchedule(input: {
   if (input.questions.length !== 30) {throw new Error("holdout schedule requires exactly 30 questions");}
   return await executeSchedule({ bindingFor: () => input.binding, clock: input.clock,
     concurrency: input.concurrency, deadlineEpochMs: input.deadlineEpochMs,
-    jobs: input.questions.map((question) => ({ question, repetition: 1 as const })),
+    jobs: input.questions.map((question, questionIndex) =>
+      ({ question, questionIndex, repetition: 1 as const })),
     journalRoot: input.journalRoot, ports: input.ports });
 }
 
@@ -54,7 +64,7 @@ async function executeSchedule(input: {
   readonly bindingFor: (repetition: 1 | 2 | 3) => FrozenExecutionBinding;
   readonly clock: CampaignClockPort;
   readonly concurrency: number; readonly deadlineEpochMs: number;
-  readonly jobs: readonly { readonly question: CampaignQuestion;
+  readonly jobs: readonly { readonly question: CampaignQuestion; readonly questionIndex: number;
     readonly repetition: 1 | 2 | 3 }[]; readonly journalRoot: string;
   readonly ports: CampaignProviderPorts;
 }): Promise<ScheduledCampaignResult> {
@@ -92,26 +102,30 @@ async function executeSchedule(input: {
 async function executeQuestion(input: {
   readonly binding: FrozenExecutionBinding; readonly clock: CampaignClockPort;
   readonly deadlineEpochMs: number; readonly job: { readonly question: CampaignQuestion;
-    readonly repetition: 1 | 2 | 3 }; readonly journal: DurableAttemptJournal;
+    readonly questionIndex: number; readonly repetition: 1 | 2 | 3 };
+  readonly journal: DurableAttemptJournal;
   readonly ports: CampaignProviderPorts;
 }): Promise<string | null> {
   let answerAttemptId = "";
-  for (const [callOrdinal, callKind] of CALLS.entries()) {
+  for (const [callIndex, callKind] of CALLS.entries()) {
     const nowEpochMs = input.clock.nowEpochMs();
     if (!Number.isSafeInteger(nowEpochMs) || nowEpochMs >= input.deadlineEpochMs) {
       throw new Error("shared 72 hour campaign deadline exceeded");
     }
-    const identity = attemptIdentity({ callKind, callOrdinal,
+    const identity = attemptIdentity({ callKind, callOrdinal: 0,
       campaignRootSha256: input.binding.campaignRootSha256,
       questionDigestSha256: input.job.question.questionDigestSha256,
-      questionId: input.job.question.questionId, repetition: input.job.repetition });
+      questionId: input.job.question.questionId,
+      releaseRootSha256: input.binding.releaseRootSha256, repetition: input.job.repetition,
+      spendReservationSha256: input.binding.spendReservationSha256 });
     const callDeadlineEpochMs = Math.min(input.deadlineEpochMs, nowEpochMs + PER_CALL_DEADLINE_MS);
     const request = Buffer.from(canonicalJson({ attemptId: identity.attemptId,
       callDeadlineEpochMs,
       callKind, campaignDeadlineEpochMs: input.deadlineEpochMs,
       campaignRootSha256: input.binding.campaignRootSha256,
       questionDigestSha256: input.job.question.questionDigestSha256,
-      questionId: input.job.question.questionId, release: input.binding.release,
+      questionId: input.job.question.questionId,
+      release: verifyPinnedReleaseDocument(input.binding.release).release,
       releaseRootSha256: input.binding.releaseRootSha256, repetition: input.job.repetition,
       schemaVersion: "meeting_knowledge.semantic_quality_provider_request.v1",
       spendReservationSha256: input.binding.spendReservationSha256 }));
@@ -121,8 +135,14 @@ async function executeQuestion(input: {
     let state;
     try {
       state = await executeReservedExchange({ campaignRootSha256:
-        input.binding.campaignRootSha256, deadlineEpochMs: callDeadlineEpochMs, identity,
-      journal: input.journal, port: input.ports[callKind], request, signal: controller.signal });
+        input.binding.campaignRootSha256, deadlineEpochMs: callDeadlineEpochMs,
+      effectUsage: { callsConsumed: input.job.questionIndex * CALLS.length + callIndex,
+        encryptedBytesConsumed: 0, requestedEncryptedBytes: request.byteLength,
+        requestedTokens: 1, tokensConsumed: input.job.questionIndex * CALLS.length + callIndex },
+      identity, journal: input.journal, nowEpochMs, port: input.ports[callKind],
+      provider: input.binding.provider, release: input.binding.release, request,
+      signal: controller.signal, spendAuthority: input.binding.spendAuthority,
+      spendReservation: input.binding.spendReservation });
     } catch (error) {
       if (controller.signal.aborted || (error as Error).name === "AbortError") {return null;}
       throw error;

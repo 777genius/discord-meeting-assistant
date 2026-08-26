@@ -1,6 +1,7 @@
 import type { AdjudicationAuthorityPort, RawOutcomeVaultPort } from "./adjudication.js";
 import type { ProviderExchangePort } from "./execution.js";
 import type { QualityCampaignRelease } from "./release.js";
+import type { ArtifactCustodyPort } from "./retention.js";
 import type { ExactCampaignEvidence, ExactAdjudicationEvidence,
   ExactOutcomeEvidence } from "./production-evidence.js";
 
@@ -63,6 +64,7 @@ export interface ObservedProductionReleasePort {
 
 export interface QualityCampaignProductionPorts {
   readonly absence: CanonicalAbsencePort;
+  readonly artifactCustody: ArtifactCustodyPort;
   readonly clock: CampaignClockPort;
   readonly deletion: CampaignDeletionPort;
   readonly evidence: CampaignExactEvidencePort;

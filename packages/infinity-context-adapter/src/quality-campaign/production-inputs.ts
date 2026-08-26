@@ -3,9 +3,9 @@ import { isAbsolute, resolve } from "node:path";
 
 import { type AdmittedMainCampaign, type AdmissionAuthority,
   type CampaignQuestion } from "./admission.js";
-import { canonicalJson, digest, exactRecord, sha256 } from "./canonical.js";
-import { verifyExternalSignedValue } from "./execution.js";
-import type { FrozenMainInputProof, HoldoutAuthorization } from "./holdout.js";
+import { canonicalJson, digest, exactRecord } from "./canonical.js";
+import { verifyExternalSignedValue, verifySpendReservation } from "./execution.js";
+import type { HoldoutAuthorization } from "./holdout.js";
 import type { ProtectedCampaignEvidence } from "./production-cleanup.js";
 import type { DerivedCampaignArtifact, QualityCampaignProductionPorts } from
   "./production-ports.js";
@@ -27,6 +27,7 @@ export interface ProductionOperatorConfiguration {
   readonly mainManifestPath: string;
   readonly releaseAuthorityPublicKeyPath: string;
   readonly releaseRootPath: string;
+  readonly repetitionAuthorityPath: string;
   readonly reviewerAuthorityPaths: readonly [string, string];
   readonly schemaVersion: "meeting_knowledge.semantic_quality_production_operator.v2";
   readonly spendAuthorityPath: string;
@@ -44,18 +45,14 @@ export interface CanonicalCustodyEvidence {
   readonly tuningEvidenceDigests: readonly string[];
 }
 
-interface ProductionHoldoutAuthorization extends HoldoutAuthorization {
-  readonly expiresAtEpochMs: number;
-  readonly tuningEvidenceDigests: readonly string[];
-}
-
 export async function loadProductionConfiguration(path: string):
 Promise<ProductionOperatorConfiguration> {
   const keys = ["absenceAuthorityPath", "adjudicationAuthorityPaths", "admissionAuthorityPath",
     "authoritativeEvidenceInventoryPath", "checkpointRoot", "cleanupPlanPath", "concurrency",
     "deletionAuthorityPath", "holdoutAuthorityPath", "holdoutCleanupPlanPath",
     "holdoutInputPath", "holdoutJournalRoot", "journalRoot", "mainManifestPath",
-    "releaseAuthorityPublicKeyPath", "releaseRootPath", "reviewerAuthorityPaths",
+    "releaseAuthorityPublicKeyPath", "releaseRootPath", "repetitionAuthorityPath",
+    "reviewerAuthorityPaths",
     "schemaVersion", "spendAuthorityPath", "spendReservationsPath"];
   const record = exactRecord(await readProductionJson(path, "production operator configuration"),
     keys, "production operator configuration");
@@ -125,17 +122,27 @@ Promise<readonly DerivedCampaignArtifact[]> {
 export async function loadProductionHoldout(input: { readonly admitted: AdmittedMainCampaign;
   readonly authority: AdmissionAuthority; readonly custody: CanonicalCustodyEvidence;
   readonly nowEpochMs: number; readonly path: string;
-  readonly ports: QualityCampaignProductionPorts }) {
+  readonly ports: QualityCampaignProductionPorts; readonly releaseRootSha256: string }) {
   const record = exactRecord(await readProductionJson(input.path, "holdout input"),
-    ["authorizationReceiptPath", "locatorDigestsPath", "questionsPath", "schemaVersion",
+    ["authorizationReceiptPath", "locatorDigestsPath", "mainProofAuthorityPath",
+      "mainProofReceiptPath", "questionAuthorityPath", "questionReceiptPath", "questionsPath",
+      "schemaVersion", "spendAuthorityPath", "spendReservationPath",
       "tuningEvidenceDigestsPath"], "holdout input");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_input.v2") {
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_input.v3") {
     throw new Error("holdout input is invalid");
   }
-  const receipt = verifyExternalSignedValue<ProductionHoldoutAuthorization>(
-    await readProductionJson(absolute(String(record.authorizationReceiptPath),
-      "holdout authorization"), "holdout authorization"), input.authority.keyId,
-  input.authority.publicKeyPem, "holdout authorization");
+  const authorization = await readProductionJson(absolute(String(record.authorizationReceiptPath),
+    "holdout authorization"), "holdout authorization");
+  const authorizationReceipt = verifyExternalSignedValue<HoldoutAuthorization>(authorization,
+    input.authority.keyId, input.authority.publicKeyPem, "holdout authorization");
+  const mainAuthority = await loadProductionAuthority(absolute(String(record.mainProofAuthorityPath),
+    "main proof authority"));
+  const questionAuthority = await loadProductionAuthority(absolute(String(record.questionAuthorityPath),
+    "holdout question authority"));
+  const main = await readProductionJson(absolute(String(record.mainProofReceiptPath),
+    "main proof receipt"), "main proof receipt");
+  const questionReceipt = await readProductionJson(absolute(String(record.questionReceiptPath),
+    "holdout question receipt"), "holdout question receipt");
   const questions = await readProductionArray(absolute(String(record.questionsPath),
     "holdout questions"), "holdout questions") as CampaignQuestion[];
   const holdoutLocatorDigests = await readProductionArray(absolute(
@@ -143,31 +150,34 @@ export async function loadProductionHoldout(input: { readonly admitted: Admitted
   const tuningEvidenceDigests = await readProductionArray(absolute(
     String(record.tuningEvidenceDigestsPath), "holdout tuning evidence"),
   "holdout tuning evidence") as string[];
-  assertHoldoutIsolation({ authorization: receipt.payload, holdoutLocatorDigests, input,
+  const spendAuthority = await loadProductionAuthority(absolute(String(record.spendAuthorityPath),
+    "holdout spend authority"));
+  const spendReservation = await readProductionJson(absolute(String(record.spendReservationPath),
+    "holdout spend reservation"), "holdout spend reservation");
+  const verifiedSpend = verifySpendReservation({ authorityKeyId: spendAuthority.keyId,
+    authorityPublicKeyPem: spendAuthority.publicKeyPem,
+    campaignRootSha256: authorizationReceipt.payload.holdoutRootSha256,
+    expectedRepetition: 1, nowEpochMs: input.nowEpochMs,
+    releaseRootSha256: input.releaseRootSha256, reservation: spendReservation });
+  assertHoldoutIsolation({ authorization: authorizationReceipt.payload, holdoutLocatorDigests, input,
     questions, tuningEvidenceDigests });
-  const main: FrozenMainInputProof = Object.freeze({ loadedLocatorDigests:
-    input.custody.loadedLocatorDigests, loadedQuestionDigests: input.custody.loadedQuestionDigests,
-    mainInputRootSha256: input.admitted.rootBindingSha256,
-    mainReleaseRootSha256: input.admitted.releaseRootSha256,
-    tuningCorpusSha256: sha256(input.custody.tuningEvidenceDigests) });
-  return { authorization: receipt.payload, holdoutLocatorDigests, main, questions };
+  return { admission: { authorization, authorizationAuthority: input.authority,
+    holdoutLocatorDigests, main, mainAuthority, questionAuthority, questionReceipt, questions },
+  authorization: authorizationReceipt.payload, holdoutLocatorDigests, main, questions,
+  provider: verifiedSpend.payload.provider, spendAuthority, spendReservation, spendReservationSha256:
+    verifiedSpend.spendReservationSha256 };
 }
 
-function assertHoldoutIsolation(value: { readonly authorization: ProductionHoldoutAuthorization;
+function assertHoldoutIsolation(value: { readonly authorization: HoldoutAuthorization;
   readonly holdoutLocatorDigests: readonly string[];
   readonly input: Parameters<typeof loadProductionHoldout>[0];
   readonly questions: readonly CampaignQuestion[]; readonly tuningEvidenceDigests:
   readonly string[] }): void {
   const { admitted, custody, nowEpochMs, ports } = value.input;
-  if (!Number.isSafeInteger(value.authorization.expiresAtEpochMs) ||
-    value.authorization.expiresAtEpochMs <= nowEpochMs ||
-    value.authorization.holdoutRootSha256 === admitted.rootBindingSha256 ||
+  if (!Number.isSafeInteger(nowEpochMs) || value.authorization.holdoutRootSha256 === admitted.rootBindingSha256 ||
     value.authorization.keyNamespace === custody.mainKeyNamespace ||
     ports.holdoutProvider.resultAuthority.keyId === ports.mainProvider.resultAuthority.keyId ||
     ports.holdoutProvider.resultAuthority.publicKeyPem === ports.mainProvider.resultAuthority.publicKeyPem ||
-    value.authorization.questionReceiptSha256 !== sha256(value.questions) ||
-    canonicalJson(value.authorization.tuningEvidenceDigests) !==
-      canonicalJson(value.tuningEvidenceDigests) ||
     value.tuningEvidenceDigests.some((item) => custody.tuningEvidenceDigests.includes(item)) ||
     value.holdoutLocatorDigests.some((item) => custody.loadedLocatorDigests.includes(item)) ||
     value.questions.some(({ questionDigestSha256 }) => custody.loadedQuestionDigests

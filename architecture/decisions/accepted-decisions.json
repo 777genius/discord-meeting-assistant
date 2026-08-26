@@ -255,7 +255,7 @@
     {
       "id": "ADR-0052",
       "path": "docs/decisions/0052-production-faithful-meeting-memory-qualification.md",
-      "immutableDigest": "sha256:dcbae13ac51bbfb7728160089a1252eeef2744894e6deb3a5fe6145dc86aa0ae"
+      "immutableDigest": "sha256:3b44d37f9eddea75903b6eef7beb6446f40bfbf90f79dcdd3c40a9e365007ce9"
     },
     {
       "id": "ADR-0054",

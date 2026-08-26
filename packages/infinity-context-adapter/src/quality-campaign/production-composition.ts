@@ -1,21 +1,23 @@
 import { admitMainCampaign, type AdmissionAuthority, type CampaignQuestion } from "./admission.js";
 import { adjudicateOutcome } from "./adjudication.js";
 import { canonicalJson, sha256 } from "./canonical.js";
-import { attemptIdentity, verifySpendReservations } from "./execution.js";
+import { attemptIdentity } from "./execution.js";
+import { admitFinalCampaign } from "./final-admission.js";
 import { createHoldoutReport } from "./holdout.js";
-import { assertObservedRelease, verifyReleaseRoot } from "./release.js";
-import { admitFinalCampaign } from "./retention.js";
+import type { OperatorSafeReceipt } from "./operator-cli.js";
+import { loadPinnedProductionRelease, loadVerifiedProductionSpend } from
+  "./production-bootstrap.js";
 import { ProductionCheckpointStore } from "./production-checkpoints.js";
 import { executeDerivedCleanup } from "./production-cleanup.js";
 import { reconstructExactHoldoutEvidence, reconstructExactMainEvidence,
   type ExactAdjudicationEvidence } from "./production-evidence.js";
 import { executeIsolatedProductionHoldout } from "./production-holdout.js";
-import { loadCanonicalCustody, loadCleanupTargets, loadProductionAuthority,
-  loadProductionConfiguration, loadProductionHoldout, readProductionArray,
-  readProductionJson, readProductionText, type CanonicalCustodyEvidence,
+import { loadCanonicalCustody, loadProductionAuthority,
+  loadProductionConfiguration, loadProductionHoldout, readProductionJson,
+  type CanonicalCustodyEvidence,
   type ProductionOperatorConfiguration } from "./production-inputs.js";
 import type { CampaignCallContext, QualityCampaignProductionPorts } from "./production-ports.js";
-import { executeMainCampaignSchedule } from "./production-scheduler.js";
+import { executeProductionMain } from "./production-main-execution.js";
 
 const AUTHORITY_CALL_DEADLINE_MS = 120_000;
 
@@ -25,8 +27,8 @@ export type ProductionCampaignCommand = "adjudicate" | "cleanup-absence" | "exec
   "verify-bind";
 
 export interface ProductionCompositionResult {
-  readonly blockerCode: "none" | "outcome_unknown";
-  readonly receipt: Readonly<Record<string, unknown>>;
+  readonly blockerCode: "campaign_incomplete" | "none" | "outcome_unknown";
+  readonly receipt: OperatorSafeReceipt;
   readonly status: "completed" | "outcome_unknown" | "paused";
 }
 
@@ -35,14 +37,8 @@ export async function runQualityCampaignProductionComposition(input: {
   readonly ports: QualityCampaignProductionPorts;
 }): Promise<ProductionCompositionResult> {
   const config = await loadProductionConfiguration(input.configurationPath);
-  const releaseAuthorityPem = await readProductionText(config.releaseAuthorityPublicKeyPath,
-    "release authority public key");
-  const verifiedRelease = verifyReleaseRoot({ authorityPublicKeyPem: releaseAuthorityPem,
-    document: await readProductionJson(config.releaseRootPath, "release root") });
-  const bootstrapNow = input.ports.clock.nowEpochMs();
-  assertObservedRelease(verifiedRelease.release, await withCallContext(
-    bootstrapNow + AUTHORITY_CALL_DEADLINE_MS, async (context) =>
-      await input.ports.release.observe(context)));
+  const { pinned: pinnedRelease, verified: verifiedRelease } =
+    await loadPinnedProductionRelease(config, input.ports);
   const custodyAuthority = await loadProductionAuthority(config.admissionAuthorityPath);
   const absenceAuthority = await loadProductionAuthority(config.absenceAuthorityPath);
   const deletionAuthority = await loadProductionAuthority(config.deletionAuthorityPath);
@@ -60,29 +56,26 @@ export async function runQualityCampaignProductionComposition(input: {
   const checkpoints = new ProductionCheckpointStore(config.checkpointRoot);
   const deadline = await checkpoints.deadline({ campaignRootSha256: admitted.rootBindingSha256,
     nowEpochMs: input.ports.clock.nowEpochMs() });
+  const { authority: spendAuthority, documents: spendDocuments, reservations } =
+    await loadVerifiedProductionSpend({ campaignRootSha256: admitted.rootBindingSha256,
+      config, nowEpochMs: input.ports.clock.nowEpochMs(), releaseRootSha256:
+      verifiedRelease.releaseRootSha256 });
+  const spendDigests = { 1: reservations[0]!.spendReservationSha256, 2:
+    reservations[1]!.spendReservationSha256, 3: reservations[2]!.spendReservationSha256 } as const;
 
   if (input.command === "preflight" || input.command === "verify-bind") {
-    return { blockerCode: "none", receipt: safeReceipt("preflight",
+    return { blockerCode: "campaign_incomplete", receipt: safeReceipt("preflight",
       admitted.rootBindingSha256, { campaignDeadlineEpochMs: deadline.campaignDeadlineEpochMs,
         providerCalls: 0, questionCount: admitted.questions.length,
         releaseRootSha256: verifiedRelease.releaseRootSha256 }), status: "paused" };
   }
 
   if (input.command === "execute" || input.command === "resume") {
-    const spendAuthority = await loadProductionAuthority(config.spendAuthorityPath);
-    const reservations = verifySpendReservations({ authorityKeyId: spendAuthority.keyId,
-      authorityPublicKeyPem: spendAuthority.publicKeyPem,
-      campaignRootSha256: admitted.rootBindingSha256,
-      nowEpochMs: input.ports.clock.nowEpochMs(), releaseRootSha256:
-      verifiedRelease.releaseRootSha256, reservations: await readProductionArray(
-        config.spendReservationsPath, "spend reservations") });
-    const scheduled = await executeMainCampaignSchedule({ binding: { campaignRootSha256:
-      admitted.rootBindingSha256, release: verifiedRelease.release,
-      releaseRootSha256: verifiedRelease.releaseRootSha256 }, clock: input.ports.clock,
-    concurrency: config.concurrency, deadlineEpochMs: deadline.campaignDeadlineEpochMs,
-    journalRoot: config.journalRoot, ports: input.ports.mainProvider,
-    questions: admitted.questions, spendReservationSha256ByRepetition: {
-      1: sha256(reservations[0]), 2: sha256(reservations[1]), 3: sha256(reservations[2]) } });
+    const scheduled = await executeProductionMain({ campaignRootSha256:
+      admitted.rootBindingSha256, clock: input.ports.clock, concurrency: config.concurrency,
+      deadlineEpochMs: deadline.campaignDeadlineEpochMs, journalRoot: config.journalRoot,
+      ports: input.ports.mainProvider, questions: admitted.questions, release: pinnedRelease,
+      reservations, spendAuthority, spendDocuments });
     const receipt = safeReceipt("execution", admitted.rootBindingSha256, {
       completedOutcomes: scheduled.completedOutcomes,
       deadlineEpochMs: deadline.campaignDeadlineEpochMs,
@@ -93,44 +86,55 @@ export async function runQualityCampaignProductionComposition(input: {
     if (scheduled.completedOutcomes !== 720) {throw new Error("execution cardinality is incomplete");}
     await checkpoints.completePhase({ campaignRootSha256: admitted.rootBindingSha256,
       phase: "executed", receipt });
-    return { blockerCode: "none", receipt, status: "paused" };
+    return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
   }
 
   if (input.command === "adjudicate") {
     await checkpoints.requirePhase(admitted.rootBindingSha256, "executed");
     await assertPinnedReviewPorts(config, input.ports);
     const adjudications = await adjudicateAttempts({ attempts: answerAttempts(admitted.questions,
-      admitted.rootBindingSha256), campaignRootSha256: admitted.rootBindingSha256,
+      admitted.rootBindingSha256, verifiedRelease.releaseRootSha256, spendDigests),
+    campaignRootSha256: admitted.rootBindingSha256,
     concurrency: config.concurrency, deadlineEpochMs: deadline.campaignDeadlineEpochMs,
     ports: input.ports });
     const receipt = adjudicationReceipt(admitted.rootBindingSha256, adjudications);
     await checkpoints.completePhase({ campaignRootSha256: admitted.rootBindingSha256,
       phase: "adjudicated", receipt });
-    return { blockerCode: "none", receipt, status: "paused" };
+    return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
   }
 
   if (input.command === "retention") {
     const adjudicatedReceiptSha256 = await checkpoints.requirePhase(
       admitted.rootBindingSha256, "adjudicated");
-    const evidence = await loadMainEvidence(input.ports, admitted.rootBindingSha256,
-      admitted.questions, deadline.campaignDeadlineEpochMs);
+    const evidence = await loadMainEvidence({ ports: input.ports,
+      campaignRootSha256: admitted.rootBindingSha256, questions: admitted.questions,
+      deadlineEpochMs: deadline.campaignDeadlineEpochMs,
+      releaseRootSha256: verifiedRelease.releaseRootSha256,
+      spendReservationSha256ByRepetition: spendDigests });
     assertAdjudicationCheckpoint(adjudicatedReceiptSha256, admitted.rootBindingSha256,
       evidence.adjudications);
-    const reconstructed = reconstructExactMainEvidence({ campaignRootSha256:
-      admitted.rootBindingSha256, evidence, questions: admitted.questions });
+    const reconstructed = await reconstructExactMainEvidence({ artifactKeyCustodySha256:
+      verifiedRelease.release.artifactKeyCustodySha256, campaignRootSha256:
+      admitted.rootBindingSha256, custody: input.ports.artifactCustody,
+    evidence, questions: admitted.questions });
     const receipt = retentionReceipt(admitted.rootBindingSha256, reconstructed);
     await checkpoints.completePhase({ campaignRootSha256: admitted.rootBindingSha256,
       phase: "retained", receipt });
-    return { blockerCode: "none", receipt, status: "paused" };
+    return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
   }
 
   if (input.command === "cleanup-absence") {
     const retainedReceiptSha256 = await checkpoints.requirePhase(
       admitted.rootBindingSha256, "retained");
-    const evidence = await loadMainEvidence(input.ports, admitted.rootBindingSha256,
-      admitted.questions, deadline.campaignDeadlineEpochMs);
-    const reconstructed = reconstructExactMainEvidence({ campaignRootSha256:
-      admitted.rootBindingSha256, evidence, questions: admitted.questions });
+    const evidence = await loadMainEvidence({ ports: input.ports,
+      campaignRootSha256: admitted.rootBindingSha256, questions: admitted.questions,
+      deadlineEpochMs: deadline.campaignDeadlineEpochMs,
+      releaseRootSha256: verifiedRelease.releaseRootSha256,
+      spendReservationSha256ByRepetition: spendDigests });
+    const reconstructed = await reconstructExactMainEvidence({ artifactKeyCustodySha256:
+      verifiedRelease.release.artifactKeyCustodySha256, campaignRootSha256:
+      admitted.rootBindingSha256, custody: input.ports.artifactCustody,
+    evidence, questions: admitted.questions });
     if (sha256(retentionReceipt(admitted.rootBindingSha256, reconstructed)) !==
       retainedReceiptSha256) {throw new Error("exact retained evidence changed before cleanup");}
     const cleanup = await withCallContext(deadline.campaignDeadlineEpochMs, async (context) =>
@@ -138,13 +142,30 @@ export async function runQualityCampaignProductionComposition(input: {
         campaignRootSha256: admitted.rootBindingSha256, context,
         deletion: input.ports.deletion, observation: input.ports.absence,
         protectedEvidence: custody.protectedEvidence,
-        targets: await loadCleanupTargets(config.cleanupPlanPath) }));
-    const passes = reconstructed.metrics.map((metrics) => ({ metricsSha256:
-      reconstructed.metricsSha256ByRepetition[metrics.repetition], repetition:
-      metrics.repetition, thresholdsPassed: true as const }));
-    const final = admitFinalCampaign({ cleanupReceiptSha256: cleanup.absenceReceiptSha256,
-      independentRepetitionPasses: passes, inventorySha256: reconstructed.inventorySha256,
-      outcomeCount: evidence.outcomes.length, rootBindingSha256: admitted.rootBindingSha256 });
+        releaseRootSha256: verifiedRelease.releaseRootSha256,
+        targetInventoryAuthority: deletionAuthority,
+        targetInventoryAuthorityKeySha256:
+          verifiedRelease.release.targetInventoryAuthorityKeySha256,
+        targetInventoryReceipt: await readProductionJson(config.cleanupPlanPath,
+          "campaign target inventory") }));
+    const repetitionAuthority = await loadProductionAuthority(config.repetitionAuthorityPath);
+    const spendReservationSha256ByRepetition = [spendDigests[1], spendDigests[2],
+      spendDigests[3]] as const;
+    const finalRootBindingSha256 = sha256({ authorizedLocatorSetSha256:
+      sha256(evidence.authorizedLocatorIds), campaignRootSha256: admitted.rootBindingSha256,
+    questionSetSha256: sha256(admitted.questions), releaseRootSha256:
+      verifiedRelease.releaseRootSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v2",
+    spendReservationSetSha256: sha256(spendReservationSha256ByRepetition) });
+    const final = await admitFinalCampaign({ artifactCustody: input.ports.artifactCustody,
+      artifacts: evidence.artifacts, authorizedLocatorIds: evidence.authorizedLocatorIds,
+      campaignByteCeiling: evidence.campaignByteCeiling,
+      campaignRootSha256: admitted.rootBindingSha256, cleanupAuthority: absenceAuthority,
+      cleanupReceipt: cleanup.cleanupReceipt, questions: admitted.questions,
+      release: pinnedRelease, repetitionAuthority,
+      repetitionEvidence: evidence.repetitionEvidence, rootBindingSha256: finalRootBindingSha256,
+      spendReservationSha256ByRepetition, targetInventoryAuthority: deletionAuthority,
+      targetInventoryReceipt: cleanup.targetInventoryReceipt });
     const receipt = safeReceipt("final-admission", admitted.rootBindingSha256, {
       cleanupReceiptSha256: cleanup.absenceReceiptSha256,
       finalAdmissionSha256: final.finalAdmissionSha256, qualified: final.qualified });
@@ -156,7 +177,8 @@ export async function runQualityCampaignProductionComposition(input: {
   const holdoutResult = await runHoldoutCommand({ absenceAuthority, admitted, checkpoints,
     command: input.command, config, custody, custodyAuthority,
     deadlineEpochMs: deadline.campaignDeadlineEpochMs, ports: input.ports,
-    release: verifiedRelease.release });
+    release: pinnedRelease, targetInventoryAuthorityKeySha256:
+      verifiedRelease.release.targetInventoryAuthorityKeySha256 });
   if (holdoutResult !== null) {return holdoutResult;}
 
   if (input.command === "status" || input.command === "final-admission") {
@@ -174,7 +196,8 @@ async function runHoldoutCommand(input: { readonly absenceAuthority: AdmissionAu
   readonly config: ProductionOperatorConfiguration; readonly custody: CanonicalCustodyEvidence;
   readonly custodyAuthority: AdmissionAuthority; readonly deadlineEpochMs: number;
   readonly ports: QualityCampaignProductionPorts;
-  readonly release: Parameters<typeof executeIsolatedProductionHoldout>[0]["release"] }):
+  readonly release: Parameters<typeof executeIsolatedProductionHoldout>[0]["release"];
+  readonly targetInventoryAuthorityKeySha256: string }):
 Promise<ProductionCompositionResult | null> {
   if (!input.command.startsWith("holdout-")) {return null;}
   const holdoutAuthority = await loadProductionAuthority(input.config.holdoutAuthorityPath);
@@ -185,7 +208,7 @@ Promise<ProductionCompositionResult | null> {
   const holdout = await loadProductionHoldout({ admitted: input.admitted,
     authority: holdoutAuthority, custody: input.custody,
     nowEpochMs: input.ports.clock.nowEpochMs(), path: input.config.holdoutInputPath,
-    ports: input.ports });
+    ports: input.ports, releaseRootSha256: input.release.releaseRootSha256 });
   const holdoutRootSha256 = holdout.authorization.holdoutRootSha256;
   if (input.command === "holdout-execute" || input.command === "holdout-resume") {
     await input.checkpoints.requirePhase(input.admitted.rootBindingSha256, "qualified");
@@ -200,34 +223,44 @@ Promise<ProductionCompositionResult | null> {
       affectsMainQualification: false, holdoutExecutionSha256: sha256(report), outcomeCount: 30 });
     await input.checkpoints.completePhase({ campaignRootSha256: input.admitted.rootBindingSha256,
       phase: "holdout-executed", receipt });
-    return { blockerCode: "none", receipt, status: "paused" };
+    return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
   }
   if (input.command === "holdout-adjudicate") {
     await input.checkpoints.requirePhase(input.admitted.rootBindingSha256, "holdout-executed");
     await assertPinnedReviewPorts(input.config, input.ports);
     const adjudications = await adjudicateAttempts({ attempts: answerAttempts(holdout.questions,
-      holdoutRootSha256, [1]), campaignRootSha256: holdoutRootSha256,
+      holdoutRootSha256, input.release.releaseRootSha256,
+      { 1: holdout.spendReservationSha256, 2: holdout.spendReservationSha256,
+        3: holdout.spendReservationSha256 }, [1]), campaignRootSha256: holdoutRootSha256,
     concurrency: input.config.concurrency, deadlineEpochMs: input.deadlineEpochMs,
     ports: input.ports });
     const receipt = adjudicationReceipt(holdoutRootSha256, adjudications);
     await input.checkpoints.completePhase({ campaignRootSha256: input.admitted.rootBindingSha256,
       phase: "holdout-adjudicated", receipt });
-    return { blockerCode: "none", receipt, status: "paused" };
+    return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
   }
   if (input.command === "holdout-cleanup") {
     const adjudicatedReceiptSha256 = await input.checkpoints.requirePhase(
       input.admitted.rootBindingSha256, "holdout-adjudicated");
-    const evidence = await loadHoldoutEvidence(input.ports, holdoutRootSha256,
-      holdout.questions, input.deadlineEpochMs);
+    const evidence = await loadHoldoutEvidence({ ports: input.ports,
+      campaignRootSha256: holdoutRootSha256, questions: holdout.questions,
+      deadlineEpochMs: input.deadlineEpochMs, releaseRootSha256:
+      input.release.releaseRootSha256,
+      spendReservationSha256: holdout.spendReservationSha256 });
     assertAdjudicationCheckpoint(adjudicatedReceiptSha256, holdoutRootSha256,
       evidence.adjudications);
     const metrics = reconstructExactHoldoutEvidence({ campaignRootSha256: holdoutRootSha256,
       ...evidence, questions: holdout.questions });
+    const targetInventoryAuthority = await loadProductionAuthority(
+      input.config.deletionAuthorityPath);
     const cleanup = await withCallContext(input.deadlineEpochMs, async (context) =>
       await executeDerivedCleanup({ absenceAuthority: input.absenceAuthority,
         campaignRootSha256: holdoutRootSha256, context, deletion: input.ports.deletion,
         observation: input.ports.absence, protectedEvidence: input.custody.protectedEvidence,
-        targets: await loadCleanupTargets(input.config.holdoutCleanupPlanPath) }));
+        releaseRootSha256: input.release.releaseRootSha256, targetInventoryAuthority,
+        targetInventoryAuthorityKeySha256: input.targetInventoryAuthorityKeySha256,
+        targetInventoryReceipt: await readProductionJson(input.config.holdoutCleanupPlanPath,
+          "holdout target inventory") }));
     const report = createHoldoutReport({ cleanupReceiptSha256: cleanup.absenceReceiptSha256,
       holdoutRootSha256, outcomeCount: evidence.outcomes.length,
       reportMetricsSha256: metrics.metricsSha256 });
@@ -254,11 +287,14 @@ async function assertPinnedReviewPorts(config: ProductionOperatorConfiguration,
 }
 
 function answerAttempts(questions: readonly CampaignQuestion[], campaignRootSha256: string,
+  releaseRootSha256: string, spendReservationSha256ByRepetition:
+  Readonly<Record<1 | 2 | 3, string>>,
   repetitions: readonly (1 | 2 | 3)[] = [1, 2, 3]) {
   return repetitions.flatMap((repetition) => questions.map((question) => attemptIdentity({
-    callKind: "answer", callOrdinal: 2, campaignRootSha256,
+    callKind: "answer", callOrdinal: 0, campaignRootSha256,
     questionDigestSha256: question.questionDigestSha256,
-    questionId: question.questionId, repetition })));
+    questionId: question.questionId, releaseRootSha256, repetition,
+    spendReservationSha256: spendReservationSha256ByRepetition[repetition] })));
 }
 
 async function adjudicateAttempts(input: { readonly attempts: ReturnType<typeof answerAttempts>;
@@ -270,6 +306,10 @@ Promise<readonly ExactAdjudicationEvidence[]> {
       const rawOutcomeEnvelopeSha256 = await input.ports.review
         .rawOutcomeEnvelopeSha256(attempt.attemptId, context);
       const result = await adjudicateOutcome({ attempt, deadlineEpochMs: context.deadlineEpochMs,
+        expectedAttempt: { campaignRootSha256: attempt.campaignRootSha256,
+          questionDigestSha256: attempt.questionDigestSha256, questionId: attempt.questionId,
+          releaseRootSha256: attempt.releaseRootSha256, repetition: attempt.repetition,
+          spendReservationSha256: attempt.spendReservationSha256 },
         first: input.ports.review.first, rawOutcomeEnvelopeSha256,
         resolver: input.ports.review.resolver, second: input.ports.review.second,
         signal: context.signal, vault: input.ports.review.vault });
@@ -296,23 +336,33 @@ function assertAdjudicationCheckpoint(receiptSha256: string, campaignRootSha256:
   }
 }
 
-async function loadMainEvidence(ports: QualityCampaignProductionPorts, campaignRootSha256: string,
-  questions: readonly CampaignQuestion[], deadlineEpochMs: number) {
-  const attemptIds = answerAttempts(questions, campaignRootSha256).map(({ attemptId }) => attemptId);
-  return await withCallContext(deadlineEpochMs, async (context) => await ports.evidence.main({
-    attemptIds, campaignRootSha256, context }));
-}
-
-async function loadHoldoutEvidence(ports: QualityCampaignProductionPorts,
-  campaignRootSha256: string, questions: readonly CampaignQuestion[], deadlineEpochMs: number) {
-  const attemptIds = answerAttempts(questions, campaignRootSha256, [1])
+async function loadMainEvidence(input: { readonly ports: QualityCampaignProductionPorts;
+  readonly campaignRootSha256: string; readonly questions: readonly CampaignQuestion[];
+  readonly deadlineEpochMs: number; readonly releaseRootSha256: string;
+  readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>> }) {
+  const attemptIds = answerAttempts(input.questions, input.campaignRootSha256,
+    input.releaseRootSha256, input.spendReservationSha256ByRepetition)
     .map(({ attemptId }) => attemptId);
-  return await withCallContext(deadlineEpochMs, async (context) => await ports.evidence.holdout({
-    attemptIds, campaignRootSha256, context }));
+  return await withCallContext(input.deadlineEpochMs, async (context) =>
+    await input.ports.evidence.main({ attemptIds, campaignRootSha256:
+      input.campaignRootSha256, context }));
 }
 
-function retentionReceipt(campaignRootSha256: string, reconstructed: ReturnType<
-  typeof reconstructExactMainEvidence>) {
+async function loadHoldoutEvidence(input: { readonly ports: QualityCampaignProductionPorts;
+  readonly campaignRootSha256: string; readonly questions: readonly CampaignQuestion[];
+  readonly deadlineEpochMs: number; readonly releaseRootSha256: string;
+  readonly spendReservationSha256: string }) {
+  const attemptIds = answerAttempts(input.questions, input.campaignRootSha256,
+    input.releaseRootSha256, { 1: input.spendReservationSha256,
+      2: input.spendReservationSha256, 3: input.spendReservationSha256 }, [1])
+    .map(({ attemptId }) => attemptId);
+  return await withCallContext(input.deadlineEpochMs, async (context) =>
+    await input.ports.evidence.holdout({ attemptIds, campaignRootSha256:
+      input.campaignRootSha256, context }));
+}
+
+function retentionReceipt(campaignRootSha256: string, reconstructed: Awaited<ReturnType<
+  typeof reconstructExactMainEvidence>>) {
   return safeReceipt("retention", campaignRootSha256, { inventorySha256:
     reconstructed.inventorySha256, metricsSha256ByRepetition:
     reconstructed.metricsSha256ByRepetition, outcomeCount: 720 });
@@ -347,7 +397,21 @@ function assertDistinctCleanupAuthorities(absence: AdmissionAuthority,
 }
 
 function safeReceipt(phase: string, campaignRootSha256: string,
-  values: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
-  return Object.freeze({ campaignRootSha256, phase, ...values,
-    schemaVersion: "meeting_knowledge.semantic_quality_production_safe_receipt.v2" });
+  values: Readonly<Record<string, unknown>>): OperatorSafeReceipt {
+  void phase;
+  const counters: Record<string, number> = {};
+  const digests: Record<string, string> = { campaignRootSha256 };
+  const counterKeys = new Set(["artifactCount", "attemptsBlocked", "attemptsCompleted",
+    "attemptsUnknown", "completedOutcomes", "maximumObservedConcurrency", "outcomeCount",
+    "providerCalls", "questionCount", "repetition", "targetCount", "totalStoredBytes"]);
+  const digestKeys = new Set(["adjudicationSetSha256", "cleanupReceiptSha256",
+    "finalAdmissionSha256", "holdoutCheckpointSha256", "holdoutExecutionSha256",
+    "inventorySha256", "metricsSha256", "qualifiedCheckpointSha256", "releaseRootSha256",
+    "rootBindingSha256", "separateReportSha256", "terminalAttemptSetSha256"]);
+  for (const [key, value] of Object.entries(values)) {
+    if (counterKeys.has(key) && typeof value === "number") {counters[key] = value;}
+    if (digestKeys.has(key) && typeof value === "string") {digests[key] = value;}
+  }
+  return Object.freeze({ counters: Object.freeze(counters), digests: Object.freeze(digests),
+    errorCode: null }) as OperatorSafeReceipt;
 }

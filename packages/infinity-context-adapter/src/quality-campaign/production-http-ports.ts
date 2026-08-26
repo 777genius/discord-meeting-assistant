@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
-import { exactRecord } from "./canonical.js";
+import { digest, exactRecord, safeId } from "./canonical.js";
 import type { AdjudicationAuthorityPort } from "./adjudication.js";
 import type { ProviderExchangePort } from "./execution.js";
 import type { QualityCampaignRelease } from "./release.js";
@@ -13,6 +13,8 @@ interface HttpConnectionConfiguration {
   readonly absenceEndpoint: string;
   readonly adjudicators: readonly [HttpReviewer, HttpReviewer, HttpReviewer];
   readonly answerEndpoint: string;
+  readonly artifactCustody: { readonly envelopeRoot: string; readonly keyCustodySha256: string;
+    readonly keyId: string; readonly keyPath: string };
   readonly capabilityEndpoint: string;
   readonly credentialPath: string;
   readonly deletionAuthority: HttpAuthority;
@@ -27,7 +29,7 @@ interface HttpConnectionConfiguration {
   readonly rawOutcomeEndpoint: string;
   readonly releaseObservationEndpoint: string;
   readonly retrievalEndpoint: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v2";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v3";
 }
 interface HttpAuthority { readonly keyId: string; readonly publicKeyPath: string }
 interface HttpReviewer extends HttpAuthority { readonly endpoint: string }
@@ -55,6 +57,7 @@ Promise<QualityCampaignProductionPorts> {
       resultAuthority, retrieval: exchange(retrieval, token) });
   const reviewers = await Promise.all(config.adjudicators.map(async (value) => ({
     authorityId: value.keyId, publicKeyPem: (await authority(value)).publicKeyPem,
+    signerKeyId: value.keyId,
     adjudicate: async (input) => await requestJson(value.endpoint, token,
       withoutSignal(input), context(input)),
   } satisfies AdjudicationAuthorityPort)));
@@ -62,6 +65,19 @@ Promise<QualityCampaignProductionPorts> {
     absence: { authorityId: config.absenceAuthority.keyId,
       observe: async (input: AbsenceInput) => await requestJson(config.absenceEndpoint, token,
         withoutContext(input), input.context) },
+    artifactCustody: {
+      loadKey: async ({ keyId }: { readonly keyId: string }) =>
+        keyId === config.artifactCustody.keyId ? {
+        key: await readFile(absolute(config.artifactCustody.keyPath)),
+        keyCustodySha256: config.artifactCustody.keyCustodySha256 } : null,
+      readEnvelope: async ({ envelopeSha256 }: { readonly envelopeSha256: string }) => {
+        if (!/^[a-f0-9]{64}$/u.test(envelopeSha256)) {return null;}
+        try {return await readFile(join(absolute(config.artifactCustody.envelopeRoot),
+          `${envelopeSha256}.enc.json`));} catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {return null;} throw error;
+        }
+      },
+    },
     clock: { nowEpochMs: () => Date.now() },
     deletion: { authorityId: config.deletionAuthority.keyId,
       deleteDerived: async (input: DeletionInput) => await requestJson(config.deletionEndpoint,
@@ -94,7 +110,8 @@ Promise<QualityCampaignProductionPorts> {
 
 function exchange(endpoint: string, token: string): ProviderExchangePort {
   return { exchange: async (input) => await requestJson(endpoint, token, {
-    attemptId: input.attemptId, deadlineEpochMs: input.deadlineEpochMs,
+    attempt: input.attempt, deadlineEpochMs: input.deadlineEpochMs,
+    requestDigestSha256: input.requestDigestSha256,
     requestBase64: Buffer.from(input.request).toString("base64") }, {
       deadlineEpochMs: input.deadlineEpochMs, signal: input.signal }) as never };
 }
@@ -121,6 +138,7 @@ async function requestJson(endpoint: string, token: string, body: unknown,
 
 async function load(path: string): Promise<HttpConnectionConfiguration> {
   const keys = ["absenceAuthority", "absenceEndpoint", "adjudicators", "answerEndpoint",
+    "artifactCustody",
     "capabilityEndpoint", "credentialPath", "deletionAuthority", "deletionEndpoint",
     "evidenceEndpoint", "holdoutAnswerEndpoint", "holdoutCapabilityEndpoint",
     "holdoutEvidenceEndpoint", "holdoutProviderResultAuthority", "holdoutRetrievalEndpoint",
@@ -128,11 +146,16 @@ async function load(path: string): Promise<HttpConnectionConfiguration> {
     "retrievalEndpoint", "schemaVersion"];
   const record = exactRecord(JSON.parse(await readFile(absolute(path), "utf8")) as unknown,
     keys, "production connection configuration");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_http_connections.v2" ||
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_http_connections.v3" ||
     !Array.isArray(record.adjudicators) || record.adjudicators.length !== 3) {
     throw new Error("production connection configuration is invalid");
   }
   const typed = record as unknown as HttpConnectionConfiguration;
+  const artifactCustody = exactRecord(typed.artifactCustody,
+    ["envelopeRoot", "keyCustodySha256", "keyId", "keyPath"], "artifact custody");
+  absolute(String(artifactCustody.envelopeRoot)); absolute(String(artifactCustody.keyPath));
+  digest(artifactCustody.keyCustodySha256, "artifact key custody");
+  safeId(artifactCustody.keyId, "artifact custody key ID");
   if (typed.absenceEndpoint === typed.deletionEndpoint ||
     typed.absenceAuthority.keyId === typed.deletionAuthority.keyId ||
     typed.absenceAuthority.publicKeyPath === typed.deletionAuthority.publicKeyPath) {

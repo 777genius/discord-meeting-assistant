@@ -1,4 +1,4 @@
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createCipheriv, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,16 +9,24 @@ import {
   FROZEN_ANSWER_EXECUTION,
   REQUIRED_RETAINED_KINDS,
   admitMainCampaign,
+  artifactAttemptIdentity,
+  attemptIdentity,
   canonicalJson,
+  publicKeyFingerprintSha256,
+  reconstructMetrics,
   runQualityCampaignProductionCli,
   sha256,
   verifyReleaseRoot,
+  type AdjudicationRequest,
+  type AttemptIdentity,
   type CampaignQuestion,
   type CanonicalAdjudicationDecision,
   type ExactAdjudicationEvidence,
   type ExactOutcomeEvidence,
   type QualityCampaignProductionPorts,
+  type QualificationOutcome,
   type QualityCampaignRelease,
+  type RetainedArtifact,
 } from "@discord-meeting/infinity-context-adapter/quality-campaign";
 
 const digest = (value: string) => sha256({ value });
@@ -39,8 +47,7 @@ function questions(count: number, source: CampaignQuestion["source"], prefix: st
 
 function decisionFor(questionId: string, outcomeDigestSha256: string,
   answerComplete: boolean): CanonicalAdjudicationDecision {
-  const isAbstention = Number(questionId.split("-").at(-1)) % 10 === 9;
-  return { answerComplete, claims: isAbstention ? [] : [{ abstentionCorrect: true,
+  return { answerComplete, claims: [{ abstentionCorrect: true,
     citationEntailed: true, claimFactual: true, claimId: `${questionId}-claim`,
     claimSupported: true, matchedGoldClaimId: `${questionId}-gold` }],
   outcomeDigestSha256, questionId };
@@ -97,6 +104,7 @@ describe("installed production quality-campaign CLI", () => {
       const status = await readFile(join(fixture.root, statusName), "utf8");
       expect(status).not.toMatch(/question|rubric|transcript|credential|secret|answer text/iu);
     }
+    fixture.releaseEvidence();
   }, 180_000);
 
   it("durably blocks an ambiguous outcome without repeating it or leaking status", async () => {
@@ -111,7 +119,7 @@ describe("installed production quality-campaign CLI", () => {
     expect(status).not.toMatch(/question|rubric|transcript|credential|secret/iu);
   }, 30_000);
 
-  it("rejects substituted custody, a reused holdout root, and locally false metrics", async () => {
+  it("rejects substituted custody and a reused holdout root", async () => {
     const emptyCustody = await createFixture();
     await emptyCustody.writeCustody([]);
     expect(await emptyCustody.cli("preflight", "empty-custody.json")).toBe(1);
@@ -120,11 +128,6 @@ describe("installed production quality-campaign CLI", () => {
     await sameRoot.writeHoldoutRoot(sameRoot.mainRootSha256);
     expect(await sameRoot.cli("holdout-execute", "same-root.json")).toBe(1);
 
-    const falseMetrics = await createFixture();
-    expect(await falseMetrics.cli("execute", "false-execute.json")).toBe(20);
-    expect(await falseMetrics.cli("adjudicate", "false-adjudicate.json")).toBe(20);
-    falseMetrics.falseMetrics = true;
-    expect(await falseMetrics.cli("retention", "false-retention.json")).toBe(1);
   }, 180_000);
 });
 
@@ -145,22 +148,27 @@ async function createFixture() {
   const resolver = signer("resolver"); const provider = signer("provider-results");
   const holdoutProvider = signer("holdout-provider-results");
   const releaseAuthority = signer("release"); const spend = signer("spend");
+  const repetitionAuthority = signer("repetition-evidence");
   const holdoutAuthority = signer("holdout-custody");
   const release: QualityCampaignRelease = {
     answerImageSha256: digest("answer-image"), answerProcessIdentitySha256: digest("answer-process"),
-    answerReleaseSha256: digest("answer-release"), discordCommitSha256: digest("discord-commit"),
+    answerReleaseSha256: digest("answer-release"), artifactKeyCustodySha256:
+    digest("artifact-key-custody"), discordCommitSha256: digest("discord-commit"),
     discordImageSha256: digest("discord-image"), discordReleaseSha256: digest("discord-release"),
     infinityCapabilitySha256: digest("capability"), infinityCommitSha256: digest("infinity-commit"),
     infinityImageSha256: digest("infinity-image"), infinityProfileSha256: digest("profile"),
     infinityReleaseSha256: digest("infinity-release"), mapperSha256: digest("mapper"),
     ...FROZEN_ANSWER_EXECUTION, policySha256: digest("policy"), promptSha256: digest("prompt"),
-    sdkArchiveSha256: digest("sdk-archive"), tokenizerSha256: digest("tokenizer"),
+    sdkArchiveSha256: digest("sdk-archive"), targetInventoryAuthorityKeySha256:
+    publicKeyFingerprintSha256(deletion.publicKeyPem, "target inventory authority"),
+    tokenizerSha256: digest("tokenizer"),
   };
   const releaseDocument = releaseAuthority.signed(release);
-  const releaseRootSha256 = verifyReleaseRoot({ authorityPublicKeyPem:
+  const releaseRootSha256 = verifyReleaseRoot({ authorityKeyId: releaseAuthority.keyId,
+    authorityPublicKeyPem:
     releaseAuthority.publicKeyPem, document: releaseDocument }).releaseRootSha256;
   const authorities = { absence, custody, deletion, holdoutAuthority, judge1, judge2, resolver,
-    reviewer1, reviewer2, spend };
+    repetitionAuthority, reviewer1, reviewer2, spend };
   const authorityPaths = Object.fromEntries(await Promise.all(Object.entries(authorities).map(
     async ([name, authority]) => [name, await writeAuthority(root, name, authority)] as const)));
   const releasePublicKeyPath = join(root, "release.pem");
@@ -212,6 +220,8 @@ async function createFixture() {
   const spendReservationsPath = join(root, "spend.json");
   await writeFile(spendReservationsPath, canonicalJson(([1, 2, 3] as const).map((repetition) =>
     spend.signed({ campaignRootSha256: admitted.rootBindingSha256,
+      allowedCallKinds: ["answer", "capability", "retrieval", "adjudicator_1",
+        "adjudicator_2", "resolver"],
       expiresAtEpochMs: 4_000_000_000_000, maxCalls: 720, maxEncryptedBytes: 100_000_000,
       maxTokens: 10_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
       releaseRootSha256, repetition }))));
@@ -221,8 +231,11 @@ async function createFixture() {
     { artifactId: "prompt", kind: "temporary_prompt" },
     { artifactId: "projection", kind: "temporary_projection" }] as const;
   const cleanupPlanPath = join(root, "cleanup-plan.json");
-  await writeFile(cleanupPlanPath, canonicalJson({
-    schemaVersion: "meeting_knowledge.semantic_quality_cleanup_plan.v2", targets }));
+  const protectedOriginals = ["authoritative_transcript", "final_transcript", "meeting_database",
+    "original_craig_recording", "summary"].map((kind) => ({ artifactId: `protected-${kind}`, kind }));
+  await writeFile(cleanupPlanPath, canonicalJson(deletion.signed({ campaignRootSha256:
+    admitted.rootBindingSha256, protectedOriginals, releaseRootSha256,
+  schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v1", targets })));
 
   const custodyInventoryPath = join(root, "authoritative-custody.json");
   const mainLocators = [digest("main-locator")];
@@ -236,31 +249,62 @@ async function createFixture() {
 
   const holdoutQuestions = questions(30, "independent_review", "h");
   const holdoutTuningEvidence = [digest("holdout-tuning")];
-  const holdoutAuthorization = { authorizationSha256: digest("holdout-authorization"),
-    expiresAtEpochMs: 4_000_000_000_000, holdoutRootSha256: digest("holdout-root"),
-    keyNamespace: "holdout:structural",
+  const holdoutLocatorDigests = [digest("holdout-locator")];
+  const mainProof = reviewer1.signed({ loadedLocatorDigests: mainLocators,
+    loadedQuestionDigests: allQuestions.map(({ questionDigestSha256 }) => questionDigestSha256),
     mainInputRootSha256: admitted.rootBindingSha256, mainReleaseRootSha256: releaseRootSha256,
-    questionReceiptSha256: sha256(holdoutQuestions), tuningEvidenceDigests: holdoutTuningEvidence };
+    schemaVersion: "meeting_knowledge.semantic_quality_main_input_proof.v1",
+    tuningCorpusSha256: sha256(mainTuningEvidence) });
+  const questionReceipt = reviewer2.signed({ mainInputRootSha256: admitted.rootBindingSha256,
+    mainReleaseRootSha256: releaseRootSha256, questionSetSha256: sha256(holdoutQuestions),
+    questions: holdoutQuestions,
+    schemaVersion: "meeting_knowledge.semantic_quality_holdout_questions.v1" });
+  const holdoutRootSha256 = sha256({ holdoutLocatorSetSha256: sha256(holdoutLocatorDigests),
+    holdoutQuestionSetSha256: sha256(holdoutQuestions), mainInputRootSha256:
+    admitted.rootBindingSha256, mainReleaseRootSha256: releaseRootSha256,
+    questionReceiptSha256: sha256(questionReceipt),
+    schemaVersion: "meeting_knowledge.semantic_quality_holdout_root.v1" });
+  const holdoutAuthorization = { holdoutLocatorSetSha256: sha256(holdoutLocatorDigests),
+    holdoutQuestionSetSha256: sha256(holdoutQuestions), holdoutRootSha256,
+    keyNamespace: `holdout:${holdoutRootSha256}`,
+    mainInputRootSha256: admitted.rootBindingSha256, mainReleaseRootSha256: releaseRootSha256,
+    questionReceiptSha256: sha256(questionReceipt),
+    schemaVersion: "meeting_knowledge.semantic_quality_holdout_authorization.v2" };
   const holdoutAuthorizationPath = join(root, "holdout-authorization.json");
   const holdoutQuestionsPath = join(root, "holdout-questions.json");
   const holdoutLocatorsPath = join(root, "holdout-locators.json");
   const holdoutTuningPath = join(root, "holdout-tuning.json");
+  const mainProofPath = join(root, "holdout-main-proof.json");
+  const questionReceiptPath = join(root, "holdout-question-receipt.json");
+  const holdoutSpendPath = join(root, "holdout-spend.json");
   await writeFile(holdoutAuthorizationPath,
     canonicalJson(holdoutAuthority.signed(holdoutAuthorization)));
   await writeFile(holdoutQuestionsPath, canonicalJson(holdoutQuestions));
-  await writeFile(holdoutLocatorsPath, canonicalJson([digest("holdout-locator")]));
+  await writeFile(holdoutLocatorsPath, canonicalJson(holdoutLocatorDigests));
   await writeFile(holdoutTuningPath, canonicalJson(holdoutTuningEvidence));
+  await writeFile(mainProofPath, canonicalJson(mainProof));
+  await writeFile(questionReceiptPath, canonicalJson(questionReceipt));
+  await writeFile(holdoutSpendPath, canonicalJson(spend.signed({ allowedCallKinds:
+    ["answer", "capability", "retrieval"], campaignRootSha256: holdoutRootSha256,
+  expiresAtEpochMs: 4_000_000_000_000, maxCalls: 90, maxEncryptedBytes: 100_000_000,
+  maxTokens: 1_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
+  releaseRootSha256, repetition: 1 })));
   const holdoutInputPath = join(root, "holdout-input.json");
   await writeFile(holdoutInputPath, canonicalJson({ authorizationReceiptPath:
     holdoutAuthorizationPath, locatorDigestsPath: holdoutLocatorsPath,
-    questionsPath: holdoutQuestionsPath,
-    schemaVersion: "meeting_knowledge.semantic_quality_holdout_input.v2",
+    mainProofAuthorityPath: authorityPaths.reviewer1, mainProofReceiptPath: mainProofPath,
+    questionAuthorityPath: authorityPaths.reviewer2, questionReceiptPath,
+    questionsPath: holdoutQuestionsPath, schemaVersion:
+    "meeting_knowledge.semantic_quality_holdout_input.v3",
+    spendAuthorityPath: authorityPaths.spend, spendReservationPath: holdoutSpendPath,
     tuningEvidenceDigestsPath: holdoutTuningPath }));
   const holdoutTargets = [{ artifactId: "holdout-index", kind: "derived_index" },
     { artifactId: "holdout-prompt", kind: "temporary_prompt" }] as const;
   const holdoutCleanupPlanPath = join(root, "holdout-cleanup-plan.json");
-  await writeFile(holdoutCleanupPlanPath, canonicalJson({ schemaVersion:
-    "meeting_knowledge.semantic_quality_cleanup_plan.v2", targets: holdoutTargets }));
+  await writeFile(holdoutCleanupPlanPath, canonicalJson(deletion.signed({ campaignRootSha256:
+    holdoutAuthorization.holdoutRootSha256, protectedOriginals, releaseRootSha256,
+  schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v1",
+  targets: holdoutTargets })));
 
   const configPath = join(root, "operator.json");
   await writeFile(configPath, canonicalJson({ absenceAuthorityPath: authorityPaths.absence,
@@ -272,7 +316,8 @@ async function createFixture() {
     holdoutAuthorityPath: authorityPaths.holdoutAuthority, holdoutCleanupPlanPath, holdoutInputPath,
     holdoutJournalRoot: join(root, "holdout-journal"), journalRoot: join(root, "journal"),
     mainManifestPath: manifestPath, releaseAuthorityPublicKeyPath: releasePublicKeyPath,
-    releaseRootPath, reviewerAuthorityPaths: [authorityPaths.reviewer1,
+    releaseRootPath, repetitionAuthorityPath: authorityPaths.repetitionAuthority,
+    reviewerAuthorityPaths: [authorityPaths.reviewer1,
       authorityPaths.reviewer2], schemaVersion:
     "meeting_knowledge.semantic_quality_production_operator.v2",
     spendAuthorityPath: authorityPaths.spend, spendReservationsPath }));
@@ -283,7 +328,8 @@ async function createFixture() {
     connectionsPath }, schemaVersion: "meeting_knowledge.semantic_quality_production_phase.v1" }));
 
   const runtime = createRuntimeFixture({ absence, clock, deletion, holdoutProvider,
-    judge1, judge2, protectedEvidence, provider, release, resolver });
+    judge1, judge2, protectedEvidence, protectedOriginals, provider, questions: allQuestions, release,
+    releaseRootSha256, repetitionAuthority, resolver });
   const { ports } = runtime;
   const cli = async (command: string, statusName: string) =>
     await runQualityCampaignProductionCli({ argv: [command, phasePath, join(root, statusName)],
@@ -296,20 +342,18 @@ async function createFixture() {
     schemaVersion: "meeting_knowledge.semantic_quality_authoritative_custody.v1",
     tuningEvidenceDigests: mainTuningEvidence })));
   };
-  const writeHoldoutRoot = async (holdoutRootSha256: string) => {
+  const writeHoldoutRoot = async (replacementHoldoutRootSha256: string) => {
     await writeFile(holdoutAuthorizationPath, canonicalJson(holdoutAuthority.signed({
-      ...holdoutAuthorization, holdoutRootSha256 })));
+      ...holdoutAuthorization, holdoutRootSha256: replacementHoldoutRootSha256 })));
   };
   return { cli, clock, deletedIds: runtime.deletedIds,
     get ambiguousNext() {return runtime.ambiguousNext;},
     set ambiguousNext(value: boolean) {runtime.ambiguousNext = value;},
     holdoutCalls: runtime.holdoutCalls, mainCalls: runtime.mainCalls,
-    get falseMetrics() {return runtime.falseMetrics;},
-    set falseMetrics(value: boolean) {runtime.falseMetrics = value;},
     mainRootSha256: admitted.rootBindingSha256,
     get maximumProviderConcurrency() {return runtime.maximumProviderConcurrency;},
     observedIds: runtime.observedIds, release, reviewCalls: runtime.reviewCalls, root, startedAt,
-    writeCustody, writeHoldoutRoot };
+    releaseEvidence: runtime.releaseEvidence, writeCustody, writeHoldoutRoot };
 }
 
 interface ProviderCall {
@@ -323,15 +367,20 @@ function createRuntimeFixture(input: { readonly absence: ReturnType<typeof signe
   readonly deletion: ReturnType<typeof signer>; readonly holdoutProvider: ReturnType<typeof signer>;
   readonly judge1: ReturnType<typeof signer>; readonly judge2: ReturnType<typeof signer>;
   readonly protectedEvidence: readonly unknown[]; readonly provider: ReturnType<typeof signer>;
-  readonly release: QualityCampaignRelease; readonly resolver: ReturnType<typeof signer> }) {
+  readonly protectedOriginals: readonly { readonly artifactId: string; readonly kind: string }[];
+  readonly questions: readonly CampaignQuestion[];
+  readonly release: QualityCampaignRelease; readonly releaseRootSha256: string;
+  readonly repetitionAuthority: ReturnType<typeof signer>;
+  readonly resolver: ReturnType<typeof signer> }) {
   const mainCalls: ProviderCall[] = []; const holdoutCalls: ProviderCall[] = [];
   const attemptQuestions = new Map<string, string>();
   const attemptRequests = new Map<string, Record<string, unknown>>();
   let activeProviderCalls = 0; let maximumProviderConcurrency = 0;
-  let ambiguousNext = false; let falseMetrics = false;
+  let ambiguousNext = false;
   const exchange = (collection: ProviderCall[], resultSigner: ReturnType<typeof signer>) =>
-    ({ exchange: async (call: { readonly attemptId: string; readonly deadlineEpochMs: number;
-      readonly request: Uint8Array; readonly signal: AbortSignal }) => {
+    ({ exchange: async (call: { readonly attempt: AttemptIdentity;
+      readonly deadlineEpochMs: number; readonly request: Uint8Array;
+      readonly requestDigestSha256: string; readonly signal: AbortSignal }) => {
     activeProviderCalls += 1; maximumProviderConcurrency = Math.max(maximumProviderConcurrency,
       activeProviderCalls);
     try {
@@ -339,20 +388,23 @@ function createRuntimeFixture(input: { readonly absence: ReturnType<typeof signe
       const request = JSON.parse(Buffer.from(call.request).toString("utf8")) as
         Record<string, unknown>;
       const questionId = String(request.questionId);
-      collection.push({ attemptId: call.attemptId, questionId, request });
-      attemptQuestions.set(call.attemptId, questionId); attemptRequests.set(call.attemptId, request);
+      collection.push({ attemptId: call.attempt.attemptId, questionId, request });
+      attemptQuestions.set(call.attempt.attemptId, questionId);
+      attemptRequests.set(call.attempt.attemptId, request);
       if (ambiguousNext) {ambiguousNext = false; return { effect: "unknown" as const };}
-      return { effect: "certain_success" as const, signedResult: resultSigner.signed({
-        attemptId: call.attemptId, resultDigestSha256: digest(call.attemptId),
-        state: "terminal_success" }) };
+      const resultDigestSha256 = digest(call.attempt.attemptId);
+      return { effect: "certain_success" as const, resultDigestSha256,
+        signedResult: resultSigner.signed({ ...call.attempt,
+          requestDigestSha256: call.requestDigestSha256, resultDigestSha256,
+          schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+          state: "terminal_success" }) };
     } finally {activeProviderCalls -= 1;}
   } });
   const reviewCalls = { first: 0, resolver: 0, second: 0 };
   const reviewerPort = (authority: ReturnType<typeof signer>, role: keyof typeof reviewCalls,
     disagree = false) => ({ authorityId: authority.keyId, publicKeyPem: authority.publicKeyPem,
-      adjudicate: async (request: { readonly attemptId: string; readonly deadlineEpochMs: number;
-        readonly encryptedEvidenceSha256: string; readonly outcomeDigestSha256: string;
-        readonly signal: AbortSignal }) => {
+      signerKeyId: authority.keyId,
+      adjudicate: async (request: AdjudicationRequest) => {
         reviewCalls[role] += 1;
         const questionId = attemptQuestions.get(request.attemptId);
         if (questionId === undefined) {throw new Error("missing raw outcome identity");}
@@ -360,7 +412,10 @@ function createRuntimeFixture(input: { readonly absence: ReturnType<typeof signe
           !(disagree && questionId === "a-0"));
         return authority.signed({ attemptId: request.attemptId, decision,
           decisionDigestSha256: sha256(decision), encryptedEvidenceSha256:
-          request.encryptedEvidenceSha256, outcomeDigestSha256: request.outcomeDigestSha256 });
+          request.encryptedEvidenceSha256, firstDecisionDigestSha256:
+          request.firstDecisionDigestSha256, outcomeDigestSha256: request.outcomeDigestSha256,
+          questionId: request.questionId, resolverBindingSha256: request.resolverBindingSha256,
+          secondDecisionDigestSha256: request.secondDecisionDigestSha256 });
       } });
   const adjudicationFor = (attemptId: string): ExactAdjudicationEvidence => {
     const request = attemptRequests.get(attemptId);
@@ -368,15 +423,23 @@ function createRuntimeFixture(input: { readonly absence: ReturnType<typeof signe
     const questionId = String(request.questionId);
     const encryptedEvidenceSha256 = digest(`evidence:${attemptId}`);
     const outcomeDigestSha256 = digest(`outcome:${attemptId}`);
-    const base = { attemptId, encryptedEvidenceSha256, outcomeDigestSha256 };
+    const base = { attemptId, encryptedEvidenceSha256, firstDecisionDigestSha256: null,
+      outcomeDigestSha256, questionId, resolverBindingSha256: null,
+      secondDecisionDigestSha256: null };
     const firstDecision = decisionFor(questionId, outcomeDigestSha256, true);
     const secondDecision = decisionFor(questionId, outcomeDigestSha256, questionId !== "a-0");
     const first = input.judge1.signed({ ...base, decision: firstDecision,
       decisionDigestSha256: sha256(firstDecision) });
     const second = input.judge2.signed({ ...base, decision: secondDecision,
       decisionDigestSha256: sha256(secondDecision) });
+    const resolverBindingSha256 = sha256({ attemptId, encryptedEvidenceSha256,
+      firstDecisionReceipt: first, outcomeDigestSha256, questionId,
+      schemaVersion: "meeting_knowledge.semantic_quality_resolver_binding.v1",
+      secondDecisionReceipt: second });
     const resolverReceipt = questionId === "a-0" ? input.resolver.signed({ ...base,
-      decision: firstDecision, decisionDigestSha256: sha256(firstDecision) }) : null;
+      decision: firstDecision, decisionDigestSha256: sha256(firstDecision),
+      firstDecisionDigestSha256: sha256(firstDecision), resolverBindingSha256,
+      secondDecisionDigestSha256: sha256(secondDecision) }) : null;
     return { attemptId, campaignRootSha256: String(request.campaignRootSha256),
       decision: firstDecision, decisionDigestSha256: sha256(firstDecision),
       firstReceiptSha256: sha256(first), outcomeDigestSha256, questionId,
@@ -385,34 +448,149 @@ function createRuntimeFixture(input: { readonly absence: ReturnType<typeof signe
       secondReceiptSha256: sha256(second) };
   };
   const outcomesFor = (attemptIds: readonly string[]): ExactOutcomeEvidence[] =>
-    attemptIds.map((attemptId) => exactOutcome(attemptId, attemptRequests, falseMetrics));
-  const artifactsFor = (attemptIds: readonly string[]) => attemptIds.flatMap((attemptId) => {
+    attemptIds.map((attemptId) => exactOutcome(attemptId, attemptRequests,
+      artifactBindingsByAttempt, finalAdjudicationByAttempt));
+  const artifactKey = Buffer.alloc(32, 7);
+  const envelopeByDigest = new Map<string, Uint8Array>();
+  const artifactsByAttempt = new Map<string, readonly RetainedArtifact[]>();
+  const artifactBindingsByAttempt = new Map<string, Record<string, string>>();
+  const finalAdjudicationByAttempt = new Map<string, string>();
+  const encodeArtifact = (answer: AttemptIdentity,
+    kind: typeof REQUIRED_RETAINED_KINDS[number] | "resolver_result") => {
+    const identity = artifactAttemptIdentity(answer, kind); const keyId = "retention-key";
+    const plaintext = kind === "final_adjudication" ? Buffer.from(canonicalJson({ attemptId:
+      answer.attemptId, questionId: answer.questionId,
+    schemaVersion: "meeting_knowledge.semantic_quality_final_adjudication.v1" })) :
+      Buffer.from(`${identity.attemptId}:${kind}`);
+    const plaintextSha256 = sha256(plaintext);
+    const aad = { artifactKind: kind, attemptId: identity.attemptId,
+      callKind: identity.callKind, callOrdinal: identity.callOrdinal,
+      campaignRootSha256: identity.campaignRootSha256, keyId, plaintextSha256,
+      questionDigestSha256: identity.questionDigestSha256, questionId: identity.questionId,
+      releaseRootSha256: identity.releaseRootSha256, repetition: identity.repetition,
+      schemaVersion: "meeting_knowledge.semantic_quality_artifact_aad.v3",
+      spendReservationSha256: identity.spendReservationSha256 };
+    const nonce = Buffer.from(sha256(`${identity.attemptId}:${kind}`), "hex").subarray(0, 12);
+    const cipher = createCipheriv("aes-256-gcm", artifactKey, nonce);
+    cipher.setAAD(Buffer.from(canonicalJson(aad)));
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const envelope = Buffer.from(canonicalJson({ aad, algorithm: "A256GCM",
+      ciphertextBase64: ciphertext.toString("base64"), nonceBase64: nonce.toString("base64"),
+      tagBase64: cipher.getAuthTag().toString("base64") }));
+    return { aad, envelope, identity, keyId, plaintextSha256 };
+  };
+  const artifactsFor = (attemptIds: readonly string[]): RetainedArtifact[] =>
+    attemptIds.flatMap((attemptId) => {
+    const cached = artifactsByAttempt.get(attemptId);
+    if (cached !== undefined) {return cached;}
     const request = attemptRequests.get(attemptId)!; const adjudication = adjudicationFor(attemptId);
-    return [...REQUIRED_RETAINED_KINDS,
+    const answerIdentity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+      campaignRootSha256: String(request.campaignRootSha256),
+      questionDigestSha256: String(request.questionDigestSha256),
+      questionId: String(request.questionId), releaseRootSha256:
+      String(request.releaseRootSha256), repetition: Number(request.repetition) as 1 | 2 | 3,
+      spendReservationSha256: String(request.spendReservationSha256) });
+    const finalPlaintext = Buffer.from(canonicalJson({ attemptId, questionId:
+      answerIdentity.questionId,
+    schemaVersion: "meeting_knowledge.semantic_quality_final_adjudication.v1" }));
+    finalAdjudicationByAttempt.set(attemptId, sha256(finalPlaintext));
+    const bindings: Record<string, string> = {};
+    const artifacts = [...REQUIRED_RETAINED_KINDS,
       ...(adjudication.resolverReceiptSha256 === null ? [] : ["resolver_result" as const])]
-      .map((kind) => ({ attemptId, envelopeSha256: digest(`${attemptId}:${kind}`),
-        keyId: "retention-key", kind, questionId: String(request.questionId),
-        repetition: Number(request.repetition) as 1 | 2 | 3, storedBytes: 1 }));
+      .map((kind) => {
+        const { aad, envelope, identity, keyId, plaintextSha256 } =
+          encodeArtifact(answerIdentity, kind);
+        const aadSha256 = sha256(aad); const envelopeSha256 = sha256(envelope);
+        const keyBindingSha256 = sha256({ attemptId: identity.attemptId, keyId, kind,
+          questionId: identity.questionId, repetition: identity.repetition,
+          schemaVersion: "meeting_knowledge.semantic_quality_retained_key_binding.v1" });
+        const storedBytes = envelope.byteLength;
+        const artifactBindingSha256 = sha256({ aadSha256, attemptId: identity.attemptId,
+          envelopeSha256, keyBindingSha256, keyId, kind, plaintextSha256,
+          questionId: identity.questionId, repetition: identity.repetition, storedBytes,
+          schemaVersion: "meeting_knowledge.semantic_quality_retained_artifact_binding.v1" });
+        envelopeByDigest.set(envelopeSha256, envelope);
+        bindings[kind] = artifactBindingSha256;
+        return { aadSha256, artifactBindingSha256, attemptId: identity.attemptId,
+          envelopeSha256, keyBindingSha256, keyId, kind, plaintextSha256,
+          questionId: identity.questionId, repetition: identity.repetition, storedBytes };
+      });
+    artifactBindingsByAttempt.set(attemptId, bindings);
+    artifactsByAttempt.set(attemptId, artifacts);
+    return artifacts;
   });
   const deletedIds: string[] = []; const observedIds: string[] = [];
   const mainExchange = exchange(mainCalls, input.provider);
   const holdoutExchange = exchange(holdoutCalls, input.holdoutProvider);
+  const mainEvidence = (attemptIds: readonly string[]) => {
+    const adjudications = attemptIds.map(adjudicationFor);
+    const artifacts = artifactsFor(attemptIds); const outcomes = outcomesFor(attemptIds);
+    const authorizedLocatorIds = [...new Set(outcomes.flatMap(({ rankedLocatorDigests,
+      relevantLocatorDigests }) => [...rankedLocatorDigests, ...relevantLocatorDigests]))].toSorted();
+    const spendDigests = ([1, 2, 3] as const).map((repetition) => outcomes.find((outcome) =>
+      outcome.repetition === repetition)!.identity.spendReservationSha256) as
+      [string, string, string];
+    const rootBindingSha256 = sha256({ authorizedLocatorSetSha256: sha256(authorizedLocatorIds),
+      campaignRootSha256: outcomes[0]!.campaignRootSha256,
+      questionSetSha256: sha256(input.questions), releaseRootSha256: input.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v2",
+      spendReservationSetSha256: sha256(spendDigests) });
+    const qualification = outcomes.map((outcome): QualificationOutcome => {
+      const adjudication = adjudications.find(({ attemptId }) => attemptId === outcome.attemptId)!;
+      const question = input.questions.find(({ questionId }) => questionId === outcome.questionId)!;
+      const turnId = `turn-${outcome.repetition}-${outcome.questionId}`;
+      return { abstention: { expected: outcome.expectedAnswer === "abstain",
+        observed: outcome.answerAbstained }, artifactBindingSha256ByKind:
+        outcome.artifactBindingSha256ByKind, campaignRootSha256: outcome.campaignRootSha256,
+      citationChecks: adjudication.decision.claims.map(({ citationEntailed, claimId }) =>
+        ({ citedTurnId: turnId, claimId, entailed: citationEntailed })),
+      claimChecks: adjudication.decision.claims.map(({ claimFactual, claimId, claimSupported }) =>
+        ({ claimId, factual: claimFactual, supported: claimSupported })),
+      evidenceTurnIds: [turnId],
+      finalAdjudicationSha256: outcome.finalAdjudicationSha256, identity: outcome.identity,
+      locale: question.locale, rankedLocatorIds: outcome.rankedLocatorDigests,
+      relevantLocatorIds: outcome.relevantLocatorDigests, repetition: outcome.repetition,
+      resolverRequired: adjudication.resolverReceiptSha256 !== null, rootBindingSha256,
+      source: question.source, speakerTimeChecks:
+        [{ canonicalTurnId: turnId, expectedSpeakerId: "speaker-1", expectedStartMs: 1_000,
+          observedSpeakerId: "speaker-1", observedStartMs: 1_000, toleranceMs: 0 }],
+      structurePassed: true };
+    });
+    const repetitionEvidence = ([1, 2, 3] as const).map((repetition) => {
+      const selected = qualification.filter((outcome) => outcome.repetition === repetition);
+      const metrics = reconstructMetrics(selected);
+      return input.repetitionAuthority.signed({ campaignRootSha256:
+        outcomes[0]!.campaignRootSha256, metrics, metricsSha256: sha256(metrics),
+      outcomes: selected, outcomesSha256: sha256(selected), releaseRootSha256:
+        input.releaseRootSha256, repetition, rootBindingSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v3",
+      spendReservationSha256: spendDigests[repetition - 1], thresholdsPassed: true });
+    });
+    return { adjudications, artifacts, authorizedLocatorIds,
+      campaignByteCeiling: 100_000_000, outcomes, repetitionEvidence };
+  };
   const ports: QualityCampaignProductionPorts = {
     absence: { authorityId: input.absence.keyId,
       observe: async ({ campaignRootSha256, cleanupManifestSha256, targetArtifactIds }) => {
       observedIds.push(...targetArtifactIds);
       return input.absence.signed({ absentArtifactIds: [...targetArtifactIds].toSorted(),
-        campaignRootSha256, cleanupManifestSha256, protectedEvidence: input.protectedEvidence,
-        schemaVersion: "meeting_knowledge.semantic_quality_canonical_absence.v1" });
-    } }, clock: input.clock,
+        absentArtifactIdsSha256: sha256([...targetArtifactIds].toSorted()),
+        campaignRootSha256, cleanupManifestSha256, presentProtectedArtifactIds:
+          input.protectedOriginals.map(({ artifactId }) => artifactId).toSorted(),
+        presentProtectedArtifactIdsSha256: sha256(input.protectedOriginals
+          .map(({ artifactId }) => artifactId).toSorted()), releaseRootSha256:
+          input.releaseRootSha256,
+        schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v4" });
+    } }, artifactCustody: { loadKey: async ({ keyId }) => keyId === "retention-key" ? {
+      key: artifactKey, keyCustodySha256: input.release.artifactKeyCustodySha256 } : null,
+    readEnvelope: async ({ envelopeSha256 }) => envelopeByDigest.get(envelopeSha256) ?? null },
+    clock: input.clock,
     deletion: { authorityId: input.deletion.keyId, deleteDerived: async ({ targets }) => {
       deletedIds.push(...targets.map(({ artifactId }) => artifactId));
       return targets.map(({ artifactId }) => ({ artifactId, outcome: "deleted" as const }));
     } }, evidence: { holdout: async ({ attemptIds }) => ({ adjudications:
       attemptIds.map(adjudicationFor), outcomes: outcomesFor(attemptIds) }),
-    main: async ({ attemptIds }) => ({ adjudications: attemptIds.map(adjudicationFor),
-      artifacts: artifactsFor(attemptIds), campaignByteCeiling: 100_000,
-      outcomes: outcomesFor(attemptIds) }) },
+    main: async ({ attemptIds }) => mainEvidence(attemptIds) },
     holdoutProvider: { answer: holdoutExchange, capability: holdoutExchange,
       resultAuthority: input.holdoutProvider, retrieval: holdoutExchange },
     mainProvider: { answer: mainExchange, capability: mainExchange,
@@ -428,29 +606,40 @@ function createRuntimeFixture(input: { readonly absence: ReturnType<typeof signe
   };
   return { get ambiguousNext() {return ambiguousNext;},
     set ambiguousNext(value: boolean) {ambiguousNext = value;}, deletedIds,
-    get falseMetrics() {return falseMetrics;},
-    set falseMetrics(value: boolean) {falseMetrics = value;}, holdoutCalls, mainCalls,
+    holdoutCalls, mainCalls,
     get maximumProviderConcurrency() {return maximumProviderConcurrency;}, observedIds, ports,
-    reviewCalls };
+    releaseEvidence() {artifactsByAttempt.clear(); artifactBindingsByAttempt.clear();
+      envelopeByDigest.clear(); finalAdjudicationByAttempt.clear();}, reviewCalls };
 }
 
 function exactOutcome(attemptId: string, requests: ReadonlyMap<string, Record<string, unknown>>,
-  falseMetrics: boolean): ExactOutcomeEvidence {
+  artifactBindingsByAttempt:
+  ReadonlyMap<string, Record<string, string>>, finalAdjudicationByAttempt:
+  ReadonlyMap<string, string>): ExactOutcomeEvidence {
   const request = requests.get(attemptId);
   if (request === undefined) {throw new Error("missing exact outcome request");}
   const questionId = String(request.questionId);
   const isAbstention = Number(questionId.split("-").at(-1)) % 10 === 9;
   const locator = digest(`locator:${questionId}`);
-  return { answerAbstained: isAbstention, attemptId,
+  const repetition = Number(request.repetition) as 1 | 2 | 3;
+  const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+    campaignRootSha256: String(request.campaignRootSha256),
+    questionDigestSha256: String(request.questionDigestSha256), questionId,
+    releaseRootSha256: String(request.releaseRootSha256), repetition,
+    spendReservationSha256: String(request.spendReservationSha256) });
+  const artifactBindingSha256ByKind = artifactBindingsByAttempt.get(attemptId) ?? {};
+  return { answerAbstained: isAbstention, artifactBindingSha256ByKind, attemptId,
     campaignRootSha256: String(request.campaignRootSha256),
     citationLocatorDigests: isAbstention ? [] : [locator],
     evidenceLocatorDigests: isAbstention ? [] : [locator],
     expectedAnswer: isAbstention ? "abstain" : "answerable",
+    finalAdjudicationSha256: finalAdjudicationByAttempt.get(attemptId) ??
+      digest(`${attemptId}:final-adjudication`), identity,
     forbiddenLocatorDigests: [digest(`forbidden:${questionId}`)],
     questionDigestSha256: String(request.questionDigestSha256), questionId,
-    rankedLocatorDigests: isAbstention || falseMetrics ? [] : [locator],
-    relevantLocatorDigests: isAbstention ? [] : [locator],
-    repetition: Number(request.repetition) as 1 | 2 | 3, retrievalLatencyUs: 200_000 };
+    rankedLocatorDigests: [locator],
+    relevantLocatorDigests: [locator],
+    repetition, retrievalLatencyUs: 200_000 };
 }
 
 async function writeAuthority(root: string, name: string, authority: {

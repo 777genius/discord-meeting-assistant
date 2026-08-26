@@ -255,13 +255,16 @@ boundaries:
     entrypoints:
       - packages/infinity-context-adapter/src/quality-campaign/adjudication.ts
       - packages/infinity-context-adapter/src/quality-campaign/admission.ts
+      - packages/infinity-context-adapter/src/quality-campaign/artifacts.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical.ts
       - packages/infinity-context-adapter/src/quality-campaign/execution.ts
+      - packages/infinity-context-adapter/src/quality-campaign/final-admission.ts
       - packages/infinity-context-adapter/src/quality-campaign/holdout.ts
       - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-evidence.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-ports.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
       - packages/infinity-context-adapter/src/quality-campaign/release.ts
@@ -277,11 +280,13 @@ boundaries:
   - id: composition.infinity-quality-campaign
     roots:
       - packages/infinity-context-adapter/src/quality-campaign/index.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-bootstrap.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-composition.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
     entrypoints:
       - packages/infinity-context-adapter/src/quality-campaign/index.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-bootstrap.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-composition.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
