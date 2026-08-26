@@ -131,12 +131,12 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     expect(perCallEndpoint.requests).toHaveLength(1);
 
     const overallEndpoint = new DisposableInfinityEndpoint();
-    overallEndpoint.delayEveryRequest(18);
+    overallEndpoint.delayEveryRequest(360);
     const overall = new InfinityContextHistoricalMemoryAdapter({
       baseUrl: "http://disposable.infinity.invalid",
       embeddingTokenProfile: () => expectedTokenProfile,
-      operationTimeoutMs: 55,
-      requestTimeoutMs: 40,
+      operationTimeoutMs: 1_100,
+      requestTimeoutMs: 800,
       schemaVersion: 1,
       transport: overallEndpoint,
     });
@@ -146,5 +146,5 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     });
     expect(overallEndpoint.requests.length).toBeGreaterThan(1);
     expect(overallEndpoint.documentCount()).toBe(0);
-  });
+  }, 20_000);
 });

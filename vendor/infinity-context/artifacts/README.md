@@ -1,11 +1,17 @@
-# Official Infinity Context SDK package artifact
+# Official Infinity Context SDK package artifacts
 
-`infinity-context-sdk-0.1.0-249245a9.tgz` is the unmodified output of
-`npm pack --ignore-scripts` for `packages/infinity_context_ts_sdk` at upstream
-commit `249245a98bdae6d357c586aa078374c2a9da728c`.
+`infinity-context-sdk-0.2.0.tgz` is the independently reviewed, unmodified
+official package artifact built from upstream source commit
+`4ea98c141770666dcbae3d46f9dddb2b974b5879`. Consumers bind to this immutable
+artifact and its packed metadata, never to a mutable source checkout.
 
-The preparation verifier rebuilds the package from the reviewed Git tree and
-requires both the rebuilt tarball and this retained artifact to match SHA-256
-`8727f751aed94769de8e7aec93ea0b927479a4ab501b3b01c31c2472b6cebc7f`
-and SRI
-`sha512-V2RCQKfJ3XMiIXQ7B3F+wvGAu9RJeRYGnDaRIVdT890tLvv0asviGpmsyyM5El7JuNjgPKI+TpdygaoKjxYSDw==`.
+- package: `@infinity-context/sdk@0.2.0`
+- SHA-256: `ecaa837b0a07ff31a786d070c6c0c34acf3b919241928ed75af5645541b790b2`
+- SRI: `sha512-c/qRsUrKGOm7fxUZh5o7Vkg5AAuCg2UeyftZsBbcOpFKUqrmMRALjwQAJpLqhlNh3NKrWcRvZZZMUvkXJmnVQQ==`
+- packed `package.json` SHA-256: `d1c84a8c9e1eeb9987247616731fd3b3d7ad3002b9a84607c36cd60f8c642367`
+
+`prepare-official-sdk.mjs` verifies all of these values offline. It does not
+rebuild or silently regenerate the reviewed tarball.
+
+The predecessor `0.1.0` artifact remains retained while existing V1 adapter
+behavior is preserved through composition cutover.

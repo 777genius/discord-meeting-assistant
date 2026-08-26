@@ -5,6 +5,9 @@ import { startDisposableInfinityHttpService } from
   "@discord-meeting/infinity-context-adapter/test-support";
 import { INFINITY_CONTEXT_SDK_PROVENANCE } from
   "@discord-meeting/infinity-context-adapter";
+import { HistoricalFocusedLocatorRetrievalV2,
+  PrepareFocusedLocatorRetrievalV2Request } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
   platformConfig,
@@ -171,6 +174,18 @@ describe("Infinity deletion-only transport qualification", () => {
     if (runtime === undefined) {
       throw new Error("invalid transport fixture did not compose");
     }
+    expect(runtime.createFocusedLocatorRetrievalV2({
+      authorize: async () => ({ authorizationDigest: "digest",
+        authorizationEpoch: "epoch", authorized: true,
+        policyVersion: "policy.v1" }),
+    })).toBeInstanceOf(HistoricalFocusedLocatorRetrievalV2);
+    expect(runtime.createRetrievalV2Admission({
+      capabilityFingerprint: "3".repeat(64), contractVersion: "context-retrieval.v2",
+      indexProfileDigest: "2".repeat(64), profileId: "profile-v2",
+      rankingPolicy: "weighted_rrf_canonical_preferences.v1",
+      requiredProviderLanes: ["postgres_keyword", "qdrant_dense"],
+      serviceRevision: "4".repeat(40),
+    })).toBeInstanceOf(PrepareFocusedLocatorRetrievalV2Request);
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
       await expect(runtime.assertReady()).resolves.toBeUndefined();

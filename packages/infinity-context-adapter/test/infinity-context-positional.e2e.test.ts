@@ -139,7 +139,7 @@ function assertExactBoundedModelRequest(
   // structural, cardinality, byte-bound and forbidden-material assertions beside
   // it so a digest refresh cannot hide prompt growth or evidence leakage.
   expect(createHash("sha256").update(exactModelRequest, "utf8").digest("hex"))
-    .toBe("b1dffdb85235d63546c279e9a07d3621aeba9a226b8f94166fa826ba7d0c273e");
+    .toBe("f3f09b757a4e62e345acfad4a19fa021dc36c5aea6d6fbf9687d9b3e9bebac17");
   expect(exactModelRequest).not.toContain("current_complete");
   expect(exactModelRequest).not.toContain(forbiddenPromptMaterial.summary);
   expect(exactModelRequest).not.toContain(forbiddenPromptMaterial.transcriptPrefix);

@@ -5,7 +5,7 @@ import type {
 import {
   deriveRecordingReadyReceipt,
   RecordingReadyNotObservedError,
-  type RecordingReadyReceiptV1,
+  type RecordingReadyReceiptV2,
 } from "./recording-ready-receipt.js";
 
 export interface RecordingCompletionReceiptProbe {
@@ -41,7 +41,7 @@ export async function waitForStableRecordingReadyReceipt(input: {
   readonly probe: RecordingCompletionReceiptProbe;
   readonly provenance: CurrentDeploymentProvenance;
   readonly signal: AbortSignal;
-}): Promise<RecordingReadyReceiptV1> {
+}): Promise<RecordingReadyReceiptV2> {
   assertPollingPolicy(input.policy);
   const startedAt = input.clock.nowEpochMs();
   const deadline = startedAt + input.policy.timeoutMs;
@@ -92,7 +92,7 @@ function assertPollingPolicy(policy: RecordingReadyPollingPolicy): void {
   }
 }
 
-function recordingReadyStableKey(receipt: RecordingReadyReceiptV1): string {
+function recordingReadyStableKey(receipt: RecordingReadyReceiptV2): string {
   const { observedAt: _observedAt, ...stable } = receipt;
   return JSON.stringify(stable);
 }

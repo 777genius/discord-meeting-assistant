@@ -7,6 +7,12 @@ import type {
 export type HostedFiniteProcessCompletion =
   | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "actor-completed" }>; readonly kind: "actor"; readonly outputPath: string; readonly runId: string; readonly scenario: CampaignScenario }
   | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "conversation-observer-completed" }>; readonly kind: "conversation-observer"; readonly outputPaths: readonly string[]; readonly runId: string }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "greeting-ledger-ready" }>; readonly kind: "greeting-ledger-observer"; readonly outputPath: string; readonly runId: string }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "historical-reply-ready" }>; readonly kind: "historical-reply-observer"; readonly outputPath: string; readonly runId: string }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "historical-reply-input-ready" }>; readonly kind: "historical-reply-preparer"; readonly outputPath: string; readonly runId: string }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "live-memory-ready" }>; readonly kind: "live-memory-observer"; readonly outputPath: string; readonly runId: string }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "private-coverage-ready" }>; readonly kind: "private-coverage-observer"; readonly outputPath: string; readonly runId: string }
+  | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "remediation-bundle-ready" }>; readonly kind: "remediation-bundle"; readonly outputPath: string; readonly runId: string }
   | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "playback-link-seen" }>; readonly kind: "playback-link-observer"; readonly outputPath: string; readonly recordingId?: string; readonly runId: string }
   | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "recording-ready" }>; readonly kind: "recording-ready"; readonly outputPath: string; readonly runId: string }
   | { readonly action: Extract<HostedCampaignCompletionAction, { readonly kind: "replay-attestation-ready" }>; readonly fixtureManifestPath: string; readonly kind: "replay-attestation-publisher"; readonly recordingId?: string; readonly remoteAttestationPath: string; readonly runId: string }
@@ -47,6 +53,18 @@ function expectedEnvironmentValues(
   switch (completion.kind) {
     case "actor": return [environment.DISCORD_E2E_ACTOR_RUN_OUTPUT, environment.DISCORD_E2E_RUN_ID, environment.DISCORD_E2E_SCENARIO];
     case "conversation-observer": return [environment.DISCORD_E2E_CONVERSATION_VOICE_RUN_ID];
+    case "greeting-ledger-observer": return [environment.DISCORD_E2E_GREETING_LEDGER_OUTPUT,
+      environment.DISCORD_E2E_GREETING_LEDGER_RUN_ID];
+    case "historical-reply-observer": return [environment.DISCORD_E2E_HISTORICAL_REPLY_OUTPUT,
+      environment.DISCORD_E2E_HISTORICAL_REPLY_RUN_ID];
+    case "historical-reply-preparer": return [environment.DISCORD_E2E_HISTORICAL_PREP_OUTPUT,
+      environment.DISCORD_E2E_HISTORICAL_PREP_RUN_ID];
+    case "live-memory-observer": return [environment.DISCORD_E2E_LIVE_MEMORY_OUTPUT,
+      environment.DISCORD_E2E_LIVE_MEMORY_RUN_ID];
+    case "private-coverage-observer": return [environment.DISCORD_E2E_PRIVATE_COVERAGE_OUTPUT,
+      environment.DISCORD_E2E_PRIVATE_COVERAGE_RUN_ID];
+    case "remediation-bundle": return [environment.DISCORD_E2E_REMEDIATION_BUNDLE_OUTPUT,
+      environment.DISCORD_E2E_REMEDIATION_BUNDLE_RUN_ID];
     case "playback-link-observer": return [environment.DISCORD_E2E_PLAYBACK_LINK_OUTPUT,
       environment.DISCORD_E2E_PLAYBACK_LINK_RUN_ID, environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID];
     case "recording-ready": return [environment.DISCORD_E2E_READY_RECEIPT_OUTPUT, environment.DISCORD_E2E_RUN_ID];
@@ -65,6 +83,12 @@ function declaredValues(
   switch (completion.kind) {
     case "actor": return [completion.outputPath, completion.runId, completion.scenario];
     case "conversation-observer": return [completion.runId];
+    case "greeting-ledger-observer": return [completion.outputPath, completion.runId];
+    case "historical-reply-observer":
+    case "historical-reply-preparer":
+    case "live-memory-observer": return [completion.outputPath, completion.runId];
+    case "private-coverage-observer": return [completion.outputPath, completion.runId];
+    case "remediation-bundle": return [completion.outputPath, completion.runId];
     case "playback-link-observer": return [completion.outputPath, completion.runId,
       completion.recordingId ?? child.environment.DISCORD_E2E_PLAYBACK_LINK_RECORDING_ID];
     case "replay-attestation-publisher": return [completion.fixtureManifestPath,

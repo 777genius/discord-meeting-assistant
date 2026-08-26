@@ -30,9 +30,28 @@ export function validateHostedCampaignOwnedPaths(
     }
   }
   registerOrchestratorOwnedArtifacts(plan.children, ownedRoot, identitiesByPath);
+  registerSutOwnedArtifacts(plan.children, ownedRoot, identitiesByPath);
   registerEnvironmentOutputs(plan.children, ownedRoot, identitiesByPath);
   validateOwnedEnvironmentReferences(plan.children, ownedRoot, external, identitiesByPath);
   validateOwnedArgumentReferences(plan.children, ownedRoot, external, identitiesByPath);
+}
+
+function registerSutOwnedArtifacts(
+  children: readonly HostedCampaignExecutableSpec[],
+  ownedRoot: string,
+  identitiesByPath: Map<string, string>,
+): void {
+  const crashReceipts = new Set(children.flatMap(({ environment }) => {
+    const path = environment.DISCORD_E2E_HISTORICAL_REPLY_CRASH_RECEIPT_INPUT;
+    return path === undefined ? [] : [path];
+  }));
+  if (crashReceipts.size !== 1) {
+    throw new Error("Hosted campaign requires one SUT-produced public-reply crash receipt");
+  }
+  registerClaim({
+    identity: "sut:public-reply-crash-receipt",
+    path: [...crashReceipts][0]!,
+  }, ownedRoot, identitiesByPath);
 }
 
 function registerOrchestratorOwnedArtifacts(
@@ -177,8 +196,14 @@ function validateOwnedArgumentReferences(
       continue;
     }
     const paths = childArguments.kind === "campaign-verifier"
-      ? childArguments.evidencePaths
-      : [childArguments.evidencePath];
+      ? [childArguments.manifestPath, ...childArguments.evidencePaths,
+          ...(childArguments.historicalReplyPath === undefined
+            ? [] : [childArguments.historicalReplyPath]),
+          ...(childArguments.thinRemediationPath === undefined
+            ? [] : [childArguments.thinRemediationPath]),
+          ...(childArguments.thresholdsPath === undefined ? [] : [childArguments.thresholdsPath])]
+      : [childArguments.manifestPath, childArguments.evidencePath,
+          ...(childArguments.thresholdsPath === undefined ? [] : [childArguments.thresholdsPath])];
     for (const path of paths) {
       const canonical = normalize(path);
       if (externalPaths.has(canonical)) {

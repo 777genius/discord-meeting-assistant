@@ -10,6 +10,7 @@ import {
 
 interface ParticipantGreetingPlaybackInput {
   readonly configuration: LiveConversationConfiguration;
+  readonly fallbackPreparedCue: ParticipantGreetingPreparedCue | null;
   readonly greeting: ResolvedParticipantGreeting;
   readonly isNamed: boolean;
   readonly logger: LiveRuntimeLogger;
@@ -17,6 +18,7 @@ interface ParticipantGreetingPlaybackInput {
   readonly nowMilliseconds: () => number;
   readonly observedLatencyMilliseconds: () => number;
   readonly participantId: string;
+  readonly providerCommandId: string;
   readonly preparedCue: ParticipantGreetingPreparedCue | null;
   readonly shouldStop: () => boolean;
   readonly turnId: string;
@@ -71,6 +73,20 @@ export function selectParticipantGreetingPreparedCue(
     speech: greeting.prompt,
     voiceProfileId: configuration.voiceProfileId,
   }) ?? null;
+}
+
+export function selectParticipantGreetingAnonymousCue(
+  configuration: LiveConversationConfiguration,
+  locale: "en" | "ru",
+  meetingId: string,
+  participantId: string,
+): ParticipantGreetingPreparedCue | null {
+  return selectParticipantGreetingPreparedCue(
+    configuration,
+    { locale, prompt: locale === "ru" ? "Привет!" : "Hi!" },
+    meetingId,
+    participantId,
+  );
 }
 
 export async function cancelParticipantGreetingPlayback(
@@ -132,13 +148,29 @@ async function runParticipantGreeting(
       preparedCue,
       observeFirstAudio,
     );
-    if (
-      primary.outcome === "unplayed" &&
-      !primary.started &&
-      preparedCue === null &&
-      input.isNamed
-    ) {
-      return playAnonymousFallback(input, observeFirstAudio);
+    if (!primary.started &&
+      (primary.outcome === "failed" || primary.outcome === "unplayed")) {
+      if (preparedCue !== null || input.fallbackPreparedCue === null) {
+        observeFirstAudio({ status: "unplayed" });
+        return "unplayed";
+      }
+      const fallbackTurnId = `${input.turnId}:anonymous-fallback`;
+      const fallback = await playAttempt(
+        input,
+        fallbackTurnId,
+        input.fallbackPreparedCue,
+        observeFirstAudio,
+      );
+      if (!fallback.started) {
+        observeFirstAudio({ status: "unplayed" });
+      }
+      if (fallback.outcome === "played") {
+        logSettled(input, "prepared-anonymous-fallback", fallbackTurnId);
+      }
+      return fallback.outcome;
+    }
+    if (!primary.started) {
+      observeFirstAudio({ status: "unplayed" });
     }
     if (primary.outcome === "played") {
       logSettled(
@@ -161,7 +193,7 @@ async function runParticipantGreeting(
 async function playAttempt(
   input: ParticipantGreetingPlaybackInput,
   turnId: string,
-  preparedCue: ReturnType<typeof selectCue>,
+  preparedCue: ParticipantGreetingPreparedCue | null,
   observeFirstAudio: (outcome: GreetingFirstAudioOutcome) => void,
 ): Promise<AttemptResult> {
   const outcome = preparedCue === null
@@ -171,6 +203,7 @@ async function playAttempt(
         literalSpeech: input.greeting.prompt,
         meetingId: input.meetingId,
         nowMs: input.nowMilliseconds(),
+        playbackAttemptId: input.providerCommandId,
         prompt: input.greeting.prompt,
         recordingId: input.meetingId,
         speakerId: input.participantId,
@@ -188,7 +221,9 @@ async function playAttempt(
           meetingId: input.meetingId,
           nowMs: input.nowMilliseconds(),
           pcmChunks: preparedCue.pcmChunks,
-          playbackAttemptId: preparedCue.playbackAttemptId,
+          // The durable receipt owns this command identity. Reusing a cue-registry
+          // attempt id here would make crash recovery issue a different command.
+          playbackAttemptId: input.providerCommandId,
           preemptive: false,
           recordingId: input.meetingId,
           speakerId: input.participantId,
@@ -207,41 +242,12 @@ async function playAttempt(
       startedAtMilliseconds: start.startedAtMs,
       status: "started",
     });
-  } else {
-    observeFirstAudio({ status: "unplayed" });
   }
   const settlement = await input.configuration.coordinator.whenTurnPlaybackSettled(
     input.meetingId,
     turnId,
   );
   return { outcome: settlement, started: start.status === "started" };
-}
-
-async function playAnonymousFallback(
-  input: ParticipantGreetingPlaybackInput,
-  observeFirstAudio: (outcome: GreetingFirstAudioOutcome) => void,
-): Promise<GreetingAttemptOutcome> {
-  const speech = input.greeting.locale === "ru" ? "Привет!" : "Hi!";
-  const preparedCue = selectCue(input, speech);
-  if (preparedCue === null || input.shouldStop()) {
-    return "unplayed";
-  }
-  const turnId = `${input.turnId}:anonymous-fallback`;
-  const result = await playAttempt(input, turnId, preparedCue, observeFirstAudio);
-  if (result.outcome === "played") {
-    logSettled(input, "prepared-anonymous-fallback", turnId);
-  }
-  return result.outcome;
-}
-
-function selectCue(input: ParticipantGreetingPlaybackInput, speech: string) {
-  return input.configuration.greetings?.cues?.select({
-    locale: input.greeting.locale,
-    meetingId: input.meetingId,
-    participantId: input.participantId,
-    speech,
-    voiceProfileId: input.configuration.voiceProfileId,
-  }) ?? null;
 }
 
 function logSettled(

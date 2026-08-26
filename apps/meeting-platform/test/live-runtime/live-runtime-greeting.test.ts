@@ -86,20 +86,28 @@ it("routes initial joins and reconnects through one meeting-local greeting", asy
   ]));
   expect(coordinator.proactiveCalls).toEqual([]);
 
+  await runtime.acceptLifecycle({
+    occurredAt: "2026-08-02T10:00:00.000Z",
+    participantId: "2533228054724346087",
+    recordingId: "recording-live-1",
+    type: "participant.joined",
+  });
+  await runtime.acceptLifecycle({
+    occurredAt: "2026-08-02T10:00:00.000Z",
+    participantId: "2533228054724346087",
+    recordingId: "recording-live-1",
+    type: "participant.left",
+  });
+
   playbackReady = true;
-  await vi.advanceTimersByTimeAsync(100);
+  await runtime.conversationPlaybackReady("recording-live-1");
   await vi.waitFor(() => {
-    expect(coordinator.proactiveCalls).toHaveLength(2);
+    expect(coordinator.proactiveCalls).toHaveLength(1);
   });
   expect(coordinator.proactiveCalls[0]).toMatchObject({
     locale: "ru",
-    prompt: "Привет!",
+    prompt: "Привет, Саша, один гость!",
     speakerId: "3533228054724346087",
-  });
-  expect(coordinator.proactiveCalls[1]).toMatchObject({
-    locale: "ru",
-    prompt: "Привет, Саша!",
-    speakerId: "1533228054724346087",
   });
 
   vi.setSystemTime("2026-08-02T10:01:00.000Z");
@@ -110,9 +118,9 @@ it("routes initial joins and reconnects through one meeting-local greeting", asy
     type: "participant.joined",
   });
   await vi.waitFor(() => {
-    expect(coordinator.proactiveCalls).toHaveLength(3);
+    expect(coordinator.proactiveCalls).toHaveLength(2);
   });
-  expect(coordinator.proactiveCalls[2]).toMatchObject({
+  expect(coordinator.proactiveCalls[1]).toMatchObject({
     locale: "en",
     prompt: "Hi, Alex!",
     speakerId: "2533228054724346087",
@@ -128,7 +136,7 @@ it("routes initial joins and reconnects through one meeting-local greeting", asy
     });
   }
   await vi.advanceTimersByTimeAsync(100);
-  expect(coordinator.proactiveCalls).toHaveLength(3);
+  expect(coordinator.proactiveCalls).toHaveLength(2);
 
   await runtime.close();
 });

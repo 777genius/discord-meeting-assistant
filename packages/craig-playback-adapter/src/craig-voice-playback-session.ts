@@ -289,7 +289,7 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
       this.eventBuffer.push({
         type: "started",
         attemptId: event.attemptId,
-        startedAtMs: observedNow(this.nowMilliseconds),
+        startedAtMs: event.startedAtMs,
       });
       return;
     }

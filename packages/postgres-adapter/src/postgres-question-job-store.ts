@@ -183,7 +183,10 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
               WHEN effect.state IN ('reserved', 'claimed') THEN 'cancelled'
               ELSE 'retraction_pending'
             END,
-            payload_bytes = '{}',
+            payload_bytes = CASE
+              WHEN effect.state IN ('reserved', 'claimed') THEN '{}'
+              ELSE effect.payload_bytes
+            END,
             claim_until = NULL,
             retraction_requested_at = CASE
               WHEN effect.state IN (

@@ -5,6 +5,15 @@ function identityPart(value: string): string {
   return `${Buffer.byteLength(value, "utf8")}:${value}`;
 }
 
+const constructedHmacHistoricalOpaqueIds = new WeakSet<object>();
+
+export function assertConstructedHmacHistoricalOpaqueIds(value: unknown): asserts value is HmacHistoricalOpaqueIds {
+  if (typeof value !== "object" || value === null ||
+    !constructedHmacHistoricalOpaqueIds.has(value)) {
+    throw new Error("historical HMAC authority was not constructed by its adapter module");
+  }
+}
+
 export class HmacHistoricalOpaqueIds implements HistoricalOpaqueIdPort {
   readonly #key: Buffer;
 
@@ -13,6 +22,7 @@ export class HmacHistoricalOpaqueIds implements HistoricalOpaqueIdPort {
     if (this.#key.byteLength < 32) {
       throw new RangeError("historical topology HMAC key must contain at least 32 bytes");
     }
+    constructedHmacHistoricalOpaqueIds.add(this);
   }
 
   public keyedId(namespace: string, parts: readonly string[]): string {

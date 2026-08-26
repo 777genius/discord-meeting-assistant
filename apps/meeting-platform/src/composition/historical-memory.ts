@@ -3,22 +3,26 @@ import {
   InfinityContextHistoricalMemoryAdapter, INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE, PinnedMultilingualMiniLmTokenizer,
   Sha256HistoricalReceiptDigest, assertInfinityContextActivation,
-  assertInfinityContextPlanningCompatibility, assertInfinityContextSearchActivation,
+  assertInfinityContextPlanningCompatibility,
   assertInfinityContextTransportCapabilities,
   infinityContextHistoricalIndexProfileId,
   type InfinityContextProductionQualificationPolicyV1,
 } from "@discord-meeting/infinity-context-adapter";
 import {
-  DEFAULT_HISTORICAL_SYNC_POLICY, DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
+  DEFAULT_HISTORICAL_SYNC_POLICY,
   DeterministicCoverageReducer, ExhaustiveCoverage, HistoricalFocusedRetrieval,
+  type HistoricalFocusedLocatorRetrievalV2,
   HistoricalSyncWorker, RequestHistoricalMeetingDeletion,
   historicalEmbeddingTokenProfile, historicalSyncLeaseDurationMs,
   prepareQualifiedHistoricalEmbeddingTokenizer, type HistoricalAuthorizationPort,
+  type PrepareFocusedLocatorRetrievalV2Request,
+  type FocusedLocatorRetrievalV2ProviderBinding,
   type HistoricalEmbeddingTokenizerPort, type HistoricalSyncStore,
   type HistoricalWindowPlanningProfileV1, type TwoHourHistoricalRetrievalProfileV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresExhaustiveCoverageStore, PostgresHistoricalEvidenceAuthority,
-  PostgresHistoricalMemoryStore } from "@discord-meeting/postgres-adapter";
+  PostgresHistoricalMemoryStore } from
+  "@discord-meeting/postgres-adapter";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import { SubscriptionRuntimeCoverageExtractorAdapter, subscriptionRuntimeCliEngine,
   type SubscriptionRuntimeTransportPort,
@@ -28,6 +32,10 @@ import type { Pool } from "pg";
 import type { PlatformConfig } from "../config.js";
 import { participantSpeakerAliases } from
   "../config/participant-greeting-profiles.js";
+import { createInfinityRetrievalV2Composition } from
+  "./infinity-retrieval-v2.js";
+import { semanticSearchQualified } from
+  "./historical-memory-qualification.js";
 
 const reconciliationIntervalMs = 5_000;
 const maximumOperationsPerPass = 25;
@@ -108,23 +116,6 @@ export function createHistoricalReconciliationLifecycle(input: {
   };
 }
 
-function semanticSearchQualified(
-  activation: NonNullable<PlatformConfig["infinityContext"]>["activation"],
-  logger: Logger,
-  productionQualification: InfinityContextProductionQualificationPolicyV1,
-): boolean {
-  try {
-    assertInfinityContextSearchActivation(activation, productionQualification);
-    return true;
-  } catch (error) {
-    logger.warn(
-      "Infinity semantic search qualification unavailable; deletion drain remains active",
-      { errorType: error instanceof Error ? error.name : "unknown" },
-    );
-    return false;
-  }
-}
-
 function qualifyEmbeddingTokenizer(
   tokenizer: HistoricalEmbeddingTokenizerPort,
   expected: {
@@ -136,20 +127,21 @@ function qualifyEmbeddingTokenizer(
     readonly embeddingProfileId: string | null;
   },
 ): HistoricalEmbeddingTokenizerPort {
-  if (
-    expected === null
-  ) {
+  if (expected === null || !isSha256Digest(expected.embeddingProfileDigestSha256)) {
     throw new Error("Infinity dense embedding profile attestation is required");
   }
   return prepareQualifiedHistoricalEmbeddingTokenizer(tokenizer, {
-    expectedEmbeddingProfileDigestSha256:
-      expected.embeddingProfileDigestSha256 as `sha256:${string}`,
+    expectedEmbeddingProfileDigestSha256: expected.embeddingProfileDigestSha256,
     expectedEmbeddingProfileId: expected.embeddingProfile,
     expectedTokenizerProfile: PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
     observedEmbeddingProfileDigestSha256:
       observed.embeddingProfileDigestSha256,
     observedEmbeddingProfileId: observed.embeddingProfileId,
   });
+}
+
+function isSha256Digest(value: string): value is `sha256:${string}` {
+  return /^sha256:[a-f\d]{64}$/u.test(value);
 }
 
 function qualifyPlanningProfile(
@@ -184,6 +176,12 @@ export interface PlatformHistoricalMemoryRuntime {
   createFocusedRetrieval(
     authorization: HistoricalAuthorizationPort,
   ): HistoricalFocusedRetrieval;
+  createFocusedLocatorRetrievalV2(
+    authorization: HistoricalAuthorizationPort,
+  ): HistoricalFocusedLocatorRetrievalV2;
+  createRetrievalV2Admission(
+    binding: FocusedLocatorRetrievalV2ProviderBinding,
+  ): PrepareFocusedLocatorRetrievalV2Request;
   embeddingTokenizer(): HistoricalEmbeddingTokenizerPort | undefined;
   searchEnabled(): boolean;
   servingAuthorized(): boolean;
@@ -281,6 +279,9 @@ export function createPlatformHistoricalMemory(
     INFINITY_CONTEXT_PRODUCTION_QUALIFICATION;
   let qualifiedTokenProfile: string | undefined;
   let qualifiedTokenizer: HistoricalEmbeddingTokenizerPort | undefined;
+  const { retrievalV2, twoHourProfile } = createInfinityRetrievalV2Composition(
+    input.config, input.pool, token, topologyKey,
+  );
   const memory = new InfinityContextHistoricalMemoryAdapter({
     baseUrl: config.baseUrl,
     operationTimeoutMs: config.operationTimeoutMs,
@@ -310,12 +311,6 @@ export function createPlatformHistoricalMemory(
   let projectionQualified = false;
   let searchQualified = false;
   const deletion = new RequestHistoricalMeetingDeletion(store);
-  const twoHourProfile = Object.freeze({
-    ...DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-    qualification:
-      input.config.meetingKnowledge?.twoHourHistoricalQualification ?? null,
-  });
-
   const refreshQualification = async (signal?: AbortSignal): Promise<void> => {
     transportQualified = projectionQualified = searchQualified = false;
     qualifiedTokenProfile = undefined; qualifiedTokenizer = undefined;
@@ -413,6 +408,9 @@ export function createPlatformHistoricalMemory(
       store: new PostgresHistoricalMemoryStore(input.pool),
       tokenizer: () => qualifiedTokenizer,
     }, undefined, twoHourProfile),
+    createFocusedLocatorRetrievalV2: (authorization) =>
+      retrievalV2.retrieval(authorization),
+    createRetrievalV2Admission: (binding) => retrievalV2.admission(binding),
     embeddingTokenizer: () => qualifiedTokenizer,
     searchEnabled: () =>
       config.activation.searchEnabled && transportQualified && searchQualified,

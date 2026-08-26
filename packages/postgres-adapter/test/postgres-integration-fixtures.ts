@@ -32,6 +32,7 @@ import { PostgresMigrationRunner } from "../src/index.js";
 
 const POSTGRES_IMAGE = "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const POSTGRES_PORT = 5432;
+const POSTGRES_CONTAINER_CLEANUP_TIMEOUT_MS = 30_000;
 
 let container: StartedTestContainer | undefined;
 let pool: Pool | undefined;
@@ -84,7 +85,7 @@ export function usePostgresIntegrationDatabase(): void {
   beforeEach(async () => {
     if (pool !== undefined) {
       await pool.query(
-        "TRUNCATE TABLE meeting_routing.source_configurations, meeting_core.conversation_one_shot_receipts, meeting_core.answer_effects, meeting_knowledge.current_question_policy, meeting_knowledge.question_rate_reservations, meeting_knowledge.question_jobs, meeting_knowledge.unavailable_final_projections, meeting_knowledge.withdrawn_meeting_sources, meeting_core.historical_coverage_checkpoints, meeting_core.historical_memory_sync, meeting_knowledge.live_memory_hot_tail, meeting_knowledge.live_memory_outbox, meeting_knowledge.live_memory_meetings, meeting_core.summary_publication_effects, meeting_core.post_call_dead_letters, meeting_core.live_meeting_summary_coverage, meeting_core.live_meeting_turns, meeting_core.live_meeting_generation_usage, meeting_core.live_meeting_generation_telemetry, meeting_core.live_meetings, meeting_core.post_call_outbox, meeting_core.meetings",
+        "TRUNCATE TABLE meeting_routing.source_configurations, meeting_core.recording_publication_reconciliations, meeting_core.conversation_greeting_capacity_admissions, meeting_core.conversation_one_shot_receipts, meeting_core.answer_effects, meeting_knowledge.current_question_policy, meeting_knowledge.question_rate_reservations, meeting_knowledge.question_jobs, meeting_knowledge.unavailable_final_projections, meeting_knowledge.withdrawn_meeting_sources, meeting_core.historical_coverage_checkpoints, meeting_core.historical_memory_sync, meeting_knowledge.live_memory_hot_tail, meeting_knowledge.live_memory_outbox, meeting_knowledge.live_memory_meetings, meeting_core.summary_publication_effects, meeting_core.post_call_dead_letters, meeting_core.live_meeting_summary_coverage, meeting_core.live_meeting_turns, meeting_core.live_meeting_generation_usage, meeting_core.live_meeting_generation_telemetry, meeting_core.live_meetings, meeting_core.post_call_outbox, meeting_core.meetings",
       );
     }
   });
@@ -92,7 +93,7 @@ export function usePostgresIntegrationDatabase(): void {
   afterAll(async () => {
     await pool?.end();
     await container?.stop();
-  });
+  }, POSTGRES_CONTAINER_CLEANUP_TIMEOUT_MS);
 }
 
 export function databaseOrSkip(context: TestContext): Pool {

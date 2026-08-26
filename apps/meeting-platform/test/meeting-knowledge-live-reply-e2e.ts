@@ -11,12 +11,10 @@ import { LiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
 import { Meeting } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import { ProcessMeetingSummary } from "@discord-meeting/meeting-core/post-call-workflow";
 import {
-  DurableAnswerPublication,
   type AnswerDeliveryPort,
 } from "@discord-meeting/meeting-core/publishing";
 import {
   PostgresMeetingSourceConfigurationRepository,
-  PostgresAnswerEffectStore,
   PostgresLiveFinalizedMemoryLifecycle,
   PostgresLiveFinalizedMemoryStore,
   PostgresLiveMeetingRepository,
@@ -42,9 +40,7 @@ import type { PlatformHistoricalMemoryRuntime } from
 import {
   createMeetingKnowledgeLocalFinalReply,
   localFinalReplyPolicy,
-  localFinalReplyPolicyRelease,
 } from "../src/composition/meeting-knowledge.js";
-import { DiscordAnswerPayloadCodec } from "@discord-meeting/discord-adapter";
 import {
   botApplicationIdentity,
   historicalMeetingId,
@@ -121,7 +117,6 @@ export async function qualifyLiveProjectionReply(input: {
   })).resolves.toBe("accepted");
   await appendLiveTurns(liveMeetings, meetingId, participantId);
   await projectLiveTurns(input.pool, meetingId);
-
   const sourceConfigurations = new PostgresMeetingSourceConfigurationRepository(input.pool);
   await sourceConfigurations.save(MeetingSourceConfiguration.configure({
     configuredByActorId: participantId,
@@ -163,6 +158,9 @@ export async function qualifyLiveProjectionReply(input: {
   const delivered: string[] = [];
   const deliveryCalls: Parameters<AnswerDeliveryPort["create"]>[0][] = [];
   let loseFirstResponse = true;
+  const inspectionStarted = Promise.withResolvers<void>();
+  const inspectionRelease = Promise.withResolvers<void>();
+  let inspectionObserved = false;
   const answerDelivery: AnswerDeliveryPort = {
     create: async (request) => {
       deliveryCalls.push(request);
@@ -174,6 +172,11 @@ export async function qualifyLiveProjectionReply(input: {
       return `88888888888888888${deliveryCalls.length}`;
     },
     inspect: async (request) => {
+      if (!inspectionObserved) {
+        inspectionObserved = true;
+        inspectionStarted.resolve();
+        await inspectionRelease.promise;
+      }
       const created = deliveryCalls.find((candidate) =>
         candidate.marker === request.marker &&
         candidate.deliveryContainerId === request.deliveryContainerId &&
@@ -244,23 +247,25 @@ export async function qualifyLiveProjectionReply(input: {
     emitQuestion();
     emitQuestion();
     await runtime.settleIngress();
-    await waitForQuestionEffectState(input.pool, questionId, "outcome_unknown", input.signal);
-    expect(deliveryCalls).toHaveLength(1);
-    expect(deliveryCalls[0]).toMatchObject({
-      deliveryContainerId: threadId,
-      projectionTargetContainerId: resultsContainerId,
-      replyToRemoteMessageId: questionId,
-    });
-    const reconciliation = new DurableAnswerPublication({
-      delivery: answerDelivery,
-      payloads: new DiscordAnswerPayloadCodec(),
-      store: new PostgresAnswerEffectStore(input.pool, localFinalReplyPolicyRelease),
-    });
-    await expect(reconciliation.reconcileUnknown(100)).resolves.toEqual({
-      absentUnconfirmed: 0,
-      containedDuplicates: 0,
-      delivered: 1,
-    });
+    await runtime.processPending();
+    const reconciliationSettled = runtime.reconcilePending();
+    await inspectionStarted.promise;
+    try {
+      input.signal.throwIfAborted();
+      await expect(input.pool.query<{ readonly state: string }>(
+        "SELECT state FROM meeting_core.answer_effects WHERE effect_id = $1",
+        [`meeting-knowledge-answer:v1:${questionId}`],
+      )).resolves.toMatchObject({ rows: [{ state: "outcome_unknown" }] });
+      expect(deliveryCalls).toHaveLength(1);
+      expect(deliveryCalls[0]).toMatchObject({
+        deliveryContainerId: threadId,
+        projectionTargetContainerId: resultsContainerId,
+        replyToRemoteMessageId: questionId,
+      });
+    } finally {
+      inspectionRelease.resolve();
+    }
+    await reconciliationSettled;
     await waitForQuestionEffect(input.pool, questionId, input.signal);
     expect(delivered).toHaveLength(1);
     expect(selectorRuntime.invocations).toBe(1);
@@ -595,28 +600,6 @@ async function finalizeAndProveCanonicalTransition(input: {
     [input.meetingId],
   );
   expect(deleted.rows.every(({ state }) => state === "deleted")).toBe(true);
-}
-
-async function waitForQuestionEffectState(
-  pool: Pool,
-  questionId: string,
-  expectedState: string,
-  signal: AbortSignal,
-): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    signal.throwIfAborted();
-    const result = await pool.query<{ readonly state: string }>(
-      "SELECT state FROM meeting_core.answer_effects WHERE effect_id = $1",
-      [`meeting-knowledge-answer:v1:${questionId}`],
-    );
-    if (result.rows[0]?.state === expectedState) {
-      return;
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100);
-    });
-  }
-  throw new Error(`question effect ${questionId} did not reach ${expectedState}`);
 }
 
 async function waitForHistoricalApplication(

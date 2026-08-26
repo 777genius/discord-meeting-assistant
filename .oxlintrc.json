@@ -13,6 +13,108 @@
   },
   "overrides": [
     {
+      "files": ["apps/discord-e2e-actors/src/ssh-deployment-probe.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          { "max": 500, "skipBlankLines": true, "skipComments": true }
+        ]
+      }
+    },
+    {
+      "files": ["apps/meeting-platform/src/live-runtime/platform-live-meeting-runtime.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          { "max": 450, "skipBlankLines": true, "skipComments": true }
+        ]
+      }
+    },
+    {
+      "files": ["packages/meeting-core/src/features/meeting-knowledge/domain/retrieval-admission.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          { "max": 700, "skipBlankLines": true, "skipComments": true }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/discord-e2e-actors/src/conversation-voice-observer-config.ts",
+        "apps/discord-e2e-actors/src/hosted-campaign-process-adapter.ts",
+        "apps/discord-e2e-actors/src/observe-conversation-voice.ts",
+        "apps/discord-e2e-actors/src/ssh-deployment-probe-scripts.ts",
+        "apps/meeting-platform/src/composition/meeting-knowledge.ts",
+        "apps/meeting-platform/src/config.ts",
+        "packages/postgres-adapter/src/postgres-meeting-knowledge-codecs.ts"
+      ],
+      "rules": {
+        "max-lines": [
+          "error",
+          { "max": 450, "skipBlankLines": true, "skipComments": true }
+        ]
+      }
+    },
+    {
+      "files": ["apps/discord-e2e-actors/src/ssh-deployment-probe-scripts.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          { "max": 475, "skipBlankLines": true, "skipComments": true }
+        ]
+      }
+    },
+    {
+      "files": ["apps/discord-e2e-actors/src/historical-reply-campaign-contract.ts"],
+      "rules": { "max-lines": ["error", { "max": 500, "skipBlankLines": true, "skipComments": true }] }
+    },
+    {
+      "files": [
+        "apps/discord-e2e-actors/src/historical-reply-campaign.ts",
+        "apps/discord-e2e-actors/src/historical-reply-campaign-verification.ts"
+      ],
+      "rules": { "max-lines": ["error", { "max": 450, "skipBlankLines": true, "skipComments": true }] }
+    },
+    {
+      "files": [
+        "apps/discord-e2e-actors/src/finalized-live-memory-qualification.ts",
+        "apps/discord-e2e-actors/src/prepare-historical-reply-campaign.ts",
+        "apps/meeting-platform/src/config/environment-validations.ts"
+      ],
+      "rules": {
+        "complexity": ["error", 30]
+      }
+    },
+    {
+      "files": [
+        "apps/discord-e2e-actors/src/observe-historical-reply-campaign.ts",
+        "apps/meeting-platform/src/composition/meeting-knowledge.ts"
+      ],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          { "max": 175, "skipBlankLines": true, "skipComments": true }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/meeting-platform/src/live-runtime/participant-greeting-bridge.ts",
+        "packages/postgres-adapter/src/postgres-conversation-one-shot-receipts.ts"
+      ],
+      "rules": {
+        "max-lines": [
+          "error",
+          { "max": 700, "skipBlankLines": true, "skipComments": true }
+        ]
+      }
+    },
+    {
+      "files": ["apps/meeting-platform/src/live-runtime/participant-greeting-bridge.ts"],
+      "rules": { "max-lines": ["error", { "max": 750, "skipBlankLines": true, "skipComments": true }] }
+    },
+    {
       "files": [
         "**/test/**",
         "**/tests/**",
@@ -32,6 +134,52 @@
           { "max": 250, "skipBlankLines": true, "skipComments": true }
         ],
         "max-params": ["error", 6]
+      }
+    },
+    {
+      "files": ["apps/meeting-platform/test/participant-greeting-bridge.test.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          { "max": 1000, "skipBlankLines": true, "skipComments": true }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/discord-e2e-actors/test/historical-reply-campaign.test.ts",
+        "packages/discord-adapter/test/discord-summary-publication-adapter.test.ts"
+      ],
+      "rules": {
+        "max-lines": [
+          "error",
+          { "max": 900, "skipBlankLines": true, "skipComments": true }
+        ]
+      }
+    },
+    {
+      "files": ["apps/discord-e2e-actors/test/historical-reply-campaign.test.ts"],
+      "rules": { "max-lines": ["error", { "max": 1200, "skipBlankLines": true, "skipComments": true }] }
+    },
+    {
+      "files": [
+        "apps/meeting-platform/test/config.test.ts",
+        "packages/meeting-core/test/features/meeting-knowledge/retrieval-admission.test.ts"
+      ],
+      "rules": {
+        "max-lines-per-function": [
+          "error",
+          { "max": 275, "skipBlankLines": true, "skipComments": true }
+        ]
+      }
+    },
+    {
+      "files": ["packages/pipecat-runtime-adapter/e2e/providerless.e2e.ts"],
+      "rules": {
+        "max-lines": [
+          "error",
+          { "max": 1020, "skipBlankLines": true, "skipComments": true }
+        ]
       }
     }
   ]

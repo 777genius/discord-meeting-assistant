@@ -2,6 +2,7 @@ import type { AnswerEffectReservationInput } from "@discord-meeting/meeting-core
 import { createHash } from "node:crypto";
 
 interface StoredAnswerEffect {
+  readonly authority_scope_id: string | null;
   readonly authorization_digest: string;
   readonly binding_hash: string;
   readonly delivery_container_id: string | null;
@@ -82,12 +83,10 @@ export function answerEffectFieldsMatch(
   input: AnswerEffectReservationInput,
 ): boolean {
   const payloadMatches = row.payload_bytes === input.payloadBytes ||
-    row.payload_bytes === "{}" && [
-      "absent_unconfirmed",
-      "cancelled",
-      "delivered",
-    ].includes(row.state);
+    row.payload_bytes === "{}" && ["cancelled", "retracted"]
+      .includes(row.state);
   return row.effect_id === input.effectId &&
+    row.authority_scope_id === input.authorityScopeId &&
     row.delivery_container_id === input.deliveryContainerId &&
     row.projection_target_container_id === input.projectionTargetContainerId &&
     row.reply_to_remote_message_id === input.replyToRemoteMessageId &&
@@ -102,6 +101,7 @@ export function legacyAnswerEffectFieldsMatch(
   input: AnswerEffectReservationInput,
 ): boolean {
   return row.effect_id === input.effectId &&
+    row.authority_scope_id === input.authorityScopeId &&
     row.delivery_container_id === input.deliveryContainerId &&
     row.projection_target_container_id === input.projectionTargetContainerId &&
     row.reply_to_remote_message_id === input.replyToRemoteMessageId &&

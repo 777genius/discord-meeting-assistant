@@ -8,7 +8,7 @@ import type { Pool } from "pg";
 import {
   decodeGroundedAnswerCandidate,
   decodeGroundingPlan,
-  decodeQuestionBinding,
+  decodePersistedQuestionBinding,
 } from "./postgres-meeting-knowledge-codecs.js";
 import {
   PostgresQuestionPolicyTransaction,
@@ -16,11 +16,13 @@ import {
 } from "./postgres-question-policy-transaction.js";
 import type { QuestionPolicyIdentity } from "./postgres-question-policy-fence.js";
 import type { PostgresQuestionProviderAttemptStore } from "./postgres-question-provider-attempt-store.js";
+import { QUESTION_JOB_WORKER_PROTOCOL_EPOCH } from "./postgres-question-worker-protocol.js";
 
 interface QuestionJobRow {
   readonly answer_candidate: unknown;
   readonly attempts: number;
   readonly binding: unknown;
+  readonly binding_hash: string;
   readonly generation: number;
   readonly grounding_plan: unknown;
   readonly question_id: string;
@@ -51,7 +53,7 @@ function toLease(row: QuestionJobRow): QuestionJobLease {
       ? null
       : decodeGroundedAnswerCandidate(row.answer_candidate),
     attempts: row.attempts,
-    binding: decodeQuestionBinding(row.binding),
+    binding: decodePersistedQuestionBinding(row.binding, row.binding_hash),
     generation: row.generation,
     groundingPlan: row.grounding_plan === null
       ? null
@@ -105,13 +107,13 @@ export class PostgresQuestionJobLeaseStore {
           SET state = CASE WHEN job.state = 'ready' THEN 'ready' ELSE 'running' END,
               generation = job.generation + 1,
               lease_owner = $1,
-              worker_protocol_epoch = 2,
+              worker_protocol_epoch = ${QUESTION_JOB_WORKER_PROTOCOL_EPOCH},
               worker_protocol_generation = job.generation + 1,
               lease_until = transaction_timestamp() + make_interval(secs => $2),
               updated_at = transaction_timestamp()
           FROM selected
           WHERE job.question_id = selected.question_id
-          RETURNING job.question_id, job.question_text, job.binding,
+          RETURNING job.question_id, job.question_text, job.binding, job.binding_hash,
                     job.state, job.attempts, job.generation::float8 AS generation,
                     job.grounding_plan, job.answer_candidate
         `,

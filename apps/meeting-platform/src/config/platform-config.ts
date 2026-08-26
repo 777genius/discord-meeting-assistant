@@ -1,6 +1,7 @@
 import type { ParticipantGreetingProfiles } from "./participant-greeting-profiles.js";
 import type { InfinityContextRuntimeActivationV1 } from "@discord-meeting/infinity-context-adapter";
-import type { TwoHourHistoricalQualificationV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import type { FocusedLocatorRetrievalV2ProviderBinding,
+  TwoHourHistoricalQualificationV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 interface PlatformSecrets {
   readonly conversationRuntimeToken?: string;
@@ -63,6 +64,7 @@ export interface PlatformConfig {
       readonly rolloutStateFile: string;
     };
     readonly localFinalReply?: true;
+    readonly retrievalV2ProviderBinding?: FocusedLocatorRetrievalV2ProviderBinding;
     readonly twoHourHistoricalQualification?: TwoHourHistoricalQualificationV1;
   };
   readonly nodeEnvironment: "development" | "production" | "test";
@@ -88,6 +90,12 @@ export interface PlatformConfig {
   readonly subscriptionRuntime: {
     readonly address: string;
     readonly launcherSha256: string;
+  };
+  readonly testOnly?: {
+    readonly publicReplyCrashInjection: {
+      readonly root: string;
+      readonly workerId: string;
+    };
   };
   readonly transcriptionProvider: "speaches" | "voicetext";
   readonly transcriptionLegacyExecutionBinding:

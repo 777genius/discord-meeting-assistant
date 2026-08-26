@@ -37,6 +37,25 @@ export const HOSTED_CAMPAIGN_ENTRYPOINT_CAPABILITY_MATRIX = Object.freeze({
     completionActionKinds: ["run-verified"],
     emittedActionKinds: [],
   },
+  "greeting-ledger-observer": {
+    completionActionKinds: ["greeting-ledger-ready"],
+    emittedActionKinds: [],
+  },
+  "historical-reply-observer": {
+    completionActionKinds: ["historical-reply-ready"], emittedActionKinds: [],
+  },
+  "historical-reply-preparer": {
+    completionActionKinds: ["historical-reply-input-ready"], emittedActionKinds: [],
+  },
+  "live-memory-observer": {
+    completionActionKinds: ["live-memory-ready"], emittedActionKinds: [],
+  },
+  "private-coverage-observer": {
+    completionActionKinds: ["private-coverage-ready"], emittedActionKinds: [],
+  },
+  "remediation-bundle": {
+    completionActionKinds: ["remediation-bundle-ready"], emittedActionKinds: [],
+  },
   "live-observer": {
     completionActionKinds: [],
     emittedActionKinds: [],
@@ -96,6 +115,12 @@ const completionKindsAreExact: {
   collector: true,
   "conversation-observer": true,
   "evidence-verifier": true,
+  "greeting-ledger-observer": true,
+  "historical-reply-observer": true,
+  "historical-reply-preparer": true,
+  "live-memory-observer": true,
+  "private-coverage-observer": true,
+  "remediation-bundle": true,
   "live-observer": true,
   "playback-link-observer": true,
   "provenance-probe": true,

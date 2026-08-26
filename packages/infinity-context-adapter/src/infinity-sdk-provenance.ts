@@ -43,3 +43,15 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   repository: "https://github.com/777genius/infinity-context.git",
   tree: "a2ed97138f1d52e33aa04de6efe17c4726baf19e",
 });
+
+/** Immutable package identity for the locator-only Retrieval V2 slice. */
+export const INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE = Object.freeze({
+  immutablePackageIntegrity:
+    "sha512-c/qRsUrKGOm7fxUZh5o7Vkg5AAuCg2UeyftZsBbcOpFKUqrmMRALjwQAJpLqhlNh3NKrWcRvZZZMUvkXJmnVQQ==",
+  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.0.tgz",
+  packageManifestSha256: "d1c84a8c9e1eeb9987247616731fd3b3d7ad3002b9a84607c36cd60f8c642367",
+  packageName: "@infinity-context/sdk",
+  packageTarballSha256: "ecaa837b0a07ff31a786d070c6c0c34acf3b919241928ed75af5645541b790b2",
+  packageVersion: "0.2.0",
+  reviewedSourceCommit: "4ea98c141770666dcbae3d46f9dddb2b974b5879",
+});

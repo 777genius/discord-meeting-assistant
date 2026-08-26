@@ -2,6 +2,7 @@ import type { LiveConversationConfiguration } from "./conversation-contracts.js"
 
 export type {
   LiveConversationConfiguration,
+  LiveConversationGreetingCapacityReconciliation,
   LiveConversationOneShotReceiptPort,
   LiveConversationOneShotReceiptReservation,
   LiveFarewellClassificationInput,

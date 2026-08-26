@@ -145,10 +145,11 @@ describe("hosted actor release gate", () => {
     const root = await mkdtemp(join(tmpdir(), "actor-release-invalid-"));
     const path = join(root, "release.json");
     const waiting = waitForActorReleaseGate(expectation(path), AbortSignal.timeout(2_000));
+    const assertion = expect(waiting).rejects.toThrow(expectedError);
     await waitForActorGateArmed(expectation(path), AbortSignal.timeout(2_000));
     await publishGate(path, gate(overrides));
 
-    await expect(waiting).rejects.toThrow(expectedError);
+    await assertion;
   });
 
   it("rejects symlinks and non-private files", async () => {

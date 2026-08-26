@@ -289,7 +289,7 @@ describe("CraigPlaybackGateway", () => {
     }
   });
 
-  it("uses local receipt timing for Craig events and waits for finish acknowledgement", async () => {
+  it("preserves Craig provider start while waiting for finish acknowledgement", async () => {
     let nowMs = 4_000;
     const gateway = new CraigPlaybackGateway(() => nowMs);
     const transport = new FakeTransport();
@@ -305,7 +305,7 @@ describe("CraigPlaybackGateway", () => {
       recordingId: request.recordingId,
       turnId: request.turnId,
       attemptId: request.attemptId,
-      startedAtMs: 4_000,
+      startedAtMs: 3_900,
     });
     const finish = opened.value.finish();
     await vi.waitFor(() => {
@@ -323,7 +323,7 @@ describe("CraigPlaybackGateway", () => {
 
     await expect(finish).resolves.toEqual({ ok: true, value: "finished" });
     await expect(events).resolves.toEqual([
-      { type: "started", attemptId: "attempt-1", startedAtMs: 4_000 },
+      { type: "started", attemptId: "attempt-1", startedAtMs: 3_900 },
       { type: "finished", attemptId: "attempt-1", finishedAtMs: 5_000 },
     ]);
     await expect(opened.value.finish()).resolves.toEqual({ ok: true, value: "reused" });

@@ -1,0 +1,30 @@
+{"addGoldTurnIds":["quality-turn-115","quality-turn-116"],"addTags":["correction","contradiction"],"id":"fact-02-en"}
+{"addGoldTurnIds":["quality-turn-115","quality-turn-116"],"addTags":["correction","contradiction"],"id":"fact-02-ru"}
+{"addGoldTurnIds":["quality-turn-115","quality-turn-116","quality-turn-121"],"addTags":["alias","correction","contradiction"],"id":"fact-02-mixed","question":"Masha сказала, что заберёт Cobalt incident; who is the canonical owner after the correction?"}
+{"addGoldTurnIds":["quality-turn-115","quality-turn-116","quality-turn-121"],"addTags":["alias","correction","contradiction"],"id":"fact-02-contextual","question":"When Masha took over Cobalt, which canonical participant became the final incident lead?"}
+{"addGoldTurnIds":["quality-turn-123","quality-turn-124"],"addTags":["correction","contradiction","temporal"],"id":"fact-06-en"}
+{"addGoldTurnIds":["quality-turn-123","quality-turn-124"],"addTags":["correction","contradiction","temporal"],"id":"fact-06-ru"}
+{"addGoldTurnIds":["quality-turn-123","quality-turn-124"],"addTags":["correction","contradiction","temporal"],"id":"fact-06-mixed"}
+{"addGoldTurnIds":["quality-turn-123","quality-turn-124","quality-turn-126"],"addTags":["alias","correction","contradiction","temporal"],"id":"fact-06-contextual","question":"What corrected Granite cutoff did Markus give, replacing the stale date?"}
+{"addGoldTurnIds":["quality-turn-127","quality-turn-128"],"addTags":["correction","contradiction"],"id":"fact-15-en"}
+{"addGoldTurnIds":["quality-turn-125","quality-turn-127","quality-turn-128"],"addTags":["alias","correction","contradiction"],"id":"fact-15-ru","question":"Какой исправленный лимит очереди Naz зафиксировал для Prairie?"}
+{"addGoldTurnIds":["quality-turn-125","quality-turn-127","quality-turn-128"],"addTags":["alias","correction","contradiction"],"id":"fact-15-mixed","question":"Naz corrected Prairie queue cap to what final number?"}
+{"addGoldTurnIds":["quality-turn-127","quality-turn-128"],"addTags":["correction","contradiction"],"id":"fact-15-contextual"}
+{"addGoldTurnIds":["quality-turn-129","quality-turn-130"],"addTags":["correction","contradiction","explicit-negation"],"id":"fact-22-en"}
+{"addGoldTurnIds":["quality-turn-129","quality-turn-130"],"addTags":["correction","contradiction","explicit-negation"],"id":"fact-22-ru"}
+{"addGoldTurnIds":["quality-turn-129","quality-turn-130"],"addTags":["correction","contradiction","explicit-negation"],"id":"fact-22-mixed"}
+{"addGoldTurnIds":["quality-turn-129","quality-turn-130"],"addTags":["correction","contradiction","explicit-negation"],"id":"fact-22-contextual"}
+{"addGoldTurnIds":["quality-turn-199","quality-turn-200","quality-turn-122"],"addTags":["alias"],"id":"fact-12-mixed","question":"Vitya owns which Meadow responsibility after the team assigned the role?"}
+{"addGoldTurnIds":["quality-turn-279","quality-turn-280","quality-turn-126"],"addTags":["alias","temporal"],"id":"fact-17-contextual","question":"Which River load-test date did Markus put on the calendar?"}
+{"addForbiddenLocatorIds":["foreign-room-turn-000"],"addTags":["cross-scope"],"id":"unsupported-00-0"}
+{"addForbiddenLocatorIds":["foreign-room-turn-001"],"addTags":["cross-scope"],"id":"unsupported-00-1"}
+{"addForbiddenLocatorIds":["foreign-room-turn-002"],"addTags":["cross-scope"],"id":"unsupported-00-2"}
+{"addForbiddenLocatorIds":["foreign-room-turn-003"],"addTags":["cross-scope"],"id":"unsupported-00-3"}
+{"addForbiddenLocatorIds":["foreign-room-turn-004"],"addTags":["cross-scope"],"id":"unsupported-01-0"}
+{"addForbiddenLocatorIds":["foreign-room-turn-005"],"addTags":["cross-scope"],"id":"unsupported-01-1"}
+{"addForbiddenLocatorIds":["foreign-scope-turn-000"],"addTags":["cross-scope"],"id":"unsupported-01-2"}
+{"addForbiddenLocatorIds":["foreign-scope-turn-001"],"addTags":["cross-scope"],"id":"unsupported-01-3"}
+{"addForbiddenLocatorIds":["foreign-scope-turn-002"],"addTags":["cross-scope"],"id":"unsupported-02-0"}
+{"addForbiddenLocatorIds":["foreign-scope-turn-003"],"addTags":["cross-scope"],"id":"unsupported-02-1"}
+{"addForbiddenLocatorIds":["foreign-scope-turn-004"],"addTags":["cross-scope"],"id":"unsupported-02-2"}
+{"addForbiddenLocatorIds":["foreign-scope-turn-005"],"addTags":["cross-scope"],"id":"unsupported-02-3"}

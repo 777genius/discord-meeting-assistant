@@ -3,12 +3,16 @@ import type {
   HistoricalTranscriptTurnV1,
 } from "../../domain/historical-evidence.js";
 
+export const HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION =
+  "document-retrieval-projection.v1";
+
 export interface HistoricalOpaqueIdPort {
   keyedId(namespace: string, parts: readonly string[]): string;
 }
 
 export interface HistoricalTopologyV1 {
   readonly indexGeneration: string;
+  readonly projectionContractVersion: string;
   readonly releaseRef: string;
   readonly roomScopeExternalRef: string;
   readonly spaceSlug: string;

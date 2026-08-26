@@ -4,7 +4,6 @@ import {
   DurableAnswerPublication,
   canTransitionAnswerEffect,
   type AnswerDeliveryPort,
-  type AnswerEffectClaim,
   type AnswerEffectRecord,
   type AnswerEffectReservationInput,
   type AnswerEffectStore,
@@ -24,7 +23,6 @@ class PayloadFake implements AnswerPayloadPort {
 
 class StoreFake implements AnswerEffectStore {
   record?: AnswerEffectRecord;
-  generation = 0;
 
   reserve(input: AnswerEffectReservationInput) {
     if (this.record !== undefined) {
@@ -57,28 +55,21 @@ class StoreFake implements AnswerEffectStore {
     return Promise.resolve(this.record?.effectId === effectId ? this.record : null);
   }
 
-  claim(effectId: string): Promise<AnswerEffectClaim> {
-    if (this.record?.effectId !== effectId || this.record.state !== "reserved") {
-      return Promise.resolve({ status: "not_claimable" });
-    }
-    this.generation += 1;
-    this.record = { ...this.record, claimGeneration: this.generation, state: "claimed" };
-    return Promise.resolve({ generation: this.generation, status: "claimed" });
-  }
-
   startRequest(input: {
     readonly effectId: string;
-    readonly generation: number;
     readonly questionGeneration: number;
   }) {
     if (
       this.record?.effectId !== input.effectId ||
-      this.record.state !== "claimed" ||
-      this.record.claimGeneration !== input.generation
+      (this.record.state !== "reserved" && this.record.state !== "claimed")
     ) {
       return Promise.resolve(false);
     }
-    this.record = { ...this.record, state: "request_started" };
+    this.record = {
+      ...this.record,
+      claimGeneration: this.record.claimGeneration + 1,
+      state: "request_started",
+    };
     return Promise.resolve(true);
   }
 
@@ -130,7 +121,6 @@ class StoreFake implements AnswerEffectStore {
       ...this.record,
       containmentReceipts: [...input.externalReceipts],
       externalReceipt: input.externalReceipts[0] ?? null,
-      payloadBytes: "{}",
       state: "retraction_pending",
     };
     return Promise.resolve(true);
@@ -312,6 +302,29 @@ describe("Publishing answer effects", () => {
     expect(delivery.creates).toBe(1);
   });
 
+  it("safely resumes an expired legacy pre-request claim with one create", async () => {
+    const store = new StoreFake();
+    const delivery = new DeliveryFake();
+    const publisher = new DurableAnswerPublication({
+      delivery,
+      payloads: new PayloadFake(),
+      store,
+    });
+    const reservation = await publisher.reserve(reservationInput());
+    if (store.record === undefined) {
+      throw new Error("answer effect fixture was not reserved");
+    }
+    store.record = { ...store.record, state: "claimed" };
+
+    await expect(publisher.send({
+      authorizationDigest: "e".repeat(64),
+      effectId: reservation.effectId,
+      questionGeneration: 1,
+      workerId: "replacement-worker",
+    })).resolves.toMatchObject({ status: "delivered" });
+    expect(delivery.creates).toBe(1);
+  });
+
   it("rejects rebinding an idempotent effect to another delivery container", async () => {
     const publisher = new DurableAnswerPublication({
       delivery: new DeliveryFake(),
@@ -371,7 +384,14 @@ describe("Publishing answer effects", () => {
       containedDuplicates: 0,
       delivered: 0,
     });
-    expect(store.record?.state).toBe("absent_unconfirmed");
+    expect(store.record).toMatchObject({
+      payloadBytes: JSON.stringify({
+        content: "Grounded answer\n-# S1 · 00:01 · turn-1",
+        marker: "meeting-knowledge-answer:v1:question-1",
+      }),
+      payloadHash: "c".repeat(64),
+      state: "absent_unconfirmed",
+    });
 
     delivery.inspection = {
       externalReceipt: "answer-message-after-restart",
@@ -381,6 +401,11 @@ describe("Publishing answer effects", () => {
       absentUnconfirmed: 0,
       containedDuplicates: 0,
       delivered: 1,
+    });
+    expect(delivery.inspectInputs).toHaveLength(2);
+    expect(delivery.inspectInputs[1]).toMatchObject({
+      payloadBytes: delivery.inspectInputs[0]?.payloadBytes,
+      payloadHash: delivery.inspectInputs[0]?.payloadHash,
     });
     expect(store.record).toMatchObject({
       externalReceipt: "answer-message-after-restart",
@@ -420,7 +445,10 @@ describe("Duplicate answer-effect reconciliation", () => {
     });
     expect(store.record).toMatchObject({
       containmentReceipts: ["answer-message-1", "answer-message-2"],
-      payloadBytes: "{}",
+      payloadBytes: JSON.stringify({
+        content: "Grounded answer\n-# S1 · 00:01 · turn-1",
+        marker: "meeting-knowledge-answer:v1:question-1",
+      }),
       state: "retraction_pending",
     });
     await expect(publisher.reconcileRetractions(10)).resolves.toEqual({
@@ -429,6 +457,7 @@ describe("Duplicate answer-effect reconciliation", () => {
     });
     expect(delivery.removeInputs.map(({ externalReceipt }) => externalReceipt))
       .toEqual(["answer-message-1", "answer-message-2"]);
+    expect(store.record).toMatchObject({ payloadBytes: "{}", state: "retracted" });
   });
 });
 
@@ -562,6 +591,13 @@ describe("Publishing answer effect recovery", () => {
       pending: 0,
       retracted: 1,
     });
+    expect(delivery.inspectInputs).toEqual([expect.objectContaining({
+      payloadBytes: JSON.stringify({
+        content: "Grounded answer\n-# S1 · 00:01 · turn-1",
+        marker: "meeting-knowledge-answer:v1:question-1",
+      }),
+      payloadHash: "c".repeat(64),
+    })]);
     expect(delivery.removeInputs).toEqual([{
       deliveryContainerId: "thread-1",
       effectId: "meeting-knowledge-answer:v1:question-1",

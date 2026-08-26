@@ -1,5 +1,4 @@
 import type {
-  AnswerEffectClaim,
   AnswerEffectRecord,
   AnswerEffectReservationInput,
   AnswerEffectState,
@@ -25,6 +24,7 @@ import { startPolicyFencedAnswerRequest } from
   "./postgres-answer-effect-request-start.js";
 
 interface AnswerEffectRow {
+  readonly authority_scope_id: string | null;
   readonly authorization_digest: string;
   readonly binding_hash: string;
   readonly claim_generation: number;
@@ -42,10 +42,11 @@ interface AnswerEffectRow {
 }
 
 function toRecord(row: AnswerEffectRow): AnswerEffectRecord {
-  if (row.delivery_container_id === null) {
-    throw new Error("legacy answer effect has no recoverable delivery location and is safely terminal");
+  if (row.delivery_container_id === null || row.authority_scope_id === null) {
+    throw new Error("legacy answer effect has no recoverable authority and is safely terminal");
   }
   return Object.freeze({
+    authorityScopeId: row.authority_scope_id,
     authorizationDigest: row.authorization_digest,
     bindingHash: row.binding_hash,
     claimGeneration: row.claim_generation,
@@ -89,10 +90,10 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
           FOR UPDATE
         )
         INSERT INTO meeting_core.answer_effects (
-          effect_id, projection_target_container_id, delivery_container_id,
+          effect_id, authority_scope_id, projection_target_container_id, delivery_container_id,
           reply_to_remote_message_id, marker, payload_bytes, payload_hash,
           binding_hash, authorization_digest, source_meeting_ids
-        ) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $12::text[]
+        ) SELECT $1, $13, $2, $3, $4, $5, $6, $7, $8, $9, $12::text[]
           FROM fenced_question
         ON CONFLICT (effect_id) DO NOTHING
         RETURNING effect_id
@@ -110,6 +111,7 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
         input.questionFence.jobId,
         input.questionFence.generation,
         input.sourceMeetingIds,
+        input.authorityScopeId,
       ],
     );
     if (inserted.rowCount === 1) {
@@ -182,35 +184,11 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
     return row === null ? null : toRecord(row);
   }
 
-  public async claim(effectId: string, workerId: string): Promise<AnswerEffectClaim> {
-    const result = await this.pool.query<{ readonly claim_generation: number }>(
-      `
-        UPDATE meeting_core.answer_effects
-        SET state = 'claimed',
-            claim_generation = claim_generation + 1,
-            claim_owner = $2,
-            claim_until = transaction_timestamp() + interval '60 seconds',
-            updated_at = transaction_timestamp()
-        WHERE effect_id = $1
-          AND (
-            state = 'reserved' OR
-            state = 'claimed' AND claim_until <= transaction_timestamp()
-          )
-        RETURNING claim_generation::float8 AS claim_generation
-      `,
-      [effectId, workerId],
-    );
-    const row = result.rows[0];
-    return row === undefined
-      ? { status: "not_claimable" }
-      : { generation: row.claim_generation, status: "claimed" };
-  }
-
   public async startRequest(input: {
     readonly authorizationDigest: string;
     readonly effectId: string;
-    readonly generation: number;
     readonly questionGeneration: number;
+    readonly workerId: string;
   }): Promise<boolean> {
     return startPolicyFencedAnswerRequest(this.pool, this.policyFence, input);
   }
@@ -224,7 +202,6 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
         UPDATE meeting_core.answer_effects
         SET state = 'delivered',
             external_receipt = COALESCE(external_receipt, $2),
-            payload_bytes = '{}',
             settled_at = COALESCE(settled_at, transaction_timestamp()),
             updated_at = transaction_timestamp()
         WHERE effect_id = $1
@@ -267,7 +244,7 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
     );
     const result = await this.pool.query<AnswerEffectRow>(
       `
-        SELECT effect_id, state, projection_target_container_id,
+        SELECT effect_id, state, authority_scope_id, projection_target_container_id,
                delivery_container_id,
                reply_to_remote_message_id, marker, payload_bytes, payload_hash,
                binding_hash, authorization_digest, source_meeting_ids,
@@ -292,8 +269,6 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
       `
         UPDATE meeting_core.answer_effects
         SET state = 'absent_unconfirmed',
-            payload_bytes = '{}',
-            settled_at = COALESCE(settled_at, transaction_timestamp()),
             updated_at = transaction_timestamp()
         WHERE effect_id = $1
           AND state IN ('outcome_unknown', 'absent_unconfirmed')
@@ -322,7 +297,6 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
         SET state = 'retraction_pending',
             external_receipt = $3,
             containment_receipts = $2::text[],
-            payload_bytes = '{}',
             retraction_requested_at = COALESCE(
               retraction_requested_at, transaction_timestamp()
             ),
@@ -380,7 +354,7 @@ export class PostgresAnswerEffectStore implements AnswerEffectStore {
   private async findRow(effectId: string): Promise<AnswerEffectRow | null> {
     const result = await this.pool.query<AnswerEffectRow>(
       `
-        SELECT effect_id, state, projection_target_container_id,
+        SELECT effect_id, state, authority_scope_id, projection_target_container_id,
                delivery_container_id,
                reply_to_remote_message_id, marker, payload_bytes, payload_hash,
                binding_hash, authorization_digest, source_meeting_ids,

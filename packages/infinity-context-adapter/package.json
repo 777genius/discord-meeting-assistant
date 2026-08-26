@@ -14,6 +14,14 @@
     "test:real-service": "INFINITY_CONTEXT_REAL_E2E=1 pnpm run prepare:official-sdk && INFINITY_CONTEXT_REAL_E2E=1 vitest run test/infinity-context-real-service.e2e.test.ts",
     "test:semantic-service": "INFINITY_CONTEXT_SEMANTIC_E2E=1 pnpm run prepare:official-sdk && INFINITY_CONTEXT_SEMANTIC_E2E=1 vitest run test/infinity-context-semantic-service.e2e.test.ts",
     "test:semantic-quality": "INFINITY_CONTEXT_SEMANTIC_QUALITY_E2E=1 pnpm run prepare:official-sdk && INFINITY_CONTEXT_SEMANTIC_QUALITY_E2E=1 vitest run test/infinity-context-semantic-quality.e2e.test.ts",
+    "test:semantic-quality-v4:gate": "vitest run test/semantic-quality-v4-evaluation.test.ts test/semantic-quality-v4-p0.test.ts test/semantic-quality-v4-qualification-tooling.test.ts test/semantic-quality-v4-workflow.test.ts --no-file-parallelism --test-timeout=30000",
+    "test:semantic-quality-v4": "node --import tsx/esm test/run-semantic-quality-v4.ts",
+    "test:semantic-quality-v4:real-preflight": "node --import tsx/esm test/run-semantic-quality-v4.ts --real-preflight",
+    "test:semantic-quality-v4:real-execute": "node --import tsx/esm test/run-semantic-quality-v4.ts --real-execute",
+    "test:semantic-quality-v4:real-adjudicate": "node --import tsx/esm test/run-semantic-quality-v4.ts --real-adjudicate",
+    "test:semantic-quality-v4:real-retention": "node --import tsx/esm test/run-semantic-quality-v4.ts --real-retention",
+    "test:semantic-quality-v4:real-cleanup": "node --import tsx/esm test/run-semantic-quality-v4.ts --real-cleanup",
+    "test:semantic-quality-v4:real-status": "node --import tsx/esm test/run-semantic-quality-v4.ts --real-status",
     "test:prepared": "vitest run --no-file-parallelism",
     "typecheck": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared",
     "typecheck:prepared": "tsc --project tsconfig.json --noEmit --pretty false"
@@ -21,10 +29,15 @@
   "dependencies": {
     "@discord-meeting/meeting-core": "workspace:*",
     "@huggingface/tokenizers": "catalog:",
-    "@infinity-context/sdk": "catalog:"
+    "@infinity-context/sdk": "catalog:",
+    "@infinity-context/sdk-v2": "catalog:"
   },
   "devDependencies": {
+    "@discord-meeting/postgres-adapter": "workspace:*",
+    "@discord-meeting/subscription-runtime-adapter": "workspace:*",
     "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "pg": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

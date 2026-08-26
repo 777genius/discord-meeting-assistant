@@ -45,6 +45,7 @@ export interface AnswerPayloadPort {
 }
 
 export interface AnswerEffectReservationInput extends PreparedAnswerPayload {
+  readonly authorityScopeId: string;
   readonly authorizationDigest: string;
   readonly deliveryContainerId: string;
   readonly effectId: string;
@@ -64,19 +65,14 @@ export type AnswerEffectStoreReservation =
   | { readonly externalReceipt?: string; readonly status: "delivered" | "existing" }
   | { readonly status: "reserved" };
 
-export type AnswerEffectClaim =
-  | { readonly generation: number; readonly status: "claimed" }
-  | { readonly status: "not_claimable" };
-
 export interface AnswerEffectStore {
   reserve(input: AnswerEffectReservationInput): Promise<AnswerEffectStoreReservation>;
   findById(effectId: string): Promise<AnswerEffectRecord | null>;
-  claim(effectId: string, workerId: string): Promise<AnswerEffectClaim>;
   startRequest(input: {
     readonly authorizationDigest: string;
     readonly effectId: string;
-    readonly generation: number;
     readonly questionGeneration: number;
+    readonly workerId: string;
   }): Promise<boolean>;
   complete(input: {
     readonly effectId: string;
@@ -103,6 +99,7 @@ export interface AnswerEffectStore {
 
 export interface AnswerDeliveryPort {
   create(input: {
+    readonly authorityScopeId: string;
     readonly deliveryContainerId: string;
     readonly effectId: string;
     readonly marker: string;
@@ -112,8 +109,11 @@ export interface AnswerDeliveryPort {
   }): Promise<string>;
 
   inspect(input: {
+    readonly authorityScopeId: string;
     readonly deliveryContainerId: string;
     readonly marker: string;
+    /** Exact immutable request bytes needed to validate every visible claim surface. */
+    readonly payloadBytes: string;
     readonly payloadHash: string;
     readonly projectionTargetContainerId: string;
     readonly replyToRemoteMessageId: string;

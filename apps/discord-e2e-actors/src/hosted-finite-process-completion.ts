@@ -10,7 +10,17 @@ import {
 } from "./conversation-retained-evidence-schema.js";
 import { fixtureManifestV1Schema, unboundActorRunEvidenceV1Schema } from "./e2e-evidence-schema.js";
 import { liveDiscordPlaybackLinkProofSchema } from "./live-discord-playback-link-observer.js";
-import { recordingReadyReceiptV1Schema } from "./recording-ready-receipt.js";
+import { recordingReadyReceiptSchema } from "./recording-ready-receipt.js";
+import { greetingLedgerQualificationV1Schema } from "./greeting-ledger-qualification.js";
+import { lateGreetingObservationV1Schema } from "./late-greeting-observation.js";
+import {
+  historicalReplyCampaignEvidenceV1Schema,
+  historicalReplyCampaignInputV1Schema,
+} from "./historical-reply-campaign-contract.js";
+import { finalizedLiveMemoryQualificationV1Schema } from "./finalized-live-memory-qualification.js";
+import { thinRemediationProofV1Schema } from "./thin-remediation-proof.js";
+import { privateCampaignCoverageQualificationV1Schema } from
+  "./private-campaign-coverage-qualification.js";
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const outputPath = z.string().refine((value) => isAbsolute(value) && value !== "/");
@@ -24,11 +34,35 @@ const completionSchemas = {
   }).strict(),
   "conversation-observer": z.object({
     kind: z.literal("conversation-observer-completion"),
-    outputPaths: z.array(outputPath).min(1).max(6), runId: identifier,
+    outputPaths: z.array(outputPath).min(1).max(7), runId: identifier,
     status: z.literal("completed"),
   }).strict().refine(({ outputPaths }) => new Set(outputPaths).size === outputPaths.length, {
     message: "Conversation observer completion output paths must be unique",
   }),
+  "greeting-ledger-observer": z.object({
+    kind: z.literal("greeting-ledger-observer-completion"), outputPath,
+    runId: identifier, status: z.literal("completed"),
+  }).strict(),
+  "historical-reply-observer": z.object({
+    kind: z.literal("historical-reply-observer-completion"), outputPath,
+    runId: identifier, status: z.literal("completed"),
+  }).strict(),
+  "historical-reply-preparer": z.object({
+    kind: z.literal("historical-reply-preparer-completion"), outputPath,
+    runId: identifier, status: z.literal("completed"),
+  }).strict(),
+  "live-memory-observer": z.object({
+    kind: z.literal("live-memory-observer-completion"), outputPath,
+    runId: identifier, status: z.literal("completed"),
+  }).strict(),
+  "private-coverage-observer": z.object({
+    kind: z.literal("private-coverage-observer-completion"), outputPath,
+    runId: identifier, status: z.literal("completed"),
+  }).strict(),
+  "remediation-bundle": z.object({
+    kind: z.literal("remediation-bundle-completion"), outputPath,
+    runId: identifier, status: z.literal("completed"),
+  }).strict(),
   "playback-link-observer": z.object({
     kind: z.literal("playback-link-observer-completion"), messageId: identifier,
     outputPath, recordingId: identifier, runId: identifier, status: z.literal("captured"),
@@ -52,6 +86,12 @@ const completionSchemas = {
 export type HostedFiniteProcessCompletionExpectation =
   | { readonly kind: "actor"; readonly outputPath: string; readonly runId: string; readonly scenario: z.infer<typeof scenario> }
   | { readonly kind: "conversation-observer"; readonly outputPaths: readonly string[]; readonly runId: string }
+  | { readonly kind: "greeting-ledger-observer"; readonly outputPath: string; readonly runId: string }
+  | { readonly kind: "historical-reply-observer"; readonly outputPath: string; readonly runId: string }
+  | { readonly kind: "historical-reply-preparer"; readonly outputPath: string; readonly runId: string }
+  | { readonly kind: "live-memory-observer"; readonly outputPath: string; readonly runId: string }
+  | { readonly kind: "private-coverage-observer"; readonly outputPath: string; readonly runId: string }
+  | { readonly kind: "remediation-bundle"; readonly outputPath: string; readonly runId: string }
   | { readonly kind: "playback-link-observer"; readonly outputPath: string; readonly recordingId?: string; readonly runId: string }
   | { readonly kind: "recording-ready"; readonly outputPath: string; readonly runId: string }
   | { readonly fixtureManifestPath: string; readonly kind: "replay-attestation-publisher"; readonly recordingId?: string; readonly remoteAttestationPath: string; readonly runId: string }
@@ -76,13 +116,68 @@ export async function verifyHostedFiniteProcessCompletion(
     const completion = completionSchemas["conversation-observer"].parse(output);
     assertStringArrayEqual(completion.outputPaths, expected.outputPaths, "conversation observer output paths");
     assertEqual(completion.runId, expected.runId, "conversation observer run ID");
-    const artifacts = await Promise.all(expected.outputPaths.map(async (path) =>
+    const voicePaths = expected.outputPaths.slice(0, 6);
+    const artifacts = await Promise.all(voicePaths.map(async (path) =>
       conversationVoiceEvidenceV3Schema.parse(await readJson(path))
     ));
     for (const artifact of artifacts) {
       assertEqual(artifact.runId, expected.runId, "conversation observer artifact run ID");
     }
-    return artifacts;
+    const latePath = expected.outputPaths[6];
+    const late = latePath === undefined ? undefined
+      : lateGreetingObservationV1Schema.parse(await readJson(latePath));
+    if (late !== undefined) { assertEqual(late.runId, expected.runId, "late greeting artifact run ID"); }
+    return late === undefined ? artifacts : [...artifacts, late];
+  }
+  if (expected.kind === "greeting-ledger-observer") {
+    const completion = completionSchemas["greeting-ledger-observer"].parse(output);
+    assertEqual(completion.outputPath, expected.outputPath, "greeting ledger output path");
+    assertEqual(completion.runId, expected.runId, "greeting ledger run ID");
+    const artifact = greetingLedgerQualificationV1Schema.parse(await readJson(expected.outputPath));
+    assertEqual(artifact.runId, expected.runId, "greeting ledger artifact run ID");
+    return artifact;
+  }
+  if (expected.kind === "historical-reply-observer") {
+    const completion = completionSchemas["historical-reply-observer"].parse(output);
+    assertEqual(completion.outputPath, expected.outputPath, "historical reply output path");
+    assertEqual(completion.runId, expected.runId, "historical reply run ID");
+    const artifact = historicalReplyCampaignEvidenceV1Schema.parse(await readJson(expected.outputPath));
+    assertEqual(artifact.campaign.runId, expected.runId, "historical reply artifact run ID");
+    return artifact;
+  }
+  if (expected.kind === "historical-reply-preparer") {
+    const completion = completionSchemas["historical-reply-preparer"].parse(output);
+    assertEqual(completion.outputPath, expected.outputPath, "historical reply input output path");
+    assertEqual(completion.runId, expected.runId, "historical reply preparer run ID");
+    const artifact = historicalReplyCampaignInputV1Schema.parse(await readJson(expected.outputPath));
+    assertEqual(artifact.runId, expected.runId, "historical reply input run ID");
+    return artifact;
+  }
+  if (expected.kind === "live-memory-observer") {
+    const completion = completionSchemas["live-memory-observer"].parse(output);
+    assertEqual(completion.outputPath, expected.outputPath, "live memory output path");
+    assertEqual(completion.runId, expected.runId, "live memory run ID");
+    const artifact = finalizedLiveMemoryQualificationV1Schema.parse(await readJson(expected.outputPath));
+    assertEqual(artifact.runId, expected.runId, "live memory artifact run ID");
+    return artifact;
+  }
+  if (expected.kind === "private-coverage-observer") {
+    const completion = completionSchemas["private-coverage-observer"].parse(output);
+    assertEqual(completion.outputPath, expected.outputPath, "private coverage output path");
+    assertEqual(completion.runId, expected.runId, "private coverage run ID");
+    const artifact = privateCampaignCoverageQualificationV1Schema.parse(
+      await readJson(expected.outputPath),
+    );
+    assertEqual(artifact.liveMemory.runId, expected.runId, "private coverage artifact run ID");
+    return artifact;
+  }
+  if (expected.kind === "remediation-bundle") {
+    const completion = completionSchemas["remediation-bundle"].parse(output);
+    assertEqual(completion.outputPath, expected.outputPath, "remediation bundle output path");
+    assertEqual(completion.runId, expected.runId, "remediation bundle run ID");
+    const artifact = thinRemediationProofV1Schema.parse(await readJson(expected.outputPath));
+    assertEqual(artifact.runId, expected.runId, "remediation bundle artifact run ID");
+    return artifact;
   }
   if (expected.kind === "playback-link-observer") {
     const completion = completionSchemas["playback-link-observer"].parse(output);
@@ -101,7 +196,7 @@ export async function verifyHostedFiniteProcessCompletion(
     const completion = completionSchemas["recording-ready"].parse(output);
     assertEqual(completion.outputPath, expected.outputPath, "recording-ready output path");
     assertEqual(completion.runId, expected.runId, "recording-ready run ID");
-    const artifact = recordingReadyReceiptV1Schema.parse(await readJson(expected.outputPath));
+    const artifact = recordingReadyReceiptSchema.parse(await readJson(expected.outputPath));
     assertEqual(artifact.recordingId, completion.recordingId, "recording-ready recording ID");
     assertEqual(artifact.runId, expected.runId, "recording-ready artifact run ID");
     return artifact;

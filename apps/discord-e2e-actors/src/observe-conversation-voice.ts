@@ -16,6 +16,9 @@ import { assertConfiguredCraigBotIsInVoiceChannel, assertConnectableVoiceChannel
 import { ConversationVoiceCaptureController, ConversationVoiceCaptureError, assertConversationVoiceEvidencePathIsNew, writeNewConversationVoiceEvidenceAtomically, } from "./conversation-voice-observer.js";
 import { publishConversationVoiceReadyProof } from "./conversation-voice-ready-proof.js";
 import { FileSecretReader, MacOsKeychainSecretReader } from "./keychain.js";
+import { writeCreateOnlyPrivateJson } from "./create-only-private-json.js";
+import { observeNoLateGreeting, waitForStableGreetingLedger } from "./late-greeting-observation.js";
+import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 import { publishAnswerFirstPacket, publishAnswerIntent, publishAnswerObserverReady, publishCaptureRetained, publishObserverSubscribed, } from "./hosted-campaign-process-event-publisher.js";
 import { publishConversationObserverCompletion } from
   "./hosted-finite-process-completion-publisher.js";
@@ -123,7 +126,46 @@ async function main(): Promise<void> {
         campaignProof,
       );
     }
-    publishConversationObserverCompletion(config, captures.map(({ outputPath }) => outputPath));
+    if (config.lateGreetingLedgerInputPath !== undefined ||
+      config.lateGreetingOutputPath !== undefined) {
+      if (config.lateGreetingLedgerInputPath === undefined ||
+        config.lateGreetingOutputPath === undefined || config.remote === undefined) {
+        throw new Error("Campaign late-greeting observation requires both paths and remote binding");
+      }
+      const ledgerBytes = await waitForStableGreetingLedger(
+        config.lateGreetingLedgerInputPath,
+        config.readyTimeoutMilliseconds,
+      );
+      const probe = new SshDeploymentEvidenceProbe({
+        composeFile: config.remote.composeFile,
+        craigProjectName: "craig-meeting-e2e",
+        craigServiceName: "bot",
+        envFile: config.remote.environmentFile,
+        host: config.remote.host,
+        mutationTarget: "test-only",
+        projectName: "discord-meeting-assistant",
+        sourceRoot: config.remote.sourceRoot,
+        timeoutMs: 300_000,
+      });
+      const negativeObservation = await observeNoLateGreeting({
+        decoder,
+        greetingLedgerBytes: ledgerBytes,
+        sourceStream,
+        subscriptionStartedAt: new Date(greetingIntentNotBeforeEpochMilliseconds).toISOString(),
+      }, {
+        now: Date.now,
+        restartMeetingPlatform: () => probe.restartMeetingPlatformForPrivateTest(),
+        wait: async (milliseconds) => new Promise((resolve) => {
+          setTimeout(resolve, milliseconds);
+        }),
+        workerIdentity: () => probe.collectMeetingPlatformWorkerProcess(),
+      });
+      await writeCreateOnlyPrivateJson(config.lateGreetingOutputPath, negativeObservation);
+    }
+    publishConversationObserverCompletion(config, [
+      ...captures.map(({ outputPath }) => outputPath),
+      ...(config.lateGreetingOutputPath === undefined ? [] : [config.lateGreetingOutputPath]),
+    ]);
   } finally {
     sourceStream?.destroy();
     connection?.destroy();

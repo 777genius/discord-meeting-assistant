@@ -14,9 +14,10 @@ import type {
   FocusedEvidenceSelectionResultV1,
   FocusedEvidenceSelectorPort,
 } from "./ports/focused-evidence-selector.js";
+import { qualifiedFocusedEvidenceCandidateLimit } from
+  "./ports/focused-evidence-selector.js";
 import type { FinalReplyEvidencePort } from "./ports/final-reply.js";
 
-const MAX_CANDIDATES = 40;
 const MAX_SELECTED = 5;
 const MAX_SNIPPET_BYTES = 1_600;
 const MAX_QUESTION_BYTES = 4_096;
@@ -114,6 +115,52 @@ export async function prepareSelectedFocusedEvidence(input: {
   };
 }
 
+/** V2 accepts Infinity's persisted provider order and never invokes the legacy selector. */
+export async function preparePersistedRetrievalV2Evidence(input: {
+  readonly authorityGeneration: string;
+  readonly binding: QuestionBindingSnapshot;
+  readonly evidence: FinalReplyEvidencePort;
+  readonly evidenceByteLimit: number;
+  readonly references: readonly FocusedMemoryReference[];
+  readonly turns: readonly RehydratedEvidenceTurn[];
+}): Promise<SelectedFocusedEvidencePreparation> {
+  const evidenceBytes = new TextEncoder().encode(
+    input.turns.map(({ text }) => text).join("\n"),
+  ).byteLength;
+  if (evidenceBytes < 1 || evidenceBytes > input.evidenceByteLimit) {
+    return { status: "unavailable" };
+  }
+  const refreshed = await input.evidence.rehydrateSelectedEvidence(
+    input.binding,
+    input.references,
+  );
+  if (refreshed.status === "stale") {
+    return { status: "stale_binding" };
+  }
+  if (refreshed.status !== "current" ||
+    !authorityMatchesBinding(refreshed.binding, input.binding) ||
+    !focusedHydrationMatchesReferences(input.binding, input.references,
+      refreshed.turns)) {
+    return { status: "unavailable" };
+  }
+  const refreshedBytes = new TextEncoder().encode(
+    refreshed.turns.map(({ text }) => text).join("\n"),
+  ).byteLength;
+  if (refreshedBytes !== evidenceBytes || refreshedBytes > input.evidenceByteLimit) {
+    return { status: "unavailable" };
+  }
+  return Object.freeze({
+    authority: refreshed.binding,
+    plan: createFocusedRetrievalGroundingPlan({
+      authorityGeneration: input.authorityGeneration,
+      coverage: "sufficient",
+      humanActorIds: admittedHumanActors(refreshed),
+      turns: refreshed.turns,
+    }),
+    status: "prepared",
+  });
+}
+
 export class SelectFocusedEvidence {
   public constructor(
     private readonly selector: FocusedEvidenceSelectorPort,
@@ -190,8 +237,10 @@ export class SelectFocusedEvidence {
 function buildCandidates(
   turns: readonly RehydratedEvidenceTurn[],
 ): readonly FocusedEvidenceSelectionCandidateV1[] {
-  if (turns.length < 1 || turns.length > MAX_CANDIDATES) {
-    throw new RangeError("focused selection requires 1..40 canonical turns");
+  if (turns.length < 1 || turns.length > qualifiedFocusedEvidenceCandidateLimit) {
+    throw new RangeError(
+      `focused selection requires 1..${qualifiedFocusedEvidenceCandidateLimit} canonical turns`,
+    );
   }
   const speakers = new Map<string, string>();
   return Object.freeze(turns.map((turn, index) => {

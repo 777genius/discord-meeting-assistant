@@ -235,6 +235,9 @@ async function createPlatformKnowledgeComposition(input: {
     meetings: core.liveMeetings,
     pool: core.pool,
     publicationEffects: core.publicationEffects,
+    ...(recordingPlayback.recordingPlayback === undefined
+      ? {}
+      : { recordingPlayback: recordingPlayback.recordingPlayback }),
     ...(recordingPlayback.recordingPlaybackUrl === undefined
       ? {}
       : { recordingPlaybackUrl: recordingPlayback.recordingPlaybackUrl }),

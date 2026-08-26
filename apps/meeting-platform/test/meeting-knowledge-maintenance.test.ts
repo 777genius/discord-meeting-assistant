@@ -101,6 +101,41 @@ describe("Meeting Knowledge final reply runtime lifecycle", () => {
     expect(handler.settle).toHaveBeenCalledOnce();
   });
 
+  it("supports deterministic immediate processing and reconciliation passes", async () => {
+    const order: string[] = [];
+    const runtime = createMeetingKnowledgePollingRuntime({
+      maintenance: new MaintainFinalReplies({
+        maintain: async () => {
+          order.push("maintenance");
+          return { cancelled: 0, expired: 0 };
+        },
+      }, true),
+      processor: {
+        executeOnce: async () => {
+          order.push("process");
+          return { status: "idle" as const };
+        },
+      },
+      publication: {
+        reconcileRetractions: async () => {
+          order.push("retractions");
+          return { pending: 0, retracted: 0 };
+        },
+        reconcileUnknown: async () => {
+          order.push("unknown");
+          return { absentUnconfirmed: 0, containedDuplicates: 0, delivered: 0 };
+        },
+      },
+      reportError: vi.fn(),
+    });
+
+    await runtime.processPending();
+    await runtime.reconcilePending();
+
+    expect(order).toEqual(["maintenance", "process", "unknown", "retractions"]);
+    await runtime.close();
+  });
+
   it("bounds shutdown when external reconciliation never settles", async () => {
     vi.useFakeTimers();
     const runtime = createMeetingKnowledgePollingRuntime({

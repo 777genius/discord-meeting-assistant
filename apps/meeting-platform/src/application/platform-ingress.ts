@@ -240,8 +240,10 @@ export class PlatformRecordingIngress {
     if (event.type === "meeting.started") {
       return {
         ...common,
+        // V1 carries identifiers without actor semantics. Proactive V1 voice
+        // admission fails closed instead of cohorting an automation as human.
         participantIds: event.schemaVersion === 1
-          ? [...event.participantIds]
+          ? []
           : event.actors
               .filter((actor) => actor.kind === "human")
               .map((actor) => actor.actorId),
@@ -270,7 +272,7 @@ export class PlatformRecordingIngress {
       };
     }
     if (event.type === "participant.joined" || event.type === "participant.left") {
-      if (event.schemaVersion !== 1 && event.actor.kind !== "human") {
+      if (event.schemaVersion === 1 || event.actor.kind !== "human") {
         return null;
       }
       return {
@@ -283,9 +285,7 @@ export class PlatformRecordingIngress {
                 producerRevision: event.producerRevision,
               },
             }),
-        participantId: event.schemaVersion === 1
-          ? event.participantId
-          : event.actor.actorId,
+        participantId: event.actor.actorId,
         type: event.type,
       };
     }

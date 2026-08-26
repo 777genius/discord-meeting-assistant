@@ -19,18 +19,20 @@ import {
   type QuestionAdmissionCommitPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
-import { QuestionJobStoreFake } from "./question-job-store.fake.test.js";
 import {
   authorizationPolicyVersion,
   authority,
   AuthorizationFake,
   binding,
   EvidenceFake,
+  fixedReplyText,
   MemoryFake,
   references,
   selectedTurns,
 } from "./local-final-reply-application-fixtures.test.js";
-
+import { QuestionJobStoreFake } from "./question-job-store.fake.test.js";
+import { retrievalV2Request } from
+  "./retrieval-v2-application-fixtures.test.js";
 const policy: LocalFinalReplyPolicy = {
   admission: {
     guildQuestionsPerHour: 100,
@@ -51,6 +53,10 @@ const policy: LocalFinalReplyPolicy = {
   maximumProviderAttempts: 2,
   policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
   retrieval: { maximumCandidates: 24, neighborTurns: 2 },
+  retrievalAdmission: {
+    cutoverEpoch: "test-cutover-r1", infinityProfileFingerprint: "e".repeat(64),
+    infinityRolloutBasisPoints: 0, legacyProfileFingerprint: "f".repeat(64),
+  },
 };
 
 const renderer: FinalReplyRendererPort = {
@@ -67,20 +73,11 @@ const renderer: FinalReplyRendererPort = {
     }
     return content;
   },
-  renderFixed: ({ outcome }) => ({
-    insufficient_evidence: "There is not enough confirmed meeting evidence.",
-    not_a_question: "This reply is not a question.",
-    processing: "The meeting evidence is still being processed.",
-    unavailable: "A grounded answer is currently unavailable.",
-    unsupported_size: "This meeting is too large.",
-  })[outcome],
+  renderFixed: ({ outcome }) => fixedReplyText[outcome],
 };
-
-
 class ExhaustiveMemoryFake implements ExhaustiveMemoryRetrievalPort {
   public rechecks = 0;
   public retrievals = 0;
-
   public retrieve() {
     this.retrievals += 1;
     return Promise.resolve({
@@ -113,7 +110,6 @@ class AdmissionFake implements QuestionAdmissionCommitPort {
     jobId: "question-1",
     status: "committed",
   };
-
   commit(input: Parameters<QuestionAdmissionCommitPort["commit"]>[0]) {
     this.commits.push(input);
     return Promise.resolve(this.result);
@@ -124,6 +120,13 @@ class AdmissionFake implements QuestionAdmissionCommitPort {
   }
 }
 
+function admissionWithRollout(admissions: AdmissionFake,
+  retrievalAdmission: LocalFinalReplyPolicy["retrievalAdmission"]) {
+  return new AdmitCurrentFinalReply(new EvidenceFake(), new AuthorizationFake(),
+    admissions, { ...policy, retrievalAdmission }, {
+      prepare: () => Promise.resolve(retrievalV2Request),
+    });
+}
 
 class GeneratorFake implements GroundedAnswerGenerator {
   requests: GroundedAnswerGenerationRequest[] = [];
@@ -144,7 +147,6 @@ class GeneratorFake implements GroundedAnswerGenerator {
     },
     status: "completed",
   };
-
   measure(request: GroundedAnswerGenerationRequest) {
     this.requests.push(request);
     return Promise.resolve(this.measurement);
@@ -197,11 +199,49 @@ describe("AdmitCurrentFinalReply", () => {
       scopeId: authority.scopeId,
     })).resolves.toEqual({ jobId: "question-1", status: "accepted" });
 
+    expect(admissions.commits).toHaveLength(1);
     expect(admissions.commits[0]?.binding).toMatchObject({
       authorizationPolicyVersion,
+      bindingProtocolVersion: 2,
       expectedLocale: "en",
       memoryGeneration: authority.memoryGeneration,
+      retrievalBinding: {
+        cutoverEpoch: "test-cutover-r1",
+        profileFingerprint: "f".repeat(64),
+        retrievalPath: "legacy_downstream_v1",
+      },
       transcriptId: authority.transcriptId,
+    });
+  });
+
+  it("uses a rollback epoch only for admissions made under that policy", async () => {
+    const firstAdmissions = new AdmissionFake();
+    const first = admissionWithRollout(firstAdmissions, {
+      ...policy.retrievalAdmission, infinityRolloutBasisPoints: 10_000,
+    });
+    const rollbackAdmissions = new AdmissionFake();
+    rollbackAdmissions.result = { jobId: "question-2", status: "committed" };
+    const rollback = admissionWithRollout(rollbackAdmissions, {
+      ...policy.retrievalAdmission, cutoverEpoch: "rollback-r2",
+      infinityRolloutBasisPoints: 0,
+    });
+    const base = {
+      authorizationPrincipalRef: "principal:v1:opaque",
+      deliveryContainerId: "question-thread-1",
+      finalProjectionReceipt: authority.finalProjectionReceipt,
+      projectionTargetContainerId: authority.projectionTargetContainerId,
+      questionHash: "c".repeat(64), questionText: "Question?",
+      requesterSubject: "d".repeat(64), schemaVersion: 2 as const,
+      scopeId: authority.scopeId,
+    };
+    await first.execute({ ...base, questionId: "question-1" });
+    await rollback.execute({ ...base, questionId: "question-2" });
+    expect(firstAdmissions.commits[0]?.binding.retrievalBinding).toEqual({
+      cutoverEpoch: "test-cutover-r1", profileFingerprint: "e".repeat(64),
+      request: retrievalV2Request, retrievalPath: "infinity_locator_v2",
+    });
+    expect(rollbackAdmissions.commits[0]?.binding.retrievalBinding).toEqual({
+      cutoverEpoch: "rollback-r2", profileFingerprint: "f".repeat(64), retrievalPath: "legacy_downstream_v1",
     });
   });
 
@@ -357,6 +397,7 @@ function focusedSelector(
 function processingFixture(
   exhaustiveMemory?: ExhaustiveMemoryRetrievalPort,
   selector = focusedSelector(),
+  processorPolicy: LocalFinalReplyPolicy = policy,
 ) {
   const evidence = new EvidenceFake();
   const authorization = new AuthorizationFake();
@@ -381,7 +422,7 @@ function processingFixture(
     generator,
     jobs,
     memory,
-    policy,
+    policy: processorPolicy,
     selector,
     renderer,
     workerId: "worker-1",
@@ -795,8 +836,7 @@ describe("ProcessFinalReplyJob publication fences", () => {
   it("resumes a durable ready job from selected canonical references without another provider call", async () => {
     const { generator, jobs, memory, processor } = processingFixture();
     const plan = createFocusedRetrievalGroundingPlan({
-      authorityGeneration: authority.memoryGeneration,
-      coverage: "sufficient",
+      authorityGeneration: authority.memoryGeneration, coverage: "sufficient",
       humanActorIds: authority.humanActorIds,
       turns: selectedTurns,
     });

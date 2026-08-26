@@ -427,6 +427,8 @@ describe("Meeting Knowledge shutdown dependency fence", () => {
       logger: { flush: async () => { calls.push("logger:flush"); } } as unknown as Logger,
       meetingKnowledge: {
         close: async () => never,
+        processPending: async () => {},
+        reconcilePending: async () => {},
         settleIngress: async () => {},
         start: () => {},
       },

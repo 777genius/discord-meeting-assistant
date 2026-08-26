@@ -103,7 +103,7 @@
     {
       "boundary": "apps.meeting-platform.recording-playback-adapters",
       "roots": ["apps/meeting-platform/src/recording-playback/adapters"],
-      "allowFeatureSubpaths": ["meeting-lifecycle"]
+      "allowFeatureSubpaths": ["meeting-lifecycle", "publishing"]
     },
     {
       "boundary": "apps.meeting-platform.composition",

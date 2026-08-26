@@ -92,9 +92,9 @@ export function campaignActions(input: HostedCampaignInput): readonly HostedCamp
 
 function isFiniteCompletionAction(action: HostedCampaignBarrierAction): action is Extract<
   HostedCampaignBarrierAction,
-  { readonly kind: "actor-completed" | "conversation-observer-completed" | "playback-link-seen" | "recording-ready" | "replay-attestation-ready" | "supplemental-completed" }
+  { readonly kind: "actor-completed" | "conversation-observer-completed" | "greeting-ledger-ready" | "historical-reply-input-ready" | "historical-reply-ready" | "live-memory-ready" | "private-coverage-ready" | "remediation-bundle-ready" | "playback-link-seen" | "recording-ready" | "replay-attestation-ready" | "supplemental-completed" }
 > {
-  return new Set(["actor-completed", "conversation-observer-completed", "playback-link-seen",
+  return new Set(["actor-completed", "conversation-observer-completed", "greeting-ledger-ready", "historical-reply-input-ready", "historical-reply-ready", "live-memory-ready", "private-coverage-ready", "remediation-bundle-ready", "playback-link-seen",
     "recording-ready", "replay-attestation-ready", "supplemental-completed"]).has(action.kind);
 }
 

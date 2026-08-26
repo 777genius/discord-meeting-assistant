@@ -97,7 +97,10 @@ export async function requestAnswerSourceWithdrawal(
            WHEN state IN ('reserved', 'claimed') THEN 'cancelled'
            ELSE 'retraction_pending'
          END,
-         payload_bytes = '{}',
+         payload_bytes = CASE
+           WHEN state IN ('reserved', 'claimed') THEN '{}'
+           ELSE payload_bytes
+         END,
          claim_until = NULL,
          retraction_requested_at = CASE
            WHEN state IN (

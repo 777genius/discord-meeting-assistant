@@ -19,6 +19,45 @@ import {
 const botId = "11111111111111111";
 const containerId = "22222222222222222";
 const questionId = "33333333333333333";
+const guildId = "66666666666666666";
+
+function directDeliveryChannelMetadata() {
+  return {
+    guild_id: guildId,
+    id: containerId,
+    name: "meeting-results",
+    parent_id: "77777777777777770",
+    permission_overwrites: [],
+    type: ChannelType.GuildText,
+  };
+}
+
+function authoredAnswerMessage(input: {
+  readonly embeds: readonly unknown[];
+  readonly id: string;
+  readonly overrides?: Readonly<Record<string, unknown>>;
+}) {
+  return {
+    application_id: botId,
+    attachments: [],
+    author: { id: botId },
+    channel_id: containerId,
+    components: [],
+    content: "",
+    embeds: input.embeds,
+    guild_id: guildId,
+    id: input.id,
+    mention_everyone: false,
+    mention_roles: [],
+    mentions: [],
+    message_reference: { channel_id: containerId, message_id: questionId, type: 0 },
+    pinned: false,
+    sticker_items: [],
+    tts: false,
+    type: 19,
+    ...input.overrides,
+  };
+}
 
 function binding(): AnswerPublicationBinding {
   return {
@@ -338,6 +377,7 @@ describe("Discord answer effect transport", () => {
     const delivery = new DiscordAnswerDeliveryAdapter(rest, botId);
 
     const receipt = await delivery.create({
+      authorityScopeId: guildId,
       deliveryContainerId: containerId,
       marker: "meeting-knowledge-answer:v1:question-1",
       payloadBytes: payload.payloadBytes,
@@ -351,39 +391,27 @@ describe("Discord answer effect transport", () => {
       readonly embeds: readonly unknown[];
     };
     expect(post).toHaveBeenCalledWith(expect.anything(), { body: postedBody });
-    get.mockResolvedValue([{
-      application_id: botId,
-      author: { id: botId },
-      embeds: postedBody.embeds,
-      id: receipt,
-      message_reference: { message_id: questionId },
-    }]);
+    get.mockResolvedValueOnce(directDeliveryChannelMetadata()).mockResolvedValueOnce([
+      authoredAnswerMessage({ embeds: postedBody.embeds, id: receipt }),
+    ]);
     await expect(delivery.inspect({
+      authorityScopeId: guildId,
       deliveryContainerId: containerId,
       marker: "meeting-knowledge-answer:v1:question-1",
+      payloadBytes: payload.payloadBytes,
       payloadHash: payload.payloadHash,
       projectionTargetContainerId: containerId,
       replyToRemoteMessageId: questionId,
     })).resolves.toEqual({ externalReceipt: receipt, status: "found" });
-    get.mockResolvedValue([
-      {
-        application_id: botId,
-        author: { id: botId },
-        embeds: postedBody.embeds,
-        id: receipt,
-        message_reference: { message_id: questionId },
-      },
-      {
-        application_id: botId,
-        author: { id: botId },
-        embeds: postedBody.embeds,
-        id: "99999999999999999",
-        message_reference: { message_id: questionId },
-      },
+    get.mockResolvedValueOnce(directDeliveryChannelMetadata()).mockResolvedValueOnce([
+      authoredAnswerMessage({ embeds: postedBody.embeds, id: receipt }),
+      authoredAnswerMessage({ embeds: postedBody.embeds, id: "99999999999999999" }),
     ]);
     await expect(delivery.inspect({
+      authorityScopeId: guildId,
       deliveryContainerId: containerId,
       marker: "meeting-knowledge-answer:v1:question-1",
+      payloadBytes: payload.payloadBytes,
       payloadHash: payload.payloadHash,
       projectionTargetContainerId: containerId,
       replyToRemoteMessageId: questionId,
@@ -419,30 +447,26 @@ describe("Discord answer effect transport", () => {
     const postedBody = JSON.parse(payload.payloadBytes) as {
       readonly embeds: readonly unknown[];
     };
-    const firstPage = Array.from({ length: 100 }, (_, index) => ({
-      application_id: botId,
-      author: { id: botId },
-      embeds: [],
-      id: (BigInt(questionId) + BigInt(index) + 1n).toString(),
-      message_reference: { message_id: questionId },
-    }));
+    const firstPage = Array.from({ length: 100 }, (_, index) =>
+      authoredAnswerMessage({
+        embeds: [], id: (BigInt(questionId) + BigInt(index) + 1n).toString(),
+      }));
     const receipt = (BigInt(questionId) + 101n).toString();
     const get = vi.fn().mockImplementation((
       _route: unknown,
-      options: { readonly query: URLSearchParams },
+      options?: { readonly query: URLSearchParams },
     ) => {
+      if (options === undefined) {
+        return Promise.resolve(directDeliveryChannelMetadata());
+      }
       const after = options.query.get("after");
       if (after === questionId) {
         return Promise.resolve(firstPage);
       }
       if (after === firstPage.at(-1)?.id) {
-        return Promise.resolve([{
-          application_id: botId,
-          author: { id: botId },
-          embeds: postedBody.embeds,
-          id: receipt,
-          message_reference: { message_id: questionId },
-        }]);
+        return Promise.resolve([
+          authoredAnswerMessage({ embeds: postedBody.embeds, id: receipt }),
+        ]);
       }
       throw new Error("unexpected reconciliation cursor");
     });
@@ -452,14 +476,16 @@ describe("Discord answer effect transport", () => {
     );
 
     await expect(delivery.inspect({
+      authorityScopeId: guildId,
       deliveryContainerId: containerId,
       marker: "meeting-knowledge-answer:v1:question-1",
+      payloadBytes: payload.payloadBytes,
       payloadHash: payload.payloadHash,
       projectionTargetContainerId: containerId,
       replyToRemoteMessageId: questionId,
     })).resolves.toEqual({ externalReceipt: receipt, status: "found" });
-    expect(get).toHaveBeenCalledTimes(2);
-    expect(get.mock.calls.map(([, options]) =>
+    expect(get).toHaveBeenCalledTimes(3);
+    expect(get.mock.calls.slice(1).map(([, options]) =>
       (options as { readonly query: URLSearchParams }).query.get("after")
     )).toEqual([questionId, firstPage.at(-1)?.id]);
   });
@@ -477,30 +503,27 @@ describe("Discord answer effect transport", () => {
       readonly embeds: readonly unknown[];
     };
     const firstReceipt = (BigInt(questionId) + 1n).toString();
-    const firstPage = Array.from({ length: 100 }, (_, index) => ({
-      application_id: botId,
-      author: { id: botId },
-      embeds: index === 0 ? postedBody.embeds : [],
-      id: (BigInt(questionId) + BigInt(index) + 1n).toString(),
-      message_reference: { message_id: questionId },
-    }));
+    const firstPage = Array.from({ length: 100 }, (_, index) =>
+      authoredAnswerMessage({
+        embeds: index === 0 ? postedBody.embeds : [],
+        id: (BigInt(questionId) + BigInt(index) + 1n).toString(),
+      }));
     const secondReceipt = (BigInt(questionId) + 101n).toString();
     const get = vi.fn().mockImplementation((
       _route: unknown,
-      options: { readonly query: URLSearchParams },
+      options?: { readonly query: URLSearchParams },
     ) => {
+      if (options === undefined) {
+        return Promise.resolve(directDeliveryChannelMetadata());
+      }
       const after = options.query.get("after");
       if (after === questionId) {
         return Promise.resolve(firstPage);
       }
       if (after === firstPage.at(-1)?.id) {
-        return Promise.resolve([{
-          application_id: botId,
-          author: { id: botId },
-          embeds: postedBody.embeds,
-          id: secondReceipt,
-          message_reference: { message_id: questionId },
-        }]);
+        return Promise.resolve([
+          authoredAnswerMessage({ embeds: postedBody.embeds, id: secondReceipt }),
+        ]);
       }
       throw new Error("unexpected reconciliation cursor");
     });
@@ -510,8 +533,10 @@ describe("Discord answer effect transport", () => {
     );
 
     await expect(delivery.inspect({
+      authorityScopeId: guildId,
       deliveryContainerId: containerId,
       marker: "meeting-knowledge-answer:v1:question-1",
+      payloadBytes: payload.payloadBytes,
       payloadHash: payload.payloadHash,
       projectionTargetContainerId: containerId,
       replyToRemoteMessageId: questionId,
@@ -519,8 +544,9 @@ describe("Discord answer effect transport", () => {
       externalReceipts: [firstReceipt, secondReceipt],
       status: "duplicate",
     });
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(3);
   });
+
 });
 
 describe("Discord Local Final Reply ingress", () => {

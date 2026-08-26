@@ -86,17 +86,33 @@ function rawDataToUtf8(data: RawData): string {
 describe("Craig playback WebSocket server", () => {
   it("authenticates, registers session-ready, and carries strict commands/events", async () => {
     const context = await start();
+    const observedReadiness: string[] = [];
+    context.gateway.onSessionReady((recordingId) => {
+      observedReadiness.push(recordingId);
+    });
     const socket = connect(context.url, `Bearer ${token}`);
     await once(socket, "open");
     socket.send(JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 3,
       type: "session-ready",
+      playbackCapabilities: {
+        attestsDiscordVoiceSend: true,
+        deduplicatesCommandIds: true,
+        deduplicationRetentionSeconds: 300,
+        replaysOriginalStartedAtMs: true,
+      },
       recordingId: "recording-1",
       guildId: "1533228590643155034",
       channelId: "1533228823045214398",
       gatewaySessionId: "gateway-session-1",
     }));
     await expect.poll(() => context.gateway.hasSession("recording-1")).toBe(true);
+    expect(observedReadiness).toEqual(["recording-1"]);
+    const replayedReadiness: string[] = [];
+    context.gateway.onSessionReady((recordingId) => {
+      replayedReadiness.push(recordingId);
+    });
+    expect(replayedReadiness).toEqual(["recording-1"]);
 
     const command = waitForMessage(socket);
     const opened = await context.gateway.open({
@@ -125,5 +141,19 @@ describe("Craig playback WebSocket server", () => {
     invalid.send(JSON.stringify({ schemaVersion: 1, type: "unknown" }));
     const code = await closed;
     expect(code).toBe(1008);
+
+    const unattested = connect(context.url, `Bearer ${token}`);
+    await once(unattested, "open");
+    const unattestedClosed = waitForCloseCode(unattested);
+    unattested.send(JSON.stringify({
+      schemaVersion: 1,
+      type: "session-ready",
+      recordingId: "recording-unattested",
+      guildId: "1533228590643155034",
+      channelId: "1533228823045214398",
+      gatewaySessionId: "gateway-session-unattested",
+    }));
+    await expect(unattestedClosed).resolves.toBe(1008);
+    expect(context.gateway.hasSession("recording-unattested")).toBe(false);
   });
 });

@@ -22,6 +22,62 @@ interface ConstraintRow { readonly validated: boolean; readonly identifier: stri
 
 interface MissingNameRow { readonly name: string; }
 
+interface AnswerPayloadFenceRow {
+  readonly definition_matches: boolean;
+  readonly wiring_matches: boolean;
+}
+
+const answerPayloadFenceV1Source = `
+BEGIN
+  IF (OLD.state IN (
+        'request_started', 'delivered', 'outcome_unknown',
+        'absent_unconfirmed', 'retraction_pending'
+      ) OR NEW.state IN (
+        'request_started', 'delivered', 'outcome_unknown',
+        'absent_unconfirmed', 'retraction_pending'
+      )) AND OLD.payload_hash IS DISTINCT FROM NEW.payload_hash THEN
+    RAISE EXCEPTION 'unresolved answer reconciliation payload is immutable'
+      USING ERRCODE = '23514',
+            CONSTRAINT = 'answer_effects_unresolved_payload_is_immutable';
+  END IF;
+  IF NEW.state IN (
+       'request_started', 'delivered', 'outcome_unknown',
+       'absent_unconfirmed', 'retraction_pending'
+     ) AND OLD.payload_bytes IS DISTINCT FROM NEW.payload_bytes THEN
+    RAISE EXCEPTION 'unresolved answer reconciliation payload is immutable'
+      USING ERRCODE = '23514',
+            CONSTRAINT = 'answer_effects_unresolved_payload_is_immutable';
+  END IF;
+  IF OLD.state IN (
+       'request_started', 'delivered', 'outcome_unknown',
+       'absent_unconfirmed', 'retraction_pending'
+     ) AND NEW.state NOT IN (
+       'request_started', 'delivered', 'outcome_unknown',
+       'absent_unconfirmed', 'retraction_pending', 'quarantined_unrecoverable'
+     ) AND OLD.payload_bytes IS DISTINCT FROM NEW.payload_bytes AND NOT (
+       OLD.state = 'retraction_pending' AND NEW.state = 'retracted' AND
+       NEW.payload_bytes = '{}'
+     ) THEN
+    RAISE EXCEPTION 'unresolved answer reconciliation payload is immutable'
+      USING ERRCODE = '23514',
+            CONSTRAINT = 'answer_effects_unresolved_payload_is_immutable';
+  END IF;
+  IF NEW.state IN (
+       'request_started', 'delivered', 'outcome_unknown',
+       'absent_unconfirmed', 'retraction_pending'
+     ) AND (
+       octet_length(NEW.payload_bytes) <= 2 OR
+       NEW.payload_bytes = '{}' OR
+       NEW.payload_hash !~ '^[a-f0-9]{64}$'
+     ) THEN
+    RAISE EXCEPTION 'unresolved answer reconciliation payload is absent'
+      USING ERRCODE = '23514',
+            CONSTRAINT = 'answer_effects_unresolved_payload_is_retained';
+  END IF;
+  RETURN NEW;
+END;
+`;
+
 export interface PostgresSchemaReadinessPort { assertReady(): Promise<void>; }
 
 /**
@@ -47,6 +103,9 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       await this.assertIndexes();
       await this.assertConstraints();
       await this.assertTriggers();
+      await this.assertAnswerPayloadFenceDefinition();
+      await this.assertAnswerQuarantineBijection();
+      await this.assertNoUnrecoverableAnswerEffects();
       const ledger = await readMigrationLedger(this.pool);
       if (ledger.length !== requiredMigrations.length) {
         throw new PostgresSchemaReadinessError(
@@ -158,10 +217,115 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
   }
 
   private async assertTriggers(): Promise<void> {
-    const missing = await findMissingPostgresTriggers(this.pool, ["meeting_core.post_call_outbox.post_call_outbox_transcription_execution_binding_is_immutable"]);
+    const missing = await findMissingPostgresTriggers(this.pool, [
+      "meeting_core.post_call_outbox.post_call_outbox_transcription_execution_binding_is_immutable",
+      "meeting_knowledge.question_jobs.question_jobs_binding_is_immutable",
+    ]);
     if (missing.length > 0) {
       throw new PostgresSchemaReadinessError(
         `required PostgreSQL trigger is missing or disabled: ${missing.join(", ")}`,
+      );
+    }
+  }
+
+  private async assertNoUnrecoverableAnswerEffects(): Promise<void> {
+    const result = await this.pool.query<{ readonly effect_id: string }>(
+      `SELECT effect_id
+       FROM meeting_core.answer_effect_reconciliation_quarantine
+       ORDER BY quarantined_at, effect_id
+       LIMIT 11`,
+    );
+    if (result.rows.length > 0) {
+      const visible = result.rows.slice(0, 10).map(({ effect_id: effectId }) => effectId);
+      const suffix = result.rows.length > 10 ? ", ..." : "";
+      throw new PostgresSchemaReadinessError(
+        `unrecoverable answer reconciliation effects require operator quarantine: ${visible.join(", ")}${suffix}`,
+      );
+    }
+  }
+
+  private async assertAnswerPayloadFenceDefinition(): Promise<void> {
+    const result = await this.pool.query<AnswerPayloadFenceRow>(
+      `SELECT procedure.prosrc = $1
+                AND procedure.provolatile = 'v'
+                AND procedure.prorettype = 'trigger'::regtype
+                AND pg_get_function_identity_arguments(procedure.oid) = ''
+                AND procedure_namespace.nspname = 'meeting_core'
+                AND procedure.proname = 'prevent_unresolved_answer_payload_mutation_v1'
+                AND language.lanname = 'plpgsql'
+                AND procedure.prokind = 'f'
+                AND NOT procedure.prosecdef
+                AND NOT procedure.proisstrict
+                AND NOT procedure.proleakproof
+                AND procedure.proparallel = 'u'
+                AND procedure.proconfig IS NULL
+              AS definition_matches
+              , trigger.tgfoid = to_regprocedure(
+                  'meeting_core.prevent_unresolved_answer_payload_mutation_v1()'
+                )
+                AND trigger.tgenabled = 'O'
+                AND trigger.tgtype = 19
+                AND (
+                  SELECT array_agg(attribute.attname ORDER BY attribute.attname)
+                  FROM unnest(trigger.tgattr::smallint[]) AS update_column(attnum)
+                  JOIN pg_attribute AS attribute
+                    ON attribute.attrelid = trigger.tgrelid
+                   AND attribute.attnum = update_column.attnum
+                   AND attribute.attnum > 0
+                   AND NOT attribute.attisdropped
+                ) = ARRAY['payload_bytes', 'payload_hash', 'state']::name[]
+              AS wiring_matches
+       FROM pg_trigger AS trigger
+       JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+       JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+       JOIN pg_proc AS procedure ON procedure.oid = trigger.tgfoid
+       JOIN pg_namespace AS procedure_namespace
+         ON procedure_namespace.oid = procedure.pronamespace
+       JOIN pg_language AS language ON language.oid = procedure.prolang
+       WHERE namespace.nspname = 'meeting_core'
+         AND relation.relname = 'answer_effects'
+         AND trigger.tgname = 'answer_effects_unresolved_payload_is_immutable'
+         AND NOT trigger.tgisinternal`,
+      [answerPayloadFenceV1Source],
+    );
+    const row = result.rows[0];
+    if (result.rows.length !== 1 || row === undefined || !row.wiring_matches) {
+      throw new PostgresSchemaReadinessError(
+        "answer reconciliation payload trigger wiring does not match v1",
+      );
+    }
+    if (!row.definition_matches) {
+      throw new PostgresSchemaReadinessError(
+        "answer reconciliation payload trigger function definition/version does not match v1",
+      );
+    }
+  }
+
+  private async assertAnswerQuarantineBijection(): Promise<void> {
+    const result = await this.pool.query<{ readonly effect_id: string }>(
+      `SELECT COALESCE(effect.effect_id, quarantine.effect_id) AS effect_id
+       FROM meeting_core.answer_effects AS effect
+       FULL OUTER JOIN meeting_core.answer_effect_reconciliation_quarantine AS quarantine
+         ON quarantine.effect_id = effect.effect_id
+       WHERE (effect.state = 'quarantined_unrecoverable')
+          IS DISTINCT FROM (quarantine.effect_id IS NOT NULL)
+          OR quarantine.effect_id IS NOT NULL AND (
+            effect.state <> 'quarantined_unrecoverable' OR
+            effect.payload_hash IS DISTINCT FROM quarantine.payload_hash OR
+            quarantine.prior_state NOT IN (
+              'request_started', 'delivered', 'outcome_unknown',
+              'absent_unconfirmed', 'retraction_pending'
+            ) OR quarantine.reason NOT IN (
+              'legacy_payload_scrubbed_before_0035',
+              'legacy_reconciliation_authority_absent_before_0035'
+            )
+          )
+       ORDER BY effect_id
+       LIMIT 11`,
+    );
+    if (result.rows.length > 0) {
+      throw new PostgresSchemaReadinessError(
+        `answer reconciliation quarantine is not bijective with quarantined effects: ${result.rows.map(({ effect_id: effectId }) => effectId).join(", ")}`,
       );
     }
   }

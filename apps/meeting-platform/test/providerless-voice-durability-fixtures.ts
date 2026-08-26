@@ -1,7 +1,14 @@
+import { createHash } from "node:crypto";
+import { once } from "node:events";
+import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CraigPlaybackGateway } from "@discord-meeting/craig-playback-adapter";
+import {
+  attachCraigPlaybackWebSocketServer,
+  CraigPlaybackGateway,
+} from "@discord-meeting/craig-playback-adapter";
+import { parseCraigPlaybackCommand } from "@discord-meeting/craig-gateway-contracts";
 import type {
   ConversationCancellationReason,
   ConversationPortResult,
@@ -20,6 +27,7 @@ import {
   PostgresLiveMeetingRepository,
 } from "@discord-meeting/postgres-adapter";
 import { Pool, type PoolConfig } from "pg";
+import { WebSocket } from "ws";
 
 import type { PlatformConfig } from "../src/config.js";
 import {
@@ -30,6 +38,7 @@ import { createLiveConversationResources } from
   "../src/composition/conversation-coordinator.js";
 import type { PlatformLiveMeetingRuntime } from "../src/live-meeting-runtime.js";
 import type {
+  LiveConversationOneShotReceiptPort,
   LiveMeetingStartedEvent,
   LiveRuntimeClock,
   LiveRuntimeTimer,
@@ -49,9 +58,21 @@ import {
 
 export const participantOne = "1533224474609057795";
 export const participantTwo = "2533224474609057795";
+export const sevenSyntheticParticipants = Object.freeze([
+  participantOne,
+  participantTwo,
+  "7533224474609057795",
+  "8533224474609057795",
+  "9533224474609057795",
+  "9633224474609057795",
+  "9733224474609057795",
+]);
+export const departedParticipant = "5533224474609057795";
 export const twoHoursMs = 7_200_000;
 export const oneMinuteMs = 60_000;
-export const hardGreetingLatencyMs = 500;
+// ADR-0051 anchors the externally meaningful claim at five seconds from the
+// producer join occurrence to Craig's accepted first audio.
+export const hardGreetingLatencyMs = 5_000;
 const botApplicationId = "3533224474609057795";
 const craigApplicationId = "4533224474609057795";
 const roomId = "voice-room-providerless-durability";
@@ -87,6 +108,21 @@ const livePolicyConfig = Object.freeze({
       greetingLocale: "en" as const,
       spokenName: "Test B",
     }),
+    [sevenSyntheticParticipants[2]!]: Object.freeze({
+      displayName: "Synthetic C", greetingLocale: "en" as const, spokenName: "Test C",
+    }),
+    [sevenSyntheticParticipants[3]!]: Object.freeze({
+      displayName: "Synthetic D", greetingLocale: "en" as const, spokenName: "Test D",
+    }),
+    [sevenSyntheticParticipants[4]!]: Object.freeze({
+      displayName: "Synthetic E", greetingLocale: "en" as const, spokenName: "Test E",
+    }),
+    [sevenSyntheticParticipants[5]!]: Object.freeze({
+      displayName: "Synthetic F", greetingLocale: "en" as const, spokenName: "Test F",
+    }),
+    [sevenSyntheticParticipants[6]!]: Object.freeze({
+      displayName: "Synthetic G", greetingLocale: "en" as const, spokenName: "Test G",
+    }),
   }),
 });
 
@@ -95,13 +131,18 @@ interface ComposePhaseInput {
   readonly database: PoolConfig;
   readonly groundedAnswers: GroundedAnswerProbe;
   readonly meetingId: string;
+  readonly participantGreetingProfiles?: PlatformConfig["participantGreetingProfiles"];
   readonly phase: string;
+  readonly receiptDecorator?: (
+    store: PostgresConversationOneShotReceiptStore,
+  ) => LiveConversationOneShotReceiptPort;
   readonly recordingRoot: string;
+  readonly waitForPlaybackReadiness?: boolean;
 }
 
 export interface QualificationPhase {
   readonly clock: VirtualClock;
-  readonly conversationRuntime: ControlledGroundedConversationRuntime;
+  readonly conversationRuntime: ControlledProviderlessConversationRuntime;
   readonly coordinator: NonNullable<Awaited<ReturnType<
     typeof createLiveConversationResources
   >>["coordinator"]>;
@@ -112,7 +153,9 @@ export interface QualificationPhase {
   readonly summarizer: SummaryStub;
   readonly transcriber: BoundedTranscriberProbe;
   readonly transport: DurableCraigPlaybackTransport;
+  connectPlayback(): Promise<void>;
   closeFinal(): Promise<void>;
+  killForRestart(): Promise<void>;
   releaseForRestart(): Promise<Awaited<ReturnType<
     PostgresLiveMeetingRepository["readSnapshotAndTimeline"]
   >>>;
@@ -123,6 +166,7 @@ export async function composePhase(input: ComposePhaseInput): Promise<Qualificat
   await pool.query("SELECT 1");
   const meetings = new PostgresLiveMeetingRepository(pool);
   const receipts = new PostgresConversationOneShotReceiptStore(pool);
+  const activeReceipts = input.receiptDecorator?.(receipts) ?? receipts;
   const playback = new CraigPlaybackGateway(() => input.clock.nowMilliseconds());
   const transport = await DurableCraigPlaybackTransport.open({
     clock: input.clock,
@@ -130,8 +174,30 @@ export async function composePhase(input: ComposePhaseInput): Promise<Qualificat
     phase: input.phase,
     root: input.recordingRoot,
   });
-  playback.register(transport);
-  const conversationRuntime = new ControlledGroundedConversationRuntime();
+  const bearerToken = "providerless-craig-playback-token";
+  const httpServer = createServer();
+  const playbackWebSocket = attachCraigPlaybackWebSocketServer(httpServer, {
+    bearerToken,
+    gateway: playback,
+  });
+  httpServer.listen(0, "127.0.0.1");
+  await once(httpServer, "listening");
+  const address = httpServer.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("providerless Craig WebSocket address was unavailable");
+  }
+  const socket = new WebSocket(`ws://127.0.0.1:${address.port}/v1/craig/playback`, {
+    headers: { authorization: `Bearer ${bearerToken}` },
+  });
+  await once(socket, "open");
+  transport.onEvent((event) => { socket.send(JSON.stringify(event)); });
+  socket.on("message", (data) => {
+    const payload = Array.isArray(data)
+      ? Buffer.concat(data).toString("utf8")
+      : Buffer.isBuffer(data) ? data.toString("utf8") : Buffer.from(data).toString("utf8");
+    void transport.send(parseCraigPlaybackCommand(JSON.parse(payload) as unknown));
+  });
+  const conversationRuntime = new ControlledProviderlessConversationRuntime();
   const resources = await createLiveConversationResources({
     config: conversationConfig,
     groundedAnswers: input.groundedAnswers,
@@ -147,13 +213,17 @@ export async function composePhase(input: ComposePhaseInput): Promise<Qualificat
     throw new Error("production conversation resources were not composed");
   }
   const conversation = createPlatformLiveConversationConfiguration({
-    config: livePolicyConfig,
+    config: input.participantGreetingProfiles === undefined
+      ? livePolicyConfig
+      : { ...livePolicyConfig, participantGreetingProfiles: input.participantGreetingProfiles },
     coordinator: resources.coordinator,
     farewellCues: resources.farewellCues,
     greetingCues: resources.greetingCues,
     isPlaybackReady: (recordingId) => playback.hasSession(recordingId),
     nowMilliseconds: () => input.clock.nowMilliseconds(),
-    oneShotReceipts: receipts,
+    // The production factory deliberately requires the concrete PostgreSQL adapter;
+    // this test decorator preserves its full port while pausing selected boundaries.
+    oneShotReceipts: activeReceipts as PostgresConversationOneShotReceiptStore,
   });
   if (conversation === undefined) {
     throw new Error("production live conversation policy was not composed");
@@ -178,11 +248,55 @@ export async function composePhase(input: ComposePhaseInput): Promise<Qualificat
     timer: input.clock,
     transcriber,
   });
+  let readinessTail = Promise.resolve();
+  const stopObservingReadiness = playback.onSessionReady((recordingId) => {
+    readinessTail = readinessTail.then(() => runtime.conversationPlaybackReady(recordingId));
+  });
+  let playbackConnected = false;
+  const connectPlayback = async (): Promise<void> => {
+    if (!playbackConnected) {
+      playbackConnected = true;
+      socket.send(JSON.stringify({
+        ...transport.identity,
+        channelId: "1533228823045214398",
+        guildId: "1533228590643155034",
+        playbackCapabilities: {
+          attestsDiscordVoiceSend: true,
+          deduplicatesCommandIds: true,
+          deduplicationRetentionSeconds: 300,
+          replaysOriginalStartedAtMs: true,
+        },
+        schemaVersion: 3,
+        type: "session-ready",
+      }));
+    }
+    while (!playback.hasSession(input.meetingId)) {
+      await new Promise<void>(setImmediate);
+    }
+    await readinessTail;
+  };
+  if (input.waitForPlaybackReadiness !== false) {
+    await connectPlayback();
+  }
   let closed = false;
-  const releaseResources = async (): Promise<void> => {
+  const releaseResources = async (closeCoordinator = true): Promise<void> => {
     await transport.whenIdle();
+    stopObservingReadiness();
     playback.close();
-    await resources.coordinator?.close(input.clock.nowMilliseconds());
+    socket.terminate();
+    await playbackWebSocket.close();
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => {
+        if (error === undefined) {
+          resolve();
+        } else {
+          reject(error);
+        }
+      });
+    });
+    if (closeCoordinator) {
+      await resources.coordinator?.close(input.clock.nowMilliseconds());
+    }
     await pool.end();
   };
   return {
@@ -195,9 +309,17 @@ export async function composePhase(input: ComposePhaseInput): Promise<Qualificat
       await runtime.close();
       await releaseResources();
     },
+    connectPlayback,
     conversationRuntime,
     coordinator: resources.coordinator,
     meetings,
+    killForRestart: async () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      await releaseResources(false);
+    },
     pool,
     projector,
     releaseForRestart: async () => {
@@ -350,10 +472,11 @@ export class GroundedAnswerProbe implements GroundedKnowledgeAnswerPort {
   }
 }
 
-class ControlledGroundedConversationRuntime implements ConversationRuntime {
+export class ControlledProviderlessConversationRuntime implements ConversationRuntime {
   public activeTurns = 0;
   public readonly cancelReasons: ConversationCancellationReason[] = [];
   public maximumActiveTurns = 0;
+  public readonly proactiveRequests: ConversationStartRequest[] = [];
   public readonly requests: ConversationStartRequest[] = [];
   private releaseLate: (() => void) | undefined;
 
@@ -362,16 +485,25 @@ class ControlledGroundedConversationRuntime implements ConversationRuntime {
     options: ConversationStartOptions = {},
   ): Promise<ConversationPortResult<ConversationRuntimeTurn>> {
     options.signal?.throwIfAborted();
-    if (request.literalSpeech !== "We decided to ship Friday.") {
+    const proactive = request.idempotencyKey.startsWith(
+      "25:proactive-conversation:v1|",
+    );
+    if (proactive && request.literalSpeech !== request.prompt) {
+      throw new Error("providerless proactive speech must be literal");
+    }
+    if (!proactive && request.literalSpeech !== "We decided to ship Friday.") {
       throw new Error("grounded qualification must use validated literal speech");
     }
-    this.requests.push(structuredClone(request));
+    const grounded = !proactive;
+    (grounded ? this.requests : this.proactiveRequests).push(structuredClone(request));
     this.activeTurns += 1;
     this.maximumActiveTurns = Math.max(this.maximumActiveTurns, this.activeTurns);
     let cancelled: ConversationCancellationReason | undefined;
-    const late = new Promise<void>((resolve) => {
-      this.releaseLate = resolve;
-    });
+    const late = grounded
+      ? new Promise<void>((resolve) => {
+          this.releaseLate = resolve;
+        })
+      : Promise.resolve();
     return Promise.resolve({
       ok: true,
       value: {
@@ -380,7 +512,7 @@ class ControlledGroundedConversationRuntime implements ConversationRuntime {
           this.cancelReasons.push(reason);
           this.releaseLate?.();
         },
-        events: this.events(request, late, () => cancelled),
+        events: this.events(request, late, grounded, () => cancelled),
       },
     });
   }
@@ -392,9 +524,12 @@ class ControlledGroundedConversationRuntime implements ConversationRuntime {
   private async *events(
     request: ConversationStartRequest,
     late: Promise<void>,
+    grounded: boolean,
     cancelled: () => ConversationCancellationReason | undefined,
   ): AsyncGenerator<ConversationRuntimeEvent> {
-    const attemptId = `grounded-attempt-${request.turnId}`;
+    const attemptId = `attempt-${createHash("sha256")
+      .update(request.idempotencyKey)
+      .digest("hex")}`;
     try {
       yield { attemptId, type: "accepted" };
       yield {
@@ -422,7 +557,9 @@ class ControlledGroundedConversationRuntime implements ConversationRuntime {
         type: "audio-start",
       };
       yield audioChunk(attemptId, request.turnId, 0, Uint8Array.of(3, 0, 4, 0));
-      await late;
+      if (grounded) {
+        await late;
+      }
       yield audioChunk(attemptId, request.turnId, 1, Uint8Array.of(5, 0, 6, 0));
       const reason = cancelled();
       if (reason === undefined) {

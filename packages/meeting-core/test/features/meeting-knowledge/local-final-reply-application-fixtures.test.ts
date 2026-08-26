@@ -64,6 +64,14 @@ export const references: readonly FocusedMemoryReference[] = Object.freeze(
   })),
 );
 
+export const fixedReplyText = Object.freeze({
+  insufficient_evidence: "There is not enough confirmed meeting evidence.",
+  not_a_question: "This reply is not a question.",
+  processing: "The meeting evidence is still being processed.",
+  unavailable: "A grounded answer is currently unavailable.",
+  unsupported_size: "This meeting is too large.",
+});
+
 function authorizationObservation(): Extract<
   QuestionAuthorizationObservation,
   { readonly status: "authorized" }

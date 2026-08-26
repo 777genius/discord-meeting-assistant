@@ -183,6 +183,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       authorizationDigest: "a".repeat(64),
       authorizationPolicyVersion: "discord.participant-current-results.v1",
       authorizationPrincipalRef: "opaque-principal",
+      bindingProtocolVersion: 2 as const,
       botApplicationIdentity: authority.botApplicationIdentity,
       canonicalEvidenceHash: authority.canonicalEvidenceHash,
       deliveryContainerId: channelId,
@@ -198,6 +199,11 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       questionHash: "b".repeat(64),
       questionId,
       requesterSubject: "c".repeat(64),
+      retrievalBinding: {
+        cutoverEpoch: "cutover-r1",
+        profileFingerprint: "e".repeat(64),
+        retrievalPath: "legacy_downstream_v1" as const,
+      },
       roomId: authority.roomId,
       scopeId: authority.scopeId,
       transcriptId: authority.transcriptId,
@@ -245,7 +251,12 @@ describe("PostgreSQL Local Final Reply adapters", () => {
 
     const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     const lease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "worker-1" });
-    expect(lease).toMatchObject({ generation: 1, jobId: questionId, state: "running" });
+    expect(lease).toMatchObject({
+      binding: { retrievalBinding: binding.retrievalBinding },
+      generation: 1,
+      jobId: questionId,
+      state: "running",
+    });
     if (lease === null) {
       return;
     }
@@ -333,7 +344,11 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       [questionId],
     );
     const ready = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "worker-2" });
-    expect(ready).toMatchObject({ generation: 2, state: "ready" });
+    expect(ready).toMatchObject({
+      binding: { retrievalBinding: binding.retrievalBinding },
+      generation: 2,
+      state: "ready",
+    });
     expect(await jobs.settle({
       generation: ready?.generation ?? 0,
       jobId: questionId,
@@ -349,6 +364,17 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       jobId: questionId,
       status: "duplicate",
     });
+    await expect(admissions.commit({
+      ...command,
+      binding: {
+        ...binding,
+        retrievalBinding: {
+          cutoverEpoch: "rollback-r2",
+          profileFingerprint: "f".repeat(64),
+          retrievalPath: "legacy_downstream_v1" as const,
+        },
+      },
+    })).resolves.toEqual({ status: "conflict" });
     const stored = await database.query(`
       SELECT authorization_principal_ref, question_text, binding, grounding_plan,
              answer_candidate, state, outcome
@@ -574,13 +600,13 @@ describe("PostgreSQL question job cleanup", () => {
     await database.query(
       `
         INSERT INTO meeting_core.answer_effects (
-          effect_id, state, projection_target_container_id,
+          effect_id, state, authority_scope_id, projection_target_container_id,
           delivery_container_id, reply_to_remote_message_id, marker,
           payload_bytes, payload_hash,
           binding_hash, authorization_digest, source_meeting_ids,
           request_started_at
         ) VALUES (
-          $1, 'outcome_unknown', $2, $2, $3, 'marker-1', '{"content":"sensitive"}',
+          $1, 'outcome_unknown', 'scope-1', $2, $2, $3, 'marker-1', '{"content":"sensitive"}',
           $4, $5, $6, ARRAY['source-meeting-1']::text[],
           transaction_timestamp() - interval '90 seconds'
         )

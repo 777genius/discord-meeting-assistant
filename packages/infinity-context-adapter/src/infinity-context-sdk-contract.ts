@@ -5,13 +5,23 @@ import {
   type HistoricalIndexPlanV1,
   type HistoricalSearchRequestV1,
   type HistoricalTopologyV1,
+  HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
-  InfinityContextError,
+  InfinityContextError as InfinityContextErrorV1,
   type DocumentRecord,
   type InfinityContextCapabilities,
-  type InfinityContextClient,
 } from "@infinity-context/sdk";
+import {
+  InfinityContextError as InfinityContextErrorV2,
+  type DocumentRecord as DocumentRecordV2,
+  type InfinityContextClient as InfinityContextClientV2,
+} from "@infinity-context/sdk-v2";
+
+import {
+  historicalRetrievalProjection,
+  validHistoricalRetrievalProjection,
+} from "./historical-retrieval-projection.js";
 
 const CANDIDATE_SOURCE_TYPE = "meeting_evidence_locator";
 export const DOCUMENT_SOURCE_TYPE = "meeting_final_human_evidence";
@@ -45,7 +55,9 @@ function asRecord(value: unknown): Readonly<Record<string, unknown>> {
     : {};
 }
 
-export function documentSourceExternalId(document: DocumentRecord): string | null {
+export function documentSourceExternalId(
+  document: DocumentRecord | DocumentRecordV2,
+): string | null {
   const value = asRecord(document).source_external_id;
   return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -56,12 +68,12 @@ export function documentSourceExternalId(document: DocumentRecord): string | nul
  * Treating only HTTP 404 as absence would leave every committed deletion in an
  * endless reconciliation loop against the official service.
  */
-export function documentIsDeleted(document: DocumentRecord): boolean {
+export function documentIsDeleted(document: DocumentRecord | DocumentRecordV2): boolean {
   return asRecord(document).status === "deleted";
 }
 
 /** Document lifecycle `status` is not proof that processing was accepted. */
-export function processMutationAccepted(document: DocumentRecord): boolean {
+export function processMutationAccepted(document: DocumentRecord | DocumentRecordV2): boolean {
   const value = asRecord(document).indexing_status;
   return typeof value === "string" && acceptedProcessStatuses.has(value);
 }
@@ -82,7 +94,7 @@ function boundedString(value: string, maximumUtf8Bytes: number): boolean {
     new TextEncoder().encode(value).byteLength <= maximumUtf8Bytes;
 }
 
-export function documentId(document: DocumentRecord): string {
+export function documentId(document: DocumentRecord | DocumentRecordV2): string {
   const value = asRecord(document).id;
   if (typeof value !== "string" || value.length === 0 || value.length > 200) {
     throw new InfinityContextAdapterContractError(
@@ -93,15 +105,16 @@ export function documentId(document: DocumentRecord): string {
 }
 
 export async function ingestHistoricalDocument(
-  client: InfinityContextClient,
+  client: InfinityContextClientV2,
   topology: HistoricalTopologyV1,
   document: HistoricalIndexDocumentV1,
   signal: AbortSignal,
-): Promise<DocumentRecord> {
+): Promise<DocumentRecordV2> {
   return (await client.documents.ingestDocument({
     classification: "internal",
     idempotencyKey: document.mutationId,
     memoryScopeExternalRef: topology.roomScopeExternalRef,
+    retrievalProjection: historicalRetrievalProjection(topology, document),
     signal,
     sourceExternalId: document.manifest.documentExternalId,
     sourceRefs: [{
@@ -120,7 +133,8 @@ export async function ingestHistoricalDocument(
 }
 
 export function isNotFound(error: unknown): boolean {
-  return error instanceof InfinityContextError && error.statusCode === 404;
+  return (error instanceof InfinityContextErrorV1 || error instanceof InfinityContextErrorV2) &&
+    error.statusCode === 404;
 }
 
 export function failure<
@@ -132,13 +146,13 @@ export function failure<
 } {
   return {
     code: safeFailureCode(
-      error instanceof InfinityContextError
+      error instanceof InfinityContextErrorV1 || error instanceof InfinityContextErrorV2
         ? error.code
         : error instanceof InfinityContextAdapterContractError
           ? "memory.invalid_sdk_response"
           : "memory.adapter_failure",
     ),
-    retryable: error instanceof InfinityContextError
+    retryable: error instanceof InfinityContextErrorV1 || error instanceof InfinityContextErrorV2
       ? error.retryable
       : !(error instanceof InfinityContextAdapterContractError),
     status,
@@ -206,7 +220,9 @@ export function validIndexPlan(
     request.documents.map(({ manifest }) => manifest.documentExternalId),
   );
   const mutationIds = new Set(request.documents.map(({ mutationId }) => mutationId));
-  return request.schemaVersion === 1 &&
+  const structurallyValid = request.schemaVersion === 1 &&
+    request.topology.projectionContractVersion ===
+      HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION &&
     request.documents.length > 0 &&
     request.documents.length <= MAXIMUM_SCOPE_DOCUMENTS &&
     candidateLocatorSet.size === request.documents.length &&
@@ -238,6 +254,15 @@ export function validIndexPlan(
       boundedString(document.remoteText, 32_768) &&
       boundedString(document.title, 200)
     );
+  if (!structurallyValid) {
+    return false;
+  }
+  for (const document of request.documents) {
+    if (!validHistoricalRetrievalProjection(request.topology, document)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function validSearchRequest(request: HistoricalSearchRequestInputV1): boolean {

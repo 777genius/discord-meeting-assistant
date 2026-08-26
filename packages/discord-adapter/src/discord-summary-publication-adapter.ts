@@ -46,6 +46,17 @@ type PublicationResult = SummaryPublicationResult<
 export interface DiscordSummaryPublicationAdapterOptions {
   readonly finalPublicationMode?: DiscordFinalPublicationMode;
   readonly publisherIdentity?: string;
+  readonly recordingPlayback?: (meetingId: string) => Promise<
+    | { readonly status: "processing" | "unavailable" }
+    | { readonly status: "ready"; readonly url: string }
+  >;
+  readonly recordingPlaybackReconciliation?: {
+    enqueue(input: {
+      readonly externalPublicationId: string;
+      readonly request: SummaryPublicationRequest;
+    }): Promise<void>;
+  };
+  /** Compatibility-only; production composition uses the readiness-aware port. */
   readonly recordingPlaybackUrl?: (meetingId: string) => string;
 }
 
@@ -67,7 +78,12 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
       const referenceHint = replacesLiveProjection
         ? liveReference
         : undefined;
-      const recordingPlaybackUrl = this.options.recordingPlaybackUrl?.(request.meetingId);
+      const playback = await this.options.recordingPlayback?.(request.meetingId);
+      const recordingPlaybackUrl = playback?.status === "ready"
+        ? playback.url
+        : this.options.recordingPlayback === undefined
+          ? this.options.recordingPlaybackUrl?.(request.meetingId)
+          : undefined;
       const reference = await this.publisher.publish({
         projectionKey: replacesLiveProjection
           ? createMeetingDiscordProjectionKey(
@@ -119,16 +135,76 @@ export class DiscordSummaryPublicationAdapter implements SummaryPublicationPort 
       ) {
         await this.tryRetireLiveProjection(request, locale, liveReference);
       }
+      const externalPublicationId = encodeDiscordExternalPublicationId(reference);
+      if (playback?.status === "processing") {
+        const reconciliation = this.options.recordingPlaybackReconciliation;
+        if (reconciliation === undefined) {
+          throw new Error("Recording playback processing has no durable reconciliation port");
+        }
+        await reconciliation.enqueue({ externalPublicationId, request });
+      }
       return {
         ok: true,
         value: {
-          externalPublicationId: encodeDiscordExternalPublicationId(reference),
+          externalPublicationId,
           publisherIdentity: this.options.publisherIdentity ?? "",
         },
       };
     } catch (error: unknown) {
       return { ok: false, failure: toDiscordPublicationFailure(error) };
     }
+  }
+
+  /**
+   * Idempotent direct edit used by a durable catalog-reconciliation worker.
+   * Processing remains pending; unavailable is terminal and never emits a URL.
+   */
+  public async reconcileRecordingPlayback(input: {
+    readonly externalPublicationId: string;
+    readonly request: SummaryPublicationRequest;
+  }): Promise<"edited" | "processing" | "unavailable"> {
+    const resolvePlayback = this.options.recordingPlayback;
+    if (resolvePlayback === undefined) {
+      return "unavailable";
+    }
+    const playback = await resolvePlayback(input.request.meetingId);
+    if (playback.status !== "ready") {
+      return playback.status;
+    }
+    const reference = decodeDiscordExternalPublicationId(input.externalPublicationId);
+    const locale = dominantTranscriptLocale(input.request.transcript.turns);
+    await this.publisher.publish({
+      currentReference: reference,
+      markdown: renderRussianSummaryMarkdown(input.request, playback.url),
+      parentChannelId: input.request.publicationTargetId,
+      projectionKey: this.finalPublicationMode === "replace-live"
+        ? createMeetingDiscordProjectionKey(
+            input.request.meetingId,
+            input.request.publicationTargetId,
+          )
+        : createMeetingDiscordFinalSummaryProjectionKey(
+            input.request.meetingId,
+            input.request.publicationTargetId,
+          ),
+      reconciledMarkdown: renderRussianSummaryMarkdown(
+        input.request,
+        playback.url,
+        finalSummaryCopy[locale].updatedAfterFinalProcessing,
+      ),
+      summaryAttachment: {
+        content: renderRussianFullSummaryAttachmentMarkdown(input.request, playback.url),
+        filename: "meeting-summary.md",
+      },
+      threadTitle: discordThreadTitle(input.request.summary.title),
+      transcriptAttachment: {
+        content: renderRussianFinalTranscriptAttachmentMarkdown(
+          input.request.transcript.turns,
+          locale,
+        ),
+        filename: finalTranscriptAttachmentFilename,
+      },
+    }, { directEditOnly: true });
+    return "edited";
   }
 
   /** A stale live draft must never invalidate an already-published final result. */

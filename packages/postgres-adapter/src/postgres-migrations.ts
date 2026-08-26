@@ -48,6 +48,11 @@ const migrationDefinitions = [
   },
   { fileName: "0030_provider_neutral_meeting_source_routing.sql" },
   { fileName: "0031_historical_memory_profile_rebuild.sql" },
+  { fileName: "0032_question_retrieval_binding_worker_fence.sql" },
+  { fileName: "0033_greeting_provider_start_fence.sql" },
+  { fileName: "0034_recording_publication_reconciliation.sql" },
+  { fileName: "0035_retain_answer_reconciliation_payload.sql" },
+  { fileName: "0036_validate_answer_reconciliation_payload.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

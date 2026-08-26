@@ -207,10 +207,19 @@ async function arrange() {
     "recording-end-to-discord-first-seen": 30_000,
   }));
   await Promise.all(accounts.map((account) => writePrivate(join(secretDirectory, account), `${"x".repeat(60)}.${account}`)));
+  const privateCoverageSourcePath = join(fixtures, "private-coverage.source.json");
+  await writePrivate(privateCoverageSourcePath, "{}");
   const definition = {
     answerFirstPacketMilliseconds: 4_000, campaignId: "campaign-admission-test",
     campaignRoot: join(root, "campaigns"), clockPreflightPath: join(root, "clock.json"),
-    fixtureManifestPath, recordingPlaybackOrigin: "https://recordings.test.example",
+    fixtureManifestPath, privateCoverageSourcePath,
+    recordingPlaybackOrigin: "https://recordings.test.example",
+    historicalReplyObservationPolicy: {
+      archivedThreadVisibilities: ["public", "private"],
+      endedAt: "2026-08-24T00:10:00.000Z", guildId: "1533228590643155034",
+      maximumArchivePagesPerParent: 100, maximumMessagePagesPerSurface: 100,
+      parentChannelIds: ["1533228891827736657"], startedAt: "2026-08-24T00:00:00.000Z",
+    },
     remote: { composeFile: "/srv/test/compose.yml", environmentFile: "/srv/test/.env", sourceRoot: "/srv/test/source" },
     revisions: { craig: "a".repeat(40), meetingPlatform: "b".repeat(40), pipecat: "c".repeat(40), subscriptionRuntime: "d".repeat(40) },
     runIds: ["run-1", "run-2", "run-3"], schemaVersion: 1, secretDirectory,

@@ -3,7 +3,7 @@ import type {
   HistoricalIndexResultV1,
   HistoricalMemoryOperationOptionsV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import type { DocumentRecord, InfinityContextClient } from "@infinity-context/sdk";
+import type { DocumentRecord, InfinityContextClient } from "@infinity-context/sdk-v2";
 
 import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
 import {

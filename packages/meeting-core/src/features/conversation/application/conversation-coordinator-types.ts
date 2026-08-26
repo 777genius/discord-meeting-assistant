@@ -46,6 +46,8 @@ export interface ProactiveConversationTurnInput {
   readonly literalSpeech?: string;
   readonly meetingId: string;
   readonly nowMs: number;
+  /** Stable provider command identity; retries may use a new coordinator turn ID. */
+  readonly playbackAttemptId?: string;
   readonly prompt: string;
   readonly recordingId: string;
   readonly speakerId: string;

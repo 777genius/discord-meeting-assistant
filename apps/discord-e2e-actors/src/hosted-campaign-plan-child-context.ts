@@ -19,8 +19,15 @@ export type HostedCampaignRuns = readonly [
 interface CampaignPaths {
   readonly artifactRoot: string;
   readonly campaignProof: string;
+  readonly greetingLedger: string;
+  readonly historicalReply: string;
+  readonly historicalReplyInput: string;
   readonly launchClockPreflight: string;
+  readonly lateGreeting: string;
+  readonly liveMemory: string;
+  readonly privateCoverage: string;
   readonly provenanceSnapshot: string;
+  readonly thinRemediation: string;
   readonly run: (ordinal: 1 | 2 | 3, leaf: string) => string;
 }
 
@@ -82,8 +89,15 @@ export function makeHostedCampaignChildContext(
   const paths: CampaignPaths = Object.freeze({
     artifactRoot: safeJoin(ownedRoot, "barriers"),
     campaignProof: safeJoin(ownedRoot, "campaign-proof.json"),
+    greetingLedger: safeJoin(ownedRoot, "greeting-ledger.json"),
+    historicalReply: safeJoin(ownedRoot, "historical-reply.json"),
+    historicalReplyInput: safeJoin(ownedRoot, "historical-reply-input.json"),
     launchClockPreflight: safeJoin(ownedRoot, "launch-clock-preflight.json"),
+    lateGreeting: safeJoin(ownedRoot, "late-greeting.json"),
+    liveMemory: safeJoin(ownedRoot, "live-memory.json"),
+    privateCoverage: safeJoin(ownedRoot, "private-coverage.json"),
     provenanceSnapshot: safeJoin(ownedRoot, "provenance.json"),
+    thinRemediation: safeJoin(ownedRoot, "thin-remediation.json"),
     run: (ordinal: 1 | 2 | 3, leaf: string) => safeJoin(ownedRoot, `run-${ordinal}`, leaf),
   });
   const [sequential, overlap, reconnect] = runs;
@@ -121,6 +135,24 @@ export function makeHostedCampaignChildContext(
   const conversationCompleted = reference(reconnect, {
     kind: "conversation-observer-completed", ordinal: 3, runId: reconnect.runId,
   });
+  const greetingLedgerReady = reference(reconnect, {
+    kind: "greeting-ledger-ready", ordinal: 3, runId: reconnect.runId,
+  });
+  const historicalReplyInputReady = reference(reconnect, {
+    kind: "historical-reply-input-ready", ordinal: 3, runId: reconnect.runId,
+  });
+  const historicalReplyReady = reference(reconnect, {
+    kind: "historical-reply-ready", ordinal: 3, runId: reconnect.runId,
+  });
+  const liveMemoryReady = reference(reconnect, {
+    kind: "live-memory-ready", ordinal: 3, runId: reconnect.runId,
+  });
+  const privateCoverageReady = reference(reconnect, {
+    kind: "private-coverage-ready", ordinal: 3, runId: reconnect.runId,
+  });
+  const remediationBundleReady = reference(reconnect, {
+    kind: "remediation-bundle-ready", ordinal: 3, runId: reconnect.runId,
+  });
   const supplementalCompleted = reference(reconnect, {
     kind: "supplemental-completed", ordinal: 3, runId: reconnect.runId,
   });
@@ -140,7 +172,10 @@ export function makeHostedCampaignChildContext(
 
   return {
     actorPlaybackCompleted, answerFirstPacket, answerIntent, answerObserverReady, barrierPath, bindings,
-    campaignVerified, captures, conversationCompleted, definition, observerSubscribed, overlap,
+    campaignVerified, captures, conversationCompleted, definition, greetingLedgerReady,
+    historicalReplyInputReady, historicalReplyReady, liveMemoryReady, privateCoverageReady,
+    remediationBundleReady,
+    observerSubscribed, overlap,
     overlapBinding, paths, playbackLinkSeen, provenanceAfter, provenanceBefore, reconnect,
     reconnectBinding, reconnectLeft, reconnectReady, recordingReady, remote, replayAttestationReady,
     revisions, runVerified, runs, sequential, sequentialBinding, serviceLevelSourcesReady,

@@ -23,11 +23,24 @@ interface MeetingRow {
   readonly snapshot: unknown;
 }
 
+const constructedHistoricalEvidenceAuthorities = new WeakSet<object>();
+
+/** Read-only nominal check; only this module's constructor can add instances. */
+export function assertConstructedPostgresHistoricalEvidenceAuthority(value: unknown): asserts value is PostgresHistoricalEvidenceAuthority {
+  if (typeof value !== "object" || value === null ||
+    !constructedHistoricalEvidenceAuthorities.has(value)) {
+    throw new Error("PostgreSQL historical evidence authority was not constructed by its adapter module");
+  }
+}
+
 export class PostgresHistoricalEvidenceAuthority implements HistoricalEvidenceAuthority {
   public constructor(
     private readonly pool: Pool,
     private readonly cancellation?: HistoricalPostgresCancellationPort,
-  ) {}
+  ) {
+    constructedHistoricalEvidenceAuthorities.add(this);
+    Object.freeze(this);
+  }
 
   public async loadAcceptedFinalMeeting(
     candidate: HistoricalReleaseBindingV1,

@@ -13,6 +13,7 @@ catalog:
   "@grpc/grpc-js": 1.14.4
   "@grpc/proto-loader": 0.8.1
   "@infinity-context/sdk": 0.1.0
+  "@infinity-context/sdk-v2": 0.2.0
   "@openai/codex": 0.146.0
   "@aws-sdk/client-s3": 3.1101.0
   "@aws-sdk/lib-storage": 3.1101.0
@@ -60,3 +61,4 @@ allowBuilds:
 
 overrides:
   "@infinity-context/sdk": "file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz"
+  "@infinity-context/sdk-v2": "file:vendor/infinity-context/artifacts/infinity-context-sdk-0.2.0.tgz"

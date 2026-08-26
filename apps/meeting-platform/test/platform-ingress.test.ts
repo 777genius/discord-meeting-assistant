@@ -83,6 +83,7 @@ function authoritativeTrackReceipt() {
   } as const;
 }
 
+// oxlint-disable-next-line max-lines-per-function
 describe("Platform recording ingress", () => {
   it("atomically records and schedules a legacy finalized recording before dispatch", async () => {
     const order: string[] = [];
@@ -256,11 +257,11 @@ describe("Platform recording ingress", () => {
       }
     });
     const started: RecordingLifecycleCommand = {
+      actors: [{ actorId: "1533227577286852649", kind: "human" }],
       eventId: "recording-1:start",
       occurredAt: "2026-08-02T00:00:00.000Z",
-      participantIds: ["1533227577286852649"],
       recordingId: "recording-1",
-      schemaVersion: 1,
+      schemaVersion: 2,
       source: meetingEnded.source,
       type: "meeting.started",
     };
@@ -295,9 +296,12 @@ describe("Platform recording ingress", () => {
 
     await ingress.ingestLifecycle(started);
     await ingress.ingestLifecycle({
-      ...started,
+      actor: { actorId: "1533228054724346087", kind: "human" },
       eventId: "recording-1:join:2",
-      participantId: "1533228054724346087",
+      occurredAt: started.occurredAt,
+      recordingId: started.recordingId,
+      schemaVersion: 2,
+      source: started.source,
       type: "participant.joined",
     });
 
@@ -307,6 +311,56 @@ describe("Platform recording ingress", () => {
       occurredAt: started.occurredAt,
       recordingId: started.recordingId,
       type: "meeting.started",
+    }));
+  });
+
+  it("fails closed for actor-less V1 participants at the derived voice boundary", async () => {
+    const acceptLifecycle = vi.fn(async () => {});
+    const ingress = new PlatformRecordingIngress({
+      dispatcher: { dispatchPending: async () => ({ dispatched: 0, failed: 0 }) },
+      failureClassifier,
+      ingress: {
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
+        ingestLifecycleEvent: async () => ({
+          kind: "accepted" as const, recordingId: "recording-v1", replayed: false,
+        }),
+        ingestPacketBatch: async () => ({
+          acceptedPackets: 0, duplicatePackets: 0, recordingId: "recording-v1",
+        }),
+      },
+      live: {
+        acceptLifecycle,
+        acceptVoiceBatch: () => {},
+        prepareForAuthoritativeFinal: () => {},
+      },
+      logger,
+      metrics,
+      outbox: { recordAndSchedule: async () => {} },
+      publicationTargets: { resolve: async () => "77777777777777777" },
+    });
+    const common = {
+      occurredAt: "2026-08-02T00:00:00.000Z",
+      recordingId: "recording-v1",
+      schemaVersion: 1 as const,
+      source: meetingEnded.source,
+    };
+
+    await ingress.ingestLifecycle({
+      ...common,
+      eventId: "recording-v1:start",
+      participantIds: ["1533227577286852649"],
+      type: "meeting.started",
+    });
+    await ingress.ingestLifecycle({
+      ...common,
+      eventId: "recording-v1:join",
+      participantId: "1533228054724346087",
+      type: "participant.joined",
+    });
+
+    expect(acceptLifecycle).toHaveBeenCalledTimes(1);
+    expect(acceptLifecycle).toHaveBeenCalledWith(expect.objectContaining({
+      participantIds: [], type: "meeting.started",
     }));
   });
 });

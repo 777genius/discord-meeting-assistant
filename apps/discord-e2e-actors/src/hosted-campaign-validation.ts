@@ -12,6 +12,8 @@ import type {
   HostedCampaignExecutableSpec,
   HostedCampaignInput,
 } from "./hosted-campaign-coordinator.js";
+import { governedCampaignObservationPolicyV1Schema } from
+  "./governed-private-campaign-observation-contract.js";
 
 function assertExactTarget(target: HostedCampaignTarget): void {
   for (const [key, expected] of Object.entries(HOSTED_CAMPAIGN_TARGET)) {
@@ -26,6 +28,15 @@ function assertExactTarget(target: HostedCampaignTarget): void {
 
 export function validateHostedCampaign(input: HostedCampaignInput): void {
   assertExactTarget(input.target);
+  const policy = governedCampaignObservationPolicyV1Schema.safeParse(
+    input.historicalReplyObservationPolicy,
+  );
+  const requiresHistoricalPolicy = input.children.some(({ entrypoint }) =>
+    entrypoint === "historical-reply-observer" || entrypoint === "historical-reply-preparer");
+  if (requiresHistoricalPolicy && (!policy.success || policy.data.guildId !== input.target.guildId ||
+    !policy.data.parentChannelIds.includes(input.target.publicationChannelId))) {
+    throw new Error("Hosted campaign historical observation policy is not the compiled private target");
+  }
   if (input.runs.length !== 3) {
     throw new Error("Hosted campaign requires exactly three runs");
   }
@@ -334,7 +345,8 @@ function matchesStaticOrBinding(
 function isFiniteCompletion(
   completion: HostedCampaignExecutableCompletion,
 ): completion is HostedFiniteProcessCompletion {
-  return new Set(["actor", "conversation-observer", "playback-link-observer", "recording-ready",
+  return new Set(["actor", "conversation-observer", "greeting-ledger-observer", "historical-reply-observer",
+    "historical-reply-preparer", "live-memory-observer", "private-coverage-observer", "remediation-bundle", "playback-link-observer", "recording-ready",
     "replay-attestation-publisher", "supplemental-player"]).has(completion.kind);
 }
 

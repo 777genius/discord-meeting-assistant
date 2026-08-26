@@ -23,6 +23,35 @@ pnpm --filter @discord-meeting/discord-e2e-actors compile:hosted-campaign-plan -
 Never reuse the output path. The runner initializes the fresh campaign artifact
 layout separately; compiling a plan does not create run or barrier artifacts.
 
+The definition also requires `privateCoverageSourcePath`. It is a private,
+create-only observation ledger emitted by the reviewed test-only scenario
+driver after the Discord/provider run; it is not a template and must not be
+authored or repaired by an operator. The finite `private-coverage-observer`
+validates that ledger, binds it to the compiled campaign/reconnect run and the
+pinned official bot identities, then publishes `private-coverage.json`. The
+hosted pass requires that artifact and the remediation bundle embeds its exact
+bytes. Provider-free structural output is rejected whenever it claims
+production evidence.
+
+The V1 coverage ledger has one ordered record for every supported, abstention,
+withdrawal, duplicate, crash, and ambiguous-outcome scenario. Every record
+retains run, actor, question, projection, effect, provider attempt, source
+generation, authorization epoch, Discord-permission epoch, and durable external
+receipt identities. Its governed surface inventory covers the target parent,
+all private-test child threads, other enumerated private-test channels, and the
+wrong-scope control surface. The total Discord answer creates must equal the
+number of admitted questions in the one governed target; every other surface
+must remain at zero.
+
+The same artifact retains the simultaneous first-join cohort and the expanded
+live-memory lifecycle: multiple RU/EN/mixed final human turns, a duplicate
+finalized event that resolves to one canonical row, correction/supersession,
+five-second availability, grounded barge-in cancellation, final historical
+generation, and zero serving/remote documents for the superseded or deleted
+ephemeral generation. Existing greeting-ledger and continuous twenty-minute
+late-audio artifacts remain mandatory and independently prove sequential joins,
+reconnect suppression, and absence of delayed greeting playback.
+
 ## Run the hosted campaign coordinator
 
 The package contains an executable coordinator for the fixed private-test
@@ -495,3 +524,113 @@ pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   /absolute/evidence/overlap.evidence.v6.json \
   /absolute/evidence/reconnect.evidence.v9.json
 ```
+
+## Historical reply qualification
+
+Current-meeting addressed voice does not qualify historical memory. The V2
+qualification runs only after the three V10 campaign artifacts exist and after
+the governed Meeting Platform restart completed inside the continuous Craig
+subscription. The official `conversation-observer` bot replies once to each
+canonical projection: the Russian supported question targets the final summary
+and the English unsupported question targets the live/final transcript. The indexed
+meeting and transcript must be the same meeting and transcript represented by
+that replied-to projection. One synthetic question must cite that transcript;
+one invented unsupported claim must receive a citation-free abstention.
+
+Prepare one private mode-0600 input from direct host observations. Its
+`restart.before` is the V10 campaign Meeting Platform instance;
+`restart.after` is the new instance with identical Compose config/project/service,
+immutable image, repository digest, and source revision. The `rehydration`
+section must be read from the current
+`meeting_core.historical_memory_sync` row after restart and must retain an
+`applied` source meeting, exact release, desired/applied generation, transcript
+identity, non-empty remote document count, exact non-rebuilding
+`applied_index_profile_id`. The create-only V2 qualification template retains
+the exact request/provider/profile/source-generation/filter/query/budget
+binding. It is consumed verbatim and compared with each nonterminal durable
+question job; it is never reconstructed from mutable environment. The authoritative turns are copied from
+the target run's same final retained transcript with SHA-256 text digests. Do
+not use operator timing, a different meeting, a generated summary, or an answer
+as authority. The discriminated target schema requires `summaryId` only for
+`final-summary` and forbids it for `live-transcript`; Discord marker inspection
+proves the selected branch. The schema rejects any target/authority meeting,
+run, or transcript mismatch and rejects readiness before the restarted instance
+has durably rehydrated.
+
+Retain the campaign admission receipt, exact plan, reviewed compiled release
+binding, and the fresh identity digest in the short-lived mutation admission.
+Set `historicalReplyTemplatePath` in the private campaign definition to the
+create-only exact V2 template. Omitting it leaves the historical preparer
+without its required environment and the campaign fails closed before Discord.
+The fresh receipt must bind the compiled private guild/publication channel,
+official observer, SUT token custody, restarted container/image/revision, and
+campaign plan. The input's digested V1 post-restart mutation-admission extension
+does not equate that fresh receipt with the original pre-restart receipt. It binds
+the original admission/release and plan, the fresh receipt and expiry, both
+restart sides, exact target and question digests, rehydration generations, and
+the expected retrieval, policy, worker-protocol, and job-generation fence. It is
+checked against the independently loaded receipts before login and against each
+durable question admission after ingress; stale, foreign, expired, or reused
+admission IDs fail closed through a create-only use marker in the original
+campaign artifact root. No Discord login occurs until the complete input parses, its readiness time has
+passed, and a read-only SSH probe independently re-reads the exact running
+Meeting Platform instance and singleton applied historical-sync row. The probe
+must exactly match the input's container, immutable image/source revision,
+source meeting, release, generation, transcript, Infinity document count, and
+durable observation time. The live observer then checks the target author,
+guild, channel, and message, sends both questions as Discord replies to that
+exact projection, and accepts only SUT answers replying to the exact observer
+question. Each pre-reconciliation admission retains the job, provider-attempt,
+grounding, and effect identities. The terminal settlement must preserve that
+exact tuple and its Discord external receipt must equal the observed answer
+message ID; substitution at any one field fails qualification. An accepted
+answer has empty message content, exactly one strict embed whose
+description is the only textual surface and whose marker URL is exact. Any other
+embed key or message side surface fails closed, including fields, title, author,
+footer, provider, media, timestamp, color, components, attachments, stickers,
+snapshots, activity, call, interaction, poll, role subscription, or thread data.
+The unsupported answer must equal
+the fixed English V1 insufficient-evidence contract byte-for-byte. The read-only restarted-runtime/index-profile probe is repeated
+immediately before each Discord send; a changed instance or durable row blocks
+that mutation. Evidence is a create-only private JSON file.
+
+```sh
+DISCORD_E2E_HISTORICAL_REPLY_MUTATION_TARGET=private-test-guild \
+DISCORD_E2E_HISTORICAL_REPLY_ADMISSION_RECEIPT=/absolute/evidence/campaign.admission.v1.json \
+DISCORD_E2E_HISTORICAL_REPLY_PLAN=/absolute/private/campaign-plan.json \
+DISCORD_E2E_HISTORICAL_REPLY_RELEASE_BINDING=/absolute/private/release-binding.v1.json \
+DISCORD_E2E_HISTORICAL_REPLY_INPUT=/absolute/private/historical-reply.input.v1.json \
+DISCORD_E2E_HISTORICAL_REPLY_OUTPUT=/absolute/evidence/historical-reply.evidence.v1.json \
+DISCORD_E2E_HISTORICAL_REPLY_QUIET_WINDOW_MS=10000 \
+DISCORD_E2E_HISTORICAL_REPLY_SECRET_DIRECTORY=/run/secrets/discord-e2e \
+DISCORD_E2E_HISTORICAL_REPLY_REMOTE_HOST=codex-workers-eu-01 \
+DISCORD_E2E_HISTORICAL_REPLY_REMOTE_SOURCE_ROOT=/srv/discord-meeting/source \
+DISCORD_E2E_HISTORICAL_REPLY_REMOTE_COMPOSE_FILE=/srv/discord-meeting/source/infra/deployment/compose.yaml \
+DISCORD_E2E_HISTORICAL_REPLY_REMOTE_ENV_FILE=/srv/discord-meeting/source.env \
+pnpm --filter @discord-meeting/discord-e2e-actors observe:historical-reply
+
+pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
+  apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
+  /absolute/evidence/sequential.evidence.v10.json \
+  /absolute/evidence/overlap.evidence.v10.json \
+  /absolute/evidence/reconnect.evidence.v10.json \
+  --historical-reply /absolute/evidence/historical-reply.evidence.v1.json
+
+pnpm --filter @discord-meeting/discord-e2e-actors verify:hosted-pass -- \
+  /absolute/private/campaign.pass.v2.json \
+  /absolute/private/campaign-plan.json \
+  /absolute/private/campaign-artifact-root
+```
+
+The supplemental flag preserves existing V10 readability. When supplied, the
+campaign verifier binds the proof to the exact V10 release, target run,
+canonical projection kind/message, same-meeting authoritative transcript bytes,
+and restart generation.
+It fails on wrong message references, authors, containers, meeting/release/
+generation/index profile, absent or foreign citations, claims/terms not present
+in their cited authoritative turns, a non-abstaining durable question outcome,
+different or non-Infinity durable retrieval bindings, a late duplicate inside
+the bounded post-answer quiet window, or any question/answer timestamp outside
+durable rehydration and mutation-admission bounds. Public thread delivery retains
+and verifies both the parent publication channel and thread ID; unsupported
+container types fail closed.

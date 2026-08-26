@@ -9,11 +9,7 @@ import type {
   HistoricalTurnSourceV1,
   HistoricalTopologyV1,
 } from "./ports/historical-memory.js";
-import type {
-  CoverageExtractV1,
-  CoverageReductionV1,
-  CoverageSelectedTurnV1,
-} from "./ports/historical-grounding.js";
+import type { CoverageExtractV1, CoverageReductionV1, CoverageSelectedTurnV1 } from "./ports/historical-grounding.js";
 
 export class HistoricalContractCodecError extends Error {
   public override readonly name = "HistoricalContractCodecError";
@@ -92,8 +88,13 @@ export function decodeHistoricalReleaseBindingV1(
 
 function decodeTopology(value: unknown): HistoricalTopologyV1 {
   const input = record(value, "plan.topology");
+  const hasProjectionContractVersion = Object.hasOwn(
+    input,
+    "projectionContractVersion",
+  );
   exactFields(input, [
     "indexGeneration",
+    ...(hasProjectionContractVersion ? ["projectionContractVersion"] : []),
     "releaseRef",
     "roomScopeExternalRef",
     "spaceSlug",
@@ -101,6 +102,9 @@ function decodeTopology(value: unknown): HistoricalTopologyV1 {
   ], "plan.topology");
   return Object.freeze({
     indexGeneration: string(input.indexGeneration, "plan.topology.indexGeneration"),
+    projectionContractVersion: hasProjectionContractVersion ? string(
+      input.projectionContractVersion, "plan.topology.projectionContractVersion",
+    ) : "legacy.document-retrieval-projection.none",
     releaseRef: string(input.releaseRef, "plan.topology.releaseRef"),
     roomScopeExternalRef: string(
       input.roomScopeExternalRef,
@@ -401,10 +405,7 @@ function coverageSelectedTurns(
   }));
 }
 
-function coverageSelectionStatus(
-  value: unknown,
-  field: string,
-): "no_match" | "selected" {
+function coverageSelectionStatus(value: unknown, field: string): "no_match" | "selected" {
   if (value !== "no_match" && value !== "selected") {
     throw new HistoricalContractCodecError(`${field} is unsupported`);
   }

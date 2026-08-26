@@ -95,8 +95,8 @@ const externalPostgresUrl = disposableExternalPostgresUrl(process.env);
 describe("Meeting Knowledge production-composition qualification", () => {
   it("leases one provider attempt across selector, answer repair, and safety deadlines", () => {
     expect([meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions, localFinalReplyPolicy.jobLeaseSeconds]).toEqual([2, (meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds + (meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions * meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds) + meetingKnowledgeProviderLeasePolicy.safetyMilliseconds) / 1_000]);
+    expect([localFinalReplyPolicy.retrieval.maximumCandidates, localFinalReplyPolicy.retrievalAdmission.infinityRolloutBasisPoints]).toEqual([24, 0]);
   });
-
   it("degrades transient Infinity health without blocking application readiness", async () => {
     const transientPool = new Pool({
       connectionString: "postgresql://synthetic.invalid/never-connected",

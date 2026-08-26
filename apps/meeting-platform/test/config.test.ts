@@ -19,6 +19,45 @@ function buildProvenance(releaseRevision = "c".repeat(40)) {
 }
 
 describe("platform configuration", () => {
+  it("admits public-reply crash injection only in the complete test-only local-reply profile", async () => {
+    const root = "/run/e2e-campaign/campaign-1/run-3";
+    const configured = await loadPlatformConfig({
+      ...environment, E2E_TEST_ONLY_LABEL: "true",
+      MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT: root,
+      MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID: "worker_before_crash",
+      MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
+    }, async (path) => `fixture:${path}`);
+    expect(configured.testOnly?.publicReplyCrashInjection).toEqual({
+      root, workerId: "worker_before_crash",
+    });
+    await expect(loadPlatformConfig({
+      ...environment,
+      MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT: root,
+      MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID: "worker_before_crash",
+      MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
+    }, async (path) => `fixture:${path}`)).rejects.toThrow("test-only local-final-reply");
+  });
+
+  it("loads an exact future-canary V2 provider binding without enabling serving", async () => {
+    const binding = {
+      capabilityFingerprint: "a".repeat(64), contractVersion: "context-retrieval.v2",
+      indexProfileDigest: "b".repeat(64), profileId: "meeting-knowledge-v2",
+      rankingPolicy: "weighted_rrf_canonical_preferences.v1",
+      requiredProviderLanes: ["postgres_keyword", "qdrant_dense"],
+      serviceRevision: "c".repeat(40),
+    };
+    const configured = await loadPlatformConfig({
+      ...environment, MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
+      MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON: JSON.stringify(binding),
+    }, async (path) => `fixture:${path}`);
+    expect(configured.meetingKnowledge?.retrievalV2ProviderBinding).toEqual(binding);
+    await expect(loadPlatformConfig({
+      ...environment, MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
+      MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON: JSON.stringify({
+        ...binding, requiredProviderLanes: ["qdrant_dense", "postgres_keyword"],
+      }),
+    }, async (path) => `fixture:${path}`)).rejects.toThrow();
+  });
   it("keeps the standard deployment wired to the complete fail-closed Infinity contract", async () => {
     const compose = await readFile(
       new URL("../../../infra/deployment/compose.yaml", import.meta.url),

@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 
-import type {
-  CanonicalEvidenceTurn,
-  FocusedMemoryReference,
-  GroundedAnswerCandidate,
-  GroundingPlan,
-  QuestionBindingSnapshot,
+import {
+  QuestionBinding,
+  isLegacyQuestionBinding,
+  type CanonicalEvidenceTurn,
+  type FocusedMemoryReference,
+  type GroundedAnswerCandidate,
+  type GroundingPlan,
+  type QuestionBindingSnapshot,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { MeetingSnapshot } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import { z } from "zod";
@@ -49,7 +51,7 @@ export function canonicalFinalReplyEvidenceHash(snapshot: MeetingSnapshot): stri
   }), "utf8").digest("hex");
 }
 
-const questionBindingV1Schema = z.object({
+const questionBindingBaseSchema = z.object({
   authorizationDigest: sha256Schema,
   authorizationPolicyVersion: boundedText,
   authorizationPrincipalRef: boundedText,
@@ -72,7 +74,94 @@ const questionBindingV1Schema = z.object({
   scopeId: boundedText,
   transcriptId: boundedText,
   transcriptVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+
+const retrievalV2IntervalSchema = z.object({
+  endAt: z.string(),
+  startAt: z.string(),
 }).strict();
+const retrievalV2RelativeIntervalSchema = z.object({
+  endMs: z.number(),
+  startMs: z.number(),
+}).strict();
+const retrievalV2WeightedKeySchema = z.object({
+  key: z.string(),
+  weightMicros: z.number(),
+}).strict();
+const retrievalV2RequestSchema = z.object({
+  binding: z.object({
+    capabilityFingerprint: z.string(),
+    contractVersion: z.literal("context-retrieval.v2"),
+    indexProfileDigest: z.string(),
+    profileId: z.string(),
+    rankingPolicy: z.literal("weighted_rrf_canonical_preferences.v1"),
+    requiredProviderLanes: z.array(z.string()),
+    serviceRevision: z.string(),
+  }).strict(),
+  budgets: z.object({
+    candidateLimit: z.number(),
+    deadlineMs: z.number(),
+    evidenceByteLimit: z.number(),
+    neighborRadius: z.literal(0),
+    responseByteLimit: z.number(),
+    resultLimit: z.number(),
+  }).strict(),
+  filters: z.object({
+    actorKeys: z.array(z.string()),
+    category: z.string().nullable(),
+    documentKeys: z.array(z.string()),
+    excludedSourceKeys: z.array(z.string()),
+    kinds: z.array(z.string()),
+    relativeTimeInterval: retrievalV2RelativeIntervalSchema.nullable(),
+    sourceGenerations: z.array(z.object({
+      projectionGeneration: z.string(),
+      sourceKey: z.string(),
+    }).strict()),
+    tagsAll: z.array(z.string()),
+    tagsAny: z.array(z.string()),
+    tagsNone: z.array(z.string()),
+    timeInterval: retrievalV2IntervalSchema.nullable(),
+  }).strict(),
+  queries: z.array(z.object({
+    query: z.string(),
+    queryId: z.string(),
+    weightMicros: z.number().optional(),
+  }).strict()),
+  schemaVersion: z.literal(2),
+  scope: z.object({
+    memoryScopeId: z.string(),
+    spaceId: z.string(),
+    threadId: z.string().nullable().optional(),
+  }).strict(),
+  softPreferences: z.object({
+    actorPreferences: z.array(retrievalV2WeightedKeySchema),
+    relativeTimeInterval: retrievalV2RelativeIntervalSchema.nullable(),
+    sourcePreferences: z.array(retrievalV2WeightedKeySchema),
+    timeInterval: retrievalV2IntervalSchema.nullable(),
+    timeWeightMicros: z.number().nullable(),
+  }).strict(),
+}).strict();
+
+const retrievalBindingSchema = z.object({
+  cutoverEpoch: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/u),
+  profileFingerprint: sha256Schema,
+  retrievalPath: z.enum(["infinity_locator_v1", "legacy_downstream_v1"]),
+}).strict().or(z.object({
+  cutoverEpoch: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/u),
+  profileFingerprint: sha256Schema,
+  request: retrievalV2RequestSchema,
+  retrievalPath: z.literal("infinity_locator_v2"),
+}).strict());
+
+const legacyQuestionBindingSchema = questionBindingBaseSchema.strict();
+const currentQuestionBindingSchema = questionBindingBaseSchema.extend({
+  bindingProtocolVersion: z.literal(2),
+  retrievalBinding: retrievalBindingSchema,
+}).strict();
+const questionBindingSchema = z.union([
+  currentQuestionBindingSchema,
+  legacyQuestionBindingSchema,
+]);
 
 const groundingEvidenceSchema = z.object({
   endMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -205,7 +294,83 @@ const groundedAnswerCandidateV1Schema = z.object({
 }).strict();
 
 export function decodeQuestionBinding(value: unknown): QuestionBindingSnapshot {
-  return questionBindingV1Schema.parse(value);
+  return QuestionBinding.create(
+    questionBindingSchema.parse(value) as unknown as QuestionBindingSnapshot,
+  ).toSnapshot();
+}
+
+export function questionAdmissionBindingHash(
+  binding: QuestionBindingSnapshot,
+): string {
+  const { authorizationPrincipalRef: _ephemeralPrincipal, ...dedupeBinding } = binding;
+  return hashJson(canonicalQuestionBindingValue(dedupeBinding));
+}
+
+export function preCanonicalProtocol2QuestionAdmissionBindingHash(
+  binding: QuestionBindingSnapshot,
+): string | null {
+  if (isLegacyQuestionBinding(binding)) {
+    return null;
+  }
+  const { authorizationPrincipalRef: _ephemeralPrincipal, ...dedupeBinding } = binding;
+  return hashJson(dedupeBinding);
+}
+
+function hashJson(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
+}
+
+function canonicalQuestionBindingValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalQuestionBindingValue);
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .toSorted(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, nested]) => [key, canonicalQuestionBindingValue(nested)]),
+  );
+}
+
+export function legacyQuestionAdmissionBindingHash(
+  binding: QuestionBindingSnapshot,
+): string | null {
+  if (!isLegacyQuestionBinding(binding)) {
+    return null;
+  }
+  const {
+    authorizationPrincipalRef: _ephemeralPrincipal,
+    deliveryContainerId: _deliveryContainerId,
+    ...legacyDedupeBinding
+  } = binding;
+  return createHash("sha256")
+    .update(JSON.stringify(legacyDedupeBinding), "utf8")
+    .digest("hex");
+}
+
+export function questionAdmissionBindingHashMatches(
+  binding: QuestionBindingSnapshot,
+  storedHash: string,
+): boolean {
+  const preCanonicalProtocol2Hash =
+    preCanonicalProtocol2QuestionAdmissionBindingHash(binding);
+  const deliverylessLegacyHash = legacyQuestionAdmissionBindingHash(binding);
+  return storedHash === questionAdmissionBindingHash(binding) ||
+    (preCanonicalProtocol2Hash !== null && storedHash === preCanonicalProtocol2Hash) ||
+    (deliverylessLegacyHash !== null && storedHash === deliverylessLegacyHash);
+}
+
+export function decodePersistedQuestionBinding(
+  value: unknown,
+  storedHash: string,
+): QuestionBindingSnapshot {
+  const binding = decodeQuestionBinding(value);
+  if (!questionAdmissionBindingHashMatches(binding, storedHash)) {
+    throw new Error("persisted question binding hash does not match its JSON authority");
+  }
+  return binding;
 }
 
 export function decodeGroundingPlan(value: unknown): GroundingPlan {

@@ -36,7 +36,7 @@ interface Deadline {
   readonly anchorMilliseconds: number;
   readonly expiresAtMilliseconds: number;
   readonly expires: Promise<void>;
-  readonly handle: LiveRuntimeTimerHandle;
+  handle?: LiveRuntimeTimerHandle;
   expired: boolean;
   readonly resolveExpiration: () => void;
 }
@@ -60,21 +60,45 @@ export class ParticipantGreetingDeadlines {
       this.onExpired(participantId);
       return freshness;
     }
+    this.installFresh(participantId, freshness);
+    return freshness;
+  }
+
+  /**
+   * Restores the original producer deadline without discarding a durable command
+   * merely because the observation clock is now stale. The caller must still
+   * prove that a commanded receipt exists before any provider invocation.
+   */
+  public restore(
+    participantId: string,
+    occurredAt: string,
+    observedAtMilliseconds: number,
+  ): ParticipantGreetingFreshness {
+    const freshness = participantGreetingFreshness(occurredAt, observedAtMilliseconds);
+    if (freshness.status === "fresh") {
+      this.installFresh(participantId, freshness);
+      return freshness;
+    }
+    const occurredAtMilliseconds = Date.parse(occurredAt);
+    if (!Number.isSafeInteger(observedAtMilliseconds) || observedAtMilliseconds < 0 ||
+      !Number.isSafeInteger(occurredAtMilliseconds) || occurredAtMilliseconds < 0 ||
+      occurredAtMilliseconds - observedAtMilliseconds > maximumFutureJoinSkewMilliseconds) {
+      return freshness;
+    }
     let resolveExpiration!: () => void;
     const expires = new Promise<void>((resolve) => {
       resolveExpiration = resolve;
     });
+    const anchorMilliseconds = Math.min(occurredAtMilliseconds, observedAtMilliseconds);
     const deadline: Deadline = {
       accepted: false,
-      anchorMilliseconds: freshness.anchorMilliseconds,
-      expiresAtMilliseconds: freshness.expiresAtMilliseconds,
-      expired: false,
+      anchorMilliseconds,
+      expiresAtMilliseconds: anchorMilliseconds + joinToFirstAudioDeadlineMilliseconds,
+      expired: true,
       expires,
-      handle: this.timer.schedule(freshness.remainingMilliseconds, () => {
-        this.expire(participantId, deadline);
-      }),
       resolveExpiration,
     };
+    resolveExpiration();
     this.deadlines.set(participantId, deadline);
     return freshness;
   }
@@ -82,7 +106,9 @@ export class ParticipantGreetingDeadlines {
   public clear(participantId: string): void {
     const deadline = this.deadlines.get(participantId);
     if (deadline !== undefined) {
-      this.timer.cancel(deadline.handle);
+      if (deadline.handle !== undefined) {
+        this.timer.cancel(deadline.handle);
+      }
       this.deadlines.delete(participantId);
     }
   }
@@ -115,6 +141,20 @@ export class ParticipantGreetingDeadlines {
     return this.deadlines.get(participantId)?.expiresAtMilliseconds;
   }
 
+  /** Selects the producer-anchored deadline that fences a shared command. */
+  public earliestParticipantId(participantIds: readonly string[]): string | undefined {
+    let earliest: { readonly participantId: string; readonly expiresAtMilliseconds: number }
+      | undefined;
+    for (const participantId of participantIds) {
+      const expiresAtMilliseconds = this.deadlines.get(participantId)?.expiresAtMilliseconds;
+      if (expiresAtMilliseconds !== undefined &&
+        (earliest === undefined || expiresAtMilliseconds < earliest.expiresAtMilliseconds)) {
+        earliest = { expiresAtMilliseconds, participantId };
+      }
+    }
+    return earliest?.participantId;
+  }
+
   /** Absolute producer-time admission check; the timer is only a wake-up. */
   public ensureFresh(participantId: string, observedAtMilliseconds: number): boolean {
     const deadline = this.deadlines.get(participantId);
@@ -132,7 +172,7 @@ export class ParticipantGreetingDeadlines {
   /** Stops the deadline only for provider-confirmed audio within the absolute budget. */
   public acceptFirstAudio(participantId: string, startedAtMilliseconds: number): boolean {
     const deadline = this.deadlines.get(participantId);
-    if (deadline === undefined || deadline.expired ||
+    if (deadline === undefined ||
       !Number.isSafeInteger(startedAtMilliseconds) ||
       startedAtMilliseconds < deadline.anchorMilliseconds ||
       startedAtMilliseconds >= deadline.expiresAtMilliseconds) {
@@ -143,7 +183,9 @@ export class ParticipantGreetingDeadlines {
     }
     if (!deadline.accepted) {
       deadline.accepted = true;
-      this.timer.cancel(deadline.handle);
+      if (deadline.handle !== undefined) {
+        this.timer.cancel(deadline.handle);
+      }
     }
     return true;
   }
@@ -189,7 +231,9 @@ export class ParticipantGreetingDeadlines {
   }
 
   private cancelDeadline(participantId: string, deadline: Deadline): void {
-    this.timer.cancel(deadline.handle);
+    if (deadline.handle !== undefined) {
+      this.timer.cancel(deadline.handle);
+    }
     deadline.expired = true;
     deadline.resolveExpiration();
     this.deadlines.delete(participantId);
@@ -206,5 +250,27 @@ export class ParticipantGreetingDeadlines {
     while (this.terminalTasks.size > 0) {
       await Promise.all(this.terminalTasks);
     }
+  }
+
+  private installFresh(
+    participantId: string,
+    freshness: Extract<ParticipantGreetingFreshness, { readonly status: "fresh" }>,
+  ): void {
+    let resolveExpiration!: () => void;
+    const expires = new Promise<void>((resolve) => {
+      resolveExpiration = resolve;
+    });
+    const deadline: Deadline = {
+      accepted: false,
+      anchorMilliseconds: freshness.anchorMilliseconds,
+      expiresAtMilliseconds: freshness.expiresAtMilliseconds,
+      expired: false,
+      expires,
+      resolveExpiration,
+    };
+    deadline.handle = this.timer.schedule(freshness.remainingMilliseconds, () => {
+      this.expire(participantId, deadline);
+    });
+    this.deadlines.set(participantId, deadline);
   }
 }

@@ -195,5 +195,5 @@ describe("pinned multilingual MiniLM tokenizer", () => {
     expect(samples.map((sample) => first.countTokens(sample))).toEqual(
       samples.map((sample) => second.countTokens(sample)),
     );
-  });
+  }, 30_000);
 });

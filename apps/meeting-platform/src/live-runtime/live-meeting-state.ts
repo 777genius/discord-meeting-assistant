@@ -88,6 +88,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
         isMeetingFinishing: () => state.finishing,
         logger: input.dependencies.logger,
         meetingId,
+        recoverInFlight: input.suppressInitialParticipantGreetings,
         timer: input.timer,
       });
   const farewell = input.dependencies.conversation?.farewells === undefined
@@ -134,6 +135,10 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     transcriptionFenceClosed: false,
   };
   farewell?.participantsPresent(input.event.participantIds);
-  greetings?.participantsPresent(input.event.participantIds, input.event.occurredAt);
+  if (input.suppressInitialParticipantGreetings) {
+    greetings?.participantsRestored(input.event.participantIds, input.event.occurredAt);
+  } else {
+    greetings?.participantsPresent(input.event.participantIds, input.event.occurredAt);
+  }
   return state;
 }

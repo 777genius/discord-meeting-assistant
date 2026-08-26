@@ -2,6 +2,8 @@ export const containerProvenanceFormat = `{"composeConfigHash":{{json (index .Co
 
 export const imageProvenanceFormat = `{"imageId":{{json .Id}},"repositoryDigests":{{json .RepoDigests}},"sourceRevision":{{json (index .Config.Labels "org.opencontainers.image.revision")}}}`;
 
+export const historicalReplyWorkerProcessFormat = `{"containerId":{{json .Id}},"hostProcessId":{{json .State.Pid}}}`;
+
 export const replayTargetContainerFormat = `{"composeProject":{{json (index .Config.Labels "com.docker.compose.project")}},"composeService":{{json (index .Config.Labels "com.docker.compose.service")}},"testOnly":{{json (index .Config.Labels "e2e.test-only")}}}`;
 
 export const completionReceiptsScript = String.raw`
@@ -55,6 +57,275 @@ SELECT jsonb_build_object(
       (SELECT snapshot -> 'summary' ->> 'summaryId' FROM target)
   )
 )::text;
+`;
+
+export const historicalReplyRehydrationQuery = `
+WITH candidate AS (
+  SELECT *
+  FROM meeting_core.historical_memory_sync
+  WHERE meeting_id = '__MEETING_ID__'
+    AND is_current
+    AND operation = 'index'
+    AND state = 'applied'
+    AND profile_rebuild_requested = false
+    AND plan IS NOT NULL
+    AND jsonb_typeof(remote_document_ids) = 'object'
+    AND jsonb_object_length(remote_document_ids) > 0
+), singleton AS (
+  SELECT * FROM candidate
+  WHERE (SELECT count(*) FROM candidate) = 1
+), lifecycle AS (
+  SELECT snapshot
+  FROM meeting_core.meetings
+  WHERE meeting_id = '__MEETING_ID__'
+    AND snapshot ->> 'lifecycleGeneration' ~ '^[3-9][0-9]*$'
+    AND snapshot -> 'identityProvenance' ->> 'producerCapabilityId' =
+      'meeting.lifecycle.sealed-actor-roster.v1'
+    AND snapshot -> 'identityProvenance' ->> 'actorObservationState' = 'consistent'
+    AND snapshot -> 'identityProvenance' ->> 'actorSemanticsVersion' = '1'
+    AND snapshot -> 'identityProvenance' ->> 'rosterState' = 'sealed'
+)
+SELECT jsonb_build_object(
+  'historicalReleaseId', release_id,
+  'sourceMeetingId', meeting_id,
+  'desiredSourceGeneration', desired_generation,
+  'transcriptId', transcript_id,
+  'transcriptVersion', transcript_version,
+  'state', state,
+  'infinityDocumentCount', jsonb_object_length(remote_document_ids),
+  'appliedIndexGeneration', applied_index_generation,
+  'appliedIndexProfileId', applied_index_profile_id,
+  'appliedReleaseRef', plan -> 'topology' ->> 'releaseRef',
+  'profileRebuildRequested', profile_rebuild_requested,
+  'canonicalTurnIds', (
+    SELECT jsonb_agg(turn_id ORDER BY turn_id)
+    FROM (
+      SELECT DISTINCT jsonb_array_elements_text(
+        document -> 'manifest' -> 'turnIds'
+      ) AS turn_id
+      FROM jsonb_array_elements(plan -> 'documents') AS document
+    ) AS covered
+  ),
+  'documentMappings', (
+    SELECT jsonb_agg(jsonb_build_object(
+      'documentExternalId', remote.key,
+      'remoteDocumentId', remote.value,
+      'plannedIndexGeneration', document -> 'manifest' ->> 'indexGeneration',
+      'plannedProfileId', document -> 'manifest' ->> 'embeddingTokenProfile',
+      'canonicalTurnIds', document -> 'manifest' -> 'turnIds'
+    ) ORDER BY remote.key)
+    FROM jsonb_each_text(remote_document_ids) AS remote
+    JOIN LATERAL (
+      SELECT document FROM jsonb_array_elements(plan -> 'documents') AS document
+      WHERE document -> 'manifest' ->> 'documentExternalId' = remote.key
+    ) AS planned ON true
+  ),
+  'plannedDocumentCount', jsonb_array_length(plan -> 'documents'),
+  'plannedGeneration', plan -> 'topology' ->> 'indexGeneration',
+  'plannedProfileIds', (
+    SELECT jsonb_agg(DISTINCT document -> 'manifest' ->> 'embeddingTokenProfile')
+    FROM jsonb_array_elements(plan -> 'documents') AS document
+  ),
+  'plannedScopeId', plan -> 'binding' ->> 'scopeId',
+  'plannedRoomId', plan -> 'binding' ->> 'roomId',
+  'scopeId', scope_id,
+  'roomId', room_id,
+  'trustedLifecycle', jsonb_build_object(
+    'lifecycleGeneration', (lifecycle.snapshot ->> 'lifecycleGeneration')::bigint,
+    'actorObservationState', lifecycle.snapshot -> 'identityProvenance' ->> 'actorObservationState',
+    'actorSemanticsVersion', (lifecycle.snapshot -> 'identityProvenance' ->> 'actorSemanticsVersion')::bigint,
+    'producerCapabilityId', lifecycle.snapshot -> 'identityProvenance' ->> 'producerCapabilityId',
+    'producerRevision', lifecycle.snapshot -> 'identityProvenance' ->> 'producerRevision',
+    'rosterState', lifecycle.snapshot -> 'identityProvenance' ->> 'rosterState',
+    'actors', lifecycle.snapshot -> 'actors'
+  ),
+  'observedAt', to_char(
+    updated_at AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  ),
+  'retrievalPath', 'infinity_locator_v2'
+)::text
+FROM singleton CROSS JOIN lifecycle;
+`;
+
+export const historicalReplyQuestionAdmissionQuery = `
+WITH candidate AS (
+  SELECT job.question_id, job.state, job.generation, job.policy_epoch,
+         worker_protocol_epoch, worker_protocol_generation,
+         binding -> 'retrievalBinding' AS retrieval_binding,
+         job.provider_attempt_id AS attempt_id,
+         job.grounding_plan::text AS grounding_plan_canonical_json,
+         effect.effect_id
+  FROM meeting_knowledge.question_jobs AS job
+  JOIN meeting_core.answer_effects AS effect
+    ON effect.effect_id = 'meeting-knowledge-answer:v1:' || job.question_id
+  WHERE job.question_id = '__QUESTION_ID__'
+    AND job.state = 'ready'
+    AND job.provider_attempt_id IS NOT NULL
+    AND job.grounding_plan IS NOT NULL
+    AND effect.state IN ('request_started', 'outcome_unknown', 'delivered')
+    AND binding ->> 'bindingProtocolVersion' = '2'
+    AND binding -> 'retrievalBinding' ->> 'retrievalPath' = 'infinity_locator_v2'
+), singleton AS (
+  SELECT * FROM candidate WHERE (SELECT count(*) FROM candidate) = 1
+)
+SELECT jsonb_build_object(
+  'questionId', question_id,
+  'jobId', question_id,
+  'state', state,
+  'attemptId', attempt_id,
+  'groundingPlanCanonicalJson', grounding_plan_canonical_json,
+  'effectId', effect_id,
+  'jobGeneration', generation,
+  'policyEpoch', policy_epoch,
+  'retrievalBinding', retrieval_binding,
+  'workerProtocolEpoch', worker_protocol_epoch,
+  'workerProtocolGeneration', worker_protocol_generation,
+  'observedAt', to_char(
+    clock_timestamp() AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  )
+)::text
+FROM singleton;
+`;
+
+export const historicalReplyQuestionOutcomeQuery = `
+WITH candidate AS (
+  SELECT question_id, state, outcome
+  FROM meeting_knowledge.question_jobs
+  WHERE question_id = '__QUESTION_ID__'
+    AND state = 'terminal'
+    AND outcome IN ('answered', 'insufficient_evidence')
+), singleton AS (
+  SELECT * FROM candidate
+  WHERE (SELECT count(*) FROM candidate) = 1
+)
+SELECT jsonb_build_object(
+  'questionId', question_id,
+  'state', state,
+  'outcome', outcome,
+  'observedAt', to_char(
+    clock_timestamp() AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  )
+)::text
+FROM singleton;
+`;
+
+export const historicalReplySettlementQuery = `
+WITH candidate AS (
+  SELECT job.question_id AS job_id,
+         job.provider_attempt_id AS attempt_id,
+         job.grounding_plan::text AS grounding_plan_canonical_json,
+         effect.effect_id,
+         effect.external_receipt
+  FROM meeting_knowledge.question_jobs AS job
+  JOIN meeting_core.answer_effects AS effect
+    ON effect.effect_id = 'meeting-knowledge-answer:v1:' || job.question_id
+  WHERE job.question_id = '__QUESTION_ID__'
+    AND job.state = 'terminal'
+    AND job.grounding_plan IS NOT NULL
+    AND effect.state = 'delivered'
+    AND effect.external_receipt IS NOT NULL
+), singleton AS (
+  SELECT * FROM candidate WHERE (SELECT count(*) FROM candidate) = 1
+)
+SELECT jsonb_build_object(
+  'jobId', job_id,
+  'attemptId', attempt_id,
+  'groundingPlanCanonicalJson', grounding_plan_canonical_json,
+  'effectId', effect_id,
+  'externalReceipt', external_receipt,
+  'observedAt', to_char(
+    clock_timestamp() AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  )
+)::text
+FROM singleton;
+`;
+
+export const greetingLedgerRowsQuery = `
+WITH requested(receipt_id, ordinal) AS (
+  VALUES __GREETING_RECEIPTS__
+), candidate AS (
+  SELECT requested.ordinal, receipt.receipt_id, receipt.cue_kind,
+         receipt.state, receipt.completed_at
+  FROM requested
+  JOIN meeting_core.conversation_one_shot_receipts AS receipt
+    ON receipt.receipt_id = requested.receipt_id
+  WHERE receipt.cue_kind = 'greeting'
+    AND receipt.state = 'played'
+    AND receipt.completed_at IS NOT NULL
+)
+SELECT jsonb_build_object(
+  'rows', COALESCE(jsonb_agg(jsonb_build_object(
+    'receiptId', receipt_id,
+    'cueKind', cue_kind,
+    'state', state,
+    'completedAt', to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  ) ORDER BY ordinal), '[]'::jsonb),
+  'settlementObservedAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+)::text
+FROM candidate
+HAVING count(*) = 4;
+`;
+
+export const liveMemoryRowsQuery = `
+WITH canonical AS (
+  SELECT jsonb_agg(jsonb_build_object(
+    'turnId', turn_id, 'speakerId', speaker_id, 'startMs', start_ms,
+    'endMs', end_ms, 'observationState', 'final',
+    'createdAt', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  ) ORDER BY start_ms, end_ms, speaker_id, turn_id) AS rows
+  FROM meeting_core.live_meeting_turns WHERE meeting_id = '__MEETING_ID__'
+), hot AS (
+  SELECT jsonb_agg(jsonb_build_object(
+    'turnId', hot.turn_id, 'speakerId', turn.speaker_id, 'observationState', 'final',
+    'sourceGeneration', hot.source_generation,
+    'identityGeneration', hot.identity_generation, 'turnHash', hot.turn_hash,
+    'projectedAt', to_char(hot.projected_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  ) ORDER BY hot.source_generation) AS rows
+  FROM meeting_knowledge.live_memory_hot_tail AS hot
+  JOIN meeting_core.live_meeting_turns AS turn
+    ON turn.meeting_id = hot.meeting_id AND turn.turn_id = hot.turn_id
+  WHERE hot.meeting_id = '__MEETING_ID__'
+), outbox AS (
+  SELECT jsonb_agg(jsonb_build_object(
+    'turnId', outbox.turn_id, 'speakerId', turn.speaker_id, 'observationState', 'final',
+    'sourceGeneration', outbox.source_generation, 'identityGeneration', outbox.identity_generation,
+    'state', outbox.state, 'turnHash', outbox.turn_hash,
+    'updatedAt', to_char(outbox.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  ) ORDER BY outbox.source_generation) AS rows
+  FROM meeting_knowledge.live_memory_outbox AS outbox
+  JOIN meeting_core.live_meeting_turns AS turn
+    ON turn.meeting_id = outbox.meeting_id AND turn.turn_id = outbox.turn_id
+  WHERE outbox.meeting_id = '__MEETING_ID__'
+), lifecycle AS (
+  SELECT snapshot
+  FROM meeting_core.meetings
+  WHERE meeting_id = '__MEETING_ID__'
+    AND snapshot ->> 'lifecycleGeneration' ~ '^[3-9][0-9]*$'
+    AND snapshot -> 'identityProvenance' ->> 'producerCapabilityId' =
+      'meeting.lifecycle.sealed-actor-roster.v1'
+    AND snapshot -> 'identityProvenance' ->> 'actorObservationState' = 'consistent'
+    AND snapshot -> 'identityProvenance' ->> 'actorSemanticsVersion' = '1'
+    AND snapshot -> 'identityProvenance' ->> 'rosterState' = 'sealed'
+)
+SELECT jsonb_build_object(
+  'canonicalTurns', COALESCE(canonical.rows, '[]'::jsonb),
+  'hotTail', COALESCE(hot.rows, '[]'::jsonb),
+  'outbox', COALESCE(outbox.rows, '[]'::jsonb),
+  'trustedLifecycle', jsonb_build_object(
+    'lifecycleGeneration', (lifecycle.snapshot ->> 'lifecycleGeneration')::bigint,
+    'actorObservationState', lifecycle.snapshot -> 'identityProvenance' ->> 'actorObservationState',
+    'actorSemanticsVersion', (lifecycle.snapshot -> 'identityProvenance' ->> 'actorSemanticsVersion')::bigint,
+    'producerCapabilityId', lifecycle.snapshot -> 'identityProvenance' ->> 'producerCapabilityId',
+    'producerRevision', lifecycle.snapshot -> 'identityProvenance' ->> 'producerRevision',
+    'rosterState', lifecycle.snapshot -> 'identityProvenance' ->> 'rosterState',
+    'actors', lifecycle.snapshot -> 'actors'
+  ),
+  'observedAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+)::text FROM canonical, hot, outbox, lifecycle;
 `;
 
 export const s3EvidenceScript = String.raw`

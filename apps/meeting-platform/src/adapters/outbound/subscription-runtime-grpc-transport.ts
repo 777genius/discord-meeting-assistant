@@ -9,27 +9,25 @@ import {
   type ClientUnaryCall,
   type ServiceClientConstructor,
   type ServiceError,
+  type MethodDefinition,
 } from "@grpc/grpc-js";
 import { loadSync } from "@grpc/proto-loader";
-import type {
-  SubscriptionRuntimeAgentTaskRequest,
-  SubscriptionRuntimeFailureCode,
-  SubscriptionRuntimeHealthResult,
-  SubscriptionRuntimeTaskResult,
-  SubscriptionRuntimeTransportPort,
-} from "@discord-meeting/subscription-runtime-adapter";
-
 import {
-  arrayValue,
-  booleanValue,
-  enumValue,
-  integerValue,
-  jsonObject,
-  optionalString,
-  recordValue,
-  requiredString,
-} from "./grpc-value-readers.js";
-import { completeUsage, partialTelemetry } from "./subscription-runtime-telemetry.js";
+  SubscriptionRuntimeGroundedAnswerAdapter,
+  type SubscriptionRuntimeAgentTaskRequest,
+  type SubscriptionRuntimeHealthResult,
+  type SubscriptionRuntimeTaskResult,
+  type SubscriptionRuntimeTransportPort,
+  type KnowledgeAnswerProviderExchangeIdentity,
+  type KnowledgeAnswerQualificationExecutionBinding,
+  type KnowledgeAnswerWireObservationPort,
+  type SubscriptionRuntimeGroundedAnswerAdapterOptions,
+} from "@discord-meeting/subscription-runtime-adapter";
+import { recordValue } from "./grpc-value-readers.js";
+import { fromGrpcHealthResponse, fromGrpcTaskResponse, toGrpcTaskRequest } from
+  "./subscription-runtime-grpc-mapping.js";
+export { fromGrpcTaskResponse, toGrpcTaskRequest } from
+  "./subscription-runtime-grpc-mapping.js";
 
 type UnaryMethod = (
   request: unknown,
@@ -48,26 +46,13 @@ interface GrpcTransportOptions {
   readonly serviceToken: string;
 }
 
-const failureCodes = new Set<SubscriptionRuntimeFailureCode>([
-  "backend_unavailable",
-  "needs_reconnect",
-  "permission_required",
-  "provider_output_invalid",
-  "provider_session_invalid",
-  "quota_limited",
-  "stale_generation",
-  "task_cancelled",
-  "task_mode_unsupported",
-  "task_timeout",
-  "telemetry_unavailable",
-  "unknown_runtime_failure",
-]);
-
 export class GrpcSubscriptionRuntimeTransport
   implements SubscriptionRuntimeTransportPort
 {
-  private readonly client: AgentRuntimeClient;
-  private readonly metadata: Metadata;
+  readonly #client: AgentRuntimeClient;
+  readonly #metadata: Metadata;
+  readonly #runAgentTaskDefinition: MethodDefinition<unknown, unknown>;
+  readonly #qualificationExchangeIdentities = new Set<string>();
 
   public constructor(options: GrpcTransportOptions) {
     if (options.serviceToken.trim().length < 16) {
@@ -85,12 +70,15 @@ export class GrpcSubscriptionRuntimeTransport
     );
     const root = loadPackageDefinition(definition) as Record<string, unknown>;
     const service = readNestedService(root);
-    this.client = new service(
+    this.#runAgentTaskDefinition = readRunAgentTaskDefinition(service);
+    this.#client = new service(
       options.address,
       credentials.createInsecure(),
     ) as unknown as AgentRuntimeClient;
-    this.metadata = new Metadata();
-    this.metadata.set("authorization", `Bearer ${options.serviceToken}`);
+    this.#metadata = new Metadata();
+    this.#metadata.set("authorization", `Bearer ${options.serviceToken}`);
+    productionGrpcTransports.add(this);
+    Object.freeze(this);
   }
 
   public async execute(
@@ -98,9 +86,9 @@ export class GrpcSubscriptionRuntimeTransport
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<SubscriptionRuntimeTaskResult> {
     const response = await callUnary(
-      this.client.runAgentTask.bind(this.client),
+      this.#client.runAgentTask.bind(this.#client),
       toGrpcTaskRequest(request),
-      this.metadata,
+      this.#metadata,
       request.timeoutMs,
       options.signal,
     );
@@ -108,121 +96,154 @@ export class GrpcSubscriptionRuntimeTransport
   }
 
   public async checkHealth(): Promise<SubscriptionRuntimeHealthResult> {
-    const response = recordValue(
-      await callUnary(
-        this.client.checkHealth.bind(this.client),
+    return fromGrpcHealthResponse(await callUnary(
+        this.#client.checkHealth.bind(this.#client),
         { service: "discord-meeting-summary" },
-        this.metadata,
+        this.#metadata,
         5_000,
-      ),
-      "health response",
-    );
-    const launcherSha256 = optionalString(response.launcherSha256);
-    return {
-      ...(launcherSha256 === undefined ? {} : { launcherSha256 }),
-      runtimeEngine: requiredString(response.runtimeEngine, "runtimeEngine"),
-      runtimeVersion: requiredString(response.runtimeVersion, "runtimeVersion"),
-      status: healthStatus(response.status),
-      warningCodes: arrayValue(response.warnings).map((warning) =>
-        requiredString(recordValue(warning, "warning").code, "warning.code"),
-      ),
-    };
+      ));
   }
 
   public close(): void {
-    this.client.close();
+    this.#qualificationExchangeIdentities.clear();
+    this.#client.close();
+  }
+
+  public claimQualificationExchange(identity: KnowledgeAnswerProviderExchangeIdentity): void {
+    const key = exchangeIdentityKey(identity);
+    if (this.#qualificationExchangeIdentities.has(key)) {
+      throw new Error("knowledge answer gRPC exchange is duplicated or replayed");
+    }
+    this.#qualificationExchangeIdentities.add(key);
+  }
+
+  public async executeQualificationCall(
+    request: SubscriptionRuntimeAgentTaskRequest,
+    options: { readonly signal?: AbortSignal },
+    capture: MutableWireCapture,
+  ): Promise<SubscriptionRuntimeTaskResult> {
+    const definition = this.#runAgentTaskDefinition;
+    const response = await callUnary(
+      (value, metadata, callOptions, callback) => this.#client.makeUnaryRequest(
+        definition.path,
+        (input) => captureRequestBytes(capture, definition.requestSerialize(input)),
+        (bytes) => definition.responseDeserialize(captureResponseBytes(capture, bytes)),
+        value,
+        metadata,
+        callOptions,
+        callback,
+      ),
+      toGrpcTaskRequest(request),
+      this.#metadata,
+      request.timeoutMs,
+      options.signal,
+    );
+    return fromGrpcTaskResponse(response);
   }
 }
 
-export function toGrpcTaskRequest(request: SubscriptionRuntimeAgentTaskRequest) {
-  return {
-    schemaVersion: request.protocolVersion,
-    requestId: request.runId,
-    tenantId: "discord-meeting",
-    workspaceId: request.context.metadata.meetingId,
-    correlationId: request.context.correlationId,
-    provider: "AGENT_RUNTIME_PROVIDER_CODEX",
-    providerInstanceId: "discord-meeting-summary-v3",
-    purpose: request.context.purpose,
-    systemPrompt: request.task.systemPrompt,
-    prompt: request.task.prompt,
-    outputSchemaJson: JSON.stringify(request.task.controls.outputSchema),
-    controlsJson: JSON.stringify(request.task.controls),
-    timeoutMs: request.timeoutMs,
-    cwd: request.cwd,
-    metadata: {
-      ...request.task.metadata,
-      application: request.context.application,
-      ...request.context.metadata,
-    },
-  };
+interface MutableWireCapture {
+  requestBytes: Uint8Array | null;
+  responseBytes: Uint8Array | null;
 }
 
-export function fromGrpcTaskResponse(input: unknown): SubscriptionRuntimeTaskResult {
-  const response = recordValue(input, "task response");
-  const protocolVersion = integerValue(response.schemaVersion, "schemaVersion");
-  const status = enumValue(response.status);
-  if (status === "AGENT_RUNTIME_TASK_STATUS_FAILED" || status === "2") {
-    const failure = recordValue(response.failure, "failure");
-    const causeCategory = optionalString(failure.causeCategory);
-    const telemetry = partialTelemetry(response.telemetry);
-    const usage = completeUsage(response.usage);
-    return {
-      failure: {
-        ...(causeCategory === undefined ? {} : { causeCategory }),
-        code: normalizeFailureCode(optionalString(failure.code)),
-        reconnectRequired: booleanValue(failure.reconnectRequired),
-        retryable: booleanValue(failure.retryable),
-        safeMessage:
-          optionalString(failure.safeMessage) ?? "Subscription runtime task failed",
-      },
-      protocolVersion,
-      status: "failed",
-      ...(telemetry === undefined ? {} : { telemetry }),
-      ...(usage === undefined ? {} : { usage }),
-    };
+const productionGrpcTransports = new WeakSet<GrpcSubscriptionRuntimeTransport>();
+const qualifiedAnswerAdapters = new WeakSet<SubscriptionRuntimeGroundedAnswerAdapter>();
+
+export function createGrpcQualifiedGroundedAnswerAdapter(input: {
+  readonly beforeProviderCall: (identity: KnowledgeAnswerProviderExchangeIdentity) => Promise<void>;
+  readonly options: SubscriptionRuntimeGroundedAnswerAdapterOptions;
+  readonly executionBinding?: KnowledgeAnswerQualificationExecutionBinding;
+  readonly transport: GrpcSubscriptionRuntimeTransport;
+}): SubscriptionRuntimeGroundedAnswerAdapter {
+  if (!productionGrpcTransports.has(input.transport)) {
+    throw new Error("knowledge answer qualification requires the repository gRPC transport");
   }
-  if (status === "AGENT_RUNTIME_TASK_STATUS_WAITING_FOR_INPUT" || status === "3") {
-    return { protocolVersion, status: "waiting_for_input" };
+  const observation = new GrpcKnowledgeAnswerWireObservation(input.transport,
+    input.beforeProviderCall);
+  const answer = new SubscriptionRuntimeGroundedAnswerAdapter(input.transport, input.options,
+    observation, input.executionBinding);
+  qualifiedAnswerAdapters.add(answer);
+  return answer;
+}
+
+export function assertGrpcQualifiedGroundedAnswerAdapter(value: unknown): void {
+  if (typeof value !== "object" || value === null ||
+    !qualifiedAnswerAdapters.has(value as SubscriptionRuntimeGroundedAnswerAdapter)) {
+    throw new Error("knowledge answer qualification requires a transport-issued gRPC adapter");
   }
-  if (status !== "AGENT_RUNTIME_TASK_STATUS_COMPLETED" && status !== "1") {
-    throw new Error("Subscription runtime returned an unknown task status");
+}
+
+class GrpcKnowledgeAnswerWireObservation implements KnowledgeAnswerWireObservationPort {
+  private readonly attempts = new Map<string, {
+    original: KnowledgeAnswerProviderExchangeIdentity | null;
+    repair: KnowledgeAnswerProviderExchangeIdentity | null;
+  }>();
+  private readonly captures = new Map<string, MutableWireCapture>();
+
+  public constructor(
+    private readonly transport: GrpcSubscriptionRuntimeTransport,
+    private readonly beforeProviderCall: (identity: KnowledgeAnswerProviderExchangeIdentity) =>
+      Promise<void>,
+  ) {}
+
+  public async execute(
+    identity: KnowledgeAnswerProviderExchangeIdentity,
+    request: SubscriptionRuntimeAgentTaskRequest,
+    options: { readonly signal?: AbortSignal },
+  ): Promise<SubscriptionRuntimeTaskResult> {
+    assertExchangeIdentityMatchesRequest(identity, request);
+    this.transport.claimQualificationExchange(identity);
+    const key = exchangeIdentityKey(identity);
+    if (this.captures.has(key)) {
+      throw new Error("knowledge answer gRPC exchange is duplicated or replayed");
+    }
+    const attempt = this.attempts.get(identity.attemptId);
+    if (identity.callOrdinal === "original") {
+      if (attempt !== undefined) {
+        throw new Error("knowledge answer original gRPC exchange is duplicated or stale");
+      }
+      this.attempts.set(identity.attemptId, { original: identity, repair: null });
+    } else {
+      if (attempt === undefined || attempt.original === null || attempt.repair !== null ||
+        attempt.original.purpose !== identity.purpose ||
+        JSON.stringify(attempt.original.runtimeProfile) !== JSON.stringify(identity.runtimeProfile) ||
+        attempt.original.runId === identity.runId) {
+        throw new Error("knowledge answer repair gRPC exchange is swapped or unbound");
+      }
+      attempt.repair = identity;
+    }
+    const capture: MutableWireCapture = { requestBytes: null, responseBytes: null };
+    this.captures.set(key, capture);
+    await this.beforeProviderCall(identity);
+    return await this.transport.executeQualificationCall(request, options, capture);
   }
 
-  const structuredOutput = jsonObject(response.structuredOutputJson, "structuredOutputJson");
-  const attestation = recordValue(response.executionAttestation, "executionAttestation");
-  const telemetry = partialTelemetry(response.telemetry);
-  const usage = completeUsage(response.usage);
-  return {
-    executionAttestation: {
-      canonicalRequestSha256: requiredString(
-        attestation.canonicalRequestSha256,
-        "canonicalRequestSha256",
-      ),
-      launcherSha256: requiredString(attestation.launcherSha256, "launcherSha256"),
-      model: requiredString(attestation.model, "model"),
-      provider: providerName(attestation.provider),
-      purpose: requiredString(attestation.purpose, "purpose"),
-      reasoningEffort: requiredString(attestation.reasoningEffort, "reasoningEffort"),
-      requestId: requiredString(attestation.requestId, "requestId"),
-      runtimeEngine: requiredString(attestation.runtimeEngine, "runtimeEngine"),
-      runtimePackageVersion: requiredString(
-        attestation.runtimePackageVersion,
-        "runtimePackageVersion",
-      ),
-      schemaVersion: integerValue(attestation.schemaVersion, "attestation.schemaVersion"),
-      selectedOutputKind: selectedOutputKind(attestation.selectedOutputKind),
-      selectedOutputSha256: requiredString(
-        attestation.selectedOutputSha256,
-        "selectedOutputSha256",
-      ),
-    },
-    protocolVersion,
-    status: "completed",
-    structuredOutput,
-    ...(telemetry === undefined ? {} : { telemetry }),
-    ...(usage === undefined ? {} : { usage }),
-  };
+  public take(identity: KnowledgeAnswerProviderExchangeIdentity): MutableWireCapture {
+    const key = exchangeIdentityKey(identity);
+    const capture = this.captures.get(key);
+    this.captures.delete(key);
+    if (capture === undefined) {
+      throw new Error("knowledge answer gRPC exchange is missing, stale, or substituted");
+    }
+    const result = { requestBytes: capture.requestBytes === null ? null :
+      Uint8Array.from(capture.requestBytes), responseBytes: capture.responseBytes === null ? null :
+      Uint8Array.from(capture.responseBytes) };
+    capture.requestBytes?.fill(0);
+    capture.responseBytes?.fill(0);
+    return result;
+  }
+
+  public finish(attemptId: string): void {
+    this.attempts.delete(attemptId);
+    for (const [key, capture] of this.captures) {
+      if (key.startsWith(`${attemptId}\u0000`)) {
+        capture.requestBytes?.fill(0);
+        capture.responseBytes?.fill(0);
+        this.captures.delete(key);
+      }
+    }
+  }
 }
 
 function readNestedService(root: Record<string, unknown>): ServiceClientConstructor {
@@ -233,6 +254,52 @@ function readNestedService(root: Record<string, unknown>): ServiceClientConstruc
     throw new Error("Agent runtime gRPC service definition is unavailable");
   }
   return version.AgentRuntimeService as ServiceClientConstructor;
+}
+
+function readRunAgentTaskDefinition(
+  service: ServiceClientConstructor,
+): MethodDefinition<unknown, unknown> {
+  const definition = service.service.RunAgentTask;
+  if (definition === undefined || definition.requestStream || definition.responseStream) {
+    throw new Error("Agent runtime unary task definition is unavailable");
+  }
+  return definition as MethodDefinition<unknown, unknown>;
+}
+
+function captureRequestBytes(capture: MutableWireCapture, bytes: Buffer): Buffer {
+  if (capture.requestBytes !== null) {
+    throw new Error("Agent runtime request was serialized more than once");
+  }
+  capture.requestBytes = Uint8Array.from(bytes);
+  return bytes;
+}
+
+function captureResponseBytes(capture: MutableWireCapture, bytes: Buffer): Buffer {
+  if (capture.responseBytes !== null) {
+    throw new Error("Agent runtime response was deserialized more than once");
+  }
+  capture.responseBytes = Uint8Array.from(bytes);
+  return bytes;
+}
+
+function exchangeIdentityKey(identity: KnowledgeAnswerProviderExchangeIdentity): string {
+  return `${identity.attemptId}\u0000${identity.callOrdinal}\u0000${identity.runId}`;
+}
+
+function assertExchangeIdentityMatchesRequest(
+  identity: KnowledgeAnswerProviderExchangeIdentity,
+  request: SubscriptionRuntimeAgentTaskRequest,
+): void {
+  const profile = identity.runtimeProfile;
+  if (!/^sqv4-[a-f0-9]{64}$/u.test(identity.attemptId) ||
+    identity.purpose !== request.context.purpose || identity.runId !== request.runId ||
+    profile.maxOutputTokens !== request.task.controls.maxOutputTokens ||
+    profile.model !== request.task.controls.model ||
+    profile.outputSchemaName !== request.task.controls.outputSchemaName ||
+    profile.policyVersion !== request.task.metadata.policyVersion ||
+    profile.reasoningEffort !== request.task.controls.reasoningEffort) {
+    throw new Error("knowledge answer gRPC exchange identity does not match the runtime request");
+  }
 }
 
 async function callUnary(
@@ -276,50 +343,4 @@ async function callUnary(
       abort();
     }
   });
-}
-
-function normalizeFailureCode(code: string | undefined): SubscriptionRuntimeFailureCode {
-  if (code !== undefined && failureCodes.has(code as SubscriptionRuntimeFailureCode)) {
-    return code as SubscriptionRuntimeFailureCode;
-  }
-  if (code?.includes("timeout") === true) {
-    return "task_timeout";
-  }
-  if (code?.includes("reconnect") === true) {
-    return "needs_reconnect";
-  }
-  if (code?.includes("session") === true) {
-    return "provider_session_invalid";
-  }
-  if (code?.includes("quota") === true) {
-    return "quota_limited";
-  }
-  return "unknown_runtime_failure";
-}
-
-function providerName(value: unknown): string {
-  const provider = enumValue(value);
-  if (provider === "AGENT_RUNTIME_PROVIDER_CODEX" || provider === "1") {
-    return "codex";
-  }
-  throw new Error("Execution attestation provider is not Codex");
-}
-
-function selectedOutputKind(value: unknown): string {
-  const kind = enumValue(value);
-  if (kind === "AGENT_RUNTIME_SELECTED_OUTPUT_KIND_STRUCTURED_OUTPUT" || kind === "1") {
-    return "structured_output";
-  }
-  throw new Error("Execution attestation selected output is not structured output");
-}
-
-function healthStatus(value: unknown): SubscriptionRuntimeHealthResult["status"] {
-  const status = enumValue(value);
-  if (status === "AGENT_RUNTIME_HEALTH_STATUS_SERVING" || status === "1") {
-    return "serving";
-  }
-  if (status === "AGENT_RUNTIME_HEALTH_STATUS_DEGRADED" || status === "2") {
-    return "degraded";
-  }
-  return "not_serving";
 }

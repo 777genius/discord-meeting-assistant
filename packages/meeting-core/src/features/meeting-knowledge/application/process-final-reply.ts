@@ -1,8 +1,6 @@
 import { requiresExhaustiveCoverage } from "../domain/question-scope.js";
-import {
-  QuestionBinding,
-  type QuestionBindingSnapshot,
-} from "../domain/question-job.js";
+import { QuestionBinding, type QuestionBindingSnapshot } from
+  "../domain/question-job.js";
 import {
   authorityMatchesBinding,
   authorizedForJob,
@@ -29,9 +27,10 @@ import {
 } from "./publish-final-reply.js";
 import {
   focusedHydrationMatchesReferences,
-  prepareSelectedFocusedEvidence,
   type SelectFocusedEvidence,
 } from "./select-focused-evidence.js";
+import { focusedMemoryRequest, isComposedLocalBinding,
+  prepareFocusedEvidence } from "./process-final-reply-retrieval.js";
 import type {
   AnswerPublicationPort,
   CurrentFinalReplyBinding,
@@ -124,6 +123,9 @@ export class ProcessFinalReplyJob {
     if (stalePolicy) {
       return this.publisher.settle(lease, "stale_binding");
     }
+    if (!isComposedLocalBinding(binding, this.input.policy)) {
+      return this.publisher.settle(lease, "stale_binding");
+    }
     if (
       lease.state === "ready" &&
       lease.answerCandidate !== null &&
@@ -198,22 +200,10 @@ export class ProcessFinalReplyJob {
     if (requiresExhaustiveCoverage(lease.questionText)) {
       return this.prepareExhaustiveGrounding(lease, binding, current.binding);
     }
-    const retrieval = await retrieveFocusedMemory(this.input.memory, {
-      authorizationPrincipalRef: binding.authorizationPrincipalRef,
-      canonicalEvidenceHash: binding.canonicalEvidenceHash,
-      expectedAuthorityGeneration: binding.memoryGeneration,
-      finalProjectionReceipt: binding.finalProjectionReceipt,
-      maximumCandidates: this.input.policy.retrieval.maximumCandidates,
-      meetingId: binding.meetingId,
-      meetingRevision: binding.meetingRevision,
-      neighborTurns: this.input.policy.retrieval.neighborTurns,
-      projectionTargetContainerId: binding.projectionTargetContainerId,
-      question: lease.questionText,
-      roomId: binding.roomId,
-      scopeId: binding.scopeId,
-      transcriptId: binding.transcriptId,
-      transcriptVersion: binding.transcriptVersion,
-    });
+    const retrieval = await retrieveFocusedMemory(
+      this.input.memory,
+      focusedMemoryRequest(binding, lease, this.input.policy),
+    );
     if (retrieval.status !== "current") {
       return this.settled(await this.publisher.publishFixed(
         lease,
@@ -288,7 +278,7 @@ export class ProcessFinalReplyJob {
       });
     }
     try {
-      const prepared = await prepareSelectedFocusedEvidence({
+      const prepared = await prepareFocusedEvidence({
         authorityGeneration: retrieval.authorityGeneration,
         binding,
         evidence: this.input.evidence,

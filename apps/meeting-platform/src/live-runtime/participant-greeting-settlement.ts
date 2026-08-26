@@ -13,6 +13,7 @@ import type { ParticipantGreetingReceipts } from "./participant-greeting-receipt
 
 const playbackCancellationMarginMilliseconds = 250;
 const playbackSettlementMarginMilliseconds = 250;
+const providerStartPersistenceAttempts = 3;
 export const participantGreetingSettlementSlotMarginMilliseconds =
   playbackCancellationMarginMilliseconds + playbackSettlementMarginMilliseconds;
 
@@ -28,8 +29,11 @@ interface CoordinateGreetingPlaybackInput {
   readonly clearTerminal: () => void;
   readonly deadlines: ParticipantGreetingDeadlines;
   readonly dependencies: GreetingSettlementDependencies;
+  /** Earliest producer deadline represented by this command. */
+  readonly deadlineParticipantId?: string;
   readonly markGreeted: () => void;
   readonly observeFirstAudio: (startedAtMilliseconds: number) => void;
+  readonly persistFirstAudio: (startedAtMilliseconds: number) => Promise<void>;
   readonly participantId: string;
   readonly playback: ParticipantGreetingPlayback;
   readonly playbackBoundMilliseconds: number;
@@ -45,20 +49,12 @@ export type CoordinatedGreetingPlayback =
 export async function coordinateGreetingPlayback(
   input: CoordinateGreetingPlaybackInput,
 ): Promise<CoordinatedGreetingPlayback> {
-  const firstAudio = await input.deadlines.race(
-    input.participantId,
-    input.playback.firstAudio,
-    input.dependencies.nowMilliseconds,
-  );
-  if (firstAudio.status === "expired") {
-    input.markGreeted();
-    await cancelGreetingPlaybackBounded(input.dependencies, input.participantId);
-    detachGreetingPlaybackSettlement(input.playback);
-    await input.receipts.settle(input.participantId, "suppressed", "ambiguous");
-    releaseAndAdvance(input);
-    return { status: "terminal" };
-  }
-  if (firstAudio.value.status === "unplayed") {
+  const deadlineParticipantId = input.deadlineParticipantId ?? input.participantId;
+  // Once the command is durable, the producer deadline no longer cancels its
+  // reconciliation. A duplicate provider command must return the original
+  // first-audio timestamp, which is validated against that retained deadline.
+  const firstAudio = await input.playback.firstAudio;
+  if (firstAudio.status === "unplayed") {
     const outcome = await awaitGreetingPlaybackSettlement(
       input.dependencies,
       input.participantId,
@@ -75,8 +71,8 @@ export async function coordinateGreetingPlayback(
     return { status: "terminal" };
   }
   if (!input.deadlines.acceptFirstAudio(
-    input.participantId,
-    firstAudio.value.startedAtMilliseconds,
+    deadlineParticipantId,
+    firstAudio.startedAtMilliseconds,
   )) {
     input.markGreeted();
     await cancelGreetingPlaybackBounded(input.dependencies, input.participantId);
@@ -86,7 +82,24 @@ export async function coordinateGreetingPlayback(
     input.clearTerminal();
     return { status: "terminal" };
   }
-  input.observeFirstAudio(firstAudio.value.startedAtMilliseconds);
+  try {
+    await persistProviderStart(input, firstAudio.startedAtMilliseconds);
+  } catch (error) {
+    input.dependencies.logger.error("Greeting provider start attestation retries exhausted", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      meetingId: input.dependencies.meetingId,
+      participantId: input.participantId,
+      reason: "provider-start-attestation-failed",
+    });
+    await cancelGreetingPlaybackBounded(input.dependencies, input.participantId);
+    detachGreetingPlaybackSettlement(input.playback);
+    await input.receipts.settle(input.participantId, "suppressed", "ambiguous");
+    input.markGreeted();
+    input.clearTerminal();
+    releaseAndAdvance(input);
+    return { status: "terminal" };
+  }
+  input.observeFirstAudio(firstAudio.startedAtMilliseconds);
   const outcome = await awaitGreetingPlaybackSettlement(
     input.dependencies,
     input.participantId,
@@ -95,6 +108,29 @@ export async function coordinateGreetingPlayback(
   );
   releaseAndAdvance(input);
   return { outcome, status: "outcome" };
+}
+
+async function persistProviderStart(
+  input: CoordinateGreetingPlaybackInput,
+  startedAtMilliseconds: number,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= providerStartPersistenceAttempts; attempt += 1) {
+    try {
+      await input.persistFirstAudio(startedAtMilliseconds);
+      return;
+    } catch (error) {
+      lastError = error;
+      input.dependencies.logger.warn("Greeting provider start persistence will retry", {
+        attempt,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        meetingId: input.dependencies.meetingId,
+        participantId: input.participantId,
+        reason: "provider-start-attestation-failed",
+      });
+    }
+  }
+  throw lastError;
 }
 
 function releaseAndAdvance(input: CoordinateGreetingPlaybackInput): void {

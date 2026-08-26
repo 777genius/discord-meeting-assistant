@@ -362,8 +362,14 @@ describe("Craig conversation playback", () => {
   it("accepts recording-scoped readiness and sender-side playback evidence", () => {
     expect(
       parseCraigPlaybackEvent({
-        schemaVersion: 1,
+        schemaVersion: 3,
         type: "session-ready",
+        playbackCapabilities: {
+          attestsDiscordVoiceSend: true,
+          deduplicatesCommandIds: true,
+          deduplicationRetentionSeconds: 300,
+          replaysOriginalStartedAtMs: true,
+        },
         recordingId: "recording-1",
         guildId: "1533224474609057793",
         channelId: "1533224474609057794",
@@ -377,6 +383,30 @@ describe("Craig conversation playback", () => {
         startedAtMs: 4_000,
       }),
     ).toMatchObject({ type: "playback-started", startedAtMs: 4_000 });
+  });
+
+  it("rejects playback activation without complete sender durability attestation", () => {
+    expect(() => parseCraigPlaybackEvent({
+      schemaVersion: 1,
+      type: "session-ready",
+      recordingId: "recording-1",
+      guildId: "1533224474609057793",
+      channelId: "1533224474609057794",
+      gatewaySessionId: "gateway-session-legacy",
+    })).toThrow();
+    expect(() => parseCraigPlaybackEvent({
+      schemaVersion: 3,
+      type: "session-ready",
+      playbackCapabilities: {
+        attestsDiscordVoiceSend: true,
+        deduplicatesCommandIds: true,
+        deduplicationRetentionSeconds: 300,
+      },
+      recordingId: "recording-1",
+      guildId: "1533224474609057793",
+      channelId: "1533224474609057794",
+      gatewaySessionId: "gateway-session-without-original-start-replay",
+    })).toThrow();
   });
 
   it("rejects unbounded, odd-length, or secret-bearing playback data", () => {

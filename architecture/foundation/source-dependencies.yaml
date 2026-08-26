@@ -259,6 +259,7 @@ boundaries:
         - "@discord-meeting/meeting-core"
         - "@huggingface/tokenizers"
         - "@infinity-context/sdk"
+        - "@infinity-context/sdk-v2"
       builtins:
         - node:crypto
         - node:fs
@@ -442,6 +443,7 @@ boundaries:
       - apps/meeting-platform/src/adapters/outbound/subscription-runtime-grpc-transport.ts
       - apps/meeting-platform/src/adapters/outbound/subscription-runtime-farewell-classifier.ts
       - apps/meeting-platform/src/adapters/outbound/system-conversation-delay.ts
+      - apps/meeting-platform/src/adapters/outbound/test-only-answer-delivery-crash-injection.ts
     allow:
       boundaries:
         - adapters.object-storage
@@ -471,6 +473,7 @@ boundaries:
         - zod
       builtins:
         - node:crypto
+        - node:fs
         - node:fs/promises
         - node:path
         - node:url
@@ -495,11 +498,13 @@ boundaries:
         - adapters.object-storage
         - apps.meeting-platform.recording-playback-application
         - core.meeting.lifecycle
+        - core.meeting.publishing
       packages:
         - "@aws-sdk/client-s3"
         - "@discord-meeting/meeting-core"
         - "@discord-meeting/object-storage-adapter"
         - fastify
+        - pg
       builtins:
         - node:crypto
         - node:stream

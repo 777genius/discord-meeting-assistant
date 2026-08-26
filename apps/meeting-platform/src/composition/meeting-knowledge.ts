@@ -17,9 +17,7 @@ import {
   GroundedMeetingAnswer,
   HistoricalExhaustiveMemoryRetrieval,
   MaintainFinalReplies,
-  ProcessFinalReplyJob,
-  SameRoomFocusedMemoryRetrieval,
-  SelectFocusedEvidence,
+  ProcessFinalReplyJob, qualifiedFocusedEvidenceCandidateLimit,
   type LocalFinalReplyPolicy,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
@@ -37,20 +35,22 @@ import {
   PostgresQuestionAdmissionCommit,
   PostgresQuestionJobStore,
 } from "@discord-meeting/postgres-adapter";
-import {
-  SubscriptionRuntimeGroundedAnswerAdapter,
-  SubscriptionRuntimeFocusedEvidenceSelectorAdapter,
-  subscriptionRuntimeCliEngine,
-  type SubscriptionRuntimeTransportPort,
-} from "@discord-meeting/subscription-runtime-adapter";
+import type { SubscriptionRuntimeTransportPort } from
+  "@discord-meeting/subscription-runtime-adapter";
 import type { Client } from "discord.js";
 import type { Pool } from "pg";
+import { TestOnlyAnswerDeliveryCrashInjection } from
+  "../adapters/outbound/test-only-answer-delivery-crash-injection.js";
 
 import type { PlatformConfig } from "../config.js";
 import { participantSpeakerAliases } from
   "../config/participant-greeting-profiles.js";
 import { classifyPlatformError } from "./observability.js";
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
+import { createPersistedFocusedMemoryRoute } from
+  "./meeting-knowledge-retrieval-router.js";
+import { createFocusedEvidenceSelector, createGroundedAnswerGenerator } from
+  "./meeting-knowledge-provider-composition.js";
 
 const processIntervalMilliseconds = 500;
 const reconciliationIntervalMilliseconds = 30_000;
@@ -102,16 +102,24 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
   // orchestration slack inside the durable lease.
   jobLeaseSeconds: providerAttemptLeaseSeconds,
   maximumProviderAttempts: 2,
+  legacyRetrievalMigration: Object.freeze({
+    deleteAfter: "2026-10-31",
+    enabled: true,
+    minimumQualifiedReleases: 2,
+    requireDrainedJobs: true,
+    requireNoUnresolvedEffects: true,
+  }),
   policyVersion: "meeting-knowledge.focused-memory-final-reply.v3",
-  retrieval: Object.freeze({
-    maximumCandidates: 40,
-    neighborTurns: 2,
+  retrieval: Object.freeze({ maximumCandidates: qualifiedFocusedEvidenceCandidateLimit, neighborTurns: 2 }),
+  retrievalAdmission: Object.freeze({
+    cutoverEpoch: "retrieval-binding-prerequisite-r1", infinityRolloutBasisPoints: 0,
+    infinityProfileFingerprint: "2e69df6bf22461ee8d6844c7e6699cfb099ad36d84b0aa15f1d3061754ff27be",
+    legacyProfileFingerprint: "3274bcd3dbbe20d913de335025d579614b3fec2531cf75b73dd8a7943aa95e2d",
   }),
 });
 
 export const localFinalReplyPolicyRelease = Object.freeze({
-  authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion,
-  policyEpoch: 2,
+  authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion, policyEpoch: 3,
   policyVersion: localFinalReplyPolicy.policyVersion,
 });
 
@@ -127,8 +135,19 @@ function discordQuestionIngressOptions(
   };
 }
 
+function createRetrievalV2Admission(
+  historicalMemory: PlatformHistoricalMemoryRuntime | undefined,
+  config: PlatformConfig,
+) {
+  const binding = config.meetingKnowledge?.retrievalV2ProviderBinding;
+  return binding === undefined || historicalMemory === undefined
+    ? undefined
+    : historicalMemory.createRetrievalV2Admission(binding);
+}
+
 export interface MeetingKnowledgeLocalFinalReplyRuntime {
   close(): Promise<void>;
+  processPending(): Promise<void>; reconcilePending(): Promise<void>;
   settleIngress(): Promise<void>;
   start(): void;
 }
@@ -146,37 +165,6 @@ class ConfiguredDiscordQuestionScope implements DiscordQuestionScopePort {
   }
 }
 
-function createGroundedAnswerGenerator(config: PlatformConfig,
-  runtimeTransport: SubscriptionRuntimeTransportPort) {
-  return new SubscriptionRuntimeGroundedAnswerAdapter(runtimeTransport, {
-    expectedLauncherSha256: config.subscriptionRuntime.launcherSha256,
-    expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-    speakerAliases: participantSpeakerAliases(config.participantGreetingProfiles),
-    timeoutMs: meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds,
-  });
-}
-
-function createFocusedEvidenceSelector(input: {
-  readonly launcherSha256: string;
-  readonly logger: Logger;
-  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
-}): SelectFocusedEvidence {
-  return new SelectFocusedEvidence(
-    new SubscriptionRuntimeFocusedEvidenceSelectorAdapter(
-      input.runtimeTransport,
-      {
-        expectedLauncherSha256: input.launcherSha256,
-        expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-        timeoutMs: meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds,
-      },
-    ),
-    (measurement) => {
-      input.logger.info("Focused evidence selection settled", measurement);
-    },
-    () => performance.now(),
-  );
-}
-
 export function createMeetingKnowledgeLocalFinalReply(input: {
   readonly answerDelivery?: AnswerDeliveryPort;
   readonly answers?: GroundedMeetingAnswer;
@@ -190,11 +178,14 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
 }): MeetingKnowledgeLocalFinalReplyRuntime {
   const servingEnabled = input.config.meetingKnowledge?.localFinalReply === true;
   const jobs = new PostgresQuestionJobStore(input.pool, localFinalReplyPolicyRelease);
-  const publication = new DurableAnswerPublication({
-    delivery: input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
+  const baseDelivery = input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
       createDiscordOneAttemptAnswerRest(input.config.secrets.discordToken),
       input.config.discordApplicationId,
-    ),
+    );
+  const crash = input.config.testOnly?.publicReplyCrashInjection;
+  const publication = new DurableAnswerPublication({
+    delivery: crash === undefined ? baseDelivery
+      : new TestOnlyAnswerDeliveryCrashInjection(baseDelivery, crash.root, crash.workerId),
     payloads: new DiscordAnswerPayloadCodec(),
     store: new PostgresAnswerEffectStore(input.pool, localFinalReplyPolicyRelease),
   });
@@ -251,32 +242,46 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   const historicalAuthorization = input.historicalMemory === undefined
     ? undefined
     : new DiscordHistoricalAuthorizationAdapter(input.client, principals);
-  const memory = input.historicalMemory === undefined ||
-      historicalAuthorization === undefined
-    ? currentMemory
-    : new SameRoomFocusedMemoryRetrieval({
-        current: currentMemory,
-        historical: input.historicalMemory.createFocusedRetrieval(
-          historicalAuthorization,
-        ),
-        turnHashes: { hash: canonicalFinalReplyTurnHash },
-      }, {
-        historicalServingAuthorized: () =>
-          input.historicalMemory?.servingAuthorized() === true,
-        remoteSearchAvailable: () =>
-          input.historicalMemory?.searchEnabled() === true,
-      });
+  const memory = createPersistedFocusedMemoryRoute({
+    current: currentMemory,
+    historicalServingAuthorized: () =>
+      input.historicalMemory?.servingAuthorized() === true,
+    ...(input.historicalMemory === undefined || historicalAuthorization === undefined
+      ? {} : {
+          legacyHistorical: input.historicalMemory.createFocusedRetrieval(
+            historicalAuthorization,
+          ),
+          retrievalV2Historical:
+            input.historicalMemory.createFocusedLocatorRetrievalV2(
+              historicalAuthorization,
+            ),
+        }),
+    remoteSearchAvailable: () => input.historicalMemory?.searchEnabled() === true,
+    turnHashes: { hash: canonicalFinalReplyTurnHash },
+  });
   const admission = new AdmitCurrentFinalReply(
     evidence,
     authorization,
     admissions,
-    localFinalReplyPolicy,
+    Object.freeze({
+      ...localFinalReplyPolicy,
+      retrievalAdmission: Object.freeze({
+        ...localFinalReplyPolicy.retrievalAdmission,
+        ...(input.config.meetingKnowledge.retrievalV2ProviderBinding === undefined
+          ? {}
+          : { retrievalV2ProviderBinding:
+              input.config.meetingKnowledge.retrievalV2ProviderBinding }),
+      }),
+    }),
+    createRetrievalV2Admission(input.historicalMemory, input.config),
   );
-  const generator = createGroundedAnswerGenerator(input.config, input.runtimeTransport);
+  const generator = createGroundedAnswerGenerator({ config: input.config, runtimeTransport: input.runtimeTransport,
+    timeoutMs: meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds,
+  });
   const selector = createFocusedEvidenceSelector({
     launcherSha256: input.config.subscriptionRuntime.launcherSha256,
-    logger: input.logger,
-    runtimeTransport: input.runtimeTransport,
+    logger: input.logger, runtimeTransport: input.runtimeTransport,
+    timeoutMs: meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds,
   });
   const processor = new ProcessFinalReplyJob({
     answerPublication: publication,
@@ -396,6 +401,16 @@ export function createMeetingKnowledgePollingRuntime(input: {
         reconciling = undefined;
       });
   };
+  const processPending = async (): Promise<void> => {
+    await processing;
+    processOnce();
+    await processing;
+  };
+  const reconcilePending = async (): Promise<void> => {
+    await reconciling;
+    reconcile();
+    await reconciling;
+  };
   return {
     close: async () => {
       input.handler?.close();
@@ -404,6 +419,8 @@ export function createMeetingKnowledgePollingRuntime(input: {
       const ingress = input.handler?.settle();
       await awaitBoundedFinalReplyDrain([ingress, processing, reconciling]);
     },
+    processPending,
+    reconcilePending,
     settleIngress: () => input.handler?.settle() ?? Promise.resolve(),
     start: () => {
       if (processTimer !== undefined) {

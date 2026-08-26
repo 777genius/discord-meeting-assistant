@@ -5,7 +5,7 @@ import type {
   LiveDiscordPlaybackRecordingIdentity,
   LiveDiscordPlaybackRecordingIdentitySource,
 } from "./live-discord-playback-link-observer.js";
-import { recordingReadyReceiptV1Schema } from "./recording-ready-receipt.js";
+import { recordingReadyReceiptSchema } from "./recording-ready-receipt.js";
 
 const maximumReceiptBytes = 64 * 1024;
 
@@ -36,7 +36,7 @@ export class RecordingReadyFileIdentitySource implements LiveDiscordPlaybackReco
         after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
         throw new Error("Playback-link recording-ready input changed while reading");
       }
-      const receipt = recordingReadyReceiptV1Schema.parse(JSON.parse(
+      const receipt = recordingReadyReceiptSchema.parse(JSON.parse(
         new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, bytesRead)),
       ) as unknown);
       return Object.freeze({ meetingId: receipt.meetingId, recordingId: receipt.recordingId });

@@ -94,6 +94,7 @@ afterAll(async () => {
   }
 });
 
+// oxlint-disable-next-line max-lines-per-function
 describe("Node to Python providerless conversation E2E", () => {
 
   it("streams normalized PCM through a real Pipecat PipelineTask", async () => {
@@ -252,8 +253,14 @@ describe("Node to Python providerless conversation E2E", () => {
     try {
       await once(socket, "open");
       socket.send(JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 3,
         type: "session-ready",
+        playbackCapabilities: {
+          attestsDiscordVoiceSend: true,
+          deduplicatesCommandIds: true,
+          deduplicationRetentionSeconds: 300,
+          replaysOriginalStartedAtMs: true,
+        },
         recordingId: "recording-e2e",
         guildId: "1533228590643155034",
         channelId: "1533228823045214398",
@@ -321,6 +328,99 @@ describe("Node to Python providerless conversation E2E", () => {
       voiceProfileId: request.voiceProfileId,
       waitForCondition,
     }), 15_000);
+
+  it("deduplicates a retried Python command and replays Craig's original start after restart",
+    async () => {
+      const activeRuntime = requireRuntime(runtime);
+      const evidenceRoot = await mkdtemp(join(tmpdir(), "providerless-craig-restart-"));
+      const evidencePath = join(evidenceRoot, "attempts.json");
+      const recordingId = "recording-craig-dedup-e2e";
+      const meetingId = "meeting-craig-dedup-e2e";
+      const playbackAttemptId = "durable-greeting-command-1";
+      const literalSpeech = "Привет, проверка повтора!";
+      let firstHarness: PlaybackHarness | undefined;
+      let restartedHarness: PlaybackHarness | undefined;
+      try {
+        firstHarness = await openPlaybackHarness(
+          recordingId,
+          await DurableCraigPlaybackEvidence.open(evidencePath),
+        );
+        const firstCoordinator = new ConversationCoordinator({
+          playback: firstHarness.playback,
+          runtime: activeRuntime,
+        });
+        await expect(firstCoordinator.handleProactiveTurn({
+          interruptible: false,
+          literalSpeech,
+          locale: "ru",
+          meetingId,
+          nowMs: 1,
+          playbackAttemptId,
+          prompt: literalSpeech,
+          recordingId,
+          speakerId: "dedup-speaker",
+          systemPrompt: "Speak the literal greeting.",
+          turnId: "dedup-turn-first",
+          voiceProfileId: request.voiceProfileId,
+        })).resolves.toMatchObject({ status: "active" });
+        await firstCoordinator.whenIdle(meetingId);
+        await expect(firstCoordinator.whenTurnPlaybackSettled(meetingId, "dedup-turn-first"))
+          .resolves.toBe("played");
+        await firstHarness.whenIdle();
+        expect(firstHarness.audibleCommands).toHaveLength(5);
+        expect(firstHarness.playbackStartedAtMilliseconds).toHaveLength(1);
+        const originalStartedAtMs = firstHarness.playbackStartedAtMilliseconds[0]!;
+        const originalAttemptIds = new Set(
+          firstHarness.commands.map(({ attemptId }) => attemptId),
+        );
+        expect(originalAttemptIds.size).toBe(1);
+        await firstCoordinator.closeMeeting(meetingId, Date.now());
+        await firstHarness.close();
+        firstHarness = undefined;
+
+        restartedHarness = await openPlaybackHarness(
+          recordingId,
+          await DurableCraigPlaybackEvidence.open(evidencePath),
+        );
+        const restartedCoordinator = new ConversationCoordinator({
+          playback: restartedHarness.playback,
+          runtime: activeRuntime,
+        });
+        await expect(restartedCoordinator.handleProactiveTurn({
+          interruptible: false,
+          literalSpeech,
+          locale: "ru",
+          meetingId,
+          nowMs: 2,
+          playbackAttemptId,
+          prompt: literalSpeech,
+          recordingId,
+          speakerId: "dedup-speaker",
+          systemPrompt: "Speak the literal greeting.",
+          turnId: "dedup-turn-retry",
+          voiceProfileId: request.voiceProfileId,
+        })).resolves.toMatchObject({ status: "active" });
+        await restartedCoordinator.whenIdle(meetingId);
+        await expect(restartedCoordinator.whenTurnPlaybackSettled(
+          meetingId,
+          "dedup-turn-retry",
+        )).resolves.toBe("played");
+        await restartedHarness.whenIdle();
+
+        expect(restartedHarness.commands.filter(({ type }) => type === "audio-chunk"))
+          .toHaveLength(5);
+        expect(restartedHarness.audibleCommands).toHaveLength(5);
+        expect(restartedHarness.playbackStartedAtMilliseconds)
+          .toEqual([originalStartedAtMs]);
+        expect(new Set(restartedHarness.commands.map(({ attemptId }) => attemptId)))
+          .toEqual(originalAttemptIds);
+        await restartedCoordinator.closeMeeting(meetingId, Date.now());
+      } finally {
+        await restartedHarness?.close();
+        await firstHarness?.close();
+        await rm(evidenceRoot, { force: true, recursive: true });
+      }
+    }, 20_000);
 });
 
 describe("Providerless greeting and farewell playback E2E", () => {
@@ -524,13 +624,117 @@ describe("Providerless greeting and farewell playback E2E", () => {
 });
 
 interface PlaybackHarness {
+  readonly audibleCommands: readonly Extract<CraigPlaybackCommand, { type: "audio-chunk" }>[];
   readonly commands: CraigPlaybackCommand[];
   close(): Promise<void>;
   firstAudioAtMilliseconds(): number | undefined;
   readonly playback: CraigPlaybackGateway;
+  readonly playbackStartedAtMilliseconds: readonly number[];
+  whenIdle(): Promise<void>;
 }
 
-async function openPlaybackHarness(recordingId: string): Promise<PlaybackHarness> {
+interface DurableCraigAttemptEvidence {
+  readonly pcmBase64: string[];
+  readonly startedAtMs: number;
+}
+
+class DurableCraigPlaybackEvidence {
+  private readonly attempts = new Map<string, DurableCraigAttemptEvidence>();
+  private readonly deduplicatedAttempts = new Set<string>();
+  private readonly freshAttempts = new Set<string>();
+
+  private constructor(private readonly path?: string) {}
+
+  public static async open(path?: string): Promise<DurableCraigPlaybackEvidence> {
+    const evidence = new DurableCraigPlaybackEvidence(path);
+    if (path === undefined) {
+      return evidence;
+    }
+    try {
+      const stored = JSON.parse(await readFile(path, "utf8")) as Record<
+        string,
+        DurableCraigAttemptEvidence
+      >;
+      for (const [attemptId, attempt] of Object.entries(stored)) {
+        evidence.attempts.set(attemptId, attempt);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+    return evidence;
+  }
+
+  public audibleCommands(): readonly Extract<
+    CraigPlaybackCommand,
+    { type: "audio-chunk" }
+  >[] {
+    return [...this.attempts.entries()].flatMap(([attemptId, attempt]) =>
+      attempt.pcmBase64.map((pcmBase64, sequence) => ({
+        attemptId,
+        pcmBase64,
+        recordingId: "durable-evidence",
+        schemaVersion: 1 as const,
+        sequence,
+        turnId: "durable-evidence",
+        type: "audio-chunk" as const,
+      }))
+    );
+  }
+
+  public async accept(command: CraigPlaybackCommand, socket: WebSocket): Promise<
+    number | undefined
+  > {
+    const existing = this.attempts.get(command.attemptId);
+    if (command.type === "playback-start") {
+      if (existing !== undefined) {
+        this.deduplicatedAttempts.add(command.attemptId);
+        sendPlaybackStarted(socket, command, existing.startedAtMs);
+        return existing.startedAtMs;
+      } else {
+        this.freshAttempts.add(command.attemptId);
+      }
+      return undefined;
+    }
+    if (this.deduplicatedAttempts.has(command.attemptId)) {
+      if (command.type === "playback-finish" || command.type === "playback-cancel") {
+        this.deduplicatedAttempts.delete(command.attemptId);
+        sendPlaybackFinished(socket, command);
+      }
+      return undefined;
+    }
+    if (command.type === "audio-chunk") {
+      if (!this.freshAttempts.has(command.attemptId)) {
+        throw new Error("Craig harness received PCM without a fresh playback command");
+      }
+      const startedAtMs = existing?.startedAtMs ?? Date.now();
+      const pcmBase64 = [...(existing?.pcmBase64 ?? []), command.pcmBase64];
+      this.attempts.set(command.attemptId, { pcmBase64, startedAtMs });
+      await this.persist();
+      if (existing === undefined) {
+        sendPlaybackStarted(socket, command, startedAtMs);
+        return startedAtMs;
+      }
+      return undefined;
+    }
+    this.freshAttempts.delete(command.attemptId);
+    sendPlaybackFinished(socket, command);
+    return undefined;
+  }
+
+  private async persist(): Promise<void> {
+    if (this.path !== undefined) {
+      await writeFile(this.path, `${JSON.stringify(Object.fromEntries(this.attempts))}\n`);
+    }
+  }
+}
+
+async function openPlaybackHarness(
+  recordingId: string,
+  durableEvidence?: DurableCraigPlaybackEvidence,
+): Promise<PlaybackHarness> {
+  const evidence = durableEvidence ?? await DurableCraigPlaybackEvidence.open();
   const playback = new CraigPlaybackGateway();
   const httpServer = createHttpServer((_request, response) => {
     response.writeHead(404).end();
@@ -549,36 +753,33 @@ async function openPlaybackHarness(recordingId: string): Promise<PlaybackHarness
     headers: { authorization: `Bearer ${serviceToken}` },
   });
   const commands: CraigPlaybackCommand[] = [];
+  const playbackStartedAtMilliseconds: number[] = [];
   let firstAudioAt: number | undefined;
+  let commandTail: Promise<unknown> = Promise.resolve();
   socket.on("message", (raw) => {
     const command = JSON.parse(webSocketText(raw)) as CraigPlaybackCommand;
     commands.push(command);
     if (command.type === "audio-chunk" && firstAudioAt === undefined) {
       firstAudioAt = performance.now();
-      socket.send(JSON.stringify({
-        schemaVersion: 1,
-        type: "playback-started",
-        recordingId: command.recordingId,
-        turnId: command.turnId,
-        attemptId: command.attemptId,
-        startedAtMs: Date.now(),
-      }));
     }
-    if (command.type === "playback-finish") {
-      socket.send(JSON.stringify({
-        schemaVersion: 1,
-        type: "playback-finished",
-        recordingId: command.recordingId,
-        turnId: command.turnId,
-        attemptId: command.attemptId,
-        finishedAtMs: Date.now(),
-      }));
-    }
+    commandTail = commandTail.then(async () => {
+      const startedAtMs = await evidence.accept(command, socket);
+      if (startedAtMs !== undefined) {
+        playbackStartedAtMilliseconds.push(startedAtMs);
+      }
+      return startedAtMs;
+    });
   });
   await once(socket, "open");
   socket.send(JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 3,
     type: "session-ready",
+    playbackCapabilities: {
+      attestsDiscordVoiceSend: true,
+      deduplicatesCommandIds: true,
+      deduplicationRetentionSeconds: 300,
+      replaysOriginalStartedAtMs: true,
+    },
     recordingId,
     guildId: "1533228590643155034",
     channelId: "1533228823045214398",
@@ -587,8 +788,12 @@ async function openPlaybackHarness(recordingId: string): Promise<PlaybackHarness
   await waitForCondition(() => playback.hasSession(recordingId));
 
   return {
+    get audibleCommands() {
+      return evidence.audibleCommands();
+    },
     commands,
     close: async () => {
+      await commandTail;
       socket.terminate();
       playback.close();
       await playbackServer.close();
@@ -604,7 +809,38 @@ async function openPlaybackHarness(recordingId: string): Promise<PlaybackHarness
     },
     firstAudioAtMilliseconds: () => firstAudioAt,
     playback,
+    playbackStartedAtMilliseconds,
+    whenIdle: async () => { await commandTail; },
   };
+}
+
+function sendPlaybackStarted(
+  socket: WebSocket,
+  command: Extract<CraigPlaybackCommand, { type: "audio-chunk" | "playback-start" }>,
+  startedAtMs: number,
+): void {
+  socket.send(JSON.stringify({
+    attemptId: command.attemptId,
+    recordingId: command.recordingId,
+    schemaVersion: 1,
+    startedAtMs,
+    turnId: command.turnId,
+    type: "playback-started",
+  }));
+}
+
+function sendPlaybackFinished(
+  socket: WebSocket,
+  command: Extract<CraigPlaybackCommand, { type: "playback-cancel" | "playback-finish" }>,
+): void {
+  socket.send(JSON.stringify({
+    attemptId: command.attemptId,
+    finishedAtMs: Date.now(),
+    recordingId: command.recordingId,
+    schemaVersion: 1,
+    turnId: command.turnId,
+    type: "playback-finished",
+  }));
 }
 
 interface FarewellAsset {
@@ -652,25 +888,39 @@ function splitPcmChunks(bytes: Uint8Array): readonly Uint8Array[] {
 }
 
 async function reserveLoopbackPort(): Promise<number> {
-  const server = createNetServer();
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  if (address === null || typeof address === "string") {
-    server.close();
-    throw new Error("Unable to reserve a loopback port for Pipecat E2E");
-  }
-  const port = address.port;
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => {
-      if (error === undefined) {
-        resolve();
-      } else {
-        reject(error);
-      }
+  // Linux ephemeral clients normally allocate >=32768. A deterministic
+  // process-scoped candidate below that range avoids losing a released port
+  // while the cold Python/Pipecat import completes.
+  const firstCandidate = 20_000 + (process.pid % 10_000);
+  for (let offset = 0; offset < 2_000; offset += 1) {
+    const port = 20_000 + ((firstCandidate - 20_000 + offset) % 12_000);
+    const server = createNetServer();
+    const available = await new Promise<boolean>((resolve, reject) => {
+      server.once("error", (error: NodeJS.ErrnoException) => {
+        if (error.code === "EADDRINUSE") {
+          resolve(false);
+        } else {
+          reject(error);
+        }
+      });
+      server.once("listening", () => { resolve(true); });
+      server.listen(port, "127.0.0.1");
     });
-  });
-  return port;
+    if (!available) {
+      continue;
+    }
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error === undefined) {
+          resolve();
+        } else {
+          reject(error);
+        }
+      });
+    });
+    return port;
+  }
+  throw new Error("Unable to reserve an isolated loopback port for Pipecat E2E");
 }
 
 function requireRuntime(

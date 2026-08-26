@@ -38,8 +38,32 @@ import { acceptHistoricalReleaseInTransaction } from
 export { acceptHistoricalReleaseInTransaction } from
   "./postgres-historical-release-acceptance.js";
 
+const constructedHistoricalMemoryStores = new WeakSet<object>();
+
+/** Read-only nominal check; only this module's constructor can add instances. */
+export function assertConstructedPostgresHistoricalMemoryStore(value: unknown): asserts value is PostgresHistoricalMemoryStore {
+  if (typeof value !== "object" || value === null ||
+    !constructedHistoricalMemoryStores.has(value)) {
+    throw new Error("PostgreSQL historical memory store was not constructed by its adapter module");
+  }
+}
+
+function recordCandidateOwnership(
+  recordsByLocator: Map<string, HistoricalCandidateRecordV1>,
+  locator: string,
+  record: HistoricalCandidateRecordV1,
+): void {
+  if (recordsByLocator.has(locator)) {
+    throw new Error("historical candidate locator has ambiguous current ownership");
+  }
+  recordsByLocator.set(locator, record);
+}
+
 export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
-  public constructor(private readonly pool: Pool, private readonly cancellation?: HistoricalPostgresCancellationPort) {}
+  public constructor(private readonly pool: Pool, private readonly cancellation?: HistoricalPostgresCancellationPort) {
+    constructedHistoricalMemoryStores.add(this);
+    Object.freeze(this);
+  }
 
   public acceptRelease(
     candidate: HistoricalReleaseBindingV1,
@@ -225,7 +249,7 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
         WHERE scope_id = $1 AND room_id = $2 AND is_current
           AND operation = 'index' AND state = 'applied'
           AND plan @> $3::jsonb
-        LIMIT 1
+        ORDER BY meeting_id, desired_generation
       `,
       values: [
         scopeId,
@@ -233,17 +257,20 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
         JSON.stringify({ documents: [{ manifest: { candidateLocator } }] }),
       ],
     }, options.signal, this.cancellation);
-    const row = result.rows[0];
-    if (row === undefined) {
-      return null;
+    const recordsByLocator = new Map<string, HistoricalCandidateRecordV1>();
+    for (const row of result.rows) {
+      const applied = historicalAppliedFromRow(row);
+      const document = applied.plan.documents.find(({ manifest }) =>
+        manifest.candidateLocator === candidateLocator
+      );
+      if (document !== undefined) {
+        recordCandidateOwnership(recordsByLocator, candidateLocator, Object.freeze({
+          ...applied,
+          ordinal: document.manifest.ordinal,
+        }));
+      }
     }
-    const applied = historicalAppliedFromRow(row);
-    const document = applied.plan.documents.find(({ manifest }) =>
-      manifest.candidateLocator === candidateLocator
-    );
-    return document === undefined
-      ? null
-      : Object.freeze({ ...applied, ordinal: document.manifest.ordinal });
+    return recordsByLocator.get(candidateLocator) ?? null;
   }
 
   public async findCurrentCandidates(
@@ -280,10 +307,11 @@ export class PostgresHistoricalMemoryStore implements HistoricalSyncStore {
       const applied = historicalAppliedFromRow(row);
       for (const document of applied.plan.documents) {
         if (requested.has(document.manifest.candidateLocator)) {
-          recordsByLocator.set(document.manifest.candidateLocator, Object.freeze({
-            ...applied,
-            ordinal: document.manifest.ordinal,
-          }));
+          recordCandidateOwnership(recordsByLocator, document.manifest.candidateLocator,
+            Object.freeze({
+              ...applied,
+              ordinal: document.manifest.ordinal,
+            }));
         }
       }
     }

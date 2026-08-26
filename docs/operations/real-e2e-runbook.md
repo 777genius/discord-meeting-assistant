@@ -15,7 +15,7 @@ projects.
 | Application `Meeting E2E Speaker B` | `1533228054724346087` |
 | Application `Meeting E2E Speaker C` (conversation observer) | `1533867700575670282` |
 | Application `Meeting E2E Speaker D` | `1533873978417086474` |
-| Botik test playback bot | `1534231284467896512` |
+| Application `Meeting E2E Speaker F` (Botik test playback bot) | `1533877611258708230` |
 
 Bot tokens are stored only in the local macOS Keychain service
 `discord-voice-bot-e2e`, under accounts `sut`, `speaker-a`, `speaker-b`,
@@ -299,6 +299,11 @@ Never delete, overwrite, or reuse an existing receipt or artifact root to make a
 retry pass. Retain an interrupted run's partial files, lease, and barrier markers
 as abandoned diagnostic evidence, clearly separated from the next campaign.
 
+Acceptance also requires `verify:hosted-pass -- <absolute-pass-receipt>
+<absolute-plan> <absolute-artifact-root>`. All three arguments are mandatory.
+The verifier recomputes every retained byte length and SHA-256 from bounded
+regular non-symlink files and checks the receipt against the exact plan.
+
 To retain the ordered capture set with one observer connection, pass the
 remaining capture records through
 `DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON`. The record shape and
@@ -367,7 +372,7 @@ induce another first join. After finalization, pass all six observer files and
 the pinned Botik speaker ID to the normal collector:
 
 ```sh
-DISCORD_E2E_BOTIK_SPEAKER_ID=1534231284467896512 \
+DISCORD_E2E_BOTIK_SPEAKER_ID=1533877611258708230 \
 DISCORD_E2E_CONVERSATION_VOICE_INPUTS='["/absolute/evidence/greeting-observer.json","/absolute/evidence/greeting-ru.json","/absolute/evidence/greeting-en.json","/absolute/evidence/greeting-speaker-d.json","/absolute/evidence/addressed-answer.json","/absolute/evidence/farewell.json"]' \
 DISCORD_E2E_SUPPLEMENTAL_PLAYBACK_INPUT=/absolute/evidence/speaker-d.playback.json \
 DISCORD_E2E_EVIDENCE_OUTPUT=/absolute/evidence/reconnect.evidence.v10.json \
@@ -548,7 +553,8 @@ pnpm --filter @discord-meeting/discord-e2e-actors run verify:campaign -- \
   apps/discord-e2e-actors/test/fixtures/manifest.v1.json \
   /absolute/evidence/sequential.evidence.v10.json \
   /absolute/evidence/overlap.evidence.v10.json \
-  /absolute/evidence/reconnect.evidence.v10.json
+  /absolute/evidence/reconnect.evidence.v10.json \
+  --thin-remediation /absolute/evidence/thin-remediation.json
 ```
 
 The current campaign requires V10 for sequential, overlap, and reconnect, with
@@ -565,6 +571,130 @@ containing layered evidence from ADR-0025 and their replay stability. Historical
 evidence remains individually readable but cannot replace the required
 v8-or-newer reconnect proof.
 A successful provider call without a passing campaign result is not accepted.
+
+### Historical Infinity reply proof after restart
+
+The addressed-answer voice capture above proves only current-meeting grounding.
+Historical-memory qualification is a separate, optional supplemental artifact
+beside the unchanged V10 run files. After all three meetings are finalized,
+restart only the isolated test Meeting Platform service. Retain the old and new
+container IDs/start times and prove that the Compose config/project/service,
+immutable image, repository digest, source revision, and reviewed campaign
+release did not change. Wait for the target projection's
+same meeting/transcript `meeting_core.historical_memory_sync` row to become `applied`
+on the new instance. Read the actual applied index generation, applied index profile,
+applied release, and source-to-document mappings; never label a desired generation
+as applied evidence. Bind the persisted V2 request profile and cutover epoch plus
+every desired source generation to those live applied values, the exact transcript
+ID/version, and a non-empty remote-document set. Retain the complete request/provider/profile/
+source-generation/filter/query/budget binding, policy epoch, worker protocol/
+generation, and literal `infinity_locator_v2` path from each nonterminal durable
+question job. `legacy_downstream_v1` and `infinity_locator_v1` never qualify V2.
+Also retain the pre-reconciliation job, provider-attempt, grounding, and effect
+identity tuple. Re-read it after terminal effect reconciliation and require an
+exact tuple match plus an external Discord receipt equal to the observed answer
+message ID.
+This durable observation must precede readiness and
+both observer questions; a sleep or HTTP liveness response is insufficient.
+
+Use only the official `conversation-observer` identity in the pinned private
+guild. Reply to the exact current SUT-authored canonical projection for that
+same meeting/transcript. Execute both branches: the supported Russian question
+replies to the separate final-summary message and the unsupported English
+question replies to the finalized live-transcript projection. Each branch must
+retain exactly one answer. Ask one synthetic question
+whose required fact exists in that authoritative transcript and one invented
+unsupported question. The supported answer
+must reply to the observer question, contain its pinned terms, and cite exact
+turns from that same authoritative final transcript. Every pinned expected claim
+and term must also occur in those cited authoritative turn texts; answer-string
+presence alone is insufficient. The unsupported answer must
+have the durable `insufficient_evidence` question outcome and contain no turn
+citation and must equal the fixed English V1 insufficient-evidence response;
+arbitrary renderer prose is not evidence. The whole Discord payload must be one
+strict embed containing only its description, exact marker URL, and optional
+Discord `rich` type, with empty message content and no other textual or auxiliary
+surface. Unknown future embed keys and message snapshots, activity, calls,
+interactions, polls, role-subscription data, and thread data fail closed. After the first answer, keep observing for the configured bounded quiet
+window and reject any late duplicate. An answer from the wrong bot, projection kind, message,
+container, meeting, transcript, release, or generation, or one observed before
+durable rehydration, fails closed.
+
+Run `observe:historical-reply` with the private V2-bound input and explicit remote
+coordinates, retained campaign admission and exact plan, compiled release binding,
+and fresh restarted-SUT identity digest described in
+`apps/discord-e2e-actors/README.md`. The versioned post-restart mutation-admission
+extension binds the original admission/release and plan to the fresh identity
+receipt/expiry, restarted provenance, exact target/question digests, rehydration
+generations, and expected retrieval/policy/protocol/job-generation fence; it never
+requires the pre- and post-restart identity receipt digests to be equal. Before reading the
+observer token or logging into Discord, it uses a read-only SSH probe to require
+the exact restarted Meeting Platform instance and exactly one matching current,
+applied historical-sync row; the direct observation must exactly equal the
+private input. A channel message retains its parent publication channel; public
+thread delivery retains both that parent and the actual thread ID. Other thread
+or container shapes fail closed. Then pass its create-only output to `verify:campaign` with
+`--historical-reply` and the separately retained bundle with mandatory
+`--thin-remediation`; the verifier cross-binds the embedded and standalone historical
+proofs. Retain exactly one create-only crash receipt and require its campaign,
+injection, job, canonical attempt, `groundingPlanSha256`, effect, external receipt,
+trigger time, crashed PID, replacement PID, and single public answer to agree. The
+entire compiled private scope must contain exactly the two target-bound SUT answers
+and no other SUT answers. Craig V3 lifecycle provenance supplies the reconnect-bound
+sealed roster; canonical, hot-tail, and outbox identities must be final human roster
+members, while bot, non-roster, partial, and interim observations fail closed. The
+restart request and completion must both precede settlement plus twenty minutes.
+Do not call Discord, restart a service, or manufacture this
+receipt during local/CI checks; deterministic tests exercise the same schemas
+and verifier through fakes.
+
+Qualification does not change rollout admission: Retrieval V2 serving remains at
+zero basis points and the compiled trust root remains unadmitted until a separate,
+authorized release decision.
+
+### Remaining Discord/voice/live-memory coverage ledger
+
+The compiled definition requires an absolute `privateCoverageSourcePath`. Only
+the reviewed private-test scenario driver may create that mode-0600 ledger. Do
+not hand-author, copy from another campaign, or patch it after a failed run.
+The coordinator validates it only after the existing historical-reply and
+live-memory children settle, writes a separate create-only
+`private-coverage.json`, embeds that exact artifact in the remediation bundle,
+and includes it in the hosted pass manifest.
+
+The ledger must cover, in its fixed contract order, supported summary and
+transcript replies in RU, EN, and mixed language; canonical real-name alias and
+nameless questions; grounded abstention; replaced/deleted projection, deleted
+question, authorization and Discord-permission withdrawal; duplicate ingress;
+the three deterministic crash windows; and ambiguous provider reconciliation.
+Each record carries explicit run, actor, question, projection, effect, attempt,
+policy epoch, permission epoch, and generation identities. Missing, duplicated,
+reordered, stale, or cross-bound records fail before a pass receipt is possible.
+
+Retain exhaustive private-test surface enumeration in the same observation
+window. Every admitted question must have exactly one Discord create and one
+matching durable external receipt. Rejected scenarios and every other governed
+private-test channel/thread/scope must have zero Botik answer creates. An
+ambiguous provider outcome may reconcile the stable attempt but may never send
+a second provider request blindly.
+
+The ledger also closes the simultaneous-join and live-memory gaps. It requires
+one immediate greeting receipt per actor in a simultaneous first-join cohort,
+while the separate sequential greeting ledger and continuous twenty-minute
+negative observer continue to prove the configured participant set, reconnect
+suppression, and no delayed playback. Live memory must retain multiple final
+human RU/EN/mixed turns, exclude interim and Botik turns, prove duplicate turn
+ID idempotency, correction/supersession, availability within five seconds,
+grounded barge-in cancellation with no late packets, final historical
+generation, and deletion or supersession of the ephemeral generation with zero
+remaining serving and remote-document rows.
+
+This artifact is external qualification evidence only when its qualification
+flags prove official bot applications, the pinned private test guild, and real
+external provider execution. Local/provider-free tests are intentionally
+unqualified. They test schemas, adapters, state transitions, parsers, and the
+offline verifier; they do not authorize Discord access or change the zero-basis-
+point rollout.
 
 Synthetic fixtures may be generated for deterministic speech. They must contain
 only invented test content, identify the expected Discord speaker explicitly in

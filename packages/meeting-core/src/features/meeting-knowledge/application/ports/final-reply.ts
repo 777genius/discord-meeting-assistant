@@ -13,6 +13,9 @@ import type {
   GroundingSafetyLimits,
   RehydratedEvidenceTurn,
 } from "../../domain/grounding-plan.js";
+import type { FocusedLocatorRetrievalV2RequestSnapshot,
+  RetrievalAdmissionRollout, RetrievalBindingSnapshot } from
+  "../../domain/retrieval-admission.js";
 import type {
   QuestionBindingSnapshot,
   QuestionJobState,
@@ -148,8 +151,10 @@ export interface FocusedMemoryRetrievalPort {
     readonly neighborTurns: number;
     readonly projectionTargetContainerId: string;
     readonly question: string;
+    readonly retrievalBinding?: RetrievalBindingSnapshot;
     readonly roomId: string;
     readonly scopeId: string;
+    readonly signal?: AbortSignal;
     readonly transcriptId: string;
     readonly transcriptVersion: number;
   }): Promise<FocusedMemoryRetrievalResult>;
@@ -231,6 +236,16 @@ export interface QuestionAdmissionCommitPort {
   withdrawProjection(input: {
     readonly finalProjectionReceipt: string;
   }): Promise<readonly string[]>;
+}
+
+export interface FocusedLocatorRetrievalV2AdmissionPort {
+  prepare(input: {
+    readonly currentMeetingId: string;
+    readonly question: string;
+    readonly roomId: string;
+    readonly scopeId: string;
+    readonly signal?: AbortSignal;
+  }): Promise<FocusedLocatorRetrievalV2RequestSnapshot | null>;
 }
 
 export type QuestionJobTerminalOutcome =
@@ -408,10 +423,19 @@ export interface LocalFinalReplyPolicy {
   readonly authorizationPolicyVersion: string;
   readonly groundingSafety: GroundingSafetyLimits;
   readonly jobLeaseSeconds: number;
+  /** Temporary V1 generic reranker rollback window; remove after the drain gate. */
+  readonly legacyRetrievalMigration?: {
+    readonly deleteAfter: string;
+    readonly enabled: boolean;
+    readonly minimumQualifiedReleases: 2;
+    readonly requireDrainedJobs: true;
+    readonly requireNoUnresolvedEffects: true;
+  };
   readonly maximumProviderAttempts: number;
   readonly policyVersion: string;
   readonly retrieval: {
     readonly maximumCandidates: number;
     readonly neighborTurns: number;
   };
+  readonly retrievalAdmission: RetrievalAdmissionRollout;
 }

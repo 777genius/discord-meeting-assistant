@@ -5,8 +5,8 @@ import type { PostgresQuestionPolicyFence } from "./postgres-question-policy-fen
 interface AnswerRequestStartInput {
   readonly authorizationDigest: string;
   readonly effectId: string;
-  readonly generation: number;
   readonly questionGeneration: number;
+  readonly workerId: string;
 }
 
 export async function startPolicyFencedAnswerRequest(
@@ -18,7 +18,6 @@ export async function startPolicyFencedAnswerRequest(
   try {
     await client.query("BEGIN");
     if (!await policyFence.lockCurrent(client)) {
-      await cancelClaimBeforeRequest(client, input);
       await client.query("COMMIT");
       return false;
     }
@@ -26,14 +25,17 @@ export async function startPolicyFencedAnswerRequest(
       `
         UPDATE meeting_core.answer_effects AS effect
         SET state = 'request_started',
+            claim_generation = claim_generation + 1,
+            claim_owner = $2,
             request_started_at = transaction_timestamp(),
             claim_until = NULL,
             updated_at = transaction_timestamp()
         WHERE effect_id = $1
-          AND state = 'claimed'
-          AND claim_generation = $2
           AND authorization_digest = $3
-          AND claim_until > transaction_timestamp()
+          AND (
+            state = 'reserved' OR
+            state = 'claimed' AND claim_until <= transaction_timestamp()
+          )
           AND EXISTS (
             SELECT 1
             FROM meeting_knowledge.question_jobs AS job
@@ -49,7 +51,7 @@ export async function startPolicyFencedAnswerRequest(
       `,
       [
         input.effectId,
-        input.generation,
+        input.workerId,
         input.authorizationDigest,
         policyFence.identity.policyEpoch,
         policyFence.identity.policyVersion,
@@ -57,9 +59,6 @@ export async function startPolicyFencedAnswerRequest(
         input.questionGeneration,
       ],
     );
-    if (result.rowCount !== 1) {
-      await cancelClaimBeforeRequest(client, input);
-    }
     await client.query("COMMIT");
     return result.rowCount === 1;
   } catch (error) {
@@ -68,26 +67,6 @@ export async function startPolicyFencedAnswerRequest(
   } finally {
     client.release();
   }
-}
-
-async function cancelClaimBeforeRequest(
-  client: PoolClient,
-  input: AnswerRequestStartInput,
-): Promise<void> {
-  await client.query(
-    `
-      UPDATE meeting_core.answer_effects
-      SET state = 'cancelled',
-          payload_bytes = '{}',
-          settled_at = COALESCE(settled_at, transaction_timestamp()),
-          claim_until = NULL,
-          updated_at = transaction_timestamp()
-      WHERE effect_id = $1
-        AND state = 'claimed'
-        AND claim_generation = $2
-    `,
-    [input.effectId, input.generation],
-  );
 }
 
 async function rollback(client: PoolClient): Promise<void> {

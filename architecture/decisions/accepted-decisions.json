@@ -236,6 +236,21 @@
       "id": "ADR-0048",
       "path": "docs/decisions/0048-exact-head-infinity-deletion-qualification.md",
       "immutableDigest": "sha256:87d3934bea1fd34f31afedb698b53691fb176ddde2f808b32c0c6687b877e0f5"
+    },
+    {
+      "id": "ADR-0049",
+      "path": "docs/decisions/0049-locator-only-upstream-retrieval.md",
+      "immutableDigest": "sha256:a82dd63f2ae47b1b9ac071726eac82dded98c74a39bc8c3048f070a101cd4840"
+    },
+    {
+      "id": "ADR-0050",
+      "path": "docs/decisions/0050-persisted-retrieval-v2-serving-binding.md",
+      "immutableDigest": "sha256:93108b77830e38d1e65bf3261a50cb5e50addf2b3f3fca16bee1cd9c90a209ad"
+    },
+    {
+      "id": "ADR-0051",
+      "path": "docs/decisions/0051-greeting-playback-and-recording-readiness.md",
+      "immutableDigest": "sha256:3ce44eccffb3c99bef5c9bdfe3c64a9b3aa444c635c659ba4c6883285a6009aa"
     }
   ]
 }

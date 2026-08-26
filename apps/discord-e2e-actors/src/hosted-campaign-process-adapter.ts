@@ -46,9 +46,11 @@ interface ChildState {
 }
 interface ChildExit { readonly code: number | null; readonly signal: NodeJS.Signals | null }
 export interface HostedCampaignProcessAdapterOptions {
+  readonly admissionPath?: string;
   readonly artifactStore: HostedCampaignArtifactStore; readonly distRoot: string;
   readonly outputLimitBytes?: number; readonly terminationGraceMilliseconds?: number;
   readonly releaseBindingPath?: string;
+  readonly planPath?: string;
   readonly trustedRuntimeEnvironment: HostedCampaignTrustedRuntimeEnvironment;
 }
 export {
@@ -69,6 +71,10 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     }
     if (options.releaseBindingPath !== undefined && !isAbsolute(options.releaseBindingPath)) {
       throw new Error("Hosted campaign release binding path must be absolute");
+    }
+    if (options.admissionPath !== undefined && !isAbsolute(options.admissionPath) ||
+      options.planPath !== undefined && !isAbsolute(options.planPath)) {
+      throw new Error("Hosted campaign control paths must be absolute");
     }
     this.#options = options;
     this.#trustedRuntimeEnvironment = validateHostedCampaignTrustedRuntimeEnvironment(
@@ -173,6 +179,17 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
       ...(spec.entrypoint === "collector" && this.#options.releaseBindingPath !== undefined
         ? { DISCORD_E2E_HOSTED_RELEASE_BINDING_INPUT: this.#options.releaseBindingPath }
         : {}),
+      ...(spec.entrypoint === "historical-reply-observer" ? {
+        ...(this.#options.admissionPath === undefined ? {} : {
+          DISCORD_E2E_HISTORICAL_REPLY_ADMISSION_RECEIPT: this.#options.admissionPath,
+        }),
+        ...(this.#options.planPath === undefined ? {} : {
+          DISCORD_E2E_HISTORICAL_REPLY_PLAN: this.#options.planPath,
+        }),
+        ...(this.#options.releaseBindingPath === undefined ? {} : {
+          DISCORD_E2E_HISTORICAL_REPLY_RELEASE_BINDING: this.#options.releaseBindingPath,
+        }),
+      } : {}),
     };
     const child = spawn(process.execPath, [join(this.#options.distRoot, entrypointFile(spec.entrypoint)), ...argumentsFor(spec)], {
       detached: process.platform !== "win32", env: environment, shell: false, stdio: ["ignore", "pipe", "pipe"],

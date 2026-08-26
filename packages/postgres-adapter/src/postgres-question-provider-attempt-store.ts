@@ -9,6 +9,7 @@ import {
   PostgresQuestionPolicyTransaction,
   questionPolicyParameters,
 } from "./postgres-question-policy-transaction.js";
+import { QUESTION_JOB_WORKER_PROTOCOL_EPOCH } from "./postgres-question-worker-protocol.js";
 
 function requireLeaseSeconds(value: number): number {
   if (!Number.isSafeInteger(value) || value < 5 || value > 600) {
@@ -56,7 +57,7 @@ export class PostgresQuestionProviderAttemptStore {
         WHERE question_id = $1
           AND generation = $2
           AND state = 'running'
-          AND worker_protocol_epoch = 2
+          AND worker_protocol_epoch = ${QUESTION_JOB_WORKER_PROTOCOL_EPOCH}
           AND worker_protocol_generation = generation
           AND lease_until > transaction_timestamp()
           AND provider_attempt_state IN ('none', 'failed')
@@ -95,7 +96,7 @@ export class PostgresQuestionProviderAttemptStore {
         WHERE question_id = $1
           AND generation = $2
           AND state = 'running'
-          AND worker_protocol_epoch = 2
+          AND worker_protocol_epoch = ${QUESTION_JOB_WORKER_PROTOCOL_EPOCH}
           AND worker_protocol_generation = generation
           AND provider_attempt_id = $3
           AND provider_attempt_state = 'reserved'
@@ -179,7 +180,7 @@ export class PostgresQuestionProviderAttemptStore {
         WHERE question_id = $1
           AND generation = $2
           AND state = 'running'
-          AND worker_protocol_epoch = 2
+          AND worker_protocol_epoch = ${QUESTION_JOB_WORKER_PROTOCOL_EPOCH}
           AND worker_protocol_generation = generation
           AND provider_attempt_id = $3
           AND provider_attempt_state = 'reserved'

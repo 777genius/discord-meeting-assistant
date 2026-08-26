@@ -1,3 +1,6 @@
+/** Qualified production maximum shared by selection and its runtime adapter. */
+export const qualifiedFocusedEvidenceCandidateLimit = 24;
+
 export interface FocusedEvidenceSelectionCandidateV1 {
   readonly candidateId: string;
   readonly endMs: number;

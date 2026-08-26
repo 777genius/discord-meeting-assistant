@@ -50,7 +50,7 @@ function proactiveConversationIdempotencyKey(
     "proactive-conversation:v1",
     input.meetingId,
     input.recordingId,
-    input.turnId,
+    input.playbackAttemptId ?? input.turnId,
   ].map(identityPart).join("|");
 }
 

@@ -21,12 +21,37 @@ import {
   secondKnownParticipantId,
   secondUnknownParticipantId,
   skipsParticipantWhoLeftBeforePlayback,
-  survivesCrashAfterProviderInvocation,
+  retriesCrashBeforeProviderConfirmedAudio,
   testTimer,
   unknownParticipantId,
   usesConfiguredEnglishFallback,
 } from "./participant-greeting-bridge.support.js";
 import { MemoryOneShotReceipts } from "./participant-greeting-receipt-memory.js";
+
+const syntheticSevenParticipantProfiles = {
+  "900000000000000001": {
+    displayName: "Synthetic Alpha", greetingLocale: "ru", spokenName: "Тест Альфа",
+  },
+  "900000000000000002": {
+    displayName: "Synthetic Beta", greetingLocale: "ru", spokenName: "Тест Бета",
+  },
+  "900000000000000003": {
+    displayName: "Synthetic Gamma", greetingLocale: "ru", spokenName: "Тест Гамма",
+  },
+  "900000000000000004": {
+    displayName: "Synthetic Delta", greetingLocale: "ru", spokenName: "Тест Дельта",
+  },
+  "900000000000000005": {
+    displayName: "Synthetic Epsilon", greetingLocale: "ru", spokenName: "Тест Эпсилон",
+  },
+  "900000000000000006": {
+    displayName: "Synthetic Zeta", greetingLocale: "ru", spokenName: "Тест Дзета",
+  },
+  "900000000000000007": {
+    displayName: "Synthetic Eta", greetingLocale: "ru", spokenName: "Тест Эта",
+  },
+} as const;
+const syntheticSevenParticipantIds = Object.keys(syntheticSevenParticipantProfiles);
 
 describe("ParticipantGreetingBridge", () => {
   it("uses a completed durable receipt to suppress greeting replay after restart", async () => {
@@ -73,7 +98,6 @@ describe("ParticipantGreetingBridge", () => {
     }, { conversationLocale });
     context.bridge.participantJoined(unknownParticipantId, occurredAt);
     await context.bridge.settle();
-    expect(context.coordinator.calls).toEqual([]);
     expect(context.coordinator.preparedCalls[0]).toMatchObject({
       cueId: `anonymous-${expectedLocale}-v1`,
       locale: expectedLocale,
@@ -81,7 +105,7 @@ describe("ParticipantGreetingBridge", () => {
     expect(selections).toEqual([{ locale: expectedLocale, speech: expectedSpeech }]);
   });
 
-  it("uses an anonymous fallback only after the named attempt proves no audio", async () => {
+  it("uses the stable command for prepared fallback after provider-proven zero audio", async () => {
     const selectedSpeech: string[] = [];
     const context = fixture(true, "ru", logger, () => 321, (selection) => {
       selectedSpeech.push(selection.speech);
@@ -93,7 +117,7 @@ describe("ParticipantGreetingBridge", () => {
           }
         : null;
     });
-    context.coordinator.playbackSettlements.push("unplayed", "played");
+    context.coordinator.playbackSettlements.push("unplayed");
 
     context.bridge.participantJoined(russianParticipantId, occurredAt);
     await context.bridge.settle();
@@ -104,8 +128,59 @@ describe("ParticipantGreetingBridge", () => {
       literalSpeech: "Привет, Саша!",
       prompt: "Привет, Саша!",
     });
+    expect(context.coordinator.preparedCalls).toHaveLength(1);
+    expect(context.coordinator.preparedCalls[0]).toMatchObject({
+      playbackAttemptId: `participant-greeting:${russianParticipantId}`,
+    });
+  });
+
+  it("falls back once to the prepared anonymous Russian cue when named literal TTS fails", async () => {
+    const context = fixture(true, "ru", logger, () => 321, (selection) =>
+      selection.speech === "Привет!"
+        ? {
+            cueId: "anonymous-ru-v1",
+            pcmChunks: [Uint8Array.of(1, 2)],
+            playbackAttemptId: "registry-id-is-not-the-command-id",
+          }
+        : null
+    );
+    context.coordinator.playbackSettlements.push("unplayed");
+
+    context.bridge.participantJoined(russianParticipantId, occurredAt);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(1);
+    expect(context.coordinator.preparedCalls).toHaveLength(1);
     expect(context.coordinator.preparedCalls[0]).toMatchObject({
       cueId: "anonymous-ru-v1",
+      playbackAttemptId: `participant-greeting:${russianParticipantId}`,
+      turnId: `participant-greeting:${russianParticipantId}:anonymous-fallback`,
+    });
+  });
+
+  it("falls back once to the prepared anonymous cohort cue when mixed literal TTS fails", async () => {
+    const context = fixture(true, "en", logger, () => 321, (selection) =>
+      selection.speech === "Привет!"
+        ? {
+            cueId: "anonymous-ru-v1",
+            pcmChunks: [Uint8Array.of(1, 2)],
+            playbackAttemptId: "registry-id-is-not-the-command-id",
+          }
+        : null
+    );
+    context.coordinator.playbackSettlements.push("unplayed");
+
+    context.bridge.participantsPresent(
+      [russianParticipantId, englishParticipantId],
+      occurredAt,
+    );
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(1);
+    expect(context.coordinator.preparedCalls).toHaveLength(1);
+    expect(context.coordinator.preparedCalls[0]).toMatchObject({
+      cueId: "anonymous-ru-v1",
+      playbackAttemptId: `participant-greeting:${russianParticipantId}`,
       turnId: `participant-greeting:${russianParticipantId}:anonymous-fallback`,
     });
   });
@@ -130,7 +205,7 @@ describe("ParticipantGreetingBridge", () => {
       context.bridge.participantJoined(russianParticipantId, occurredAt);
       await context.bridge.settle();
 
-      expect(selectedSpeech).toEqual(["Привет, Саша!"]);
+      expect(selectedSpeech).toEqual(["Привет, Саша!", "Привет!"]);
       expect(context.coordinator.calls).toHaveLength(1);
       expect(context.coordinator.preparedCalls).toEqual([]);
       expect(receipts.state("greeting", "recording-1", russianParticipantId))
@@ -164,7 +239,7 @@ describe("ParticipantGreetingBridge", () => {
     context.bridge.advance();
     await context.bridge.settle();
 
-    expect(context.coordinator.calls).toHaveLength(2);
+    expect(context.coordinator.calls).toHaveLength(1);
     expect(context.coordinator.calls.map(({
       interruptible,
       locale,
@@ -181,29 +256,85 @@ describe("ParticipantGreetingBridge", () => {
       {
         interruptible: false,
         locale: "ru",
-        literalSpeech: "Привет!",
-        prompt: "Привет!",
+        literalSpeech: "Привет, Саша, один гость! Hi, Alex!",
+        prompt: "Привет, Саша, один гость! Hi, Alex!",
         speakerId: unknownParticipantId,
-      },
-      {
-        interruptible: false,
-        locale: "ru",
-        literalSpeech: "Привет, Саша!",
-        prompt: "Привет, Саша!",
-        speakerId: russianParticipantId,
       },
     ]);
     expect(context.coordinator.calls[0]?.systemPrompt).toContain(
       "Speak exactly the greeting provided",
     );
-    expect(context.coordinator.idleCalls).toBe(4);
+    expect(context.coordinator.idleCalls).toBe(2);
   });
 
 });
 
+// oxlint-disable-next-line max-lines-per-function
 describe("ParticipantGreetingBridge ordering and observability", () => {
 
-  it("preserves FIFO order while suppressing simultaneous overflow before admission", async () => {
+  it("greets all seven configured synthetic participants in one burst command", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const context = fixture(true, "ru", logger, () => 321, undefined, {
+      greetingProfiles: syntheticSevenParticipantProfiles,
+      oneShotReceipts: receipts,
+    });
+
+    context.bridge.participantsPresent(syntheticSevenParticipantIds, occurredAt);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(1);
+    expect(context.coordinator.calls[0]).toMatchObject({
+      locale: "ru",
+      literalSpeech: "Привет, Тест Альфа, Тест Бета, Тест Гамма, Тест Дельта, Тест Эпсилон, Тест Дзета, Тест Эта!",
+      prompt: "Привет, Тест Альфа, Тест Бета, Тест Гамма, Тест Дельта, Тест Эпсилон, Тест Дзета, Тест Эта!",
+      speakerId: syntheticSevenParticipantIds[0],
+    });
+    expect(syntheticSevenParticipantIds.map((participantId) =>
+      receipts.state("greeting", "recording-1", participantId)
+    )).toEqual(Array.from({ length: 7 }, () => "played"));
+    expect(syntheticSevenParticipantIds.map((participantId) =>
+      receipts.state("greeting", "recording-1", participantId)
+    )).not.toContain("suppressed_capacity");
+  });
+
+  it("greets seven sequential joins exactly once and never replays reconnects", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const context = fixture(true, "ru", logger, () => 321, undefined, {
+      greetingProfiles: syntheticSevenParticipantProfiles,
+      oneShotReceipts: receipts,
+    });
+
+    for (const participantId of syntheticSevenParticipantIds) {
+      context.bridge.participantJoined(participantId, occurredAt);
+      await context.bridge.settle();
+    }
+
+    expect(context.coordinator.calls.map(({ literalSpeech }) => literalSpeech)).toEqual([
+      "Привет, Тест Альфа!",
+      "Привет, Тест Бета!",
+      "Привет, Тест Гамма!",
+      "Привет, Тест Дельта!",
+      "Привет, Тест Эпсилон!",
+      "Привет, Тест Дзета!",
+      "Привет, Тест Эта!",
+    ]);
+    for (const participantId of syntheticSevenParticipantIds) {
+      context.bridge.participantLeft(participantId);
+      context.bridge.participantJoined(participantId, occurredAt);
+      await context.bridge.settle();
+    }
+    expect(context.coordinator.calls).toHaveLength(7);
+
+    const restarted = fixture(true, "ru", logger, () => 654, undefined, {
+      greetingProfiles: syntheticSevenParticipantProfiles,
+      oneShotReceipts: receipts,
+    });
+    restarted.bridge.participantsRestored(syntheticSevenParticipantIds, occurredAt);
+    await restarted.bridge.settle();
+    expect(restarted.coordinator.calls).toEqual([]);
+  });
+
+  it("coalesces rapid RU/EN joins without suppressing a supported participant", async () => {
     const context = fixture(true);
 
     context.bridge.participantsPresent([
@@ -214,10 +345,125 @@ describe("ParticipantGreetingBridge ordering and observability", () => {
     ], occurredAt);
     await context.bridge.settle();
 
-    expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
-      unknownParticipantId,
-      secondUnknownParticipantId,
-    ]);
+    expect(context.coordinator.calls).toHaveLength(1);
+    expect(context.coordinator.calls[0]?.literalSpeech)
+      .toBe("Привет, Саша, 2 гостя! Hi, Alex!");
+  });
+
+  it("greets eight anonymous humans without moving the seven-name copy limit into runtime admission", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const context = fixture(true, "ru", logger, () => 321, undefined, {
+      oneShotReceipts: receipts,
+    });
+    const participants = Array.from({ length: 8 }, (_, index) => `human-${index + 1}`);
+    context.bridge.participantsPresent(participants, occurredAt);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(1);
+    expect(context.coordinator.calls[0]?.literalSpeech).toBe("Привет, 8 гостей!");
+    for (const participantId of participants) {
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("played");
+    }
+  });
+
+  it("caps spoken names at seven while still representing additional humans", async () => {
+    const eighthKnownId = "999999999999999999";
+    const receipts = new MemoryOneShotReceipts();
+    const context = fixture(true, "ru", logger, () => 321, undefined, {
+      greetingProfiles: {
+        ...syntheticSevenParticipantProfiles,
+        [eighthKnownId]: {
+          displayName: "Анна", greetingLocale: "ru", spokenName: "Анна",
+        },
+      },
+      oneShotReceipts: receipts,
+    });
+    const participants = [...syntheticSevenParticipantIds, eighthKnownId];
+    context.bridge.participantsPresent(participants, occurredAt);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls[0]?.literalSpeech)
+      .toBe("Привет, Тест Альфа, Тест Бета, Тест Гамма, Тест Дельта, Тест Эпсилон, Тест Дзета, Тест Эта, один гость!");
+    expect(participants.map((participantId) =>
+      receipts.state("greeting", "recording-1", participantId)
+    )).toEqual(Array.from({ length: 8 }, () => "played"));
+  });
+
+  it("fences a thirteenth simultaneous human at the documented safety bound", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const context = fixture(true, "ru", logger, () => 321, undefined, {
+      oneShotReceipts: receipts,
+    });
+    const participants = Array.from({ length: 13 }, (_, index) => `human-${index + 1}`);
+    context.bridge.participantsPresent(participants, occurredAt);
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls[0]?.literalSpeech).toBe("Привет, 12 гостей!");
+    for (const participantId of participants.slice(0, 12)) {
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("played");
+    }
+    expect(receipts.state("greeting", "recording-1", "human-13"))
+      .toBe("suppressed_capacity");
+  });
+
+  it("atomically reconciles thirteen incremental joins while playback is unavailable", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const context = fixture(false, "ru", logger, () => 321, undefined, {
+      oneShotReceipts: receipts,
+    });
+    const participants = Array.from({ length: 13 }, (_, index) => `human-${index + 1}`);
+
+    for (const [index, participantId] of participants.entries()) {
+      context.bridge.participantJoined(participantId, occurredAt);
+      await context.bridge.settle();
+      expect(context.coordinator.calls).toHaveLength(0);
+      expect(participants.slice(0, index + 1).filter((id) =>
+        receipts.state("greeting", "recording-1", id) === "suppressed_capacity"
+      )).toHaveLength(Math.max(0, index + 1 - 12));
+    }
+
+    context.setPlaybackReady(true);
+    context.bridge.advance();
+    await context.bridge.settle();
+    expect(context.coordinator.calls).toHaveLength(1);
+    expect(receipts.state("greeting", "recording-1", "human-13"))
+      .toBe("suppressed_capacity");
+  });
+
+  it("fails closed and recomputes durable capacity after a reordered restart", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const reconcileCapacity = receipts.reconcileGreetingCapacity.bind(receipts);
+    let rejectedCapacityWrite = false;
+    receipts.reconcileGreetingCapacity = (input) => {
+      if (!rejectedCapacityWrite && input.orderedSubjectIds.includes("human-13")) {
+        rejectedCapacityWrite = true;
+        return Promise.reject(new Error("synthetic capacity persistence failure"));
+      }
+      return reconcileCapacity(input);
+    };
+    const context = fixture(false, "ru", logger, () => 321, undefined, {
+      oneShotReceipts: receipts,
+    });
+    const participants = Array.from({ length: 13 }, (_, index) => `human-${index + 1}`);
+
+    for (const participantId of participants) {
+      context.bridge.participantJoined(participantId, occurredAt);
+      await context.bridge.settle();
+    }
+    expect(receipts.state("greeting", "recording-1", "human-13")).toBeUndefined();
+    expect(context.coordinator.calls).toHaveLength(0);
+
+    context.bridge.close();
+    const restarted = fixture(true, "ru", logger, () => 400, undefined, {
+      oneShotReceipts: receipts,
+    });
+    const reordered = [participants[12]!, ...participants.slice(0, 12)];
+    restarted.bridge.participantsRestored(reordered, occurredAt);
+    await restarted.bridge.settle();
+    expect(receipts.state("greeting", "recording-1", "human-12")).toBe("played");
+    expect(receipts.state("greeting", "recording-1", "human-13"))
+      .toBe("suppressed_capacity");
+    expect(restarted.coordinator.calls).toHaveLength(1);
   });
 
   it("admits a live join before remaining initial greetings after current playback", async () => {
@@ -237,7 +483,6 @@ describe("ParticipantGreetingBridge ordering and observability", () => {
     expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
       russianParticipantId,
       englishParticipantId,
-      secondKnownParticipantId,
     ]);
   });
 
@@ -272,9 +517,7 @@ describe("ParticipantGreetingBridge ordering and observability", () => {
 
     expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
       russianParticipantId,
-      ...liveParticipantIds.slice(0, 3),
-      englishParticipantId,
-      ...liveParticipantIds.slice(3),
+      ...liveParticipantIds,
     ]);
   });
 
@@ -405,7 +648,7 @@ describe("ParticipantGreetingBridge retry admission", () => {
       await restarted.bridge.settle();
 
       expect(restarted.coordinator.calls).toEqual([]);
-      expect(reserve).toHaveBeenCalledTimes(3);
+      expect(reserve).toHaveBeenCalledTimes(2);
       expect(complete).toHaveBeenCalledTimes(0);
     },
   );
@@ -434,6 +677,11 @@ describe("ParticipantGreetingBridge retry admission", () => {
       `participant-greeting:${russianParticipantId}`,
       `participant-greeting:${russianParticipantId}:retry-1`,
     ]);
+    expect(context.coordinator.calls.map(({ playbackAttemptId }) => playbackAttemptId))
+      .toEqual([
+        `participant-greeting:${russianParticipantId}`,
+        `participant-greeting:${russianParticipantId}`,
+      ]);
 
     context.bridge.participantLeft(russianParticipantId);
     context.bridge.participantJoined(russianParticipantId, occurredAt);
@@ -461,8 +709,6 @@ describe("ParticipantGreetingBridge retry admission", () => {
     expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
       russianParticipantId,
       unknownParticipantId,
-      englishParticipantId,
-      russianParticipantId,
     ]);
   });
 
@@ -527,8 +773,10 @@ describe("ParticipantGreetingBridge retry admission", () => {
       warn: (message) => warnCalls.push(message),
     });
     context.coordinator.playbackSettlements.push("unplayed", "unplayed", "unplayed", "unplayed");
-    context.coordinator.onPlaybackSettlement = (turnId) => {
-      if (turnId === `participant-greeting:${russianParticipantId}:retry-3`) {
+    let russianSettlements = 0;
+    context.coordinator.onPlaybackSettlement = () => {
+      russianSettlements += 1;
+      if (russianSettlements === 4) {
         context.bridge.participantJoined(englishParticipantId, occurredAt);
       }
     };
@@ -611,9 +859,128 @@ describe("ParticipantGreetingBridge retries and lifecycle", () => {
   });
 
   it(
-    "survives a crash after provider invocation with never-settling playback",
-    survivesCrashAfterProviderInvocation,
+    "retries the stable provider command after a crash before confirmed audio",
+    retriesCrashBeforeProviderConfirmedAudio,
   );
+
+  it("retries a recovered provider command independently from a fresh leader", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const recovered = await receipts.reserve({
+      kind: "greeting",
+      leaseSeconds: 120,
+      meetingId: "recording-1",
+      subjectId: englishParticipantId,
+    });
+    expect(recovered.status).toBe("reserved");
+    if (recovered.status !== "reserved") {
+      return;
+    }
+    await receipts.beginGreetingAttempt({
+      kind: "greeting",
+      leaseToken: recovered.leaseToken,
+      locale: "en",
+      meetingId: "recording-1",
+      prompt: "Original stable recovered greeting.",
+      providerCommandId: recovered.providerCommandId ?? "recovered-command",
+      subjectId: englishParticipantId,
+    });
+    receipts.expireReservations();
+    const restarted = fixture(true, "ru", logger, () => 321, undefined, {
+      oneShotReceipts: receipts,
+    });
+
+    restarted.bridge.participantsRestored([
+      russianParticipantId,
+      englishParticipantId,
+    ], occurredAt);
+    await restarted.bridge.settle();
+
+    expect(restarted.coordinator.calls).toHaveLength(2);
+    expect(restarted.coordinator.calls.some((call) =>
+      call.playbackAttemptId?.includes(russianParticipantId) === true &&
+      call.prompt === "Привет, Саша!"))
+      .toBe(true);
+    expect(restarted.coordinator.calls.some((call) =>
+      call.playbackAttemptId === recovered.providerCommandId &&
+      call.prompt === "Original stable recovered greeting."))
+      .toBe(true);
+    expect(new Set(
+      restarted.coordinator.calls.map(({ playbackAttemptId }) => playbackAttemptId),
+    ).size)
+      .toBe(2);
+  });
+
+  it("exempts a recovered command while durably suppressing fresh overflow", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const recovered = await receipts.reserve({
+      kind: "greeting",
+      leaseSeconds: 120,
+      meetingId: "recording-1",
+      subjectId: englishParticipantId,
+    });
+    expect(recovered.status).toBe("reserved");
+    if (recovered.status !== "reserved") {
+      return;
+    }
+    await receipts.beginGreetingAttempt({
+      kind: "greeting",
+      leaseToken: recovered.leaseToken,
+      locale: "en",
+      meetingId: "recording-1",
+      prompt: "Original stable recovered greeting.",
+      providerCommandId: recovered.providerCommandId ?? "recovered-command",
+      subjectId: englishParticipantId,
+    });
+    receipts.expireReservations();
+    const restarted = fixture(true, "ru", logger, () => 321, undefined, {
+      oneShotReceipts: receipts,
+    });
+    const freshParticipants = Array.from(
+      { length: 13 },
+      (_, index) => `fresh-human-${index + 1}`,
+    );
+
+    restarted.bridge.participantsRestored(
+      [...freshParticipants, englishParticipantId],
+      occurredAt,
+    );
+    await restarted.bridge.settle();
+
+    expect(receipts.state("greeting", "recording-1", "fresh-human-13"))
+      .toBe("suppressed_capacity");
+    expect(restarted.coordinator.calls).toHaveLength(2);
+    expect(restarted.coordinator.calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ prompt: "Привет, 12 гостей!" }),
+      expect.objectContaining({
+        playbackAttemptId: recovered.providerCommandId,
+        prompt: "Original stable recovered greeting.",
+      }),
+    ]));
+  });
+
+  it("never replays after durable provider-confirmed first audio", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const first = fixture(true, "ru", logger, () => 321, undefined, {
+      oneShotReceipts: receipts,
+    });
+    first.coordinator.whenTurnPlaybackSettled = () => new Promise<never>(() => {});
+    first.bridge.participantJoined(russianParticipantId, occurredAt);
+    const abandoned = first.bridge.settle();
+    await vi.waitFor(() => {
+      expect(receipts.state("greeting", "recording-1", russianParticipantId)).toBe("started");
+    });
+
+    receipts.expireReservations();
+    const restarted = fixture(true, "ru", logger, () => 654, undefined, {
+      oneShotReceipts: receipts,
+    });
+    restarted.bridge.participantsRestored([russianParticipantId], occurredAt);
+    await restarted.bridge.settle();
+    expect(restarted.coordinator.calls).toEqual([]);
+
+    first.bridge.close();
+    await abandoned;
+  }, 5_000);
 
   it(
     "emits no audio when the durable admission commit fails",
@@ -637,6 +1004,46 @@ describe("ParticipantGreetingBridge lifecycle fencing", () => {
     "does not greet someone who left before playback became ready",
     skipsParticipantWhoLeftBeforePlayback,
   );
+
+  it("removes someone who leaves while a ready cohort is being reserved", async () => {
+    const receipts = new MemoryOneShotReceipts();
+    const reserve = receipts.reserve.bind(receipts);
+    let reservationCount = 0;
+    let releaseFollower!: () => void;
+    let observeFollower!: () => void;
+    const followerObserved = new Promise<void>((resolve) => {
+      observeFollower = resolve;
+    });
+    const followerGate = new Promise<void>((resolve) => {
+      releaseFollower = resolve;
+    });
+    receipts.reserve = async (input) => {
+      const result = await reserve(input);
+      reservationCount += 1;
+      if (reservationCount === 2) {
+        observeFollower();
+        await followerGate;
+      }
+      return result;
+    };
+    const context = fixture(true, "ru", logger, () => 321, undefined, {
+      oneShotReceipts: receipts,
+    });
+
+    context.bridge.participantsPresent([
+      russianParticipantId,
+      englishParticipantId,
+    ], occurredAt);
+    await followerObserved;
+    context.bridge.participantLeft(englishParticipantId);
+    releaseFollower();
+    await context.bridge.settle();
+
+    expect(context.coordinator.calls).toHaveLength(1);
+    expect(context.coordinator.calls[0]?.prompt).toBe("Привет, Саша!");
+    expect(receipts.state("greeting", "recording-1", englishParticipantId))
+      .toBe("suppressed_stale");
+  });
 
   it("drops queued greetings when the meeting closes", dropsQueuedGreetingsWhenMeetingCloses);
 });
@@ -669,7 +1076,7 @@ it("suppresses contradictory played settlement when provider reports no first au
   expect(restarted.coordinator.calls).toEqual([]);
 });
 
-it("keeps an attempted greeting terminal when played settlement persistence fails", async () => {
+it("keeps a started greeting terminal when played settlement persistence fails", async () => {
   const receipts = new MemoryOneShotReceipts();
   receipts.settleGreeting = () => Promise.reject(new Error("synthetic settlement write failure"));
   const context = fixture(true, "ru", logger, () => 321, undefined, {
@@ -678,7 +1085,7 @@ it("keeps an attempted greeting terminal when played settlement persistence fail
 
   context.bridge.participantJoined(russianParticipantId, occurredAt);
   await context.bridge.settle();
-  expect(receipts.state("greeting", "recording-1", russianParticipantId)).toBe("attempted");
+  expect(receipts.state("greeting", "recording-1", russianParticipantId)).toBe("started");
 
   const restarted = fixture(true, "ru", logger, () => 654, undefined, {
     oneShotReceipts: receipts,

@@ -25,7 +25,6 @@ export {
 export { DurableAnswerPublication } from "./application/durable-answer-publication.js";
 export type {
   AnswerDeliveryPort,
-  AnswerEffectClaim,
   AnswerEffectReservationInput,
   AnswerEffectStore,
   AnswerEffectStoreReservation,

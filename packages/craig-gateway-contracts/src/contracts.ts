@@ -257,6 +257,7 @@ export type VoicePacketBatch = z.infer<typeof voicePacketBatchSchema>;
 
 export const craigPlaybackProtocolVersion = 1 as const;
 export const craigPlaybackCancellationProtocolVersion = 2 as const;
+export const craigPlaybackReliabilityProtocolVersion = 3 as const;
 export const craigPlaybackSampleRateHz = 48_000 as const;
 export const craigPlaybackChannels = 1 as const;
 export const maximumCraigPlaybackPcmBytes = 19_200;
@@ -342,12 +343,18 @@ export type CraigPlaybackCommand = z.infer<typeof craigPlaybackCommandSchema>;
 
 const playbackSessionReadySchema = z
   .object({
-    schemaVersion: z.literal(craigPlaybackProtocolVersion),
+    schemaVersion: z.literal(craigPlaybackReliabilityProtocolVersion),
     type: z.literal("session-ready"),
     recordingId: identifierSchema,
     guildId: discordSnowflakeSchema,
     channelId: discordSnowflakeSchema,
     gatewaySessionId: identifierSchema,
+    playbackCapabilities: z.object({
+      attestsDiscordVoiceSend: z.literal(true),
+      deduplicatesCommandIds: z.literal(true),
+      deduplicationRetentionSeconds: z.number().int().min(300).max(86_400),
+      replaysOriginalStartedAtMs: z.literal(true),
+    }).strict(),
   })
   .strict();
 

@@ -29,6 +29,8 @@ const definition = () => ({
     campaignRoot: "/private/evidence/campaigns",
     clockPreflightPath: "/private/evidence/clock-preflight.json",
     fixtureManifestPath: "/private/evidence/fixture-manifest.json",
+    historicalReplyObservationPolicy: observationPolicy(),
+    privateCoverageSourcePath: "/private/evidence/private-coverage.source.json",
     recordingPlaybackOrigin: "https://recordings.test.example",
     remote: {
       composeFile: "/srv/discord-meeting/compose.yaml",
@@ -77,6 +79,15 @@ const clockProof = () => deriveHostedClockPreflightReceiptV2({
   }, sourceClockId: "source-clock",
   target: { environment: "private-test-guild", host: "codex-workers-eu-01", project: "discord-meeting-assistant" },
 });
+
+function observationPolicy() {
+  return {
+    archivedThreadVisibilities: ["public", "private"] as const,
+    endedAt: "2026-08-24T00:10:00.000Z", guildId: "1533228590643155034",
+    maximumArchivePagesPerParent: 100, maximumMessagePagesPerSurface: 100,
+    parentChannelIds: ["1533228891827736657"], startedAt: "2026-08-24T00:00:00.000Z",
+  };
+}
 const freshClockProof = () => deriveHostedClockPreflightReceiptV2({
   observer: {
     after: { bootId: "observer-boot", epochMs: 2_010, monotonicNs: "2010000000" },

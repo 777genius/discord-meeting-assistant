@@ -44,6 +44,7 @@ export {
 } from "./domain/grounding-mode.js";
 export {
   DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
+  HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
   HistoricalIndexPlanError,
   buildHistoricalIndexPlan,
   buildHistoricalIndexPlanFromPreparedWindows,
@@ -128,6 +129,9 @@ export {
   type LiveFinalizedMemoryPolicyV1,
   type LiveFinalizedMemoryWorkerResultV1,
 } from "./application/live-finalized-memory-worker.js";
+export {
+  qualifiedFocusedEvidenceCandidateLimit,
+} from "./application/ports/focused-evidence-selector.js";
 export type {
   LiveFinalizedMemoryLeaseV1,
   LiveFinalizedMemoryLifecyclePort,
@@ -253,10 +257,25 @@ export {
 export {
   QuestionBinding,
   canTransitionQuestionJob,
+  isLegacyQuestionBinding,
   questionBindingsEqual,
   type QuestionBindingSnapshot,
   type QuestionJobState,
 } from "./domain/question-job.js";
+export {
+  RetrievalBinding,
+  retrievalRolloutBucket,
+  retrievalRolloutBucketCount,
+  retrievalV2ConsumerEvidenceByteLimit,
+  retrievalV2Selected,
+  sameFocusedLocatorRetrievalV2Value,
+  selectRetrievalBinding,
+  type RetrievalAdmissionRollout,
+  type RetrievalBindingSnapshot,
+  type RetrievalPath,
+  type FocusedLocatorRetrievalV2ProviderBinding,
+  type FocusedLocatorRetrievalV2RequestSnapshot,
+} from "./domain/retrieval-admission.js";
 export { requiresExhaustiveCoverage } from "./domain/question-scope.js";
 export {
   AdmitCurrentFinalReply,
@@ -274,11 +293,24 @@ export {
   SelectFocusedEvidence,
   type FocusedEvidenceSelection,
 } from "./application/select-focused-evidence.js";
+export {
+  DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY,
+  HistoricalFocusedLocatorRetrievalV2,
+  PersistedFocusedMemoryRetrievalV2,
+  PrepareFocusedLocatorRetrievalV2Request,
+  isPersistedRetrievalV2Binding,
+  type FocusedLocatorRetrievalV2Policy,
+} from "./application/focused-locator-retrieval-v2.js";
 export type {
   FocusedEvidenceSelectionCandidateV1,
   FocusedEvidenceSelectionResultV1,
   FocusedEvidenceSelectorPort,
 } from "./application/ports/focused-evidence-selector.js";
+export type {
+  FocusedLocatorRetrievalV2Candidate,
+  FocusedLocatorRetrievalV2Port,
+  FocusedLocatorRetrievalV2Result,
+} from "./application/ports/focused-locator-retrieval-v2.js";
 export type {
   AnswerEffectDeliveryResult,
   AnswerEffectReservation,
@@ -292,6 +324,7 @@ export type {
   FinalReplyMaintenancePort,
   FinalReplyEvidencePort,
   FinalReplyRendererPort,
+  FocusedLocatorRetrievalV2AdmissionPort,
   FocusedMemoryRetrievalPort,
   FocusedMemoryRetrievalResult,
   GroundedAnswerGenerationRequest,

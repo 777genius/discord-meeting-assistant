@@ -141,6 +141,17 @@ export class PlatformLiveMeetingRuntime {
     });
   }
 
+  /** Reconsiders queued provider-neutral playback after its transport becomes ready. */
+  public conversationPlaybackReady(recordingId: string): Promise<void> {
+    if (this.closed) {
+      return Promise.resolve();
+    }
+    return this.recordingOperations.enqueue(recordingId, () => {
+      this.meetings.get(recordingId)?.greetings?.advance();
+      return Promise.resolve();
+    });
+  }
+
   public async settleBeforeFinalPublication(
     recordingId: string,
   ): Promise<void> {

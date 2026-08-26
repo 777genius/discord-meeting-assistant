@@ -2,6 +2,8 @@ import type {
   FocusedEvidenceSelectionResultV1,
   FocusedEvidenceSelectorPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { qualifiedFocusedEvidenceCandidateLimit } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 import { z } from "zod";
 
 import {
@@ -213,7 +215,7 @@ function validateInput(
     input.attemptId.length < 1 ||
     input.attemptId.length > 256 ||
     input.candidates.length < 1 ||
-    input.candidates.length > 40 ||
+    input.candidates.length > qualifiedFocusedEvidenceCandidateLimit ||
     input.question.trim().length === 0 ||
     encoder.encode(input.question).byteLength > 4_096 ||
     input.candidates.some((candidate, index) =>

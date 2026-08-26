@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "meeting_knowledge.semantic_quality_manifest.v4",
+  "title": "Provider-free Discord meeting-memory V4 evaluation manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["components", "corpus", "evaluation", "manifestSha256", "qualification", "questionSets", "schemaVersion"],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "ratio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["denominator", "numerator"],
+      "properties": {
+        "denominator": { "type": "integer", "minimum": 1 },
+        "numerator": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "properties": {
+    "schemaVersion": { "const": "meeting_knowledge.semantic_quality_manifest.v4" },
+    "manifestSha256": { "$ref": "#/$defs/sha256" },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["automatedQuestionPatchesSha256", "automatedQuestionsSha256", "auxiliaryTurnsSha256", "factFamilyNegativesSha256", "humanReviewQuestionsSha256", "locatorAuthoritySha256", "manifestSchemaSha256", "primaryTurnOverridesSha256", "primaryTurnsSha256", "scopeTopologySha256"],
+      "properties": {
+        "automatedQuestionPatchesSha256": { "$ref": "#/$defs/sha256" },
+        "automatedQuestionsSha256": { "$ref": "#/$defs/sha256" },
+        "auxiliaryTurnsSha256": { "$ref": "#/$defs/sha256" },
+        "factFamilyNegativesSha256": { "$ref": "#/$defs/sha256" },
+        "humanReviewQuestionsSha256": { "$ref": "#/$defs/sha256" },
+        "locatorAuthoritySha256": { "$ref": "#/$defs/sha256" },
+        "manifestSchemaSha256": { "$ref": "#/$defs/sha256" },
+        "primaryTurnOverridesSha256": { "$ref": "#/$defs/sha256" },
+        "primaryTurnsSha256": { "$ref": "#/$defs/sha256" },
+        "scopeTopologySha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "corpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["corpusSha256", "primaryDurationMs", "primaryTurnCount", "sourceKind", "totalDurationMs"],
+      "properties": {
+        "corpusSha256": { "$ref": "#/$defs/sha256" },
+        "primaryDurationMs": { "const": 8418500 },
+        "primaryTurnCount": { "const": 421 },
+        "sourceKind": { "const": "synthetic" },
+        "totalDurationMs": { "const": 10658500 }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applicability", "bounds", "reportedWithoutThreshold", "thresholdProfileSha256", "thresholds"],
+      "properties": {
+        "applicability": {
+          "const": {
+            "automated": ["overall", "en", "ru", "mixed"],
+            "overall": ["overall", "en", "ru", "mixed"],
+            "real": ["overall", "en", "ru"],
+            "recallAt5MetricIds": ["blockLocatorRecallAt5", "completeQuestionRecallAt5"]
+          }
+        },
+        "bounds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maximumEvidenceBytes", "maximumPromptBytes", "maximumRankedLocators"],
+          "properties": {
+            "maximumEvidenceBytes": { "const": 16000 },
+            "maximumPromptBytes": { "const": 16000 },
+            "maximumRankedLocators": { "const": 10 }
+          }
+        },
+        "reportedWithoutThreshold": {
+          "const": ["blockLocatorRecallAt10", "completeQuestionRecallAt10", "ndcgAt10"]
+        },
+        "thresholdProfileSha256": { "$ref": "#/$defs/sha256" },
+        "thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["abstentionPrecision", "abstentionRecall", "blockLocatorRecallAt5", "citationEntailment", "citationMembership", "claimPrecision", "completeQuestionRecallAt5", "crossScopeLeakageMaximum", "finalAnswerRecall", "markerBlindRecallAt5", "maximumMarkerBlindDegradation", "maximumRetrievalLatencyP95Us", "mrrAt10", "speakerAccuracy", "timeAccuracy", "unsupportedFactualClaimsMaximum", "wholeTranscriptIncludedMaximum"],
+          "properties": {
+            "abstentionPrecision": { "$ref": "#/$defs/ratio" },
+            "abstentionRecall": { "$ref": "#/$defs/ratio" },
+            "blockLocatorRecallAt5": { "$ref": "#/$defs/ratio" },
+            "citationEntailment": { "$ref": "#/$defs/ratio" },
+            "citationMembership": { "$ref": "#/$defs/ratio" },
+            "claimPrecision": { "$ref": "#/$defs/ratio" },
+            "completeQuestionRecallAt5": { "$ref": "#/$defs/ratio" },
+            "crossScopeLeakageMaximum": { "const": 0 },
+            "finalAnswerRecall": { "$ref": "#/$defs/ratio" },
+            "markerBlindRecallAt5": { "$ref": "#/$defs/ratio" },
+            "maximumMarkerBlindDegradation": { "$ref": "#/$defs/ratio" },
+            "maximumRetrievalLatencyP95Us": { "const": 3000000 },
+            "mrrAt10": { "$ref": "#/$defs/ratio" },
+            "speakerAccuracy": { "$ref": "#/$defs/ratio" },
+            "timeAccuracy": { "$ref": "#/$defs/ratio" },
+            "unsupportedFactualClaimsMaximum": { "const": 0 },
+            "wholeTranscriptIncludedMaximum": { "const": 0 }
+          }
+        }
+      }
+    },
+    "qualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exactBindingRealRunsPresent", "independentAnswerAdjudicationReceiptsPresent", "independentQuestionReviewReceiptsPresent", "requiredExactBindingRealRuns", "requiredIndependentAnswerAdjudicationReceipts", "requiredIndependentQuestionReviewReceipts", "status"],
+      "properties": {
+        "exactBindingRealRunsPresent": { "const": 0 },
+        "independentAnswerAdjudicationReceiptsPresent": { "const": 0 },
+        "independentQuestionReviewReceiptsPresent": { "const": 0 },
+        "requiredExactBindingRealRuns": { "const": 3 },
+        "requiredIndependentAnswerAdjudicationReceipts": { "const": 2 },
+        "requiredIndependentQuestionReviewReceipts": { "const": 2 },
+        "status": { "const": "unqualified" }
+      }
+    },
+    "questionSets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["automated", "humanReviewCandidates"],
+      "properties": {
+        "automated": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["answerable", "count", "questionSetSha256", "unsupported"],
+          "properties": {
+            "answerable": { "const": 100 },
+            "count": { "const": 200 },
+            "questionSetSha256": { "$ref": "#/$defs/sha256" },
+            "unsupported": { "const": 100 }
+          }
+        },
+        "humanReviewCandidates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["answerable", "count", "locales", "questionSetSha256", "reviewStatus", "unsupported"],
+          "properties": {
+            "answerable": { "const": 20 },
+            "count": { "const": 40 },
+            "locales": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["en", "mixed", "ru"],
+              "properties": { "en": { "const": 12 }, "mixed": { "const": 16 }, "ru": { "const": 12 } }
+            },
+            "questionSetSha256": { "$ref": "#/$defs/sha256" },
+            "reviewStatus": { "const": "unreviewed" },
+            "unsupported": { "const": 20 }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import {
   QuestionBinding,
   type QuestionAdmissionCommitPort,
@@ -8,7 +6,11 @@ import {
 import type { Pool, PoolClient } from "pg";
 
 import { lockMeetingKnowledgeSource } from "./postgres-answer-source-withdrawal.js";
-import { decodeQuestionBinding } from "./postgres-meeting-knowledge-codecs.js";
+import {
+  decodeQuestionBinding,
+  questionAdmissionBindingHash,
+  questionAdmissionBindingHashMatches,
+} from "./postgres-meeting-knowledge-codecs.js";
 import {
   finalReplyAuthorityMatches,
   loadLockedFinalReplyAuthority,
@@ -32,26 +34,10 @@ interface CountRow {
   readonly scope_count: number;
 }
 
-function sha256(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
 function admissionBindingHash(
   binding: ReturnType<QuestionBinding["toSnapshot"]>,
 ): string {
-  const { authorizationPrincipalRef: _ephemeralPrincipal, ...dedupeBinding } = binding;
-  return sha256(JSON.stringify(dedupeBinding));
-}
-
-function legacyAdmissionBindingHash(
-  binding: ReturnType<QuestionBinding["toSnapshot"]>,
-): string {
-  const {
-    authorizationPrincipalRef: _ephemeralPrincipal,
-    deliveryContainerId: _deliveryContainerId,
-    ...legacyDedupeBinding
-  } = binding;
-  return sha256(JSON.stringify(legacyDedupeBinding));
+  return questionAdmissionBindingHash(binding);
 }
 
 function admissionBindingsEqual(
@@ -124,13 +110,14 @@ export class PostgresQuestionAdmissionCommit
       await lockMeetingKnowledgeSource(client, binding.meetingId);
       const existing = await this.findQuestion(client, binding.questionId);
       if (existing !== null) {
-        const bindingHash = admissionBindingHash(binding);
         const activeBindingMatches = existing.binding === null || admissionBindingsEqual(
           decodeQuestionBinding(existing.binding),
           binding,
         );
-        const storedHashMatches = existing.binding_hash === bindingHash ||
-          existing.binding_hash === legacyAdmissionBindingHash(binding);
+        const storedHashMatches = questionAdmissionBindingHashMatches(
+          binding,
+          existing.binding_hash,
+        );
         const result = activeBindingMatches && storedHashMatches &&
             existing.policy_epoch === this.policyFence.identity.policyEpoch
           ? { jobId: existing.question_id, status: "duplicate" } as const

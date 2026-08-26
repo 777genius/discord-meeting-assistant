@@ -16,6 +16,10 @@ import {
   type HttpTransport,
   type InfinityContextCapabilities,
 } from "@infinity-context/sdk";
+import {
+  InfinityContextClient as InfinityContextClientV2,
+  type HttpTransport as HttpTransportV2,
+} from "@infinity-context/sdk-v2";
 
 import {
   decodeInfinityContextCapabilityAttestation,
@@ -60,6 +64,7 @@ type InfinityContextHistoricalMemoryConfigInputV1 = Omit<
 
 export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryPort {
   readonly #client: InfinityContextClient;
+  readonly #indexClient: InfinityContextClientV2;
   readonly #operationTimeoutMs: number;
   readonly #requestTimeoutMs: number;
   readonly #embeddingTokenProfile: (() => string | undefined) | undefined;
@@ -92,6 +97,15 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
       ...(config.transport === undefined
         ? {}
         : { transport: config.transport as HttpTransport }),
+    });
+    this.#indexClient = new InfinityContextClientV2({
+      baseUrl: config.baseUrl,
+      retryPolicy: { maxAttempts: 1 },
+      timeoutMs: config.requestTimeoutMs,
+      ...(config.token === undefined ? {} : { token: config.token }),
+      ...(config.transport === undefined
+        ? {}
+        : { transport: config.transport as HttpTransportV2 }),
     });
   }
 
@@ -130,7 +144,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
       };
     }
     return indexHistoricalMeeting({
-      client: this.#client,
+      client: this.#indexClient,
       operationTimeoutMs: this.#operationTimeoutMs,
       options,
       request,

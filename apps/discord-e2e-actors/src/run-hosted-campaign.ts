@@ -29,6 +29,7 @@ import {
 } from "./hosted-campaign-process-adapter.js";
 import { createHostedCampaignProductionComposition } from "./hosted-campaign-production-composition.js";
 import { createHostedCampaignProductionPolicy } from "./hosted-campaign-production-policy.js";
+import { collectFiniteArtifactManifest } from "./finite-artifact-manifest.js";
 import { readStablePrivateJson } from "./compile-hosted-campaign-plan.js";
 import {
   createHostedCampaignPassReceiptV2,
@@ -138,8 +139,12 @@ export async function runHostedCampaignCli(
   if (dependencies.releaseReference === undefined) {
     throw new Error("Hosted campaign pass receipt requires an exact release binding reference");
   }
+  const artifacts = await collectFiniteArtifactManifest(
+    dirname(resolveHostedCampaignBarrierRoot(input)),
+  );
   const finalReceipt = createHostedCampaignPassReceiptV2(receipt, {
     admissionReceiptSha256: verifiedAdmission.receiptSha256,
+    artifacts,
     bindingsSha256: verifiedAdmission.bindingsSha256,
     definitionSha256: verifiedAdmission.definitionSha256,
     plan: input,
@@ -237,8 +242,10 @@ export async function createProductionHostedCampaignPorts(
     ...(controlPaths.releaseBindingPath === undefined ? [] : [controlPaths.releaseBindingPath]),
   ]);
   return new HostedCampaignProcessAdapter({
+    admissionPath: controlPaths.admissionPath,
     artifactStore: store,
     distRoot: dirname(fileURLToPath(import.meta.url)),
+    planPath: controlPaths.planPath,
     ...(controlPaths.releaseBindingPath === undefined
       ? {}
       : { releaseBindingPath: controlPaths.releaseBindingPath }),

@@ -5,8 +5,10 @@ export {
   type MeetingPersistenceConflict,
 } from "./errors.js";
 export { PostgresMeetingRepository } from "./postgres-meeting-repository.js";
-export { PostgresHistoricalMemoryStore } from "./postgres-historical-memory-store.js";
-export { PostgresHistoricalEvidenceAuthority } from "./postgres-historical-evidence-authority.js";
+export { PostgresHistoricalMemoryStore,
+  assertConstructedPostgresHistoricalMemoryStore } from "./postgres-historical-memory-store.js";
+export { PostgresHistoricalEvidenceAuthority,
+  assertConstructedPostgresHistoricalEvidenceAuthority } from "./postgres-historical-evidence-authority.js";
 export { PostgresExhaustiveCoverageStore } from "./postgres-exhaustive-coverage-store.js";
 export {
   HistoricalPostgresCancellationError,

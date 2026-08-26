@@ -17,6 +17,7 @@ const platformRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const assetRoot = join(platformRoot, "assets");
 
 export interface StoredPlaybackEvent {
+  readonly acceptedAtMs?: number;
   readonly attemptId: string;
   readonly cancellationObservedAtMs?: number;
   readonly meetingId?: string;
@@ -25,6 +26,7 @@ export interface StoredPlaybackEvent {
   readonly phase: string;
   readonly reason?: string;
   readonly schemaVersion?: number;
+  readonly sequence?: number;
   readonly turnId: string;
   readonly type: CraigPlaybackCommand["type"];
 }
@@ -45,7 +47,12 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
   public peakPendingWrites = 0;
   public pendingWrites = 0;
   private closeListener: (reason: string) => void = () => {};
+  private readonly deduplicatedAttempts = new Set<string>();
+  private readonly durableStartedAtMs = new Map<string, number>();
+  private readonly durablyStartedAttempts = new Set<string>();
   private eventListener: (event: CraigPlaybackEvent) => void = () => {};
+  private readonly firstAudioAcceptedAt = new Map<string, number>();
+  private readonly firstAudioWaiters = new Map<string, Set<(acceptedAt: number) => void>>();
   private readonly eventPath: string;
   private readonly playbackConfirmedAttempts = new Set<string>();
   private readonly startedAttempts = new Set<string>();
@@ -71,6 +78,14 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
       writeFile(transport.eventPath, "", { flag: "a" }),
       writeFile(transport.trackPath, "", { flag: "a" }),
     ]);
+    for (const event of await readEvents(input.root)) {
+      if (event.type === "audio-chunk" && event.acceptedAtMs !== undefined) {
+        transport.durablyStartedAttempts.add(event.attemptId);
+        if (!transport.durableStartedAtMs.has(event.attemptId)) {
+          transport.durableStartedAtMs.set(event.attemptId, event.acceptedAtMs);
+        }
+      }
+    }
     return transport;
   }
 
@@ -87,12 +102,55 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
   }
 
   public send(command: CraigPlaybackCommand): Promise<void> {
+    const accepted = this.acceptAfter(this.tail, command);
+    this.tail = this.ignoreFailure(accepted);
+    return accepted;
+  }
+
+  private async acceptAfter(
+    preceding: Promise<void>,
+    command: CraigPlaybackCommand,
+  ): Promise<void> {
+    await preceding;
     this.pendingWrites += 1;
     this.peakPendingWrites = Math.max(this.peakPendingWrites, this.pendingWrites);
-    const accepted = this.tail.then(() => this.accept(command));
-    this.tail = accepted.catch(() => {});
-    return accepted.finally(() => {
+    try {
+      await this.accept(command);
+    } finally {
       this.pendingWrites -= 1;
+    }
+  }
+
+  private async ignoreFailure(operation: Promise<void>): Promise<void> {
+    try {
+      await operation;
+    } catch {
+      // The returned promise retains the failure; the transport tail only serializes later writes.
+    }
+  }
+
+  public whenFirstAudioAccepted(
+    turnId: string,
+    timeoutMs: number,
+  ): Promise<number> {
+    const observed = this.firstAudioAcceptedAt.get(turnId);
+    if (observed !== undefined) {
+      return Promise.resolve(observed);
+    }
+    return new Promise<number>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.firstAudioWaiters.get(turnId)?.delete(accept);
+        reject(new Error(`first audio was not accepted for ${turnId}`));
+      }, timeoutMs);
+      timeout.unref();
+      const accept = (acceptedAt: number): void => {
+        clearTimeout(timeout);
+        this.firstAudioWaiters.get(turnId)?.delete(accept);
+        resolve(acceptedAt);
+      };
+      const waiters = this.firstAudioWaiters.get(turnId) ?? new Set();
+      waiters.add(accept);
+      this.firstAudioWaiters.set(turnId, waiters);
     });
   }
 
@@ -121,6 +179,39 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
   }
 
   private async accept(command: CraigPlaybackCommand): Promise<void> {
+    if (command.type === "audio-chunk") {
+      this.observeFirstAudio(command.turnId);
+    }
+    if (
+      command.type === "playback-start" &&
+      this.durablyStartedAttempts.has(command.attemptId)
+    ) {
+      this.deduplicatedAttempts.add(command.attemptId);
+      this.eventListener({
+        attemptId: command.attemptId,
+        recordingId: command.recordingId,
+        schemaVersion: 1,
+        startedAtMs: this.durableStartedAtMs.get(command.attemptId) ??
+          this.input.clock.nowMilliseconds(),
+        turnId: command.turnId,
+        type: "playback-started",
+      });
+      return;
+    }
+    if (this.deduplicatedAttempts.has(command.attemptId)) {
+      if (command.type === "playback-finish" || command.type === "playback-cancel") {
+        this.deduplicatedAttempts.delete(command.attemptId);
+        this.eventListener({
+          attemptId: command.attemptId,
+          finishedAtMs: this.input.clock.nowMilliseconds(),
+          recordingId: command.recordingId,
+          schemaVersion: 1,
+          turnId: command.turnId,
+          type: "playback-finished",
+        });
+      }
+      return;
+    }
     if (command.type === "playback-start") {
       this.startedAttempts.add(command.attemptId);
       this.activeAttempts = this.startedAttempts.size;
@@ -143,7 +234,9 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
         this.bufferedBytes -= bytes.byteLength;
       }
     }
+    const acceptedAtMs = this.input.clock.nowMilliseconds();
     const stored: StoredPlaybackEvent = {
+      acceptedAtMs,
       attemptId: command.attemptId,
       ...(command.type === "playback-cancel" && command.schemaVersion === 2
         ? {
@@ -155,6 +248,7 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
         : {}),
       ...(pcmBase64 === undefined ? {} : { pcmBase64 }),
       ...(pcmSha256 === undefined ? {} : { pcmSha256 }),
+      ...(command.type === "audio-chunk" ? { sequence: command.sequence } : {}),
       phase: this.input.phase,
       turnId: command.turnId,
       type: command.type,
@@ -168,11 +262,13 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
       !this.playbackConfirmedAttempts.has(command.attemptId)
     ) {
       this.playbackConfirmedAttempts.add(command.attemptId);
+      this.durablyStartedAttempts.add(command.attemptId);
+      this.durableStartedAtMs.set(command.attemptId, acceptedAtMs);
       this.eventListener({
         attemptId: command.attemptId,
         recordingId: command.recordingId,
         schemaVersion: 1,
-        startedAtMs: this.input.clock.nowMilliseconds(),
+        startedAtMs: acceptedAtMs,
         turnId: command.turnId,
         type: "playback-started",
       });
@@ -191,13 +287,43 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
       });
     }
   }
+
+  private observeFirstAudio(turnId: string): void {
+    if (this.firstAudioAcceptedAt.has(turnId)) {
+      return;
+    }
+    const acceptedAt = performance.now();
+    this.firstAudioAcceptedAt.set(turnId, acceptedAt);
+    const waiters = this.firstAudioWaiters.get(turnId);
+    this.firstAudioWaiters.delete(turnId);
+    for (const accept of waiters ?? []) {
+      accept(acceptedAt);
+    }
+  }
 }
 
-export async function completedReceiptStates(pool: Pool): Promise<readonly string[]> {
-  const result = await pool.query<{ readonly state: string }>(
-    "SELECT state FROM meeting_core.conversation_one_shot_receipts ORDER BY receipt_id",
-  );
-  return result.rows.map(({ state }) => state);
+export async function completedReceiptStates(
+  pool: Pool,
+  expectedCount: number,
+): Promise<readonly string[]> {
+  const deadline = performance.now() + 10_000;
+  for (;;) {
+    const result = await pool.query<{ readonly state: string }>(
+      "SELECT state FROM meeting_core.conversation_one_shot_receipts ORDER BY receipt_id",
+    );
+    const states = result.rows.map(({ state }) => state);
+    if (states.length === expectedCount && states.every((state) =>
+      state === "completed" || state === "played" || state === "suppressed"
+    )) {
+      return states;
+    }
+    if (performance.now() >= deadline) {
+      throw new Error(
+        `conversation one-shot receipts did not reach ${expectedCount} terminal rows`,
+      );
+    }
+    await new Promise<void>((resolve) => { setTimeout(resolve, 5); });
+  }
 }
 
 export async function readEvents(root: string): Promise<readonly StoredPlaybackEvent[]> {
@@ -261,14 +387,6 @@ export function turnPcmSha256(
   return sha256(bytes);
 }
 
-export async function readGreetingManifest(): Promise<ReadonlyMap<string, string>> {
-  const manifest = JSON.parse(await readFile(
-    join(assetRoot, "greeting-cues", "manifest.json"),
-    "utf8",
-  )) as { readonly cues: readonly { readonly sha256: string; readonly text: string }[] };
-  return new Map(manifest.cues.map(({ sha256: digest, text }) => [text, digest]));
-}
-
 export async function farewellSha256(locale: "en" | "ru"): Promise<string> {
   const manifest = JSON.parse(await readFile(
     join(assetRoot, "farewell-cues", "manifest.json"),
@@ -328,7 +446,9 @@ export async function waitForPersistedTurn(
   meetingId: string,
   turnId: string,
 ): Promise<void> {
-  const deadline = performance.now() + 2_000;
+  // A disposable PostgreSQL process can checkpoint slowly under constrained CI;
+  // this bound is test liveness, not a product latency assertion.
+  const deadline = performance.now() + 10_000;
   for (;;) {
     const persisted = await meetings.readSnapshotAndTimeline(meetingId);
     if (persisted?.timeline.some(({ turn }) => turn.turnId === turnId) === true) {

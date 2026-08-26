@@ -4,6 +4,7 @@ export type AnswerEffectState =
   | "claimed"
   | "delivered"
   | "outcome_unknown"
+  | "quarantined_unrecoverable"
   | "rejected_before_request"
   | "retracted"
   | "retraction_pending"
@@ -28,6 +29,7 @@ const transitions = Object.freeze({
     "outcome_unknown",
     "retraction_pending",
   ]),
+  quarantined_unrecoverable: Object.freeze(["quarantined_unrecoverable"]),
   rejected_before_request: Object.freeze(["rejected_before_request"]),
   retracted: Object.freeze(["retracted"]),
   retraction_pending: Object.freeze(["retracted", "retraction_pending"]),
@@ -48,6 +50,7 @@ export function canTransitionAnswerEffect(
 }
 
 export interface AnswerEffectRecord {
+  readonly authorityScopeId: string;
   readonly authorizationDigest: string;
   readonly bindingHash: string;
   readonly claimGeneration: number;

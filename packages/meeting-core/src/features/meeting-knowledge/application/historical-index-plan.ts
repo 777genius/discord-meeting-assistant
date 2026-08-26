@@ -14,14 +14,17 @@ import {
   type AcceptedFinalMeetingV1,
   type HistoricalReleaseBindingV1,
 } from "../domain/historical-evidence.js";
-import type {
-  HistoricalBlockManifestV1,
-  HistoricalIndexDocumentV1,
-  HistoricalIndexPlanV1,
-  HistoricalOpaqueIdPort,
-  HistoricalTopologyV1,
-  LocallyRehydratedEvidenceBlockV1,
+import {
+  HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
+  type HistoricalBlockManifestV1,
+  type HistoricalIndexDocumentV1,
+  type HistoricalIndexPlanV1,
+  type HistoricalOpaqueIdPort,
+  type HistoricalTopologyV1,
+  type LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
+export { HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION } from
+  "./ports/historical-memory.js";
 import {
   historicalEmbeddingTokenProfile,
   type HistoricalEmbeddingTokenizerPort,
@@ -134,8 +137,10 @@ function buildHistoricalTopologyForProfile(
         String(policy.maximumEmbeddingTokens),
         String(policy.turnOverlap),
         tokenProfile,
+        HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
       ]),
     ),
+    projectionContractVersion: HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
     releaseRef,
     roomScopeExternalRef,
     spaceSlug,
@@ -313,7 +318,12 @@ function assembleHistoricalIndexPlan(input: HistoricalIndexAssembly): Historical
     documents: Object.freeze(documents),
     effectiveTurnOverlap: policy.turnOverlap,
     indexMutationId: opaque(
-      "mkmutation1", ids.keyedId("historical-release-index-mutation", [releaseRef]),
+      "mkmutation1",
+      ids.keyedId("historical-release-index-mutation", [
+        releaseRef,
+        indexGeneration,
+        HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
+      ]),
     ),
     planDigest,
     schemaVersion: 1,

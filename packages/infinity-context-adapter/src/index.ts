@@ -4,6 +4,13 @@ export {
   type InfinityContextHistoricalMemoryConfigV1,
 } from "./infinity-context-historical-memory.js";
 export {
+  InfinityContextRetrievalV2Adapter,
+  type InfinityContextRetrievalV2Binding,
+  type InfinityContextRetrievalV2Config,
+  type InfinityContextRetrievalV2Request,
+} from "./infinity-context-retrieval-v2.js";
+export { INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE } from "./infinity-sdk-provenance.js";
+export {
   INFINITY_CONTEXT_SDK_PROVENANCE,
   InfinityContextActivationError,
   assertInfinityContextActivation,
@@ -43,3 +50,24 @@ export {
   Sha256HistoricalReceiptDigest,
   type CooperativeHistoricalIndexPlannerConfigV1,
 } from "./cooperative-historical-index-planner.js";
+export {
+  FailClosedSemanticQualityV4Adjudication,
+  FailClosedSemanticQualityV4Answer,
+  FailClosedSemanticQualityV4Evidence,
+  FailClosedSemanticQualityV4Retrieval,
+  runSemanticQualityV4,
+  runSemanticQualityV4AnswerPhase,
+  runSemanticQualityV4RetrievalPhase,
+  semanticQualityV4QuestionDigest,
+  type SemanticQualityV4AdjudicationPort,
+  type SemanticQualityV4AnswerPort,
+  type SemanticQualityV4AnswerMeasurement,
+  type SemanticQualityV4EvidencePort,
+  type SemanticQualityV4RetrievalPort,
+  type SemanticQualityV4LocalEvidenceTurn,
+  type SemanticQualityV4ModelInputMeasurement,
+  type SemanticQualityV4RetrievalResult,
+  type SemanticQualityV4RunQuestion,
+  type SemanticQualityV4RunnerOutcome,
+  type SemanticQualityV4RetrievalPhaseOutcome,
+} from "./semantic-quality-v4-runner.js";

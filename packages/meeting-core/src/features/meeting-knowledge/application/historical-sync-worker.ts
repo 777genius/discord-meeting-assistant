@@ -2,13 +2,12 @@ import {
   buildHistoricalIndexPlan,
   buildHistoricalIndexPlanFromPreparedWindows,
   DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
+  HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
   HistoricalIndexPlanError,
   type HistoricalEvidenceBlockPolicyV1,
 } from "./historical-index-plan.js";
-import type { HistoricalIndexPlanV1, HistoricalMemoryPort, HistoricalOpaqueIdPort } from
-  "./ports/historical-memory.js";
-import type { HistoricalEvidenceAuthority, HistoricalSyncLeaseV1, HistoricalSyncStore } from
-  "./ports/historical-state.js";
+import type { HistoricalIndexPlanV1, HistoricalMemoryPort, HistoricalOpaqueIdPort } from "./ports/historical-memory.js";
+import type { HistoricalEvidenceAuthority, HistoricalSyncLeaseV1, HistoricalSyncStore } from "./ports/historical-state.js";
 import type { AcceptedFinalMeetingV1 } from "../domain/historical-evidence.js";
 import { historicalPlanProjectionMatches } from "./historical-embedding-windows.js";
 import type { HistoricalEmbeddingTokenizerPort } from
@@ -421,6 +420,7 @@ function planNeeded(
   profileRebuildRequired: boolean,
   exactPlanningConfigured: boolean,
 ): boolean {
-  return persisted === null || profileRebuildRequired ||
+  return persisted === null || persisted.topology.projectionContractVersion !== HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION ||
+    profileRebuildRequired ||
     (exactPlanningConfigured && appliedIndexProfileId === null);
 }
