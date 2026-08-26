@@ -50,7 +50,9 @@ interface LiveProactiveConversationTurnInput {
   readonly literalSpeech?: string;
   readonly meetingId: string;
   readonly nowMs: number;
+  readonly playbackNotAfterMs?: number;
   readonly playbackAttemptId?: string;
+  readonly preemptive?: boolean;
   readonly prompt: string;
   readonly recordingId: string;
   readonly speakerId: string;
@@ -68,6 +70,7 @@ interface LivePreparedConversationCueInput {
   readonly nowMs: number;
   readonly pcmChunks: readonly Uint8Array[];
   readonly playbackAttemptId: string;
+  readonly playbackNotAfterMs?: number;
   readonly preemptive?: boolean;
   readonly recordingId: string;
   readonly speakerId: string;

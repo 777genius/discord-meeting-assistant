@@ -6,6 +6,7 @@ import {
 import { RequestHistoricalMeetingDeletion } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import {
+  PostgresDerivedGreetingObligationStore,
   PostgresHistoricalMemoryStore,
   PostgresSchemaReadiness,
 } from "@discord-meeting/postgres-adapter";
@@ -43,6 +44,9 @@ import {
 import { startPlatformServices } from "./startup.js";
 
 const outboxReconcileIntervalMilliseconds = 5_000;
+const greetingObligationReconcileIntervalMilliseconds = 100;
+const monotonicUnixNowMilliseconds = (): number =>
+  Math.floor(performance.timeOrigin + performance.now());
 
 export interface MeetingPlatformRuntime {
   close(): Promise<void>;
@@ -93,10 +97,12 @@ export async function startMeetingPlatform(
     const ingress = new PlatformRecordingIngress({
       dispatcher: postCall.outboxDispatcher,
       failureClassifier: { classify: classifyRecordingIngressRejection },
+      greetingObligations: new PostgresDerivedGreetingObligationStore(core.pool),
       ingress: core.recordingIngress,
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
       logger,
       metrics,
+      nowMilliseconds: monotonicUnixNowMilliseconds,
       outbox: {
         recordAndSchedule: (snapshot, expectedRevision) =>
           core.meetings.recordAndSchedule(
@@ -156,6 +162,7 @@ export async function startMeetingPlatform(
       server: http.server,
       worker: postCall.worker,
     });
+    await ingress.dispatchPendingGreetings();
     meetingKnowledge.start();
     liveFinalizedMemory?.start();
     cleanup.release();
@@ -172,6 +179,7 @@ export async function startMeetingPlatform(
       ...(historicalMemory === undefined ? {} : { historicalMemory }),
       ...(liveFinalizedMemory === undefined ? {} : { liveFinalizedMemory }),
       logger,
+      greetingObligationDispatcher: ingress,
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
       meetingKnowledge,
       outboxDispatcher: postCall.outboxDispatcher,
@@ -302,16 +310,25 @@ function createRunningPlatformRuntime(
       PostCallOutboxDispatcher,
       "dispatchPending" | "whenIdle"
     >;
+    readonly greetingObligationDispatcher: Pick<
+      PlatformRecordingIngress,
+      "dispatchPendingGreetings"
+    >;
   },
 ): MeetingPlatformRuntime {
   const outboxReconcileTimer = setInterval(() => {
     void resources.outboxDispatcher.dispatchPending();
   }, outboxReconcileIntervalMilliseconds);
   outboxReconcileTimer.unref();
+  const greetingObligationReconcileTimer = setInterval(() => {
+    void resources.greetingObligationDispatcher.dispatchPendingGreetings();
+  }, greetingObligationReconcileIntervalMilliseconds);
+  greetingObligationReconcileTimer.unref();
   let closing: Promise<void> | undefined;
   return {
     close: () => {
       clearInterval(outboxReconcileTimer);
+      clearInterval(greetingObligationReconcileTimer);
       closing ??= closeMeetingPlatformResources(resources);
       return closing;
     },

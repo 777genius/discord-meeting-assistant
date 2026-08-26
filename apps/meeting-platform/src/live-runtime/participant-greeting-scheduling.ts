@@ -82,6 +82,12 @@ export async function reserveGreetingPlaybackAdmission(
           `participant-greeting:${input.participantId}`,
       };
     }
+    if (!input.deadlines.ensureFresh(input.participantId, input.nowMilliseconds())) {
+      await input.receipts.settle(input.participantId, "suppressed", "stale");
+      input.markGreeted();
+      input.clearTerminal();
+      return undefined;
+    }
     if (recovered.providerRecoveryRemainingMilliseconds === undefined ||
       recovered.providerRecoveryRemainingMilliseconds <= 0) {
       await input.receipts.settle(input.participantId, "suppressed", "ambiguous");

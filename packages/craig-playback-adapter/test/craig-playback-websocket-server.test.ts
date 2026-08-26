@@ -100,6 +100,7 @@ describe("Craig playback WebSocket server", () => {
         deduplicatesCommandIds: true,
         deduplicationRetentionSeconds: 300,
         replaysOriginalStartedAtMs: true,
+        suppressesPlaybackAtOrAfterNotAfter: true,
       },
       recordingId: "recording-1",
       guildId: "1533228590643155034",

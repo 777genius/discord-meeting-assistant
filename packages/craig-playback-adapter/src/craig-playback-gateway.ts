@@ -82,6 +82,15 @@ export class CraigPlaybackGateway implements VoicePlaybackPort {
     if (options.signal?.aborted === true) {
       return playbackOpenCancelled();
     }
+    if (request.notAfterMs !== undefined &&
+      (!Number.isSafeInteger(request.notAfterMs) ||
+        request.notAfterMs < 0 || this.nowMilliseconds() >= request.notAfterMs)) {
+      return failure(
+        "CRAIG_PLAYBACK_DEADLINE_EXPIRED",
+        "Craig playback deadline expired before session open",
+        false,
+      );
+    }
     const registered = this.transports.get(request.recordingId);
     if (registered === undefined) {
       return failure(

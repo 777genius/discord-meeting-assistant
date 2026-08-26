@@ -115,6 +115,9 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
         format: "pcm_s16le",
         sampleRateHz: craigPlaybackSampleRateHz,
         channels: craigPlaybackChannels,
+        ...(this.request.notAfterMs === undefined
+          ? {}
+          : { notAfterUnixMs: this.request.notAfterMs }),
       }),
       signal,
     );
@@ -146,6 +149,16 @@ export class CraigVoicePlaybackSession implements VoicePlaybackSession {
     const identityFailure = this.validateChunkIdentity(chunk);
     if (identityFailure !== undefined) {
       return { ok: false, failure: identityFailure };
+    }
+    if (this.request.notAfterMs !== undefined &&
+      this.nowMilliseconds() >= this.request.notAfterMs && !this.playbackStarted) {
+      const expired = failure(
+        "CRAIG_PLAYBACK_DEADLINE_EXPIRED",
+        "Craig playback deadline expired before provider-confirmed start",
+        false,
+      );
+      this.fail(expired.failure);
+      return expired;
     }
     const hash = chunkHash(chunk.bytes);
     if (chunk.sequence < this.expectedSequence) {

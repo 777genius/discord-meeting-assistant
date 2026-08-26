@@ -275,6 +275,7 @@ const playbackStartSchema = playbackTurnEnvelopeSchema
     format: z.literal("pcm_s16le"),
     sampleRateHz: z.literal(craigPlaybackSampleRateHz),
     channels: z.literal(craigPlaybackChannels),
+    notAfterUnixMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   })
   .strict();
 
@@ -354,6 +355,7 @@ const playbackSessionReadySchema = z
       deduplicatesCommandIds: z.literal(true),
       deduplicationRetentionSeconds: z.number().int().min(300).max(86_400),
       replaysOriginalStartedAtMs: z.literal(true),
+      suppressesPlaybackAtOrAfterNotAfter: z.literal(true),
     }).strict(),
   })
   .strict();

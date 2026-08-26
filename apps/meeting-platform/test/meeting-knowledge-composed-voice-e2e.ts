@@ -158,6 +158,7 @@ export async function proveComposedGroundedVoice(input: {
         deduplicatesCommandIds: true,
         deduplicationRetentionSeconds: 300,
         replaysOriginalStartedAtMs: true,
+        suppressesPlaybackAtOrAfterNotAfter: true,
       },
     }));
     await waitForCondition(() => playback?.hasSession(recordingId) === true);

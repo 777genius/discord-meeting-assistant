@@ -256,6 +256,11 @@
       "id": "ADR-0054",
       "path": "docs/decisions/0054-official-sdk-live-memory-projection.md",
       "immutableDigest": "sha256:ded5c7dd3363857ceecb27808ab154ff634e5700b304fc00bf77e4e11ccc889f"
+    },
+    {
+      "id": "ADR-0055",
+      "path": "docs/decisions/0055-deadline-bound-durable-participant-greetings.md",
+      "immutableDigest": "sha256:91945c2f883dcb1717a23618247a45fc3a1c4943df8c1954dfac4d5f624005c3"
     }
   ]
 }

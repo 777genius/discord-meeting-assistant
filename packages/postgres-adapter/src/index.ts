@@ -40,6 +40,10 @@ export {
 } from "./postgres-final-reply-evidence.js";
 export { PostgresFocusedMemoryRetrieval } from "./postgres-focused-memory-retrieval.js";
 export { PostgresConversationOneShotReceiptStore } from "./postgres-conversation-one-shot-receipts.js";
+export {
+  PostgresDerivedGreetingObligationStore,
+  type DerivedGreetingObligation,
+} from "./postgres-derived-greeting-obligations.js";
 export { PostgresQuestionAdmissionCommit } from "./postgres-question-admission-commit.js";
 export { PostgresQuestionJobStore } from "./postgres-question-job-store.js";
 export { PostgresFinalReplyMaintenance } from "./postgres-final-reply-maintenance.js";

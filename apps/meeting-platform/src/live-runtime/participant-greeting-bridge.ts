@@ -7,6 +7,7 @@ import { participantGreetingProfile, resolveParticipantGreeting,
   type GreetingAttemptOutcome,
   type ResolvedParticipantGreeting } from "./participant-greeting-content.js";
 import { playParticipantGreeting,
+  cancelParticipantGreetingPlayback,
   selectParticipantGreetingAnonymousCue,
   type ParticipantGreetingPlayback,
 } from "./participant-greeting-playback.js";
@@ -41,6 +42,7 @@ interface ParticipantGreetingBridgeDependencies {
 const maximumSupportedCohortSize = 12;
 /** Meeting-local, bounded queue for one proactive greeting per participant. */
 export class ParticipantGreetingBridge {
+  private activeGreetingParticipantId: string | null = null;
   private advanceRequested = false;
   private readonly capacityExemptParticipantIds = new Set<string>();
   private capacityReconciliationGeneration = 0;
@@ -120,6 +122,7 @@ export class ParticipantGreetingBridge {
       // transaction before its queue entry can reach playback.
       this.capacityReconciliationGeneration += 1;
       this.requestCapacityReconciliation();
+      this.preemptActiveGreeting();
     }
     this.tryAdvance();
   }
@@ -175,6 +178,7 @@ export class ParticipantGreetingBridge {
   }
   public close(): void {
     this.closed = true;
+    this.preemptActiveGreeting();
     this.advanceRequested = false;
     this.pendingGreetings.clear();
     this.capacityExemptParticipantIds.clear();
@@ -194,6 +198,15 @@ export class ParticipantGreetingBridge {
       ]);
     }
     await this.deadlines.settle();
+  }
+  /** True only after the heap obligation has crossed into durable or terminal receipt state. */
+  public async settleAcceptance(participantId: string): Promise<boolean> {
+    if (this.greeting(participantId) === undefined) {
+      return true;
+    }
+    await this.settle();
+    return this.greetedParticipantIds.has(participantId) ||
+      this.receipts.isFencedOrActive(participantId);
   }
   private async drain(): Promise<void> {
     const greetings = this.dependencies.configuration.greetings;
@@ -233,28 +246,6 @@ export class ParticipantGreetingBridge {
     priority: ParticipantGreetingPriority,
     greeting: ResolvedParticipantGreeting,
   ): Promise<boolean> {
-    const recovering = this.recoveryParticipantIds.has(participantId);
-    const waitingCohortParticipantIds = this.cohortCandidates(participantId);
-    const waitingDeadlineParticipantId = this.deadlines.earliestParticipantId(
-      waitingCohortParticipantIds,
-    ) ?? participantId;
-    const idleOperation = this.dependencies.configuration.coordinator.whenIdle(
-      this.dependencies.meetingId,
-    );
-    const idle = recovering
-      ? await completedVoid(idleOperation)
-      : await this.deadlines.race(
-          waitingDeadlineParticipantId,
-          idleOperation,
-          () => this.nowMilliseconds(),
-        );
-    if (idle.status !== "completed") {
-      if (waitingDeadlineParticipantId !== participantId &&
-        this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
-        this.enqueue(participantId, priority);
-      }
-      return false;
-    }
     if (this.capacityReconciliationRequired ||
       this.capacityReconciliationTask !== null) {
       this.enqueue(participantId, priority);
@@ -272,8 +263,7 @@ export class ParticipantGreetingBridge {
       return true;
     }
     let admissionCohortParticipantIds = this.cohortCandidates(participantId);
-    if (!recovering) {
-      for (;;) {
+    for (;;) {
         const admissionDeadlineParticipantId = this.deadlines.earliestParticipantId(
           admissionCohortParticipantIds,
         ) ?? participantId;
@@ -296,7 +286,6 @@ export class ParticipantGreetingBridge {
         admissionCohortParticipantIds = admissionCohortParticipantIds.filter(
           (id) => id !== admissionDeadlineParticipantId,
         );
-      }
     }
     const reclaimActive = this.recoveryParticipantIds.delete(participantId);
     const admission = this.preReservedAdmissions.get(participantId) ??
@@ -314,7 +303,9 @@ export class ParticipantGreetingBridge {
       return false;
     }
     const cohortParticipantIds = admission.providerCommand === undefined
-      ? this.takeCohort(participantId, admissionCohortParticipantIds)
+      ? this.hasPreparedIndividualCues(admissionCohortParticipantIds)
+        ? [participantId]
+        : this.takeCohort(participantId, admissionCohortParticipantIds)
       : [participantId];
     const cohortAdmissions = new Map([[participantId, admission]]);
     for (const cohortParticipantId of cohortParticipantIds.slice(1)) {
@@ -343,7 +334,7 @@ export class ParticipantGreetingBridge {
     const recoveredCommand = admission.providerCommand !== undefined;
     const admittedParticipantIds = reservedParticipantIds.filter((id) =>
       this.presentParticipantIds.has(id) &&
-      (recoveredCommand || this.deadlines.ensureFresh(id, this.nowMilliseconds()))
+      this.deadlines.ensureFresh(id, this.nowMilliseconds())
     );
     await Promise.all(reservedParticipantIds
       .filter((id) => !admittedParticipantIds.includes(id))
@@ -358,8 +349,7 @@ export class ParticipantGreetingBridge {
       }
       return false;
     }
-    if (!recoveredCommand &&
-      !this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
+    if (!this.deadlines.ensureFresh(participantId, this.nowMilliseconds())) {
       await Promise.all(admittedParticipantIds.map((id) =>
         this.receipts.settle(id, "suppressed", "stale")
       ));
@@ -369,11 +359,11 @@ export class ParticipantGreetingBridge {
     const deadlineParticipantId = this.deadlines.earliestParticipantId(
       admittedParticipantIds,
     );
-    if (deadlineParticipantId === undefined || (!recoveredCommand &&
+    if (deadlineParticipantId === undefined ||
       !this.scheduling.canStartBeforeDeadline(
         this.deadlines.expiresAtMilliseconds(deadlineParticipantId),
         this.nowMilliseconds(),
-      ))) {
+      )) {
       await Promise.all(admittedParticipantIds.map((id) =>
         this.receipts.settle(id, "suppressed", "stale")
       ));
@@ -417,45 +407,64 @@ export class ParticipantGreetingBridge {
         this.receipts.settle(id, "suppressed", "ambiguous")));
       return false;
     }
+    const playbackNotAfterMilliseconds = this.deadlines.expiresAtMilliseconds(
+      deadlineParticipantId,
+    );
+    if (playbackNotAfterMilliseconds === undefined ||
+      !this.deadlines.ensureFresh(deadlineParticipantId, this.nowMilliseconds())) {
+      await Promise.all(admittedParticipantIds.map((id) =>
+        this.receipts.settle(id, "suppressed", "stale")
+      ));
+      return false;
+    }
+    this.activeGreetingParticipantId = participantId;
     const playback = this.speak(
       participantId,
       cohortGreeting,
       admission.providerCommandId,
       usesDynamicCohortCommand,
+      playbackNotAfterMilliseconds,
     );
     const playbackBound = this.scheduling.beginSlot(
       participantId,
       this.nowMilliseconds(),
       usesDynamicCohortCommand,
     );
-    const coordinated = await coordinateGreetingPlayback({
-      clearTerminal: () => { this.clearTerminalState(participantId); },
-      deadlines: this.deadlines,
-      dependencies: this.settlementDependencies(),
-      deadlineParticipantId,
-      markGreeted: () => this.greetedParticipantIds.add(participantId),
-      observeFirstAudio: (startedAtMilliseconds) => {
-        this.scheduling.observeFirstAudio(startedAtMilliseconds, playbackBound);
-      },
-      persistFirstAudio: async (startedAtMilliseconds) => {
-        for (const id of admittedParticipantIds) {
-          if (id !== deadlineParticipantId &&
-            !this.deadlines.acceptFirstAudio(id, startedAtMilliseconds)) {
-            throw new Error("Greeting cohort member missed the producer deadline");
+    let coordinated;
+    try {
+      coordinated = await coordinateGreetingPlayback({
+        clearTerminal: () => { this.clearTerminalState(participantId); },
+        deadlines: this.deadlines,
+        dependencies: this.settlementDependencies(),
+        deadlineParticipantId,
+        markGreeted: () => this.greetedParticipantIds.add(participantId),
+        observeFirstAudio: (startedAtMilliseconds) => {
+          this.scheduling.observeFirstAudio(startedAtMilliseconds, playbackBound);
+        },
+        persistFirstAudio: async (startedAtMilliseconds) => {
+          for (const id of admittedParticipantIds) {
+            if (id !== deadlineParticipantId &&
+              !this.deadlines.acceptFirstAudio(id, startedAtMilliseconds)) {
+              throw new Error("Greeting cohort member missed the producer deadline");
+            }
           }
-        }
-        await this.receipts.confirmCohortStarted(
-          admittedParticipantIds,
-          startedAtMilliseconds,
-        );
-      },
-      participantId,
-      playback,
-      playbackBoundMilliseconds: playbackBound,
-      receipts: this.receipts,
-      releaseSlot: () => { this.scheduling.releaseSlot(); },
-      suppressOverflow: () => { /* explicit bounded cohort admission owns overflow */ },
-    });
+          await this.receipts.confirmCohortStarted(
+            admittedParticipantIds,
+            startedAtMilliseconds,
+          );
+        },
+        participantId,
+        playback,
+        playbackBoundMilliseconds: playbackBound,
+        receipts: this.receipts,
+        releaseSlot: () => { this.scheduling.releaseSlot(); },
+        suppressOverflow: () => { /* explicit bounded cohort admission owns overflow */ },
+      });
+    } finally {
+      if (this.activeGreetingParticipantId === participantId) {
+        this.activeGreetingParticipantId = null;
+      }
+    }
     await this.settleCohortFollowers(
       admittedParticipantIds.slice(1),
       coordinated.status === "outcome" ? coordinated.outcome : "unknown",
@@ -510,6 +519,12 @@ export class ParticipantGreetingBridge {
       this.pendingGreetings.delete(participantId);
     }
     return [leaderParticipantId, ...admitted.map(({ participantId }) => participantId)];
+  }
+
+  private hasPreparedIndividualCues(participantIds: readonly string[]): boolean {
+    return participantIds.length > 1 && participantIds.every((participantId) =>
+      this.scheduling.preparedCue(participantId) !== null
+    );
   }
 
   private async settleCohortFollowers(
@@ -654,6 +669,7 @@ export class ParticipantGreetingBridge {
     greeting: ResolvedParticipantGreeting,
     providerCommandId: string,
     isCohort: boolean,
+    playbackNotAfterMilliseconds: number,
   ): ParticipantGreetingPlayback {
     const retryCount = this.scheduling.retryCount(participantId);
     const turnId = retryCount === 0
@@ -674,6 +690,7 @@ export class ParticipantGreetingBridge {
       logger: this.dependencies.logger,
       meetingId: this.dependencies.meetingId,
       nowMilliseconds: () => this.nowMilliseconds(),
+      playbackNotAfterMilliseconds,
       observedLatencyMilliseconds: () =>
         this.observedGreetingLatencyMilliseconds(participantId),
       participantId,
@@ -682,6 +699,20 @@ export class ParticipantGreetingBridge {
       shouldStop: () => this.shouldStopGreeting(participantId),
       turnId,
     });
+  }
+  private preemptActiveGreeting(): void {
+    const participantId = this.activeGreetingParticipantId;
+    if (participantId === null) {
+      return;
+    }
+    const cancellation = cancelParticipantGreetingPlayback(
+      this.dependencies.configuration,
+      this.dependencies.logger,
+      this.dependencies.meetingId,
+      participantId,
+      this.nowMilliseconds(),
+    );
+    this.deadlines.track(cancellation);
   }
   private profile(participantId: string) { return participantGreetingProfile(this.dependencies.configuration, participantId); }
   private greeting(participantId: string): ResolvedParticipantGreeting | undefined {

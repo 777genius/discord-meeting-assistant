@@ -46,6 +46,10 @@ export interface ProactiveConversationTurnInput {
   readonly literalSpeech?: string;
   readonly meetingId: string;
   readonly nowMs: number;
+  /** Preempts active or queued conversation work before admitting this system utterance. */
+  readonly preemptive?: boolean;
+  /** Absolute first-audio fence carried to the playback transport. */
+  readonly playbackNotAfterMs?: number;
   /** Stable provider command identity; retries may use a new coordinator turn ID. */
   readonly playbackAttemptId?: string;
   readonly prompt: string;
@@ -68,8 +72,10 @@ export interface PreparedConversationCueInput {
   readonly nowMs: number;
   readonly pcmChunks: readonly Uint8Array[];
   readonly playbackAttemptId: string;
-  /** Farewells may preempt; join greetings queue behind an answer race. */
+  /** Farewells and deadline-bound greetings may preempt active conversation work. */
   readonly preemptive?: boolean;
+  /** Absolute first-audio fence carried to the playback transport. */
+  readonly playbackNotAfterMs?: number;
   readonly recordingId: string;
   readonly speakerId: string;
   readonly turnId: string;
@@ -146,6 +152,7 @@ export interface PreparedConversation {
   readonly interruptible: boolean;
   readonly groundedKnowledgeRequest?: GroundedKnowledgeAnswerRequest;
   readonly preemptive: boolean;
+  readonly playbackNotAfterMs?: number;
   readonly request: ConversationStartRequest;
   readonly thinkingCueLocale: string;
   readonly thinkingCuesEnabled: boolean;

@@ -265,6 +265,7 @@ export async function composePhase(input: ComposePhaseInput): Promise<Qualificat
           deduplicatesCommandIds: true,
           deduplicationRetentionSeconds: 300,
           replaysOriginalStartedAtMs: true,
+          suppressesPlaybackAtOrAfterNotAfter: true,
         },
         schemaVersion: 3,
         type: "session-ready",

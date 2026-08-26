@@ -100,6 +100,31 @@ async function collect<Value>(values: AsyncIterable<Value>): Promise<Value[]> {
   return result;
 }
 
+describe("CraigPlaybackGateway not-after fencing", () => {
+  it("carries not-after to Craig and suppresses PCM when a queued start becomes late", async () => {
+    let now = 90;
+    const gateway = new CraigPlaybackGateway(() => now);
+    const transport = new FakeTransport();
+    gateway.register(transport);
+
+    const opened = await gateway.open({ ...request, notAfterMs: 100 });
+    if (!opened.ok) {
+      throw new Error("deadline-bound playback did not open while fresh");
+    }
+    expect(transport.commands[0]).toMatchObject({
+      notAfterUnixMs: 100,
+      type: "playback-start",
+    });
+
+    now = 100;
+    await expect(opened.value.write(chunk(0))).resolves.toMatchObject({
+      failure: { code: "CRAIG_PLAYBACK_DEADLINE_EXPIRED" },
+      ok: false,
+    });
+    expect(transport.commands.filter(({ type }) => type === "audio-chunk")).toEqual([]);
+  });
+});
+
 describe("CraigPlaybackGateway", () => {
   it("holds an aborted pending open until its terminal receipt", async () => {
     const gateway = new CraigPlaybackGateway();

@@ -19,6 +19,7 @@ export function preparedConversationFingerprint(
     "prepared-conversation:v1",
     prepared.interruptible,
     prepared.preemptive,
+    prepared.playbackNotAfterMs ?? null,
     prepared.groundedKnowledgeRequest?.meetingId ?? null,
     prepared.groundedKnowledgeRequest?.roomId ?? null,
     prepared.groundedKnowledgeRequest?.participantId ?? null,

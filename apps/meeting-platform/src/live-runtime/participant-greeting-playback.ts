@@ -16,6 +16,7 @@ interface ParticipantGreetingPlaybackInput {
   readonly logger: LiveRuntimeLogger;
   readonly meetingId: string;
   readonly nowMilliseconds: () => number;
+  readonly playbackNotAfterMilliseconds: number;
   readonly observedLatencyMilliseconds: () => number;
   readonly participantId: string;
   readonly providerCommandId: string;
@@ -203,7 +204,9 @@ async function playAttempt(
         literalSpeech: input.greeting.prompt,
         meetingId: input.meetingId,
         nowMs: input.nowMilliseconds(),
+        playbackNotAfterMs: input.playbackNotAfterMilliseconds,
         playbackAttemptId: input.providerCommandId,
+        preemptive: true,
         prompt: input.greeting.prompt,
         recordingId: input.meetingId,
         speakerId: input.participantId,
@@ -224,7 +227,8 @@ async function playAttempt(
           // The durable receipt owns this command identity. Reusing a cue-registry
           // attempt id here would make crash recovery issue a different command.
           playbackAttemptId: input.providerCommandId,
-          preemptive: false,
+          playbackNotAfterMs: input.playbackNotAfterMilliseconds,
+          preemptive: true,
           recordingId: input.meetingId,
           speakerId: input.participantId,
           turnId,

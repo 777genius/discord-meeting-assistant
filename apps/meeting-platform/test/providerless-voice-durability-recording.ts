@@ -55,6 +55,7 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
   private readonly firstAudioWaiters = new Map<string, Set<(acceptedAt: number) => void>>();
   private readonly eventPath: string;
   private readonly playbackConfirmedAttempts = new Set<string>();
+  private readonly playbackNotAfterByAttempt = new Map<string, number>();
   private readonly startedAttempts = new Set<string>();
   private tail: Promise<void> = Promise.resolve();
   private readonly trackPath: string;
@@ -179,6 +180,26 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
   }
 
   private async accept(command: CraigPlaybackCommand): Promise<void> {
+    if (command.type === "playback-start" && command.notAfterUnixMs !== undefined) {
+      this.playbackNotAfterByAttempt.set(command.attemptId, command.notAfterUnixMs);
+    }
+    if (command.type === "audio-chunk" &&
+      this.input.clock.nowMilliseconds() >=
+        (this.playbackNotAfterByAttempt.get(command.attemptId) ?? Number.POSITIVE_INFINITY)) {
+      this.startedAttempts.delete(command.attemptId);
+      this.playbackNotAfterByAttempt.delete(command.attemptId);
+      this.eventListener({
+        attemptId: command.attemptId,
+        code: "playback-error",
+        recordingId: command.recordingId,
+        retryable: false,
+        safeMessage: "Playback suppressed at its absolute not-after deadline",
+        schemaVersion: 1,
+        turnId: command.turnId,
+        type: "playback-failed",
+      });
+      return;
+    }
     if (command.type === "audio-chunk") {
       this.observeFirstAudio(command.turnId);
     }
@@ -276,6 +297,7 @@ export class DurableCraigPlaybackTransport implements CraigPlaybackTransport {
     if (command.type === "playback-finish" || command.type === "playback-cancel") {
       this.playbackConfirmedAttempts.delete(command.attemptId);
       this.startedAttempts.delete(command.attemptId);
+      this.playbackNotAfterByAttempt.delete(command.attemptId);
       this.activeAttempts = this.startedAttempts.size;
       this.eventListener({
         attemptId: command.attemptId,

@@ -104,6 +104,9 @@ export class ConversationAnswerPlayback {
         opened = await this.dependencies.playback.open({
           attemptId: run.attemptId,
           meetingId: run.prepared.request.meetingId,
+          ...(run.prepared.playbackNotAfterMs === undefined
+            ? {}
+            : { notAfterMs: run.prepared.playbackNotAfterMs }),
           recordingId: run.prepared.request.recordingId,
           turnId: run.prepared.request.turnId,
         }, {

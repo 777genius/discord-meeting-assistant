@@ -445,6 +445,12 @@ describe("providerless production-composition voice durability", () => {
       );
       expect(firstAudioAcceptedAt - clusteredGreetingAt)
         .toBeLessThan(hardGreetingLatencyMs);
+      const secondAudioAcceptedAt = await first.transport.whenFirstAudioAccepted(
+        `participant-greeting:${participantTwo}`,
+        hardGreetingLatencyMs,
+      );
+      expect(secondAudioAcceptedAt - clusteredGreetingAt)
+        .toBeLessThan(hardGreetingLatencyMs);
       await waitForEvidence(
         recordingRoot,
         (events) => audioChunks(events, `participant-greeting:${participantOne}`).length > 0,
@@ -453,13 +459,15 @@ describe("providerless production-composition voice durability", () => {
         recordingRoot,
         (events) => completedTurn(events, `participant-greeting:${participantOne}`),
       );
+      await waitForEvidence(
+        recordingRoot,
+        (events) => completedTurn(events, `participant-greeting:${participantTwo}`),
+      );
       expect(await completedReceiptStates(first.pool, 2)).toEqual([
         "played",
         "played",
       ]);
-      expect(first.conversationRuntime.proactiveRequests).toHaveLength(1);
-      expect(first.conversationRuntime.proactiveRequests[0]?.literalSpeech)
-        .toBe("Привет, Тест А! Hi, Test B!");
+      expect(first.conversationRuntime.proactiveRequests).toEqual([]);
 
       for (let minute = 1; minute <= 60; minute += 1) {
         await runMinute(first, meetingId, startedAtMs, minute, `Status update ${minute}.`);
@@ -510,7 +518,7 @@ describe("providerless production-composition voice durability", () => {
         "played",
         "played",
       ]);
-      expect(greetingStarts(await readEvents(recordingRoot))).toHaveLength(1);
+      expect(greetingStarts(await readEvents(recordingRoot))).toHaveLength(2);
 
       for (let minute = 61; minute <= 117; minute += 1) {
         await runMinute(
@@ -613,7 +621,7 @@ describe("providerless production-composition voice durability", () => {
       ]);
 
       const events = await readEvents(recordingRoot);
-      expect(greetingStarts(events)).toHaveLength(1);
+      expect(greetingStarts(events)).toHaveLength(2);
       expect(playbackStarts(events, "meeting-farewell:v1")).toHaveLength(1);
       expect(completedTurn(events, "meeting-farewell:v1")).toBe(true);
       expect(audioChunks(events, questionTurnId)).toHaveLength(1);

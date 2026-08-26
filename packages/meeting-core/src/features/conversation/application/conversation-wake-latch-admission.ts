@@ -228,7 +228,9 @@ export class ConversationWakeLatchAdmission {
     });
     return this.admitPrepared(state, {
       interruptible: input.interruptible ?? true,
-      preemptive: false,
+      preemptive: input.preemptive ?? false,
+      ...(input.playbackNotAfterMs === undefined ? {}
+        : { playbackNotAfterMs: input.playbackNotAfterMs }),
       request: {
         idempotencyKey: proactiveConversationIdempotencyKey(input),
         locale: input.locale,
@@ -289,6 +291,8 @@ export class ConversationWakeLatchAdmission {
       },
       interruptible: input.interruptible ?? true,
       preemptive: input.preemptive ?? true,
+      ...(input.playbackNotAfterMs === undefined ? {}
+        : { playbackNotAfterMs: input.playbackNotAfterMs }),
       request: {
         idempotencyKey: preparedCueIdempotencyKey(input),
         locale: input.locale,

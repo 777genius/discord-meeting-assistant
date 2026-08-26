@@ -70,39 +70,41 @@ export class PlatformLiveMeetingRuntime {
     });
   }
 
-  public async acceptLifecycle(event: LiveMeetingLifecycleEvent): Promise<void> {
+  public async acceptLifecycle(
+    event: LiveMeetingLifecycleEvent,
+  ): Promise<"accepted" | "retry"> {
     if (this.closed) {
       this.dependencies.logger.debug("Live meeting lifecycle skipped during shutdown", {
         eventType: event.type,
         meetingId: event.recordingId,
       });
-      return;
+      return "retry";
     }
     if (event.type === "meeting.started") {
       await this.recordingOperations.enqueue(event.recordingId, () => this.start(event));
-      return;
+      return "accepted";
     }
     if (event.type === "participant.joined" || event.type === "participant.left") {
-      await this.recordingOperations.enqueue(event.recordingId, async () => {
-        await this.acceptParticipant(event);
-      });
-      return;
+      return await this.recordingOperations.enqueue(event.recordingId, () =>
+        this.acceptParticipant(event)
+      );
     }
     if (event.type === "meeting.ended" || event.type === "meeting.aborted") {
       await this.recordingOperations.enqueue(event.recordingId, () =>
         this.finalizer.finishRecording(event.recordingId, Date.parse(event.occurredAt))
       );
-      return;
+      return "accepted";
     }
     if (event.type === "meeting.connection_lost") {
       await this.recordingOperations.enqueue(event.recordingId, () =>
         this.meetings.get(event.recordingId)?.conversation?.disconnect() ?? Promise.resolve()
       );
-      return;
+      return "accepted";
     }
     if (event.type === "recording.authoritative_ready") {
       await sealFinalizedMemory(this.dependencies, event);
     }
+    return "accepted";
   }
 
   /**
@@ -268,15 +270,21 @@ export class PlatformLiveMeetingRuntime {
     });
   }
 
-  private async acceptParticipant(event: LiveMeetingParticipantEvent): Promise<void> {
+  private async acceptParticipant(
+    event: LiveMeetingParticipantEvent,
+  ): Promise<"accepted" | "retry"> {
     const state = this.meetings.get(event.recordingId);
     if (state === undefined || state.finishing) {
-      return;
+      return "retry";
     }
     if (event.type === "participant.joined") {
       await observeFinalizedHuman(this.dependencies, event);
       state.farewell?.participantJoined(event.participantId);
       state.greetings?.participantJoined(event.participantId, event.occurredAt);
+      if (state.greetings !== undefined &&
+        !await state.greetings.settleAcceptance(event.participantId)) {
+        return "retry";
+      }
     } else {
       // Cancellation owns the departure edge. A slow or failed roster projection
       // must never leave generation or playback running for the departed actor.
@@ -291,6 +299,7 @@ export class PlatformLiveMeetingRuntime {
       occurredAt: event.occurredAt,
       participantId: event.participantId,
     });
+    return "accepted";
   }
 
   private acceptTranscript(

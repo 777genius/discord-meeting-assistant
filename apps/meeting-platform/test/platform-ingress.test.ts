@@ -270,6 +270,12 @@ describe("Platform recording ingress", () => {
         dispatchPending: async () => ({ dispatched: 0, failed: 0 }),
       },
       failureClassifier,
+      greetingObligations: {
+        accept: async () => {},
+        listPending: async () => [],
+        markDelivered: async () => {},
+        markExpired: async () => {},
+      },
       ingress: {
         ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
         ingestLifecycleEvent: async () => ({
@@ -290,6 +296,7 @@ describe("Platform recording ingress", () => {
       },
       logger,
       metrics,
+      nowMilliseconds: () => Date.parse(started.occurredAt) + 1,
       outbox: { recordAndSchedule: async () => {} },
       publicationTargets: { resolve },
     });
@@ -652,5 +659,87 @@ describe("Platform derived ingress failure isolation", () => {
       ["lifecycle"],
       ["prepare-final"],
     ]);
+  });
+
+  it("retains and replays a greeting obligation after derived failure following acceptance",
+    async () => {
+    const occurredAt = "2026-08-02T00:00:00.000Z";
+    const pending = new Map<string, Parameters<
+      NonNullable<ConstructorParameters<typeof PlatformRecordingIngress>[0][
+        "greetingObligations"
+      ]>["accept"]
+    >[0]>();
+    const delivered: string[] = [];
+    let attempts = 0;
+    const order: string[] = [];
+    const ingress = new PlatformRecordingIngress({
+      dispatcher: { dispatchPending: async () => ({ dispatched: 0, failed: 0 }) },
+      failureClassifier,
+      greetingObligations: {
+        accept: async (obligation) => {
+          order.push("durable");
+          pending.set(obligation.eventId, obligation);
+        },
+        listPending: async () => [...pending.values()],
+        markDelivered: async (eventId) => {
+          delivered.push(eventId);
+          pending.delete(eventId);
+        },
+        markExpired: async (eventId) => {
+          pending.delete(eventId);
+        },
+      },
+      ingress: {
+        ingestAuthoritativeTrack: async () => authoritativeTrackReceipt(),
+        ingestLifecycleEvent: async () => ({
+          kind: "accepted" as const,
+          recordingId: "recording-1",
+          replayed: false,
+        }),
+        ingestPacketBatch: async () => ({
+          acceptedPackets: 0,
+          duplicatePackets: 0,
+          recordingId: "recording-1",
+        }),
+      },
+      live: {
+        acceptLifecycle: async () => {
+          order.push("derived");
+          attempts += 1;
+          if (attempts === 1) {
+            throw new Error("transient finalized-memory failure");
+          }
+          return "accepted" as const;
+        },
+        acceptVoiceBatch: () => {},
+        prepareForAuthoritativeFinal: () => {},
+      },
+      logger,
+      metrics,
+      nowMilliseconds: () => Date.parse(occurredAt) + 1,
+      outbox: { recordAndSchedule: async () => {} },
+      publicationTargets: defaultPublicationTargets,
+    });
+    const joined = {
+      actor: { actorId: "1533228054724346087", kind: "human" as const },
+      eventId: "recording-1:join:durable-1",
+      occurredAt,
+      recordingId: "recording-1",
+      schemaVersion: 2 as const,
+      source: meetingEnded.source,
+      type: "participant.joined" as const,
+    };
+
+    await expect(ingress.ingestLifecycle(joined)).resolves.toBeUndefined();
+    expect(order.slice(0, 2)).toEqual(["durable", "derived"]);
+    expect(pending.has(joined.eventId)).toBe(true);
+
+    await expect(ingress.dispatchPendingGreetings()).resolves.toEqual({
+      delivered: 1,
+      expired: 0,
+      failed: 0,
+    });
+    expect(delivered).toEqual([joined.eventId]);
+    expect(pending.size).toBe(0);
   });
 });

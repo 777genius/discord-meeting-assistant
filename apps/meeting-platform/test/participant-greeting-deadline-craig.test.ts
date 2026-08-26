@@ -202,58 +202,58 @@ describe("ParticipantGreetingBridge lifecycle cancellation", () => {
     ]);
   });
 
-  it("wakes a stuck idle wait after leave and advances the queued participant", async () => {
+  it("does not wait behind a stuck conversation idle barrier", async () => {
     const context = deadlineFixture(() => true, new MemoryOneShotReceipts());
-    let markIdleEntered: (() => void) | undefined;
-    const idleEntered = new Promise<void>((resolve) => {
-      markIdleEntered = resolve;
-    });
-    const stuckIdle = new Promise<void>(() => {});
     let idleCalls = 0;
     context.coordinator.whenIdle = () => {
       idleCalls += 1;
-      if (idleCalls === 1) {
-        markIdleEntered?.();
-        return stuckIdle;
-      }
-      return Promise.resolve();
-    };
-
-    context.bridge.participantJoined(participantId, occurredAt);
-    await idleEntered;
-    context.bridge.participantJoined(secondParticipantId, occurredAt);
-    context.bridge.participantLeft(participantId);
-    await context.bridge.settle();
-
-    expect(context.coordinator.calls).toEqual([
-      expect.objectContaining({ speakerId: secondParticipantId }),
-    ]);
-  });
-
-  it("wakes a stuck idle wait when the meeting closes", async () => {
-    const context = deadlineFixture(() => true, new MemoryOneShotReceipts());
-    let markIdleEntered: (() => void) | undefined;
-    const idleEntered = new Promise<void>((resolve) => {
-      markIdleEntered = resolve;
-    });
-    context.coordinator.whenIdle = () => {
-      markIdleEntered?.();
       return new Promise<void>(() => {});
     };
 
     context.bridge.participantJoined(participantId, occurredAt);
-    await idleEntered;
-    context.bridge.close();
+    await context.bridge.settle();
 
-    await expect(context.bridge.settle()).resolves.toBeUndefined();
-    expect(context.coordinator.calls).toEqual([]);
+    expect(context.coordinator.calls).toEqual([
+      expect.objectContaining({ preemptive: true, speakerId: participantId }),
+    ]);
+    expect(idleCalls).toBe(0);
+  });
+
+  it("cancels a stuck prior greeting so a close join can start without overlap", async () => {
+    const context = deadlineFixture(() => true, new MemoryOneShotReceipts());
+    let releaseFirst: (() => void) | undefined;
+    let settlements = 0;
+    context.coordinator.whenTurnPlaybackSettled = () => {
+      settlements += 1;
+      return settlements === 1
+        ? new Promise<"partial">((resolve) => {
+            releaseFirst = () => resolve("partial");
+          })
+        : Promise.resolve("played");
+    };
+    context.coordinator.participantLeft = () => {
+      context.coordinator.participantLeftCalls += 1;
+      releaseFirst?.();
+      return Promise.resolve();
+    };
+
+    context.bridge.participantJoined(participantId, occurredAt);
+    await vi.waitFor(() => expect(context.coordinator.calls).toHaveLength(1));
+    context.bridge.participantJoined(secondParticipantId, occurredAt);
+
+    await context.bridge.settle();
+    expect(context.coordinator.calls).toEqual([
+      expect.objectContaining({ speakerId: participantId }),
+      expect.objectContaining({ speakerId: secondParticipantId }),
+    ]);
+    expect(context.coordinator.participantLeftCalls).toBe(1);
   });
 });
 
 describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
   it.each([
     ["accepts", 5_320, "played"],
-    ["rejects", 5_321, "suppressed_ambiguous"],
+    ["rejects", 5_321, "suppressed_stale"],
   ] as const)("%s first audio at the exact five-second clock bound", async (
     _expectation,
     startedAtMs,
@@ -293,16 +293,8 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
   it("uses the earliest occurrence across priority lanes before issuing a cohort command", async () => {
     let now = 1_321;
     let ready = false;
-    let releaseIdle!: () => void;
-    let markIdleEntered!: () => void;
-    const idle = new Promise<void>((resolve) => { releaseIdle = resolve; });
-    const idleEntered = new Promise<void>((resolve) => { markIdleEntered = resolve; });
     const receipts = new MemoryOneShotReceipts();
     const context = deadlineFixture(() => ready, receipts, logger, () => now);
-    context.coordinator.whenIdle = () => {
-      markIdleEntered();
-      return idle;
-    };
     context.coordinator.whenTurnPlaybackStarted = () => Promise.resolve({
       startedAtMs: now,
       status: "started" as const,
@@ -317,10 +309,8 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
       "1970-01-01T00:00:01.321Z",
     );
     ready = true;
-    context.bridge.advance();
-    await idleEntered;
     now = 5_321;
-    releaseIdle();
+    context.bridge.advance();
     await context.bridge.settle();
 
     expect(receipts.state("greeting", "recording-1", participantId))
@@ -482,29 +472,6 @@ describe("ParticipantGreetingBridge join-to-first-audio deadline", () => {
     }
   });
 
-  it("does not admit delayed playback after whenIdle reaches the same deadline", async () => {
-    vi.useFakeTimers();
-    try {
-      let releaseIdle: (() => void) | undefined;
-      const idle = new Promise<void>((resolve) => {
-        releaseIdle = resolve;
-      });
-      const context = deadlineFixture(() => true, new MemoryOneShotReceipts());
-      context.coordinator.whenIdle = () => idle;
-      context.bridge.participantJoined(participantId, occurredAt);
-      const settlement = context.bridge.settle();
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      await settlement;
-      releaseIdle?.();
-      await Promise.resolve();
-
-      expect(context.coordinator.calls).toEqual([]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("blocks admission after event-loop lag even before the timer callback runs", async () => {
     let now = 321;
     let releaseIdle: (() => void) | undefined;
@@ -573,7 +540,7 @@ describe("ParticipantGreetingBridge playback deadline fencing", () => {
     }
   });
 
-  it("reconciles a command issued before the deadline after the clock passes five seconds",
+  it("cancels a commanded greeting when provider start is still queued at the deadline",
     async () => {
     vi.useFakeTimers();
     try {
@@ -593,11 +560,11 @@ describe("ParticipantGreetingBridge playback deadline fencing", () => {
       expect(receipts.state("greeting", "recording-1", participantId)).toBe("commanded");
 
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(context.coordinator.participantLeftCalls).toBe(0);
-      expect(receipts.state("greeting", "recording-1", participantId)).toBe("commanded");
+      expect(context.coordinator.participantLeftCalls).toBe(1);
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("suppressed_stale");
       finishStartObservation?.();
       await settlement;
-      expect(receipts.state("greeting", "recording-1", participantId)).toBe("played");
+      expect(receipts.state("greeting", "recording-1", participantId)).toBe("suppressed_stale");
     } finally {
       vi.useRealTimers();
     }
@@ -653,7 +620,7 @@ describe("ParticipantGreetingBridge playback deadline fencing", () => {
     }
   });
 
-  it("does not revoke a command durably issued at the deadline boundary", async () => {
+  it("suppresses a command that has no safe startup budget after commit", async () => {
     let completeReceipt: (() => void) | undefined;
     let completeCalls = 0;
     let commitSettled = false;
@@ -705,11 +672,7 @@ describe("ParticipantGreetingBridge playback deadline fencing", () => {
     expect(receiptState).toBe("commanded");
     expect(completeCalls).toBe(1);
     expect(postCommitObservations).toBeGreaterThanOrEqual(2);
-    expect(context.coordinator.calls).toHaveLength(1);
-    expect(context.coordinator.calls[0]).toMatchObject({
-      playbackAttemptId: `participant-greeting:${participantId}`,
-      turnId: `participant-greeting:${participantId}`,
-    });
+    expect(context.coordinator.calls).toEqual([]);
   });
 });
 

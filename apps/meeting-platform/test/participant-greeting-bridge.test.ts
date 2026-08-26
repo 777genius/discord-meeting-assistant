@@ -264,7 +264,9 @@ describe("ParticipantGreetingBridge", () => {
     expect(context.coordinator.calls[0]?.systemPrompt).toContain(
       "Speak exactly the greeting provided",
     );
-    expect(context.coordinator.idleCalls).toBe(2);
+    // Settlement may wait for its own provider task, but greeting admission
+    // never waits on the conversation-wide idle barrier.
+    expect(context.coordinator.idleCalls).toBe(1);
   });
 
 });

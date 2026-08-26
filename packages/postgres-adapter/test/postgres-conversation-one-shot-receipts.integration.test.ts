@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { PostgresConversationOneShotReceiptStore } from "../src/index.js";
+import {
+  PostgresConversationOneShotReceiptStore,
+  PostgresDerivedGreetingObligationStore,
+} from "../src/index.js";
 import {
   databaseOrSkip,
   usePostgresIntegrationDatabase,
@@ -550,6 +553,69 @@ describe("PostgreSQL conversation one-shot receipts", () => {
       "SELECT count(*) FROM meeting_core.conversation_greeting_capacity_admissions",
     );
     expect(admissions.rows).toEqual([{ count: "12" }]);
+  });
+
+  it("replays an idempotently accepted derived greeting obligation", async (context) => {
+    const database = databaseOrSkip(context);
+    const store = new PostgresDerivedGreetingObligationStore(database);
+    const obligation = {
+      eventId: "derived-greeting-event-1",
+      notAfterMilliseconds: 1_000_005_000,
+      occurredAt: "1970-01-12T13:46:40.000Z",
+      participantId: "participant-1",
+      recordingId: "derived-greeting-meeting-1",
+    } as const;
+
+    await store.accept(obligation);
+    await store.accept(obligation);
+    await expect(store.listPending()).resolves.toContainEqual(obligation);
+    await store.markDelivered(obligation.eventId);
+    await expect(store.listPending()).resolves.not.toContainEqual(obligation);
+  });
+
+  it("expires a commanded obligation atomically without making replay audible", async (context) => {
+    const database = databaseOrSkip(context);
+    const obligations = new PostgresDerivedGreetingObligationStore(database);
+    const receipts = new PostgresConversationOneShotReceiptStore(database);
+    const meetingId = "expired-derived-greeting-meeting-1";
+    const subjectId = "participant-1";
+    const obligation = {
+      eventId: "expired-derived-greeting-event-1",
+      notAfterMilliseconds: 1_000_005_000,
+      occurredAt: "1970-01-12T13:46:40.000Z",
+      participantId: subjectId,
+      recordingId: meetingId,
+    } as const;
+    await obligations.accept(obligation);
+    const reservation = await receipts.reserve({
+      kind: "greeting",
+      leaseSeconds: 120,
+      meetingId,
+      subjectId,
+    });
+    if (reservation.status !== "reserved") {
+      throw new Error("greeting receipt was not reserved");
+    }
+    await receipts.beginGreetingAttempt({
+      kind: "greeting",
+      leaseToken: reservation.leaseToken,
+      locale: "en",
+      meetingId,
+      prompt: "Hi!",
+      providerCommandId: reservation.providerCommandId!,
+      subjectId,
+    });
+
+    await obligations.markExpired(obligation.eventId);
+
+    await expect(receipts.reserve({
+      kind: "greeting",
+      leaseSeconds: 120,
+      meetingId,
+      reclaimActive: true,
+      subjectId,
+    })).resolves.toEqual({ status: "completed" });
+    await expect(obligations.listPending()).resolves.not.toContainEqual(obligation);
   });
 
 });

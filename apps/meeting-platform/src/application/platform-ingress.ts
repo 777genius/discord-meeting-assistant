@@ -16,6 +16,11 @@ import type {
   RecordingSource,
 } from "./recording-ingress.js";
 import { RecordingIngressRejectedError } from "./recording-ingress.js";
+import {
+  DerivedGreetingObligationDispatcher,
+  type DerivedGreetingObligation,
+  type DerivedGreetingObligationPort,
+} from "./derived-greeting-obligations.js";
 
 interface RecordedMeetingOutbox {
   recordAndSchedule(
@@ -52,7 +57,9 @@ interface PostCallOutboxDispatcherPort {
 }
 
 interface DerivedLiveIngressPort {
-  acceptLifecycle(event: DerivedLiveLifecycleEvent): void | Promise<void>;
+  acceptLifecycle(
+    event: DerivedLiveLifecycleEvent,
+  ): void | "accepted" | "retry" | Promise<void | "accepted" | "retry">;
   /**
    * Resolves after bounded derived admission. It must not reject the durable
    * durable ingress request when live captions are degraded.
@@ -79,17 +86,33 @@ export interface PlatformRecordingIngressDependencies {
   readonly dispatcher: PostCallOutboxDispatcherPort;
   readonly failureClassifier: RecordingIngressFailureClassifier;
   readonly ingress: RecordingDurabilityPort;
+  readonly greetingObligations?: DerivedGreetingObligationPort;
   readonly live?: DerivedLiveIngressPort;
   readonly logger: ApplicationLogger;
+  /** Monotonic Unix-shaped observation clock supplied by composition. */
+  readonly nowMilliseconds?: () => number;
   readonly outbox: RecordedMeetingOutbox;
   readonly metrics: IngressMetricsPort;
   readonly publicationTargets: PublicationTargetResolverPort;
 }
 
 export class PlatformRecordingIngress {
+  private readonly greetingDispatcher: DerivedGreetingObligationDispatcher | null;
   public constructor(
     private readonly dependencies: PlatformRecordingIngressDependencies,
-  ) {}
+  ) {
+    this.greetingDispatcher = dependencies.greetingObligations === undefined ||
+      dependencies.live === undefined || dependencies.nowMilliseconds === undefined
+      ? null
+      : new DerivedGreetingObligationDispatcher({
+          live: dependencies.live,
+          nowMilliseconds: dependencies.nowMilliseconds,
+          obligations: dependencies.greetingObligations,
+          recordFailure: (recordingId, error) => {
+            this.recordDerivedFailure("lifecycle", recordingId, error);
+          },
+        });
+  }
 
   public async ingestAuthoritativeTrack(
     metadata: AuthoritativeSpeakerTrackUpload,
@@ -155,7 +178,22 @@ export class PlatformRecordingIngress {
     const result = await this.acceptDurably(() =>
       this.dependencies.ingress.ingestLifecycleEvent(event),
     );
-    await this.acceptDerivedLifecycle(event);
+    const greetingObligation = this.toGreetingObligation(event);
+    if (greetingObligation === null) {
+      await this.acceptDerivedLifecycle(event);
+    } else {
+      const obligations = this.dependencies.greetingObligations;
+      if (obligations === undefined) {
+        throw new Error("durable greeting obligation store is unavailable");
+      }
+      // This commit is part of HTTP admission: a 202 never acknowledges an
+      // effect that can only survive in the live process heap.
+      await obligations.accept(greetingObligation);
+      if (this.greetingDispatcher === null) {
+        throw new Error("durable greeting obligation dispatcher is unavailable");
+      }
+      await this.greetingDispatcher.deliver(greetingObligation);
+    }
     this.dependencies.metrics.recordIngress("accepted", "accepted");
     if (result.kind !== "finalized") {
       return;
@@ -199,6 +237,15 @@ export class PlatformRecordingIngress {
     );
   }
 
+  public dispatchPendingGreetings(): Promise<{
+    readonly delivered: number;
+    readonly expired: number;
+    readonly failed: number;
+  }> {
+    return this.greetingDispatcher?.dispatchPending() ??
+      Promise.resolve({ delivered: 0, expired: 0, failed: 0 });
+  }
+
   private async acceptDurably<Result>(operation: () => Promise<Result>): Promise<Result> {
     try {
       return await operation();
@@ -228,6 +275,33 @@ export class PlatformRecordingIngress {
     } catch (error) {
       this.recordDerivedFailure("lifecycle", event.recordingId, error);
     }
+  }
+
+  private toGreetingObligation(
+    event: RecordingLifecycleCommand,
+  ): DerivedGreetingObligation | null {
+    if (this.dependencies.live === undefined ||
+      event.type !== "participant.joined" || event.schemaVersion === 1 ||
+      event.actor.kind !== "human") {
+      return null;
+    }
+    const occurredAtMilliseconds = Date.parse(event.occurredAt);
+    if (!Number.isSafeInteger(occurredAtMilliseconds) || occurredAtMilliseconds < 0) {
+      throw new Error("greeting obligation occurrence is invalid");
+    }
+    return {
+      eventId: event.eventId,
+      ...(event.schemaVersion !== 3
+        ? {}
+        : { memoryHumanObservation: {
+            actorId: event.actor.actorId,
+            producerRevision: event.producerRevision,
+          } }),
+      notAfterMilliseconds: occurredAtMilliseconds + 5_000,
+      occurredAt: event.occurredAt,
+      participantId: event.actor.actorId,
+      recordingId: event.recordingId,
+    };
   }
 
   private toDerivedLifecycleEvent(

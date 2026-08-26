@@ -50,10 +50,21 @@ export async function coordinateGreetingPlayback(
   input: CoordinateGreetingPlaybackInput,
 ): Promise<CoordinatedGreetingPlayback> {
   const deadlineParticipantId = input.deadlineParticipantId ?? input.participantId;
-  // Once the command is durable, the producer deadline no longer cancels its
-  // reconciliation. A duplicate provider command must return the original
-  // first-audio timestamp, which is validated against that retained deadline.
-  const firstAudio = await input.playback.firstAudio;
+  const firstAudioResult = await input.deadlines.race(
+    deadlineParticipantId,
+    input.playback.firstAudio,
+    input.dependencies.nowMilliseconds,
+  );
+  if (firstAudioResult.status === "expired") {
+    await cancelGreetingPlaybackBounded(input.dependencies, input.participantId);
+    detachGreetingPlaybackSettlement(input.playback);
+    await input.receipts.settle(input.participantId, "suppressed", "stale");
+    input.markGreeted();
+    input.clearTerminal();
+    releaseAndAdvance(input);
+    return { status: "terminal" };
+  }
+  const firstAudio = firstAudioResult.value;
   if (firstAudio.status === "unplayed") {
     const outcome = await awaitGreetingPlaybackSettlement(
       input.dependencies,
