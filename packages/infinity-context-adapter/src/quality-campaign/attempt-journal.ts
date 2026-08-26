@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { link, mkdir, open, readFile, stat, unlink } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { assertAttemptIdentity, CALL_KINDS, type AttemptIdentity, type CallKind,
@@ -227,21 +227,39 @@ export class DurableAttemptJournal {
   }
 }
 async function writeCreateOnly(path: string, bytes: string | Uint8Array): Promise<void> {
-  await ensureDirectory(dirname(path));
-  const temporaryPath = `${path}.${randomUUID()}.pending`;
+  const directoryPath = dirname(path);
+  await ensureDirectory(directoryPath);
+  const temporaryPath = join(directoryPath, `.${basename(path)}.${randomUUID()}.tmp`);
   const handle = await open(temporaryPath, "wx", 0o600);
-  try {await handle.writeFile(bytes); await handle.sync();} finally {await handle.close();}
+  try {
+    await handle.writeFile(bytes);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  let published = false;
   try {
     await link(temporaryPath, path);
-    const directory = await open(dirname(path), "r");
-    try {await directory.sync();} finally {await directory.close();}
+    published = true;
+    await syncDirectory(directoryPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") {throw error;}
-    const existing = await readFile(path); const requested = Buffer.from(bytes);
+    const existing = await readFile(path);
+    const requested = Buffer.from(bytes);
     if (!existing.equals(requested)) {
       throw new Error("create-only artifact conflicts", { cause: error });
     }
-  } finally {await unlink(temporaryPath);}
+  } finally {
+    await unlink(temporaryPath).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {throw error;}
+    });
+    if (published) {await syncDirectory(directoryPath);}
+  }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const directory = await open(path, "r");
+  try {await directory.sync();} finally {await directory.close();}
 }
 
 async function appendDurableLine(path: string, line: string): Promise<void> {
