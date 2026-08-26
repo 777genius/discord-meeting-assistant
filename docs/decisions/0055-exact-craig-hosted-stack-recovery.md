@@ -1,8 +1,8 @@
 ---
 id: ADR-0055
-status: accepted
+status: superseded
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0056]
 ---
 
 # ADR-0055: Exact Craig hosted stack recovery
@@ -37,24 +37,17 @@ evidence verification.
   chain contains no accept rule. The `FORWARD` chain retains only PostgreSQL
   TCP 5432, Discord TCP 443, the compiled UDP range, established return traffic,
   and one terminal drop.
-- Firewall uninstall is allowed only after a stopped-bot proof. Its ownership
-  fence accepts only the complete exact installed policy or complete absence.
-  Partial, unknown, or duplicate chain/dispatch state fails closed for retained
-  manual diagnosis and is never completed by destructive guessing.
+- Firewall uninstall is allowed only after a stopped-bot proof. It recognizes
+  exact owned partial state so a crash between deletions is retryable, while an
+  unknown or duplicate owned-chain rule fails closed.
 - Successful teardown independently proves the exact containers, network, and
   volume absent and binds that proof to campaign, project, plan, and release.
-- Before the mutation receipt is created, effect-free Compose authority records
-  the exact per-service configuration hashes. Recovery recomputes that closed
-  authority and requires every retained container label to match its service
-  hash before stop, firewall removal, or down.
 - A mutated failure retains a strict failure receipt and lease. The explicit
   `recover:craig-stack` command verifies mutation/failure custody, exact Docker
   ownership labels, plan, release, and lease; stops the bot; removes policy and
   resources idempotently; proves absence; removes the retained lease; and emits
-  one strict create-only recovery receipt. An existing receipt is terminal only
-  after its exact campaign, plan, network, volume, prior container identities,
-  project-labeled inventory, and firewall absence are proved again from current
-  host state. Fresh campaigns never adopt failed resources.
+  one strict create-only recovery receipt. Fresh campaigns never adopt failed
+  resources.
 - Fresh admission stops at eight unrecovered Craig failures. Evidence is not
   deleted; operators must run exact recovery. This bounds resource accumulation
   without weakening retained failure authority.
