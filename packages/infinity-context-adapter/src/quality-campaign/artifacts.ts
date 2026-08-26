@@ -3,7 +3,8 @@ import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { canonicalJson, safeId, sha256 } from "./canonical.js";
-import { assertAttemptIdentity, type AttemptIdentity } from "./execution.js";
+import { assertAttemptIdentity, attemptIdentity, type AttemptIdentity,
+  type CallKind } from "./execution.js";
 
 export type EncryptedArtifactKind = "adjudication_input" | "adjudicator_1_result" |
   "adjudicator_2_result" | "answer_request" | "answer_response" | "capability_request" |
@@ -53,6 +54,7 @@ export class CampaignEncryptedArtifactStore {
       input.plaintext.byteLength < 1) {
       throw new Error("artifact encryption input is invalid");
     }
+    assertArtifactAttemptIdentity(input.artifactKind, input.identity);
     safeId(input.keyId, "artifact key ID");
     const plaintextSha256 = createHash("sha256").update(input.plaintext).digest("hex");
     const aad: ArtifactAad = { artifactKind: input.artifactKind,
@@ -99,6 +101,37 @@ const ARTIFACT_KINDS: readonly EncryptedArtifactKind[] = ["adjudication_input",
   "adjudicator_1_result", "adjudicator_2_result", "answer_request", "answer_response",
   "capability_request", "capability_response", "evidence", "final_adjudication", "raw_outcome",
   "resolver_result", "retrieval_request", "retrieval_response"];
+
+export const ARTIFACT_CALL_KIND = Object.freeze({
+  adjudication_input: "adjudicator_1", adjudicator_1_result: "adjudicator_1",
+  adjudicator_2_result: "adjudicator_2", answer_request: "answer",
+  answer_response: "answer", capability_request: "capability",
+  capability_response: "capability", evidence: "retrieval", final_adjudication: "answer",
+  raw_outcome: "answer", resolver_result: "resolver", retrieval_request: "retrieval",
+  retrieval_response: "retrieval",
+} satisfies Readonly<Record<EncryptedArtifactKind, CallKind>>);
+
+export function artifactAttemptIdentity(answerAttempt: AttemptIdentity,
+  artifactKind: EncryptedArtifactKind): AttemptIdentity {
+  assertAttemptIdentity(answerAttempt);
+  if (answerAttempt.callKind !== "answer" || answerAttempt.callOrdinal !== 0) {
+    throw new Error("artifact inventory requires the canonical answer attempt");
+  }
+  return attemptIdentity({ callKind: ARTIFACT_CALL_KIND[artifactKind], callOrdinal: 0,
+    campaignRootSha256: answerAttempt.campaignRootSha256,
+    questionDigestSha256: answerAttempt.questionDigestSha256,
+    questionId: answerAttempt.questionId, releaseRootSha256: answerAttempt.releaseRootSha256,
+    repetition: answerAttempt.repetition,
+    spendReservationSha256: answerAttempt.spendReservationSha256 });
+}
+
+export function assertArtifactAttemptIdentity(artifactKind: EncryptedArtifactKind,
+  identity: AttemptIdentity): void {
+  assertAttemptIdentity(identity);
+  if (identity.callKind !== ARTIFACT_CALL_KIND[artifactKind] || identity.callOrdinal !== 0) {
+    throw new Error(`artifact ${artifactKind} has foreign call semantics`);
+  }
+}
 
 async function writeCreateOnly(path: string, bytes: Uint8Array): Promise<void> {
   await ensureDirectory(dirname(path));

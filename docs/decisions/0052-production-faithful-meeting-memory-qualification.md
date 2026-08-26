@@ -97,12 +97,34 @@ unknown-outcome handling and exact original/repair input accounting.
   result, exact release root, and signed spend-reservation digest. Corrupt or
   foreign evidence is an explicit blocked state, and replay never causes a new
   provider effect.
+- Every provider effect and replay entry re-verifies the canonical signed release
+  document and signed repetition spend reservation against pinned authority keys
+  at an explicit deterministic time. The core checks provider/model/reasoning,
+  exact attempt and call kind, expiry, and projected call/token/encrypted-byte
+  totals before the effect port can be reached; digest strings are not authority.
 - Final admission consumes signed repetition documents containing the exact
   3x240 outcomes rather than caller-attested pass booleans or opaque report
   digests. It reconstructs question membership, attempt identity, structural
   success, overall/corpus/locale Recall@5 thresholds, root bindings, the complete
   retained-artifact inventory, authenticated stored-envelope AAD, and cleanup
   absence for the exact deletion targets.
+- Each repetition contains exactly the same 200 automatic and 40 independently
+  reviewed main questions. Ordered ranked locator IDs, relevant locator IDs,
+  canonical-turn speaker/time comparisons, citation entailment, factual-claim
+  support, and abstention observations replace caller-supplied metric counts;
+  Recall@5, complete Recall@5, MRR@10, citation, precision, speaker/time, and
+  abstention thresholds are reconstructed from those closed bounded structures.
+- Retained artifact kinds have one closed call-kind/ordinal ownership map. The
+  final-adjudication digest is the SHA-256 of the authenticated retained
+  plaintext. Final admission reads canonical envelope bytes and pinned key
+  custody through narrow ports and performs AES-256-GCM authentication in the
+  core; a structural assertion that storage already opened an envelope is not
+  admissible evidence.
+- Cleanup targets come only from an independently signed campaign-created
+  inventory whose authority key is pinned by the verified release. The absence
+  receipt enumerates all and only those derived IDs and separately enumerates
+  every protected original still present; no caller-authored replacement
+  manifest participates in final admission.
 - A conflict resolver receives both complete independently signed decisions.
   The core reverifies them and requires the resolver result to bind their exact
   signed receipts, raw outcome, question, attempt, and encrypted evidence.
@@ -125,10 +147,12 @@ counts, metrics, digests, versions, and signatures. This proposal does not set
 quality pass.
 
 The production runner must adapt to the exported core contracts before it can
-claim this proof: pass the verified spend-reservation digest and release root
-into every attempt/exchange/seal operation; give the resolver both signed
-decision receipts; implement the authoritative envelope-opening port; emit
-signed repetition evidence with exact outcomes; emit cleanup absence IDs for
-the exact manifest; and provide the separately signed holdout-question receipt.
+claim this proof: pass the signed pinned release document, signed spend
+reservation, deterministic effect time, and authoritative usage totals into
+every exchange; give the resolver both signed decision receipts; provide
+canonical envelope bytes and pinned AES key custody; emit signed repetition
+evidence with ordered locator/turn/claim structures and correct per-kind attempt
+identities; sign the authoritative campaign-created cleanup inventory and exact
+absence/presence receipt; and provide the separately signed holdout-question receipt.
 Until then, runner integration is intentionally unavailable rather than
 silently accepting legacy caller-attested evidence.

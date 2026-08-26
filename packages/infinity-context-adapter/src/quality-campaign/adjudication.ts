@@ -1,5 +1,6 @@
 import { digest, exactRecord, publicKeyFingerprintSha256, safeId, sha256 } from "./canonical.js";
-import { type AttemptIdentity, type SignedValue, verifyExternalSignedValue } from "./execution.js";
+import { assertAttemptIdentity, type AttemptIdentity, type SignedValue,
+  verifyExternalSignedValue } from "./execution.js";
 
 export interface CanonicalClaimDecision {
   readonly abstentionCorrect: boolean;
@@ -65,11 +66,22 @@ export interface FinalAdjudicationEnvelope {
   readonly secondReceiptSha256: string;
 }
 
+export interface ExpectedAdjudicationAttempt {
+  readonly campaignRootSha256: string;
+  readonly questionDigestSha256: string;
+  readonly questionId: string;
+  readonly releaseRootSha256: string;
+  readonly repetition: 1 | 2 | 3;
+  readonly spendReservationSha256: string;
+}
+
 /** Calls two authorities always and the independent resolver only on canonical disagreement. */
 export async function adjudicateOutcome(input: { readonly attempt: AttemptIdentity;
+  readonly expectedAttempt: ExpectedAdjudicationAttempt;
   readonly first: AdjudicationAuthorityPort; readonly rawOutcomeEnvelopeSha256: string;
   readonly resolver: AdjudicationAuthorityPort; readonly second: AdjudicationAuthorityPort;
   readonly vault: RawOutcomeVaultPort }): Promise<FinalAdjudicationEnvelope> {
+  assertAdjudicationAttempt(input.attempt, input.expectedAttempt);
   assertIndependentAuthorities([input.first, input.second, input.resolver]);
   const raw = await input.vault.reconstruct({ attempt: input.attempt,
     envelopeSha256: digest(input.rawOutcomeEnvelopeSha256, "raw outcome envelope") });
@@ -108,6 +120,21 @@ export async function adjudicateOutcome(input: { readonly attempt: AttemptIdenti
   return Object.freeze({ decision, decisionDigestSha256: sha256(decision),
     firstReceiptSha256: sha256(first), outcomeDigestSha256: raw.outcomeDigestSha256,
     resolverReceiptSha256, secondReceiptSha256: sha256(second) });
+}
+
+function assertAdjudicationAttempt(attempt: AttemptIdentity,
+  expected: ExpectedAdjudicationAttempt): void {
+  exactRecord(expected, ["campaignRootSha256", "questionDigestSha256", "questionId",
+    "releaseRootSha256", "repetition", "spendReservationSha256"],
+  "expected adjudication attempt");
+  assertAttemptIdentity(attempt, expected);
+  digest(expected.questionDigestSha256, "expected adjudication question digest");
+  safeId(expected.questionId, "expected adjudication question ID");
+  if (attempt.callKind !== "answer" || attempt.callOrdinal !== 0 ||
+    attempt.questionDigestSha256 !== expected.questionDigestSha256 ||
+    attempt.questionId !== expected.questionId || attempt.repetition !== expected.repetition) {
+    throw new Error("adjudication attempt has foreign identity or call semantics");
+  }
 }
 
 function verifyDecisionReceipt(value: unknown, authority: AdjudicationAuthorityPort,
