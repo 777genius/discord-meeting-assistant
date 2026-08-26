@@ -1,4 +1,4 @@
-import type { RawOutcomeVaultPort } from "./adjudication.js";
+import type { AdjudicationEffectEvidence, RawOutcomeVaultPort } from "./adjudication.js";
 import type { ProviderExchangePort } from "./execution.js";
 import type { QualityCampaignRelease } from "./release.js";
 import type { ArtifactCustodyPort } from "./retention.js";
@@ -21,9 +21,13 @@ export interface CampaignProviderPorts {
 }
 
 export interface CampaignReviewEvidence {
+  readonly firstEffectEvidence: AdjudicationEffectEvidence;
   readonly firstReceipt: unknown;
+  readonly predecessorPlaintextSha256: string;
   readonly rawOutcomeEnvelopeSha256: string;
+  readonly resolverEffectEvidence: AdjudicationEffectEvidence | null;
   readonly resolverReceipt: unknown | null;
+  readonly secondEffectEvidence: AdjudicationEffectEvidence;
   readonly secondReceipt: unknown;
 }
 

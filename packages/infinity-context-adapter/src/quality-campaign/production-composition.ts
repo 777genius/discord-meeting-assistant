@@ -93,7 +93,8 @@ Promise<ProductionCompositionResult> {
     const adjudications = await adjudicateAttempts({ attempts: answerAttempts(admitted.questions,
       admitted.rootBindingSha256, verifiedRelease.releaseRootSha256, spendDigests), campaignRootSha256:
       admitted.rootBindingSha256, concurrency: config.concurrency, deadlineEpochMs:
-      deadline.campaignDeadlineEpochMs, policy, ports: input.ports });
+      deadline.campaignDeadlineEpochMs, effectVerificationEpochMs: input.ports.clock.nowEpochMs(),
+      policy, ports: input.ports, release: pinnedRelease, spendReservations: spendDocuments });
     const receipt = adjudicationReceipt(admitted.rootBindingSha256, adjudications);
     await checkpoints.completePhase({ campaignRootSha256: admitted.rootBindingSha256,
       phase: "adjudicated", receipt });
@@ -111,8 +112,10 @@ Promise<ProductionCompositionResult> {
       artifactKeyCustodySha256:
       verifiedRelease.release.artifactKeyCustodySha256, campaignRootSha256:
       admitted.rootBindingSha256, custody: input.ports.artifactCustody,
-    evidence, providerResultAuthority: input.ports.mainProvider.resultAuthority,
+    effectVerificationEpochMs: input.ports.clock.nowEpochMs(), evidence,
+    providerResultAuthority: input.ports.mainProvider.resultAuthority,
     questions: admitted.questions, releaseRootSha256: verifiedRelease.releaseRootSha256,
+    releaseDocumentSha256: sha256(pinnedRelease.document), spendReservations: reservations,
     spendReservationSha256ByRepetition: spendDigests });
     const receipt = retentionReceipt(admitted.rootBindingSha256, reconstructed);
     await checkpoints.completePhase({ campaignRootSha256: admitted.rootBindingSha256,
@@ -130,8 +133,10 @@ Promise<ProductionCompositionResult> {
       artifactKeyCustodySha256:
       verifiedRelease.release.artifactKeyCustodySha256, campaignRootSha256:
       admitted.rootBindingSha256, custody: input.ports.artifactCustody,
-    evidence, providerResultAuthority: input.ports.mainProvider.resultAuthority,
+    effectVerificationEpochMs: input.ports.clock.nowEpochMs(), evidence,
+    providerResultAuthority: input.ports.mainProvider.resultAuthority,
     questions: admitted.questions, releaseRootSha256: verifiedRelease.releaseRootSha256,
+    releaseDocumentSha256: sha256(pinnedRelease.document), spendReservations: reservations,
     spendReservationSha256ByRepetition: spendDigests });
     if (sha256(retentionReceipt(admitted.rootBindingSha256, reconstructed)) !==
       retainedReceiptSha256) {throw new Error("exact retained evidence changed before cleanup");}
@@ -148,23 +153,21 @@ Promise<ProductionCompositionResult> {
           "campaign target inventory") }));
     const repetitionAuthority = await loadProductionAuthority(config.repetitionAuthorityPath);
     const spendReservationSha256ByRepetition = [spendDigests[1], spendDigests[2], spendDigests[3]] as const;
-    const finalRootBindingSha256 = sha256({ authorizedLocatorSetSha256:
-      sha256(evidence.authorizedLocatorIds), campaignRootSha256: admitted.rootBindingSha256,
-    questionSetSha256: sha256(admitted.questions), releaseRootSha256:
-      verifiedRelease.releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v2",
-    spendReservationSetSha256: sha256(spendReservationSha256ByRepetition) });
     const final = await admitFinalCampaign(policy, { artifactCustody: input.ports.artifactCustody,
       artifacts: evidence.artifacts,
       campaignByteCeiling: evidence.campaignByteCeiling,
       campaignRootSha256: admitted.rootBindingSha256,
       cleanupAuthorityKeyId: absenceAuthority.keyId,
       cleanupReceipt: cleanup.cleanupReceipt,
+      effectVerificationEpochMs: input.ports.clock.nowEpochMs(),
+      goldRelevanceReceipt: evidence.goldRelevanceReceipt,
       locatorAuthorityKeyId: policy.authority("locator").keyId,
       authorizedLocatorInventory: evidence.authorizedLocatorInventory,
       questionReviewReceipts: evidence.questionReviewReceipts,
       release: pinnedRelease, repetitionAuthorityKeyId: repetitionAuthority.keyId,
-      repetitionEvidence: evidence.repetitionEvidence, rootBindingSha256: finalRootBindingSha256,
+      repetitionEvidence: evidence.repetitionEvidence,
+      rootBindingSha256: evidence.finalRootBindingSha256,
+      spendReservationsByRepetition: spendDocuments as [unknown, unknown, unknown],
       spendReservationSha256ByRepetition, targetInventoryAuthorityKeyId: deletionAuthority.keyId,
       targetInventoryReceipt: cleanup.targetInventoryReceipt });
     const receipt = createOperatorSafeReceipt(admitted.rootBindingSha256, {
@@ -232,7 +235,10 @@ Promise<ProductionCompositionResult | null> {
       { 1: holdout.spendReservationSha256, 2: holdout.spendReservationSha256,
         3: holdout.spendReservationSha256 }, [1]), campaignRootSha256: holdoutRootSha256,
     concurrency: input.config.concurrency, deadlineEpochMs: input.deadlineEpochMs,
-    policy: input.policy, ports: input.ports });
+    effectVerificationEpochMs: input.ports.clock.nowEpochMs(), policy: input.policy,
+    ports: input.ports, release: input.release,
+    spendReservations: [holdout.spendReservation, holdout.spendReservation,
+      holdout.spendReservation] });
     const receipt = adjudicationReceipt(holdoutRootSha256, adjudications);
     await input.checkpoints.completePhase({ campaignRootSha256: input.admitted.rootBindingSha256,
       phase: "holdout-adjudicated", receipt });
@@ -293,20 +299,28 @@ function answerAttempts(questions: readonly CampaignQuestion[], campaignRootSha2
 async function adjudicateAttempts(input: { readonly attempts: ReturnType<typeof answerAttempts>;
   readonly campaignRootSha256: string; readonly concurrency: number;
   readonly deadlineEpochMs: number;
+  readonly effectVerificationEpochMs: number;
   readonly policy: import("./release.js").QualityCampaignAuthorityPolicy;
-  readonly ports: QualityCampaignProductionPorts }):
+  readonly ports: QualityCampaignProductionPorts;
+  readonly release: import("./release.js").PinnedReleaseDocument;
+  readonly spendReservations: readonly unknown[] }):
 Promise<readonly ExactAdjudicationEvidence[]> {
   return await boundedMap(input.attempts, input.concurrency, async (attempt) =>
     await withCallContext(input.deadlineEpochMs, async (context) => {
       const receipts = await input.ports.review.receipts(attempt.attemptId, context);
       const result = await adjudicateOutcome(input.policy, { attempt,
+        effectVerificationEpochMs: input.effectVerificationEpochMs,
         expectedAttempt: { campaignRootSha256: attempt.campaignRootSha256,
           questionDigestSha256: attempt.questionDigestSha256, questionId: attempt.questionId,
           releaseRootSha256: attempt.releaseRootSha256, repetition: attempt.repetition,
           spendReservationSha256: attempt.spendReservationSha256 },
-        firstReceipt: receipts.firstReceipt,
+        firstEffectEvidence: receipts.firstEffectEvidence, firstReceipt: receipts.firstReceipt,
+        predecessorPlaintextSha256: receipts.predecessorPlaintextSha256,
         rawOutcomeEnvelopeSha256: receipts.rawOutcomeEnvelopeSha256,
-        resolverReceipt: receipts.resolverReceipt, secondReceipt: receipts.secondReceipt,
+        release: input.release, resolverEffectEvidence: receipts.resolverEffectEvidence,
+        resolverReceipt: receipts.resolverReceipt,
+        secondEffectEvidence: receipts.secondEffectEvidence, secondReceipt: receipts.secondReceipt,
+        spendReservation: input.spendReservations[attempt.repetition - 1],
         vault: input.ports.review.vault });
       return Object.freeze({ ...result, attemptId: attempt.attemptId,
         campaignRootSha256: input.campaignRootSha256, questionId: attempt.questionId,

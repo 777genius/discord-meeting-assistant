@@ -2,6 +2,7 @@ import type { CampaignQuestion } from "./admission.js";
 import type { FinalAdjudicationEnvelope } from "./adjudication.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import type { AttemptIdentity } from "./execution.js";
+import type { VerifiedSpendReservation } from "./execution.js";
 import type { QualityCampaignAuthorityPolicy } from "./release.js";
 import { assertTerminalChain } from "./production-evidence-terminals.js";
 import { verifyExactRetentionInventory, type ArtifactCustodyPort,
@@ -55,6 +56,8 @@ export interface ExactCampaignEvidence {
   readonly authorizedLocatorInventory: unknown;
   readonly authorizedLocatorIds: readonly string[];
   readonly campaignByteCeiling: number;
+  readonly finalRootBindingSha256: string;
+  readonly goldRelevanceReceipt: unknown;
   readonly outcomes: readonly ExactOutcomeEvidence[];
   readonly questionReviewReceipts: readonly [unknown, unknown];
   readonly repetitionEvidence: readonly unknown[];
@@ -88,6 +91,9 @@ export async function reconstructExactMainEvidence(input: {
   readonly providerResultAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly questions: readonly CampaignQuestion[];
   readonly releaseRootSha256: string;
+  readonly releaseDocumentSha256: string;
+  readonly effectVerificationEpochMs: number;
+  readonly spendReservations: readonly VerifiedSpendReservation[];
   readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
 }): Promise<{ readonly inventorySha256: string; readonly metrics: readonly LocallyComputedMetrics[];
   readonly metricsSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>> }> {
@@ -113,7 +119,9 @@ export async function reconstructExactMainEvidence(input: {
     artifacts: input.evidence.artifacts,
     artifactKeyCustodySha256: input.artifactKeyCustodySha256,
     campaignByteCeiling: input.evidence.campaignByteCeiling,
-    custody: input.custody, expectedOutcomes: expected.map(({ attempt }) => {
+    custody: input.custody, effectVerificationEpochMs: input.effectVerificationEpochMs,
+    releaseDocumentSha256: input.releaseDocumentSha256,
+    spendReservations: input.spendReservations, expectedOutcomes: expected.map(({ attempt }) => {
       const outcome = input.evidence.outcomes.find(({ identity }) =>
         identity.attemptId === attempt.attemptId)!;
       return { artifactBindingSha256ByKind: outcome.artifactBindingSha256ByKind,
