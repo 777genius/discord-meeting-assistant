@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import {
   greetingScopeIdentity,
@@ -26,6 +26,13 @@ interface ObligationRow {
   readonly participant_id: string;
   readonly recording_id: string;
 }
+
+interface RetentionMeetingRow {
+  readonly meeting_id: string;
+  readonly updated_at: Date;
+}
+
+const retentionCandidateScanLimit = 1_000;
 
 /** Durable derived-effect ledger; replay is safe because greeting receipts own audible idempotency. */
 export class PostgresDerivedGreetingObligationStore {
@@ -161,23 +168,7 @@ export class PostgresDerivedGreetingObligationStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const meetings = await client.query<{ readonly meeting_id: string }>(
-        `SELECT meeting_id
-         FROM meeting_core.live_meetings
-         WHERE snapshot ->> 'status' = 'ended'
-           AND updated_at < to_timestamp($1 / 1000.0)
-           AND NOT EXISTS (
-             SELECT 1
-             FROM meeting_core.derived_greeting_obligations AS pending
-             WHERE pending.recording_id = live_meetings.meeting_id
-               AND pending.state = 'pending'
-           )
-         ORDER BY updated_at, meeting_id
-         LIMIT $2
-         FOR UPDATE SKIP LOCKED`,
-        [input.terminalBeforeMilliseconds, input.limit],
-      );
-      const meetingIds = meetings.rows.map(({ meeting_id }) => meeting_id);
+      const meetingIds = await this.selectRetentionMeetingIds(client, input);
       if (meetingIds.length === 0) {
         await client.query("COMMIT");
         return {
@@ -220,6 +211,121 @@ export class PostgresDerivedGreetingObligationStore {
     } finally {
       client.release();
     }
+  }
+
+  private async selectRetentionMeetingIds(
+    client: PoolClient,
+    input: { readonly limit: number; readonly terminalBeforeMilliseconds: number },
+  ): Promise<string[]> {
+    const meetingIds: string[] = [];
+    let cursor: RetentionMeetingRow | undefined;
+    while (meetingIds.length < input.limit) {
+      const candidates = await client.query<RetentionMeetingRow>(
+        `SELECT meeting_id, updated_at
+         FROM meeting_core.live_meetings
+         WHERE snapshot ->> 'status' = 'ended'
+           AND updated_at < to_timestamp($1 / 1000.0)
+           AND ($2::timestamptz IS NULL OR
+             (updated_at, meeting_id) > ($2::timestamptz, $3::text))
+           AND EXISTS (
+             SELECT 1
+             FROM meeting_core.derived_greeting_obligations AS actionable
+             WHERE actionable.recording_id = live_meetings.meeting_id
+               AND actionable.state IN ('delivered', 'expired')
+               AND actionable.terminal_at < to_timestamp($1 / 1000.0)
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM meeting_core.derived_greeting_obligations AS pending
+             WHERE pending.recording_id = live_meetings.meeting_id
+               AND pending.state = 'pending'
+           )
+         ORDER BY updated_at, meeting_id
+         LIMIT $4`,
+        [input.terminalBeforeMilliseconds, cursor?.updated_at ?? null,
+          cursor?.meeting_id ?? "", retentionCandidateScanLimit],
+      );
+      if (candidates.rows.length === 0) {
+        break;
+      }
+      const candidateMeetingIds = candidates.rows.map(({ meeting_id }) => meeting_id);
+      const candidateScopeIds = candidateMeetingIds.map(greetingScopeIdentity);
+      const safeScopes = await client.query<{ readonly meeting_id: string }>(
+        `SELECT candidate.meeting_id
+         FROM unnest($1::text[], $2::text[]) AS candidate(meeting_id, scope_id)
+         WHERE NOT EXISTS (
+           SELECT 1
+           FROM meeting_core.conversation_greeting_capacity_admissions AS admission
+           LEFT JOIN meeting_core.conversation_one_shot_receipts AS receipt
+             ON receipt.receipt_id = admission.receipt_id
+           WHERE admission.scope_id = candidate.scope_id
+             AND (receipt.receipt_id IS NULL OR
+               receipt.state NOT IN ('played', 'suppressed'))
+         )`,
+        [candidateMeetingIds, candidateScopeIds],
+      );
+      const safeMeetingIds = new Set(safeScopes.rows.map(({ meeting_id }) => meeting_id));
+      for (const candidate of candidates.rows) {
+        if (meetingIds.length === input.limit) {
+          break;
+        }
+        if (safeMeetingIds.has(candidate.meeting_id) && await this.lockRetentionMeeting(
+          client, candidate.meeting_id, greetingScopeIdentity(candidate.meeting_id),
+          input.terminalBeforeMilliseconds,
+        )) {
+          meetingIds.push(candidate.meeting_id);
+        }
+      }
+      cursor = candidates.rows.at(-1);
+    }
+    return meetingIds;
+  }
+
+  private async lockRetentionMeeting(
+    client: PoolClient,
+    meetingId: string,
+    scopeId: string,
+    terminalBeforeMilliseconds: number,
+  ): Promise<boolean> {
+    const advisoryLock = await client.query<{ readonly locked: boolean }>(
+      `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS locked`,
+      [scopeId],
+    );
+    if (advisoryLock.rows[0]?.locked !== true) {
+      return false;
+    }
+    const locked = await client.query<{ readonly meeting_id: string }>(
+      `SELECT meeting_id
+       FROM meeting_core.live_meetings
+       WHERE meeting_id = $2
+         AND snapshot ->> 'status' = 'ended'
+         AND updated_at < to_timestamp($1 / 1000.0)
+         AND EXISTS (
+           SELECT 1
+           FROM meeting_core.derived_greeting_obligations AS actionable
+           WHERE actionable.recording_id = live_meetings.meeting_id
+             AND actionable.state IN ('delivered', 'expired')
+             AND actionable.terminal_at < to_timestamp($1 / 1000.0)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM meeting_core.derived_greeting_obligations AS pending
+           WHERE pending.recording_id = live_meetings.meeting_id
+             AND pending.state = 'pending'
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM meeting_core.conversation_greeting_capacity_admissions AS admission
+           LEFT JOIN meeting_core.conversation_one_shot_receipts AS receipt
+             ON receipt.receipt_id = admission.receipt_id
+           WHERE admission.scope_id = $3
+             AND (receipt.receipt_id IS NULL OR
+               receipt.state NOT IN ('played', 'suppressed'))
+         )
+       FOR UPDATE SKIP LOCKED`,
+      [terminalBeforeMilliseconds, meetingId, scopeId],
+    );
+    return locked.rows[0] !== undefined;
   }
 
   private async markTerminal(eventId: string, state: "delivered" | "expired"): Promise<void> {
