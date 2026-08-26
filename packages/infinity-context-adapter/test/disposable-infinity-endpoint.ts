@@ -53,6 +53,12 @@ interface RecordedRequest {
   readonly query: string;
 }
 
+interface RecordedExactHttpRequest {
+  readonly bodyBytes: Uint8Array;
+  readonly method: string;
+  readonly path: string;
+}
+
 interface IngestGate {
   readonly release: Promise<void>;
   readonly started: () => void;
@@ -148,6 +154,19 @@ export class DisposableInfinityEndpoint implements HttpTransport {
   #scopeListCursorFault: "missing" | "overlong" | "oversized" | "repeated" | "repeated_rows" | null = null;
   #scopeListCursorFormat: "encoded" | "numeric" = "numeric";
   public readonly requests: RecordedRequest[] = [];
+  public readonly exactHttpRequests: RecordedExactHttpRequest[] = [];
+
+  public recordExactHttpRequest(
+    method: string,
+    path: string,
+    bodyBytes: Uint8Array,
+  ): void {
+    this.exactHttpRequests.push(Object.freeze({
+      bodyBytes: Uint8Array.from(bodyBytes),
+      method,
+      path,
+    }));
+  }
 
   public pauseNextIngest(): {
     readonly resume: () => void;

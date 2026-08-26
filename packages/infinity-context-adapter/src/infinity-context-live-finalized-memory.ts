@@ -38,7 +38,7 @@ export interface InfinityContextLiveFinalizedMemoryConfigV1 {
   readonly ids: HistoricalOpaqueIdPort;
   readonly operationTimeoutMs: number;
   readonly requestTimeoutMs: number;
-  readonly schemaVersion: 1;
+  readonly schemaVersion: number;
   readonly token: string | (() => Promise<string | null | undefined> | string | null | undefined);
   /** Test injection still traverses the official SDK clients. */
   readonly transport?: unknown;

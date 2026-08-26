@@ -22,6 +22,12 @@ export function createDiscordInfinityActorCustody(
     decodeDiscordInfinityActorKeyring(encodedKeyring),
   );
   return Object.freeze({
+    actorReferences: Object.freeze({
+      actorKeysForQuestion: (question: string): readonly string[] => Object.freeze(
+        [...new Set(question.match(/(?<!\d)\d{17,20}(?!\d)/gu) ?? [])]
+          .flatMap((actorId) => actorKeys.actorKeysForFilter(actorId)),
+      ),
+    }),
     actorKeys,
     historicalIds: createActorKeyBoundHistoricalIds(
       topologyKey,

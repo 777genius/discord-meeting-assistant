@@ -46,6 +46,19 @@ function adapter(endpoint: DisposableInfinityEndpoint) {
 }
 
 describe("Infinity finalized-live-memory ACL", () => {
+  it("rejects an unsupported runtime configuration schema", () => {
+    expect(() => new InfinityContextLiveFinalizedMemoryAdapter({
+      actorKeys: { activeActorKey: () => "dactor1.r1.opaque-human" },
+      baseUrl: "http://disposable.infinity.invalid",
+      ids,
+      operationTimeoutMs: 2_000,
+      requestTimeoutMs: 1_000,
+      schemaVersion: 2,
+      token: "test-token",
+      transport: new DisposableInfinityEndpoint(),
+    })).toThrow("Infinity live memory configuration is invalid");
+  });
+
   it("uses the official SDK with opaque stable identity and finalized human text only", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     await expect(adapter(endpoint).upsert(projection())).resolves.toEqual({

@@ -45,4 +45,25 @@ describe("Retrieval V2-only composition policy", () => {
       custody.speakerAliases,
     )]).toEqual(custody.speakerAliases[0]?.actorKeys);
   });
+
+  it.each([
+    "<@987654321098765432>",
+    "<@!987654321098765432>",
+    "987654321098765432",
+  ])("derives active and retained keys directly for unprofiled Discord identity %s",
+    (identity) => {
+      const custody = createDiscordInfinityActorCustody(
+        platformConfig("http://127.0.0.1:1", false, false, "test"),
+        "t".repeat(32),
+      );
+
+      expect(custody.actorReferences.actorKeysForQuestion(
+        `What did ${identity} decide?`,
+      )).toEqual([
+        expect.stringMatching(/^dactor1\.synthetic-r0\./u),
+        expect.stringMatching(/^dactor1\.synthetic-r1\./u),
+      ]);
+      expect(JSON.stringify(custody.actorReferences.actorKeysForQuestion(identity)))
+        .not.toContain("987654321098765432");
+    });
 });

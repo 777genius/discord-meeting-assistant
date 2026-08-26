@@ -4,7 +4,8 @@ import { compareRetrievalV2Utf8, retrievalV2ConsumerEvidenceByteLimit,
 import type { FocusedMemoryReference } from
   "../domain/grounding-plan.js";
 import { buildHistoricalRoomTopology } from "./historical-index-plan.js";
-import { resolveRequestedActorKeys, type RetrievalActorAliasOwnerV1 } from
+import { hasAmbiguousRequestedActorAlias, resolveRequestedActorKeys,
+  type RetrievalActorAliasOwnerV1, type RetrievalActorReferenceAuthorityV1 } from
   "./speaker-alias-resolution.js";
 import { boundedRetrievalQuery, redactRetrievalQueryIdentities, relativeTimeFilter } from
   "./focused-locator-retrieval-v2-query.js";
@@ -48,6 +49,7 @@ export class PrepareFocusedLocatorRetrievalV2Request {
     private readonly dependencies: {
       readonly ids: HistoricalOpaqueIdPort;
       readonly providerBinding: FocusedLocatorRetrievalV2ProviderBinding;
+      readonly actorReferences?: RetrievalActorReferenceAuthorityV1;
       readonly servingAuthorized?: () => boolean;
       readonly speakerAliases?: readonly RetrievalActorAliasOwnerV1[];
       readonly store: HistoricalSyncStore;
@@ -67,6 +69,14 @@ export class PrepareFocusedLocatorRetrievalV2Request {
     if (this.dependencies.servingAuthorized?.() === false) {
       return null;
     }
+    const aliases = this.dependencies.speakerAliases ?? [];
+    if (hasAmbiguousRequestedActorAlias(input.question, aliases)) {
+      return null;
+    }
+    const requestedActorKeys = new Set([
+      ...resolveRequestedActorKeys(input.question, aliases),
+      ...(this.dependencies.actorReferences?.actorKeysForQuestion(input.question) ?? []),
+    ]);
     const plans = (await this.dependencies.store.listCurrentRoomPlans(
       input.scopeId,
       input.roomId,
@@ -93,14 +103,9 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       input.roomId,
       this.dependencies.ids,
     );
-    const requestedActorKeys = resolveRequestedActorKeys(
-      input.question,
-      this.dependencies.speakerAliases,
-    );
     const query = boundedRetrievalQuery(redactRetrievalQueryIdentities(
       input.question,
-      this.dependencies.speakerAliases ?? [],
-      requestedActorKeys,
+      aliases,
     ));
     if (query.length === 0) {
       return null;

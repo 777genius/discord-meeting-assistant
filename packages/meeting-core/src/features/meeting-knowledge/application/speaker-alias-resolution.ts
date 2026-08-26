@@ -7,6 +7,10 @@ export interface RetrievalActorAliasOwnerV1 {
   readonly aliases: readonly string[];
 }
 
+export interface RetrievalActorReferenceAuthorityV1 {
+  readonly actorKeysForQuestion: (question: string) => readonly string[];
+}
+
 export interface RequestedSpeakerAliasV1 {
   readonly matchedAlias: string;
   readonly speakerId: string;
@@ -113,6 +117,24 @@ export function resolveRequestedActorAliases(
     }
   }
   return Object.freeze([...selected.values()]);
+}
+
+export function hasAmbiguousRequestedActorAlias(
+  question: string,
+  aliases: readonly RetrievalActorAliasOwnerV1[] = [],
+): boolean {
+  const candidates: RetrievalAliasCandidate[] = [];
+  for (const [ownerIndex, owner] of aliases.entries()) {
+    for (const alias of owner.aliases) {
+      const match = matchAlias(question, alias);
+      if (match !== undefined) {
+        candidates.push(Object.freeze({ actorKeys: owner.actorKeys,
+          end: match.end, matchedAlias: match.text, ownerIndex, start: match.start }));
+      }
+    }
+  }
+  return candidates.some((candidate) =>
+    hasConflictingRetrievalOwner(candidate, candidates));
 }
 
 function matchAlias(question: string, alias: string): AliasQuestionSpan | undefined {

@@ -13,6 +13,7 @@ import {
   PostgresLiveFinalizedMemoryQuery,
   PostgresLiveFinalizedMemoryStore,
   PostgresLiveMeetingRepository,
+  PostgresMeetingSourceConfigurationRepository,
   PostgresMeetingRepository,
   PostgresMigrationRunner,
   canonicalFinalReplyTurnHash,
@@ -20,13 +21,17 @@ import {
 import type { Client } from "discord.js";
 import { Pool } from "pg";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createVoiceGroundedAnswers } from
   "../src/composition/voice-grounded-answers.js";
-import { localFinalReplyPolicy } from "../src/composition/meeting-knowledge.js";
+import type { PlatformHistoricalMemoryRuntime } from
+  "../src/composition/historical-memory.js";
+import { createMeetingKnowledgeLocalFinalReply, localFinalReplyPolicy } from
+  "../src/composition/meeting-knowledge.js";
 import { createPersistedFocusedMemoryRoute } from
   "../src/composition/meeting-knowledge-retrieval-router.js";
+import type { PlatformConfig } from "../src/config.js";
 import { proveComposedGroundedVoice } from "./meeting-knowledge-composed-voice-e2e.js";
 import {
   allowOnlySyntheticRoom,
@@ -44,6 +49,8 @@ import {
   resultsContainerId,
   roomId,
   scopeId,
+  silentLogger,
+  syntheticCoverageRuntime,
 } from "./meeting-knowledge-production-composition-fixtures.js";
 import {
   disposableExternalPostgresUrl,
@@ -124,7 +131,7 @@ describe("Meeting Knowledge V2 production composition", () => {
 
         const live = await createLiveProjection(pool, current, controller.signal);
         const authorization = allowOnlySyntheticRoom();
-        const question = `How does <@${historicalActorA}> Vlad's ANCHOR connect to PINE-GOLF?`;
+        const question = `How does <@${historicalActorA}> VLAD-Vlad, vlad_vLaD, and Vladimir   VLADIMIR's ANCHOR connect to PINE-GOLF?`;
         const observedEvidence: string[][] = [];
         let validatedAnswers = 0;
         const groundedAnswerUseCase = new GroundedMeetingAnswer({
@@ -291,6 +298,13 @@ describe("Meeting Knowledge V2 production composition", () => {
         expect(infinity.endpoint.requests.filter(
           ({ path }) => path === "/v1/context/retrieve",
         )).toHaveLength(providerCallsBeforeRevocation);
+
+        await proveFinalReplyFactoryHistoricalWiring({
+          config,
+          groundedAnswerUseCase,
+          historicalMemory: servingRuntime,
+          pool,
+        });
         expect(historical.transcript?.turns.at(-2)?.turnId)
           .toBe("history-turn-0719");
       } finally {
@@ -304,6 +318,46 @@ describe("Meeting Knowledge V2 production composition", () => {
     }, 600_000);
 });
 
+async function proveFinalReplyFactoryHistoricalWiring(input: {
+  readonly config: PlatformConfig;
+  readonly groundedAnswerUseCase: GroundedMeetingAnswer;
+  readonly historicalMemory: PlatformHistoricalMemoryRuntime;
+  readonly pool: Pool;
+}): Promise<void> {
+  const createFocusedLocatorRetrievalV2 = vi.fn(
+    (authorization: Parameters<
+      PlatformHistoricalMemoryRuntime["createFocusedLocatorRetrievalV2"]
+    >[0]) => input.historicalMemory.createFocusedLocatorRetrievalV2(authorization),
+  );
+  const finalReplyRuntime = createMeetingKnowledgeLocalFinalReply({
+    answerDelivery: {
+      create: async () => "888888888888888888",
+      inspect: async () => ({ status: "unconfirmed" }),
+      remove: async () => {},
+    },
+    answers: input.groundedAnswerUseCase,
+    client: {} as Client,
+    config: {
+      ...input.config,
+      meetingKnowledge: {
+        ...input.config.meetingKnowledge,
+        localFinalReply: true,
+      },
+    },
+    historicalMemory: {
+      ...input.historicalMemory,
+      createFocusedLocatorRetrievalV2,
+    },
+    logger: silentLogger,
+    pool: input.pool,
+    runtimeTransport: syntheticCoverageRuntime,
+    sourceConfigurations:
+      new PostgresMeetingSourceConfigurationRepository(input.pool),
+  });
+  expect(createFocusedLocatorRetrievalV2).toHaveBeenCalledOnce();
+  await finalReplyRuntime.close();
+}
+
 function assertRetrievalRequestPrivacy(
   infinity: Awaited<ReturnType<typeof startDisposableInfinityHttpService>>,
 ): number {
@@ -313,11 +367,11 @@ function assertRetrievalRequestPrivacy(
   expect(retrievalRequests.length).toBeGreaterThanOrEqual(2);
   const projectedActorKeys = infinity.endpoint.requests
     .filter(({ path }) => path === "/v1/documents")
-    .flatMap(({ body }) => (body as { readonly retrieval_projection?: {
+    .flatMap(({ body }) => (body as null | { readonly retrieval_projection?: {
       readonly actor_keys?: readonly string[] } })
       ?.retrieval_projection?.actor_keys ?? []);
   for (const request of retrievalRequests) {
-    const actorKeys = (request.body as { readonly filters?: {
+    const actorKeys = (request.body as null | { readonly filters?: {
       readonly actor_keys?: readonly string[] } })?.filters?.actor_keys ?? [];
     expect(actorKeys).toHaveLength(2);
     expect(actorKeys.map((key) => key.split(".")[1])).toEqual([
@@ -332,6 +386,17 @@ function assertRetrievalRequestPrivacy(
     expect(projectedActorKeys).toEqual(expect.arrayContaining(
       actorKeys.filter((key) => key.startsWith("dactor1.synthetic-r1.")),
     ));
+  }
+  const exactRetrievalBodies = infinity.endpoint.exactHttpRequests
+    .filter(({ path }) => path === "/v1/context/retrieve")
+    .map(({ bodyBytes }) => new TextDecoder().decode(bodyBytes));
+  expect(exactRetrievalBodies).toHaveLength(retrievalRequests.length);
+  for (const body of exactRetrievalBodies) {
+    expect(body).not.toMatch(
+      new RegExp([currentActor, historicalActorA, historicalActorB,
+        "Vlad", "Vladimir"].join("|"), "iu"),
+    );
+    expect(body).toMatch(/ANCHOR.*PINE-GOLF/u);
   }
   return retrievalRequests.length;
 }

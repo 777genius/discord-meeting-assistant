@@ -6,6 +6,7 @@ import { HistoricalFocusedLocatorRetrievalV2,
   type FocusedLocatorRetrievalV2ProviderBinding,
   type HistoricalAuthorizationPort, type HistoricalOpaqueIdPort,
   type RetrievalActorAliasOwnerV1,
+  type RetrievalActorReferenceAuthorityV1,
   type TwoHourHistoricalRetrievalProfileV1 } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
@@ -20,6 +21,7 @@ export class InfinityRetrievalV2Composition {
   public constructor(private readonly input: {
     readonly baseUrl: string;
     readonly operationTimeoutMs: number;
+    readonly actorReferences: RetrievalActorReferenceAuthorityV1;
     readonly pool: Pool;
     readonly requestTimeoutMs: number;
     readonly servingAuthorized: () => boolean;
@@ -40,6 +42,7 @@ export class InfinityRetrievalV2Composition {
   public admission(binding: FocusedLocatorRetrievalV2ProviderBinding) {
     return new PrepareFocusedLocatorRetrievalV2Request({
       ids: this.#ids,
+      actorReferences: this.input.actorReferences,
       providerBinding: binding,
       servingAuthorized: this.input.servingAuthorized,
       speakerAliases: this.input.speakerAliases,
@@ -66,6 +69,7 @@ export function createInfinityRetrievalV2Composition(
   token: string,
   ids: HistoricalOpaqueIdPort,
   authority: {
+    readonly actorReferences: RetrievalActorReferenceAuthorityV1;
     readonly servingAuthorized: () => boolean;
     readonly speakerAliases: readonly RetrievalActorAliasOwnerV1[];
   },
@@ -81,6 +85,7 @@ export function createInfinityRetrievalV2Composition(
   return Object.freeze({
     retrievalV2: new InfinityRetrievalV2Composition({
       baseUrl: infinity.baseUrl,
+      actorReferences: authority.actorReferences,
       operationTimeoutMs: infinity.operationTimeoutMs,
       ids,
       pool,

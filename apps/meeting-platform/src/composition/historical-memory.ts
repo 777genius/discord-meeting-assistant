@@ -255,7 +255,7 @@ export function createPlatformHistoricalMemory(
     throw new Error("Infinity activation environment does not match Meeting Platform");
   }
   const { token, topologyKey } = requireHistoricalRuntimeSecrets(input.config);
-  const { actorKeys, historicalIds, speakerAliases } =
+  const { actorKeys, actorReferences, historicalIds, speakerAliases } =
     createDiscordInfinityActorCustody(input.config, topologyKey);
   const productionQualification = input.productionQualification ??
     INFINITY_CONTEXT_PRODUCTION_QUALIFICATION;
@@ -268,7 +268,7 @@ export function createPlatformHistoricalMemory(
     input.pool,
     token,
     historicalIds,
-    { servingAuthorized, speakerAliases },
+    { actorReferences, servingAuthorized, speakerAliases },
   );
   const memory = new InfinityContextHistoricalMemoryAdapter({
     actorKeys,

@@ -1,4 +1,4 @@
-import { resolveRequestedActorAliases, type RetrievalActorAliasOwnerV1 } from
+import { type RetrievalActorAliasOwnerV1 } from
   "./speaker-alias-resolution.js";
 
 export function relativeTimeFilter(question: string):
@@ -31,19 +31,11 @@ export function boundedRetrievalQuery(value: string): string {
 export function redactRetrievalQueryIdentities(
   question: string,
   aliases: readonly RetrievalActorAliasOwnerV1[],
-  requestedActorKeys: ReadonlySet<string>,
 ): string {
   let redacted = question
     .replace(/<(?:@!?|@&|#)\d{17,20}>/gu, "participant")
     .replace(/(?<!\d)\d{17,20}(?!\d)/gu, "participant");
-  const matchedAliases = resolveRequestedActorAliases(question, aliases)
-    .filter(({ actorKeys }) => actorKeys.some((actorKey) =>
-      requestedActorKeys.has(actorKey)))
-    .map(({ matchedAlias }) => matchedAlias);
   for (const owner of aliases) {
-    if (!owner.actorKeys.some((actorKey) => requestedActorKeys.has(actorKey))) {
-      continue;
-    }
     for (const alias of owner.aliases) {
       if (/^\d{17,20}$/u.test(alias)) {
         continue;
@@ -54,15 +46,16 @@ export function redactRetrievalQueryIdentities(
       );
     }
   }
-  for (const matchedAlias of matchedAliases) {
-    redacted = redacted.replace(identityAliasPattern(matchedAlias), "participant");
-  }
   return redacted;
 }
 
 function identityAliasPattern(alias: string): RegExp {
+  const tokens = alias.normalize("NFKC").match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (tokens.length === 0) {
+    return /(?!)x/gu;
+  }
   return new RegExp(
-    `(?<![\\p{L}\\p{N}])${escapeRegExp(alias)}(?![\\p{L}\\p{N}])`,
+    `(?<![\\p{L}\\p{N}])${tokens.map(escapeRegExp).join("[^\\p{L}\\p{N}]+")}(?![\\p{L}\\p{N}])`,
     "giu",
   );
 }
