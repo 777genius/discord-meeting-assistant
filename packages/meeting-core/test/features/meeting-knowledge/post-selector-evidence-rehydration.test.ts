@@ -148,7 +148,7 @@ function focusedSelector(
 }
 
 function processingFixture(selector = focusedSelector(),
-  jobBinding: QuestionBindingSnapshot = binding(),
+  jobBinding: QuestionBindingSnapshot = currentV2Binding(),
   processorPolicy: LocalFinalReplyPolicy = policy) {
   const evidence = new EvidenceFake();
   const jobs = new QuestionJobStoreFake({
@@ -179,6 +179,19 @@ function processingFixture(selector = focusedSelector(),
   return { evidence, generator, jobs, memory, processor, publication };
 }
 
+function currentV2Binding(): QuestionBindingSnapshot {
+  return {
+    ...binding(),
+    bindingProtocolVersion: 2,
+    retrievalBinding: {
+      cutoverEpoch: policy.retrievalAdmission.cutoverEpoch,
+      profileFingerprint: policy.retrievalAdmission.infinityProfileFingerprint,
+      request: retrievalV2Request,
+      retrievalPath: "infinity_locator_v2",
+    },
+  } as QuestionBindingSnapshot;
+}
+
 function indexedAnchorEvidence(indexGeneration = "generation-1") {
   const turns = selectedTurns.map((turn, index) => Object.freeze({
     ...turn,
@@ -206,7 +219,7 @@ function indexedAnchorEvidence(indexGeneration = "generation-1") {
   };
 }
 
-describe("post-selector evidence rehydration", () => {
+describe("persisted focused evidence rehydration", () => {
   it("rejects a queued rollout-A Retrieval V2 binding before retrieval under rollout-B",
     async () => {
       const rolloutA = rolloutABinding(binding());
@@ -227,17 +240,11 @@ describe("post-selector evidence rehydration", () => {
     ["cutover epoch", { cutoverEpoch: "stale-cutover-r0" }],
   ] as const)("rejects a stale V2 %s before retrieval and recovers on a current lease",
     async (_name, staleValue) => {
-      const currentRetrievalBinding = {
-          cutoverEpoch: policy.retrievalAdmission.cutoverEpoch,
-          profileFingerprint: policy.retrievalAdmission.infinityProfileFingerprint,
-          request: retrievalV2Request,
-          retrievalPath: "infinity_locator_v2" as const,
-      };
-      const current = {
-        ...binding(),
-        bindingProtocolVersion: 2 as const,
-        retrievalBinding: currentRetrievalBinding,
-      } as QuestionBindingSnapshot;
+      const current = currentV2Binding();
+      const currentRetrievalBinding = current.retrievalBinding;
+      if (currentRetrievalBinding === undefined) {
+        throw new Error("current V2 fixture is missing its retrieval binding");
+      }
       const fixture = processingFixture(focusedSelector(), {
         ...current,
         bindingProtocolVersion: 2,
@@ -364,31 +371,34 @@ describe("post-selector evidence rehydration", () => {
     expect(fixture.generator.generationCalls).toBe(0);
   });
 
-  it("reserves the shared provider attempt before billed evidence selection", async () => {
-    let fixture: ReturnType<typeof processingFixture> | undefined;
-    let reservationsSeenBySelector = -1;
-    const selector = focusedSelector(undefined, () => {
-      reservationsSeenBySelector = fixture?.jobs.providerReservations.length ?? -1;
-    });
-    fixture = processingFixture(selector);
+  it("reserves the shared provider attempt before persisted V2 evidence preparation",
+    async () => {
+    const fixture = processingFixture();
+    const originalRehydrate = fixture.evidence.rehydrateSelectedEvidence.bind(
+      fixture.evidence,
+    );
+    let hydrationCalls = 0;
+    let reservationsSeenByPreparation = -1;
+    fixture.evidence.rehydrateSelectedEvidence = (questionBinding, selectedReferences) => {
+      hydrationCalls += 1;
+      if (hydrationCalls === 2) {
+        reservationsSeenByPreparation = fixture.jobs.providerReservations.length;
+      }
+      return originalRehydrate(questionBinding, selectedReferences);
+    };
 
     await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
       outcome: "answered",
     });
-    expect(reservationsSeenBySelector).toBe(1);
+    expect(reservationsSeenByPreparation).toBe(1);
     expect(fixture.jobs.providerReservations).toHaveLength(1);
     expect(fixture.generator.requests[0]?.attemptId).toBe(
       fixture.jobs.providerReservations[0]?.attemptId,
     );
   });
 
-  it("rehydrates only the exact selected references after semantic selection", async () => {
-    const selector = focusedSelector({
-      schemaVersion: 1,
-      selectedCandidateIds: ["candidate-000002"],
-      status: "selected",
-    });
-    const { evidence, generator, processor } = processingFixture(selector);
+  it("rehydrates only the exact provider-selected V2 references", async () => {
+    const { evidence, generator, memory, processor } = processingFixture();
     generator.result = {
       answer: {
         claims: [{
@@ -400,27 +410,20 @@ describe("post-selector evidence rehydration", () => {
       },
       status: "completed",
     };
+    memory.result = {
+      authorityGeneration: authority.memoryGeneration,
+      candidates: [references[1]!],
+      schemaVersion: 1,
+      status: "current",
+    };
     evidence.hydrated = {
       binding: authority,
       status: "current",
       turns: [selectedTurns[1]!],
     };
-    const originalRehydrate = evidence.rehydrateSelectedEvidence.bind(evidence);
-    let calls = 0;
-    evidence.rehydrateSelectedEvidence = (questionBinding, selectedReferences) => {
-      calls += 1;
-      if (calls === 1) {
-        evidence.references.push(selectedReferences);
-        return Promise.resolve({
-          binding: authority,
-          status: "current" as const,
-          turns: selectedTurns,
-        });
-      }
-      return originalRehydrate(questionBinding, selectedReferences);
-    };
 
     await expect(processor.executeOnce()).resolves.toMatchObject({ outcome: "answered" });
+    expect(evidence.references[0]).toEqual([references[1]]);
     expect(evidence.references[1]).toEqual([references[1]]);
     expect(generator.requests[0]?.plan.evidence.map(({ turnId }) => turnId))
       .toEqual(["turn-correction"]);
@@ -443,13 +446,11 @@ describe("post-selector evidence rehydration", () => {
     CanonicalFinalReplyEvidenceResult,
     "stale_binding" | "unavailable",
   ][])("fails closed for %s after selection", async (_label, hydrated, outcome) => {
-    let fixture: ReturnType<typeof processingFixture> | undefined;
-    const selector = focusedSelector(undefined, () => {
-      if (fixture !== undefined) {
-        fixture.evidence.hydrated = hydrated;
-      }
-    });
-    fixture = processingFixture(selector);
+    const fixture = processingFixture();
+    fixture.evidence.hydrationResults.push(
+      { binding: authority, status: "current", turns: selectedTurns },
+      hydrated,
+    );
 
     await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
       outcome,

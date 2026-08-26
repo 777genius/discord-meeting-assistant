@@ -137,8 +137,13 @@ export async function preparePersistedRetrievalV2Evidence(input: {
   if (refreshed.status === "stale") {
     return { status: "stale_binding" };
   }
-  if (refreshed.status !== "current" ||
-    !authorityMatchesBinding(refreshed.binding, input.binding) ||
+  if (refreshed.status !== "current") {
+    return { status: "unavailable" };
+  }
+  if (!authorityMatchesBinding(refreshed.binding, input.binding)) {
+    return { status: "stale_binding" };
+  }
+  if (
     !focusedHydrationMatchesReferences(input.binding, input.references,
       refreshed.turns)) {
     return { status: "unavailable" };

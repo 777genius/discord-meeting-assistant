@@ -4,10 +4,10 @@ import {
 } from "@discord-meeting/discord-adapter";
 import { infinityContextHistoricalIndexProfileId } from
   "@discord-meeting/infinity-context-adapter";
+import type { RetrievalActorAliasOwnerV1 } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 
 import type { PlatformConfig } from "../config.js";
-import { participantRetrievalActorAliases } from
-  "../config/participant-greeting-profiles.js";
 import { createActorKeyBoundHistoricalIds } from "./infinity-retrieval-v2.js";
 
 export function createDiscordInfinityActorCustody(
@@ -27,11 +27,27 @@ export function createDiscordInfinityActorCustody(
       topologyKey,
       actorKeys.activeProfileId(),
     ),
-    speakerAliases: participantRetrievalActorAliases(
+    speakerAliases: participantRetrievalAliasOwners(
       config.participantGreetingProfiles,
       actorKeys,
     ),
   });
+}
+
+function participantRetrievalAliasOwners(
+  profiles: PlatformConfig["participantGreetingProfiles"],
+  actorKeys: DiscordInfinityActorKeys,
+): readonly RetrievalActorAliasOwnerV1[] {
+  return Object.freeze(Object.entries(profiles).map(([participantId, profile]) =>
+    Object.freeze({
+      actorKeys: Object.freeze([...actorKeys.actorKeysForFilter(participantId)]),
+      aliases: Object.freeze([...new Set([
+        profile.displayName,
+        profile.spokenName,
+        participantId,
+      ])]),
+    })
+  ));
 }
 
 export function requireHistoricalRuntimeSecrets(config: PlatformConfig): {

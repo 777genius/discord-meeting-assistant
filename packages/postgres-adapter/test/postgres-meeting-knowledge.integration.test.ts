@@ -276,12 +276,13 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       transcriptId: binding.transcriptId,
       transcriptVersion: binding.transcriptVersion,
     };
-    await expect(retrievalAdapter.retrieve({
+    const compatibilityNeighborRequest = await retrievalAdapter.retrieve({
       ...retrievalInput,
       neighborTurns: 8,
-    })).resolves.toEqual({ schemaVersion: 1, status: "low_coverage" });
+    });
     const retrieval = await retrievalAdapter.retrieve(retrievalInput);
     expect(retrieval.status).toBe("current");
+    expect(compatibilityNeighborRequest).toEqual(retrieval);
     if (retrieval.status !== "current") {
       return;
     }
