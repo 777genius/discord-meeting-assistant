@@ -370,7 +370,9 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
         WHERE effect_id = 'meeting-knowledge-answer:v1:migration-race-effect'
       `);
       await oldWorker.query("COMMIT");
-      await expect(migration).resolves.toMatchObject({ appliedVersions: [35, 36, 37] });
+      await expect(migration).resolves.toMatchObject({
+        appliedVersions: [35, 36, 37, 38],
+      });
       await expect(isolated.pool.query(`
         SELECT effect.state, quarantine.prior_state, quarantine.reason
         FROM meeting_core.answer_effects AS effect
@@ -456,8 +458,8 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
       await expect(new PostgresMigrationRunner(isolated.pool, {
         migrations,
       }).migrate()).resolves.toEqual({
-        appliedVersions: [30, 31, 32, 33, 34, 35, 36, 37],
-        version: 37,
+        appliedVersions: [30, 31, 32, 33, 34, 35, 36, 37, 38],
+        version: 38,
       });
       await expectBindingAwareQuestionPolicy(isolated.pool);
       const migrated = await isolated.pool.query(

@@ -51,20 +51,6 @@ export function participantSpeakerAliases(
   )));
 }
 
-export function participantRetrievalActorAliases(
-  profiles: ParticipantGreetingProfiles,
-  actorKeys: { actorKeysForFilter(discordActorId: string): readonly string[] },
-): Readonly<Record<string, readonly string[]>> {
-  return Object.freeze(Object.fromEntries(Object.entries(profiles).flatMap(
-    ([participantId, profile]) => actorKeys.actorKeysForFilter(participantId).map(
-      (actorKey) => [
-        actorKey,
-        Object.freeze([...new Set([profile.displayName, profile.spokenName])]),
-      ],
-    ),
-  )));
-}
-
 export const participantGreetingProfilesEnvironmentSchema = z
   .string()
   .max(64_000)

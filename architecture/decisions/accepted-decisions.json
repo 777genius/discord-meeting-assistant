@@ -260,12 +260,12 @@
     {
       "id": "ADR-0055",
       "path": "docs/decisions/0055-deadline-bound-durable-participant-greetings.md",
-      "immutableDigest": "sha256:91945c2f883dcb1717a23618247a45fc3a1c4943df8c1954dfac4d5f624005c3"
+      "immutableDigest": "sha256:502e5155674c5f3535b9ad40ef74495abe0893d0793f0945d46b886147153de2"
     },
     {
       "id": "ADR-0056",
       "path": "docs/decisions/0056-terminal-evidence-greeting-reconciliation.md",
-      "immutableDigest": "sha256:326d92320b61823a5d721748597219899440f2721cf9ffa16c6f1f21c8e60120"
+      "immutableDigest": "sha256:2ac50a56e85b9eaae0c98a318ec51c07d760e8bd4937760cebe56e26c40a13fb"
     }
   ]
 }
