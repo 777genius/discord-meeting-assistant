@@ -4,6 +4,7 @@ export * from "./artifacts.js";
 export * from "./attempt-journal.js";
 export * from "./canonical.js";
 export * from "./cleanup-evidence.js";
+export * from "./cumulative-spend.js";
 export * from "./execution.js";
 export * from "./final-admission.js";
 export * from "./holdout.js";

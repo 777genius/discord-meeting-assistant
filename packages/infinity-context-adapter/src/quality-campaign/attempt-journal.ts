@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve as resolvePath } from "nod
 
 import { claimDurableAttemptBudget } from "./attempt-budget-ledger.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import type { CumulativeSpendLedgerPort, DurableSpendClaim } from "./cumulative-spend.js";
 import { assertAttemptIdentity, CALL_KINDS, type AttemptIdentity, type CallKind,
   type JournalState, type SignedValue, type TerminalState,
   type VerifiedSpendReservation, verifyExternalSignedValue } from "./execution.js";
@@ -46,7 +47,7 @@ interface BlockedRecord {
   readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_blocked.v1";
 }
 
-export class DurableAttemptJournal {
+export class DurableAttemptJournal implements CumulativeSpendLedgerPort {
   private readonly root: string;
   public constructor(root: string, public readonly authorityPolicy: QualityCampaignAuthorityPolicy,
     private readonly resultAuthorityRole: Extract<QualityAuthorityRole,
@@ -262,6 +263,13 @@ export class DurableAttemptJournal {
   }
   private budgetPath(spendReservationSha256: string): string {
     return join(this.root, "budgets", `${spendReservationSha256}.jsonl`);
+  }
+  public async loadAdmittedClaims(spend: VerifiedSpendReservation):
+  Promise<readonly DurableSpendClaim[]> {
+    const claims = await readBudgetClaims(this.budgetPath(spend.spendReservationSha256),
+      spend.spendReservationSha256, spend.payload.campaignRootSha256);
+    const admitted = admittedBudgetClaims(claims, spend.payload);
+    return Object.freeze(claims.filter(({ admissionId }) => admitted.has(admissionId)));
   }
 }
 

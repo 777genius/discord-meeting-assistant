@@ -260,6 +260,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/attempt-journal.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical.ts
       - packages/infinity-context-adapter/src/quality-campaign/cleanup-evidence.ts
+      - packages/infinity-context-adapter/src/quality-campaign/cumulative-spend.ts
       - packages/infinity-context-adapter/src/quality-campaign/execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/final-admission.ts
       - packages/infinity-context-adapter/src/quality-campaign/holdout.ts
