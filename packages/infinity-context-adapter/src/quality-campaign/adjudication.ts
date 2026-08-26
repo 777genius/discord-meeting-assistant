@@ -1,4 +1,4 @@
-import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import { digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { type AttemptIdentity, type SignedValue, verifyExternalSignedValue } from "./execution.js";
 
 export interface CanonicalClaimDecision {

@@ -76,7 +76,7 @@ describe("production quality campaign", () => {
     expect(verifySpendReservations({ authorityKeyId: authority.keyId,
       authorityPublicKeyPem: authority.publicKeyPem, campaignRootSha256: d("1"),
       nowEpochMs: 1_000, releaseRootSha256: d("2"), reservations: receipts })).toHaveLength(3);
-    for (const reservations of [[...receipts.slice(0, 2)], receipts.map((value, index) =>
+    for (const reservations of [receipts.slice(0, 2), receipts.map((value, index) =>
       index === 0 ? authority.signed({ ...value.payload, maxCalls: 1 }) : value),
     receipts.map((value, index) => index === 0 ? authority.signed({ ...value.payload,
       expiresAtEpochMs: 500 }) : value)]) {

@@ -96,15 +96,7 @@ export async function admitMainCampaign(input: {
   const authPayload = exactRecord(authorization.payload, ["acceptanceReceiptSha256",
     "authorizedProviderExecution", "corpusDigestSha256", "expiresAtEpochMs",
     "releaseRootSha256", "schemaVersion"], "execution authorization");
-  if (authPayload.schemaVersion !== "meeting_knowledge.semantic_quality_execution_authorization.v1" ||
-    authPayload.authorizedProviderExecution !== true ||
-    authPayload.acceptanceReceiptSha256 !== sha256(acceptance) ||
-    authPayload.corpusDigestSha256 !== manifest.corpusDigestSha256 ||
-    authPayload.releaseRootSha256 !== input.releaseRootSha256 ||
-    typeof authPayload.expiresAtEpochMs !== "number" ||
-    !Number.isSafeInteger(authPayload.expiresAtEpochMs) || authPayload.expiresAtEpochMs <= Date.now()) {
-    throw new Error("provider execution is not separately authorized");
-  }
+  assertExecutionAuthorization(authPayload, acceptance, manifest, input.releaseRootSha256);
 
   const automatic = await readQuestions(base, manifest.sealedAutomaticQuestionsPath,
     "automatic", MAIN_CARDINALITY.automatic);
@@ -156,6 +148,19 @@ export async function admitMainCampaign(input: {
     reviewerReceiptSetSha256: root.reviewerReceiptSetSha256,
     rootBindingSha256: sha256(root), snapshotSha256,
     turnToBlockManifestSha256: root.turnToBlockManifestSha256 });
+}
+
+function assertExecutionAuthorization(authPayload: Record<string, unknown>, acceptance: unknown,
+  manifest: InputManifest, releaseRootSha256: string): void {
+  if (authPayload.schemaVersion !== "meeting_knowledge.semantic_quality_execution_authorization.v1" ||
+    authPayload.authorizedProviderExecution !== true ||
+    authPayload.acceptanceReceiptSha256 !== sha256(acceptance) ||
+    authPayload.corpusDigestSha256 !== manifest.corpusDigestSha256 ||
+    authPayload.releaseRootSha256 !== releaseRootSha256 ||
+    typeof authPayload.expiresAtEpochMs !== "number" ||
+    !Number.isSafeInteger(authPayload.expiresAtEpochMs) || authPayload.expiresAtEpochMs <= Date.now()) {
+    throw new Error("provider execution is not separately authorized");
+  }
 }
 
 async function readQuestions(base: string, path: string, source: CampaignQuestion["source"],
