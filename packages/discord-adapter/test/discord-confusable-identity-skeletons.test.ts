@@ -29,9 +29,24 @@ describe("Discord confusable identity skeletons", () => {
     "Ali\u0000ce",
     "Ali\u2060ce",
     "Ali\uFE0Fce",
+    "Ali\uFFF0ce",
+    "Ali\uFFF8ce",
     "Ali\u{E0061}ce",
     "Ali\u{E0100}ce",
   ])("marks invisible or bidi identity text uncertain: %s", (value) => {
+    expect(skeletons.skeleton(value)).toMatchObject({
+      certainty: "uncertain",
+      skeleton: "alice",
+    });
+  });
+
+  it.each([
+    "Ali\u0009ce",
+    "Ali\u000Ace",
+    "Ali\u007Fce",
+    "Ali\u0085ce",
+    "Ali\u009Fce",
+  ])("marks every C0/C1 control-bearing identity uncertain: %s", (value) => {
     expect(skeletons.skeleton(value)).toMatchObject({
       certainty: "uncertain",
       skeleton: "alice",

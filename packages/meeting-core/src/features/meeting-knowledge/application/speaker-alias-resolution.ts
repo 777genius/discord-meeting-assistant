@@ -63,7 +63,11 @@ interface IdentityToken extends IdentitySkeletonV1 {
 const ambiguousEnglishAliasTokens = new Set([
   "bill", "mark", "may", "will",
 ]);
-const identityWhitespaceControlCodes = new Set([9, 10, 11, 12, 13]);
+const identityWordAuthorityCharacter = /[\p{L}\p{N}]/u;
+const identityUnsafeCandidateCharacter =
+  /(?:\p{Default_Ignorable_Code_Point}|\p{Bidi_Control}|\p{Join_Control}|\p{Cf}|\p{Cc}|[\uFFF0-\uFFF8]|[\u{E0000}-\u{E0FFF}])/u;
+const literalModifierCharacter = /(?:\p{M}|\p{Emoji_Modifier})/u;
+const safeLiteralBoundaryCharacter = /[\p{White_Space}\p{P}]/u;
 
 export function resolveRequestedSpeakerIds(
   question: string,
@@ -185,7 +189,11 @@ export function identityAliasSpans(
   const canonicalQuestion = canonicalIdentityText(question);
   const aliasTokens = identityTokens(canonicalIdentityText(alias), skeletons);
   if (aliasTokens.length === 0) {
-    return literalAliasSpans(canonicalQuestion, canonicalIdentityText(alias));
+    return literalAliasSpans(
+      canonicalQuestion,
+      canonicalIdentityText(alias),
+      skeletons,
+    );
   }
   const questionTokens = identityTokens(canonicalQuestion, skeletons);
   const spans: AliasQuestionSpan[] = [];
@@ -206,14 +214,22 @@ export function identityAliasSpans(
       aliasTokens.map(({ canonical }) => canonical))) {
       continue;
     }
+    const spanIdentity = skeletons?.skeleton(text);
     spans.push(Object.freeze({
-      certainty: comparisons.includes("uncertain") ? "uncertain" : "certain",
+      certainty: comparisons.includes("uncertain") ||
+        spanIdentity?.certainty === "uncertain" ? "uncertain" : "certain",
       end: last.end,
       start: first.start,
       text,
     }));
   }
-  return Object.freeze(spans);
+  spans.push(...compactedUncertainAliasSpans(
+    canonicalQuestion, questionTokens, aliasTokens, skeletons,
+  ));
+  return Object.freeze(spans.filter((span, index) => spans.findIndex((other) =>
+    other.start === span.start && other.end === span.end &&
+    other.certainty === span.certainty
+  ) === index));
 }
 
 function matchAlias(
@@ -227,20 +243,69 @@ function matchAlias(
 function literalAliasSpans(
   question: string,
   alias: string,
+  skeletons?: IdentitySkeletonPortV1,
 ): readonly AliasQuestionSpan[] {
   if (alias.length === 0) {
     return Object.freeze([]);
   }
-  return Object.freeze([...question.matchAll(new RegExp(`(${escapeRegExp(alias)})`, "gu"))]
-    .flatMap((match) => {
-      const text = match[1];
-      return text === undefined ? [] : [Object.freeze({
-        certainty: "certain" as const,
-        end: match.index + text.length,
-        start: match.index,
-        text,
-      })];
+  const spans: AliasQuestionSpan[] = [];
+  const aliasIdentity = skeletons?.skeleton(alias);
+  for (let start = question.indexOf(alias); start >= 0;
+    start = question.indexOf(alias, start + 1)) {
+    const exactEnd = start + alias.length;
+    const prefix = codePointBefore(question, start);
+    const suffix = codePointAt(question, exactEnd);
+    const unsafePrefix = literalAttachmentIsUnsafe(prefix?.text, skeletons);
+    const unsafeSuffix = literalAttachmentIsUnsafe(suffix?.text, skeletons);
+    const safeBoundaries = literalBoundaryIsSafe(prefix?.text, alias) &&
+      literalBoundaryIsSafe(suffix?.text, alias);
+    if (![unsafePrefix, unsafeSuffix, safeBoundaries].includes(true)) {
+      continue;
+    }
+    const spanStart = unsafePrefix ? prefix?.start ?? start : start;
+    const spanEnd = unsafeSuffix ? suffix?.end ?? exactEnd : exactEnd;
+    const text = question.slice(spanStart, spanEnd);
+    const uncertain = [aliasIdentity?.certainty === "uncertain", unsafePrefix,
+      unsafeSuffix].includes(true);
+    spans.push(Object.freeze({
+      certainty: uncertain ? "uncertain" as const : "certain" as const,
+      end: spanEnd,
+      start: spanStart,
+      text,
     }));
+  }
+  return Object.freeze(spans);
+}
+
+function compactedUncertainAliasSpans(
+  question: string,
+  questionTokens: readonly IdentityToken[],
+  aliasTokens: readonly IdentityToken[],
+  skeletons?: IdentitySkeletonPortV1,
+): readonly AliasQuestionSpan[] {
+  if (skeletons === undefined) {
+    return Object.freeze([]);
+  }
+  const expected = aliasTokens.map(({ skeleton }) => skeleton).join("");
+  const maximum = Array.from(aliasTokens.map(({ canonical }) => canonical).join("")).length;
+  const spans: AliasQuestionSpan[] = [];
+  for (let start = 0; start < questionTokens.length; start += 1) {
+    for (let end = start + 1;
+      end <= Math.min(questionTokens.length, start + maximum); end += 1) {
+      const window = questionTokens.slice(start, end);
+      const first = window[0];
+      const last = window.at(-1);
+      if (first !== undefined && last !== undefined &&
+        window.map(({ skeleton }) => skeleton).join("") === expected) {
+        const text = question.slice(first.start, last.end);
+        if (skeletons.skeleton(text).certainty === "uncertain") {
+          spans.push(Object.freeze({ certainty: "uncertain", end: last.end,
+            start: first.start, text }));
+        }
+      }
+    }
+  }
+  return Object.freeze(spans);
 }
 
 function hasConflictingSpeakerOwner(
@@ -290,20 +355,11 @@ function identityTokens(
   value: string,
   skeletons?: IdentitySkeletonPortV1,
 ): readonly IdentityToken[] {
-  // Keep embedded non-whitespace C0/C1 controls in the candidate token so the
-  // adapter can collapse them into a comparable deny skeleton. Whitespace
-  // controls remain separators and cannot join otherwise separate words.
-  const separatedWhitespaceControls = value.split("").map((character) =>
-    identityWhitespaceControlCodes.has(character.charCodeAt(0)) ? " " : character
-  ).join("");
-  return Object.freeze([...separatedWhitespaceControls.matchAll(
-    /[\p{L}\p{N}\p{M}\p{Cf}\p{Cc}]+/gu,
-  )]
-    .flatMap((match) => {
-      const text = match[0];
-      if (!/[\p{L}\p{N}]/u.test(text)) {
-        return [];
-      }
+  return Object.freeze([...value.matchAll(
+    /[\p{L}\p{N}\p{M}\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\p{Join_Control}\p{Cf}\p{Cc}\uFFF0-\uFFF8\u{E0000}-\u{E0FFF}]+/gu,
+  )].flatMap((match) => {
+    const text = match[0];
+    if (identityWordAuthorityCharacter.test(text)) {
       const identity = skeletons?.skeleton(text) ?? Object.freeze({
         canonical: canonicalIdentityText(text),
         certainty: "certain" as const,
@@ -311,7 +367,50 @@ function identityTokens(
       });
       return [Object.freeze({ ...identity, end: match.index + text.length,
         start: match.index, text })];
-    }));
+    }
+    return [];
+  }));
+}
+
+function literalAttachmentIsUnsafe(
+  character: string | undefined,
+  skeletons?: IdentitySkeletonPortV1,
+): boolean {
+  return character !== undefined && (literalModifierCharacter.test(character) ||
+    identityUnsafeCandidateCharacter.test(character) ||
+    skeletons?.skeleton(character).certainty === "uncertain");
+}
+
+function literalBoundaryIsSafe(
+  character: string | undefined,
+  alias: string,
+): boolean {
+  return character === undefined ||
+    (safeLiteralBoundaryCharacter.test(character) && !alias.includes(character));
+}
+
+function codePointAt(
+  value: string,
+  start: number,
+): { readonly end: number; readonly text: string } | undefined {
+  const codePoint = value.codePointAt(start);
+  if (codePoint === undefined) {
+    return undefined;
+  }
+  const text = String.fromCodePoint(codePoint);
+  return { end: start + text.length, text };
+}
+
+function codePointBefore(
+  value: string,
+  end: number,
+): { readonly start: number; readonly text: string } | undefined {
+  if (end <= 0) {
+    return undefined;
+  }
+  const last = value.charCodeAt(end - 1);
+  const start = last >= 0xDC00 && last <= 0xDFFF && end > 1 ? end - 2 : end - 1;
+  return { start, text: value.slice(start, end) };
 }
 
 function compareIdentityToken(

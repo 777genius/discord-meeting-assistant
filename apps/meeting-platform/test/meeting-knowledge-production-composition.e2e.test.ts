@@ -27,7 +27,7 @@ import {
 import { ChannelType, PermissionFlagsBits, type Client } from "discord.js";
 import { Pool } from "pg";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createVoiceGroundedAnswers } from
   "../src/composition/voice-grounded-answers.js";
@@ -70,6 +70,11 @@ let container: StartedTestContainer | undefined;
 let database: Pool | undefined;
 const externalPostgresUrl = disposableExternalPostgresUrl(process.env);
 const unicodePrivacyProfiles = Object.freeze({
+  [currentActor]: Object.freeze({
+    displayName: "Alice Smith",
+    greetingLocale: "en" as const,
+    spokenName: "Alice",
+  }),
   [historicalActorA]: Object.freeze({
     displayName: "Ｖｌａｄ",
     greetingLocale: "en" as const,
@@ -173,6 +178,7 @@ describe("Meeting Knowledge V2 production composition", () => {
           authorization,
           currentMeetingId,
           infinity,
+          pool,
           providerBinding,
           roomId,
           runtime: servingRuntime,
@@ -381,6 +387,7 @@ async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
   readonly authorization: ReturnType<typeof allowOnlySyntheticRoom>;
   readonly currentMeetingId: string;
   readonly infinity: Awaited<ReturnType<typeof startDisposableInfinityHttpService>>;
+  readonly pool: Pool;
   readonly providerBinding:
     NonNullable<PlatformConfig["meetingKnowledge"]>["retrievalV2ProviderBinding"];
   readonly roomId: string;
@@ -403,24 +410,38 @@ async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
   const rawBefore = input.infinity.endpoint.exactHttpRequests.filter(
     ({ path }) => path === "/v1/context/retrieve",
   ).length;
-  for (const question of [
-    "What did Vlad and Ѵӏаԁ decide?",
-    "Что решила Вова?",
-    "Что решила Нора?",
-    "What did Vl\u0000ad decide?",
-    "What did Vl\u2060ad decide?",
-    "What did Vl\uFE0Fad decide?",
-    "What did Vl\u{E0061}ad decide?",
-  ]) {
-    await expect(retrieval.retrieve({
-      authorizationPrincipalRef: "synthetic-principal",
-      currentMeetingId: input.currentMeetingId,
-      maximumCandidates: 24,
-      question,
-      roomId: input.roomId,
-      scopeId: input.scopeId,
-      signal: input.signal,
-    })).resolves.toEqual({ status: "unavailable" });
+  const store = vi.spyOn(input.pool, "query");
+  const storeBefore = store.mock.calls.length;
+  try {
+    for (const question of [
+      "What did Vlad and Ѵӏаԁ decide?",
+      "Что решила Вова?",
+      "Что решила Нора?",
+      "What did Vl\u0000ad decide?",
+      "What did Vl\u000Aad decide?",
+      "What did Vl\u2060ad decide?",
+      "What did Vl\uFE0Fad decide?",
+      "What did Vl\uFFF0ad decide?",
+      "What did Vl\u{E0061}ad decide?",
+      "What did 🔥\uFE0F decide?",
+      "What did 🔥\u0000 decide?",
+      "What did 🔥\u{E0061} decide?",
+      "What did Alice \u2060 Smith decide?",
+      "What did Alice\u000ASmith decide?",
+    ]) {
+      await expect(retrieval.retrieve({
+        authorizationPrincipalRef: "synthetic-principal",
+        currentMeetingId: input.currentMeetingId,
+        maximumCandidates: 24,
+        question,
+        roomId: input.roomId,
+        scopeId: input.scopeId,
+        signal: input.signal,
+      })).resolves.toEqual({ status: "unavailable" });
+    }
+    expect(store.mock.calls).toHaveLength(storeBefore);
+  } finally {
+    store.mockRestore();
   }
   expect(input.infinity.endpoint.requests.filter(
     ({ path }) => path === "/v1/context/retrieve",
