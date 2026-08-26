@@ -1,4 +1,5 @@
 export * from "./admission.js";
+export * from "./campaign-contracts.js";
 export * from "./adjudication.js";
 export * from "./artifacts.js";
 export * from "./attempt-journal.js";
@@ -16,6 +17,8 @@ export * from "./production-cleanup.js";
 export * from "./production-cli.js";
 export * from "./production-composition.js";
 export * from "./production-evidence.js";
+export * from "./production-evidence-custody.js";
+export * from "./production-durable-adapters.js";
 export * from "./production-holdout.js";
 export * from "./production-http-ports.js";
 export * from "./production-ports.js";

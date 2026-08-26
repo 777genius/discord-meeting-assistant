@@ -92,6 +92,23 @@ unknown-outcome handling and exact original/repair input accounting.
   canonical attempt, artifact kind, key ID, and plaintext digest. Artifact
   retention, derived Infinity deletion, and authoritative canonical absence are
   separate signed bindings.
+- Provider and evidence adapters return authenticated raw receipts/envelopes.
+  Application reconstruction accepts only locally opened AES-256-GCM bytes and
+  exact capability-to-retrieval-to-answer terminal chains. Each terminal binds
+  the request, result envelope, release, spend reservation and per-call spend
+  receipt, question, repetition, call kind, ordinal, campaign, and terminal
+  state. Ambiguous effects use the same-identity status port and are never
+  replayed blindly.
+- Quality-campaign application sources contain deterministic reconstruction and
+  consumer-owned ports only. Filesystem journals/checkpoints/input custody,
+  encryption, HTTP, wall clocks, timers, and bounded scheduler mechanics are
+  classified as adapters; production assembly is the only concrete selection
+  point.
+- Cleanup consumes one signed campaign-created complete derived-artifact
+  inventory disjoint from protected originals. Deletion outcomes and exact-set
+  absence are independently signed. The isolated holdout authorization binds
+  its question, locator, derived-artifact, key-namespace, and spend-reservation
+  inventories, and holdout retention is non-qualifying.
 - Terminal replay reconstructs the complete reserved exchange and accepts a
   terminal only when its signed inner payload and create-only wrapper bind the
   same attempt, call identity, campaign, question, repetition, request, state,

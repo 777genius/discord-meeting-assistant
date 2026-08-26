@@ -1,7 +1,6 @@
 import { exactRecord } from "./canonical.js";
 import { runQualityCampaignOperatorCli, type OperatorExit } from "./operator-cli.js";
-import { runQualityCampaignProductionComposition, type ProductionCampaignCommand } from
-  "./production-composition.js";
+import { runQualityCampaignProductionComposition } from "./production-composition.js";
 import { createHttpQualityCampaignProductionPorts } from "./production-http-ports.js";
 import type { QualityCampaignProductionPorts } from "./production-ports.js";
 
@@ -20,8 +19,8 @@ export async function runQualityCampaignProductionCli(input: { readonly argv: re
         throw new Error("production phase input is invalid");
       }
       ports ??= await createHttpQualityCampaignProductionPorts(String(phase.connectionsPath));
-      const result = await runQualityCampaignProductionComposition({ command: command as
-        ProductionCampaignCommand, configurationPath: String(phase.configurationPath), ports });
+      const result = await runQualityCampaignProductionComposition({ command,
+        configurationPath: String(phase.configurationPath), ports });
       return { blockers: result.blockerCode === "none" ? [] : [result.blockerCode], command,
         receipt: result.receipt, status: result.status };
     } }, statusReceiptPath: statusPath,
