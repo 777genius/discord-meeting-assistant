@@ -1,11 +1,14 @@
+/* oxlint-disable max-lines -- AES opening and closed artifact-chain validation form one boundary */
 import { createDecipheriv } from "node:crypto";
 
 import { MAIN_CARDINALITY } from "./admission.js";
-import { verifyRetainedFinalAdjudication } from "./adjudication.js";
+import { verifyDurableReservedExchangeEvidence,
+  verifyRetainedFinalAdjudication } from "./adjudication.js";
 import { artifactAttemptIdentity, type ArtifactAad, type ArtifactReceipt,
 } from "./artifacts.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
-import { assertAttemptIdentity, type AttemptIdentity } from "./execution.js";
+import { assertAttemptIdentity, type AttemptIdentity, type VerifiedSpendReservation,
+  verifyExternalSignedValue } from "./execution.js";
 import { QualityCampaignAuthorityPolicy } from "./release.js";
 
 export const REQUIRED_RETAINED_KINDS = Object.freeze([
@@ -69,15 +72,24 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
   input: { readonly artifacts:
   readonly RetainedArtifact[]; readonly artifactKeyCustodySha256: string;
   readonly campaignByteCeiling: number; readonly custody: ArtifactCustodyPort;
-  readonly expectedOutcomes: readonly ExpectedOutcomeInventory[] }): Promise<{
+  readonly effectVerificationEpochMs: number;
+  readonly expectedOutcomes: readonly ExpectedOutcomeInventory[];
+  readonly releaseDocumentSha256: string;
+  readonly spendReservations: readonly VerifiedSpendReservation[] }): Promise<{
     readonly artifactCount: number; readonly inventorySha256: string;
     readonly totalStoredBytes: number }> {
   digest(input.artifactKeyCustodySha256, "artifact key custody");
   const expected = buildExpectedMembership(input.expectedOutcomes);
+  if (input.artifacts.length !== expected.size) {
+    throw new Error("retained inventory has missing or orphan artifacts");
+  }
   const seen: RetentionSeen = { aadDigests: new Set(), artifactBindings: new Set(),
     envelopeDigests: new Set(), keyBindings: new Set(), memberships: new Set() };
   const context = { artifactKeyCustodySha256: input.artifactKeyCustodySha256,
-    custody: input.custody, expected, seen };
+    authenticated: new Map<string, AuthenticatedArtifact>(), custody: input.custody,
+    effectVerificationEpochMs: input.effectVerificationEpochMs, expected, releaseDocumentSha256:
+    digest(input.releaseDocumentSha256, "retained release document"), seen,
+    spendReservations: input.spendReservations };
   let totalStoredBytes = 0;
   for (const artifact of input.artifacts) {
     await admitRetainedArtifact(policy, artifact, context);
@@ -90,6 +102,7 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
     canonicalJson([...expected.keys()].toSorted())) {
     throw new Error("retained inventory has missing or orphan artifacts");
   }
+  verifyCompleteArtifactChains(policy, input.expectedOutcomes, context.authenticated);
   if (!Number.isSafeInteger(input.campaignByteCeiling) ||
     totalStoredBytes > input.campaignByteCeiling) {
     throw new Error("retained inventory exceeds campaign byte ceiling");
@@ -116,9 +129,14 @@ interface RetentionSeen {
   readonly memberships: Set<string>;
 }
 interface RetentionContext {
+  readonly authenticated: Map<string, AuthenticatedArtifact>;
   readonly artifactKeyCustodySha256: string; readonly custody: ArtifactCustodyPort;
+  readonly effectVerificationEpochMs: number;
   readonly expected: ReadonlyMap<string, ExpectedArtifactMembership>; readonly seen: RetentionSeen;
+  readonly releaseDocumentSha256: string;
+  readonly spendReservations: readonly VerifiedSpendReservation[];
 }
+interface AuthenticatedArtifact { readonly artifact: RetainedArtifact; readonly value: unknown }
 
 function buildExpectedMembership(outcomes: readonly ExpectedOutcomeInventory[]):
 Map<string, ExpectedArtifactMembership> {
@@ -141,7 +159,8 @@ Map<string, ExpectedArtifactMembership> {
     questions.add(outcome.identity.questionId);
     repetitionQuestions.set(outcome.identity.repetition, questions);
     const requiredKinds: readonly RetainedArtifactKind[] = outcome.resolverRequired ?
-      [...REQUIRED_RETAINED_KINDS, "resolver_result"] : REQUIRED_RETAINED_KINDS;
+      [...REQUIRED_RETAINED_KINDS.slice(0, -1), "resolver_result", "final_adjudication"] :
+      REQUIRED_RETAINED_KINDS;
     if (canonicalJson(Object.keys(outcome.artifactBindingSha256ByKind).toSorted()) !==
       canonicalJson([...requiredKinds].toSorted())) {
       throw new Error("expected artifact binding inventory is not exact");
@@ -215,18 +234,23 @@ async function admitRetainedArtifact(policy: QualityCampaignAuthorityPolicy,
     sha256(plaintext) !== expectedArtifact.finalAdjudicationSha256) {
     throw new Error("retained plaintext does not bind the exact final adjudication");
   }
-  validateAuthenticatedPlaintext(policy, artifact, expectedArtifact, plaintext);
+  validateAuthenticatedPlaintext(policy, artifact, expectedArtifact, plaintext, context);
+  context.authenticated.set(membership, { artifact,
+    value: decodeCanonicalPlaintext(plaintext, artifact.kind.replaceAll("_", " ")) });
   context.seen.memberships.add(membership); context.seen.aadDigests.add(artifact.aadSha256);
   context.seen.artifactBindings.add(artifact.artifactBindingSha256);
   context.seen.envelopeDigests.add(artifact.envelopeSha256);
   context.seen.keyBindings.add(artifact.keyBindingSha256);
 }
 
+// Closed kind dispatch is deliberately exhaustive rather than extensible.
+// oxlint-disable-next-line complexity
 function validateAuthenticatedPlaintext(policy: QualityCampaignAuthorityPolicy,
   artifact: RetainedArtifact, expectedArtifact: ExpectedArtifactMembership,
-  plaintext: Uint8Array): void {
+  plaintext: Uint8Array, context: RetentionContext): void {
+  const decoded = decodeCanonicalPlaintext(plaintext, artifact.kind.replaceAll("_", " "));
   if (artifact.kind === "final_adjudication") {
-    const value = decodeCanonicalPlaintext(plaintext, "final adjudication");
+    const value = decoded;
     const final = verifyRetainedFinalAdjudication(policy, value, expectedArtifact.identity,
       expectedArtifact.resolverRequired);
     const expectedClaims = expectedArtifact.outcome.claimChecks;
@@ -238,6 +262,9 @@ function validateAuthenticatedPlaintext(policy: QualityCampaignAuthorityPolicy,
       .map(({ claimId, entailed }) => ({ claimId, entailed }));
     const abstentionPassed = expectedArtifact.outcome.abstention.expected ===
       expectedArtifact.outcome.abstention.observed;
+    if (!final.decision.answerComplete) {
+      throw new Error("final adjudication answerComplete must be true");
+    }
     if (canonicalJson(claims) !== canonicalJson(expectedClaims) ||
       canonicalJson(citations) !== canonicalJson(expectedCitations) ||
       final.decision.claims.some(({ abstentionCorrect }) =>
@@ -245,8 +272,9 @@ function validateAuthenticatedPlaintext(policy: QualityCampaignAuthorityPolicy,
       throw new Error("final adjudication decisions differ from admitted metric evidence");
     }
   } else if (artifact.kind === "retrieval_response") {
-    const value = exactRecord(decodeCanonicalPlaintext(plaintext, "retrieval response"),
-      ["attempt", "latencyUs", "rankedLocatorIds", "schemaVersion", "scopeViolationLocatorIds"],
+    const value = exactRecord(decoded,
+      ["attempt", "chain", "latencyUs", "rankedLocatorIds", "responseBytesBase64",
+        "schemaVersion", "scopeViolationLocatorIds"],
       "retained retrieval response");
     if (value.schemaVersion !== "meeting_knowledge.semantic_quality_retrieval_evidence.v1" ||
       canonicalJson(value.attempt) !== canonicalJson(expectedArtifact.identity) ||
@@ -257,9 +285,11 @@ function validateAuthenticatedPlaintext(policy: QualityCampaignAuthorityPolicy,
         canonicalJson(expectedArtifact.outcome.scopeViolationLocatorIds)) {
       throw new Error("authenticated retrieval evidence differs from admitted ranking");
     }
+    verifyArtifactChain(policy, artifact, expectedArtifact.identity, value.chain, context, true);
+    assertProviderResultDigest(value.responseBytesBase64, value.chain, "retrieval response");
   } else if (artifact.kind === "evidence") {
-    const value = exactRecord(decodeCanonicalPlaintext(plaintext, "canonical evidence"),
-      ["attempt", "evidenceTurnIds", "schemaVersion", "speakerTimeChecks"],
+    const value = exactRecord(decoded,
+      ["attempt", "chain", "evidenceTurnIds", "schemaVersion", "speakerTimeChecks"],
       "retained canonical evidence");
     if (value.schemaVersion !== "meeting_knowledge.semantic_quality_canonical_evidence.v1" ||
       canonicalJson(value.attempt) !== canonicalJson(expectedArtifact.identity) ||
@@ -269,6 +299,256 @@ function validateAuthenticatedPlaintext(policy: QualityCampaignAuthorityPolicy,
         canonicalJson(expectedArtifact.outcome.speakerTimeChecks)) {
       throw new Error("authenticated canonical evidence differs from admitted turn observations");
     }
+    verifyArtifactChain(policy, artifact, expectedArtifact.identity, value.chain, context, false);
+  } else if (["capability_request", "retrieval_request", "answer_request"]
+    .includes(artifact.kind)) {
+    const value = exactRecord(decoded, ["attempt", "chain", "requestBytesBase64",
+      "schemaVersion"], `retained ${artifact.kind}`);
+    assertArtifactHeader(value, artifact.kind, expectedArtifact.identity);
+    verifyArtifactChain(policy, artifact, expectedArtifact.identity, value.chain, context, false);
+    assertProviderRequestDigest(value.requestBytesBase64, value.chain,
+      artifact.kind.replaceAll("_", " "));
+  } else if (artifact.kind === "capability_response") {
+    const value = exactRecord(decoded, ["attempt", "chain", "responseBytesBase64",
+      "schemaVersion"], "retained capability response");
+    assertArtifactHeader(value, artifact.kind, expectedArtifact.identity);
+    verifyArtifactChain(policy, artifact, expectedArtifact.identity, value.chain, context, true);
+    assertProviderResultDigest(value.responseBytesBase64, value.chain, "capability response");
+  } else if (artifact.kind === "answer_response") {
+    const value = exactRecord(decoded, ["answerDigestSha256", "attempt", "chain",
+      "responseBytesBase64", "schemaVersion"], "retained answer response");
+    assertArtifactHeader(value, artifact.kind, expectedArtifact.identity);
+    verifyArtifactChain(policy, artifact, expectedArtifact.identity, value.chain, context, true);
+    const resultDigestSha256 = assertProviderResultDigest(value.responseBytesBase64, value.chain,
+      "answer response");
+    if (value.answerDigestSha256 !== resultDigestSha256) {
+      throw new Error("authenticated answer response digest is not authoritative");
+    }
+  } else if (artifact.kind === "raw_outcome") {
+    const value = exactRecord(decoded, ["attempt", "chain", "encryptedEvidenceSha256",
+      "outcomeDigestSha256", "responseBytesBase64", "schemaVersion"],
+    "retained raw outcome");
+    assertArtifactHeader(value, artifact.kind, expectedArtifact.identity);
+    verifyArtifactChain(policy, artifact, expectedArtifact.identity, value.chain, context, true);
+    assertProviderResultDigest(value.responseBytesBase64, value.chain, "raw outcome");
+  } else {
+    const keys = artifact.kind.includes("result") ?
+      ["attempt", "chain", "decisionReceipt", "schemaVersion"] :
+      artifact.kind === "adjudication_input" ?
+        ["attempt", "chain", "encryptedEvidenceSha256", "outcomeDigestSha256", "schemaVersion"] :
+        ["attempt", "chain", "schemaVersion"];
+    const value = exactRecord(decoded, keys, `retained ${artifact.kind}`);
+    assertArtifactHeader(value, artifact.kind, expectedArtifact.identity);
+    verifyArtifactChain(policy, artifact, expectedArtifact.identity, value.chain, context,
+      isProviderResultKind(artifact.kind));
+  }
+}
+
+function assertArtifactHeader(value: Record<string, unknown>, kind: RetainedArtifactKind,
+  identity: AttemptIdentity): void {
+  if (value.schemaVersion !== `meeting_knowledge.semantic_quality_${kind}.v1` ||
+    canonicalJson(value.attempt) !== canonicalJson(identity)) {
+    throw new Error(`authenticated ${kind} has foreign structure`);
+  }
+}
+
+function assertProviderRequestDigest(value: unknown, chainValue: unknown, label: string): string {
+  const bytes = decodeCanonicalBase64Value(value, `${label} request bytes`);
+  const chain = chainValue as Record<string, unknown>;
+  const requestDigestSha256 = sha256(bytes);
+  if (chain.requestDigestSha256 !== requestDigestSha256) {
+    throw new Error(`authenticated ${label} does not bind the exact provider request`);
+  }
+  return requestDigestSha256;
+}
+
+function assertProviderResultDigest(value: unknown, chainValue: unknown, label: string): string {
+  const bytes = decodeCanonicalBase64Value(value, `${label} result bytes`);
+  const chain = chainValue as Record<string, unknown>;
+  const resultDigestSha256 = sha256(bytes);
+  if (chain.resultDigestSha256 !== resultDigestSha256) {
+    throw new Error(`authenticated ${label} does not bind the exact provider result`);
+  }
+  return resultDigestSha256;
+}
+
+// This reconstructs every conditional resolver/result link in one pass.
+// oxlint-disable-next-line complexity
+function verifyCompleteArtifactChains(policy: QualityCampaignAuthorityPolicy,
+  outcomes: readonly ExpectedOutcomeInventory[],
+  authenticated: ReadonlyMap<string, AuthenticatedArtifact>): void {
+  for (const outcome of outcomes) {
+    const kinds: readonly RetainedArtifactKind[] = outcome.resolverRequired ?
+      [...REQUIRED_RETAINED_KINDS.slice(0, -1), "resolver_result", "final_adjudication"] :
+      REQUIRED_RETAINED_KINDS;
+    let predecessorPlaintextSha256: string | null = null;
+    const values = new Map<RetainedArtifactKind, Record<string, unknown>>();
+    for (const kind of kinds) {
+      const identity = artifactAttemptIdentity(outcome.identity, kind);
+      const retained = authenticated.get(`${identity.attemptId}:${kind}`);
+      if (retained === undefined) {throw new Error("authenticated artifact chain is incomplete");}
+      const value = retained.value as Record<string, unknown>;
+      values.set(kind, value);
+      if (kind !== "final_adjudication") {
+        const chain = value.chain as Record<string, unknown>;
+        if (chain.predecessorPlaintextSha256 !== predecessorPlaintextSha256) {
+          throw new Error("authenticated artifact predecessor chain is broken");
+        }
+      } else if (value.predecessorPlaintextSha256 !== predecessorPlaintextSha256) {
+        throw new Error("final adjudication is not the terminal artifact in its predecessor chain");
+      }
+      predecessorPlaintextSha256 = retained.artifact.plaintextSha256;
+    }
+    const final = verifyRetainedFinalAdjudication(policy, values.get("final_adjudication"),
+      artifactAttemptIdentity(outcome.identity, "final_adjudication"), outcome.resolverRequired);
+    const raw = values.get("raw_outcome")!;
+    const adjudicationInput = values.get("adjudication_input")!;
+    if ([raw, adjudicationInput].some((value) => value.outcomeDigestSha256 !==
+      final.outcomeDigestSha256 || value.encryptedEvidenceSha256 !==
+      final.encryptedEvidenceSha256)) {
+      throw new Error("authenticated raw outcome/adjudication input chain is unrelated");
+    }
+    assertExactProviderExchange(values, "capability_request", "capability_response");
+    assertExactProviderExchange(values, "retrieval_request", "retrieval_response");
+    assertExactProviderExchange(values, "answer_request", "answer_response");
+    const answerResponse = values.get("answer_response")!;
+    const answerChain = answerResponse.chain as Record<string, unknown>;
+    const rawChain = raw.chain as Record<string, unknown>;
+    if (rawChain.requestDigestSha256 !== answerChain.requestDigestSha256 ||
+      rawChain.resultDigestSha256 !== answerChain.resultDigestSha256 ||
+      canonicalJson(rawChain.signedProviderTerminal) !==
+        canonicalJson(answerChain.signedProviderTerminal) ||
+      raw.responseBytesBase64 !== answerResponse.responseBytesBase64) {
+      throw new Error("answer response and raw outcome do not bind one authoritative terminal");
+    }
+    const first = values.get("adjudicator_1_result")!;
+    const second = values.get("adjudicator_2_result")!;
+    if (canonicalJson(first.decisionReceipt) !== canonicalJson(final.firstReceipt) ||
+      canonicalJson(second.decisionReceipt) !== canonicalJson(final.secondReceipt)) {
+      throw new Error("authenticated adjudicator result differs from final decision receipt");
+    }
+    const adjudicationRequest = { attemptId: outcome.identity.attemptId,
+      encryptedEvidenceSha256: adjudicationInput.encryptedEvidenceSha256,
+      firstDecisionDigestSha256: null, firstDecisionReceipt: null,
+      outcomeDigestSha256: adjudicationInput.outcomeDigestSha256,
+      questionId: outcome.identity.questionId, resolverBindingSha256: null,
+      secondDecisionDigestSha256: null, secondDecisionReceipt: null };
+    const adjudicationRequestSha256 = sha256(adjudicationRequest);
+    for (const reviewerResult of [first, second]) {
+      const chain = reviewerResult.chain as Record<string, unknown>;
+      if (chain.requestDigestSha256 !== adjudicationRequestSha256 ||
+        chain.resultDigestSha256 !== sha256(reviewerResult.decisionReceipt)) {
+        throw new Error("adjudicator terminal does not bind its exact input and signed result");
+      }
+    }
+    const resolver = values.get("resolver_result");
+    if (outcome.resolverRequired && (resolver === undefined ||
+      canonicalJson(resolver.decisionReceipt) !== canonicalJson(final.resolverReceipt)) ||
+      !outcome.resolverRequired && resolver !== undefined) {
+      throw new Error("authenticated resolver result chain is not exact");
+    }
+    if (resolver !== undefined) {
+      const resolverChain = resolver.chain as Record<string, unknown>;
+      const resolverBindingSha256 = sha256({ attemptId: adjudicationRequest.attemptId,
+        encryptedEvidenceSha256: adjudicationRequest.encryptedEvidenceSha256,
+        firstDecisionReceipt: final.firstReceipt,
+        outcomeDigestSha256: adjudicationRequest.outcomeDigestSha256,
+        questionId: adjudicationRequest.questionId,
+        schemaVersion: "meeting_knowledge.semantic_quality_resolver_binding.v1",
+        secondDecisionReceipt: final.secondReceipt });
+      const resolverRequest = { ...adjudicationRequest,
+        firstDecisionDigestSha256: final.firstReceipt.payload.decisionDigestSha256,
+        firstDecisionReceipt: final.firstReceipt, resolverBindingSha256,
+        secondDecisionDigestSha256: final.secondReceipt.payload.decisionDigestSha256,
+        secondDecisionReceipt: final.secondReceipt };
+      if (resolverChain.requestDigestSha256 !== sha256(resolverRequest) ||
+        resolverChain.resultDigestSha256 !==
+        sha256(resolver.decisionReceipt)) {
+        throw new Error("resolver terminal does not bind both conflicting decisions and result");
+      }
+    }
+  }
+}
+
+function assertExactProviderExchange(values: ReadonlyMap<RetainedArtifactKind,
+  Record<string, unknown>>, requestKind: RetainedArtifactKind,
+  responseKind: RetainedArtifactKind): void {
+  const request = values.get(requestKind)!;
+  const response = values.get(responseKind)!;
+  const requestChain = request.chain as Record<string, unknown>;
+  const responseChain = response.chain as Record<string, unknown>;
+  if (requestChain.requestDigestSha256 !== responseChain.requestDigestSha256) {
+    throw new Error(`${responseKind} does not follow its exact provider request`);
+  }
+}
+
+function isProviderResultKind(kind: RetainedArtifactKind): boolean {
+  return ["capability_response", "retrieval_response", "answer_response", "raw_outcome",
+    "adjudicator_1_result", "adjudicator_2_result", "resolver_result"].includes(kind);
+}
+
+// Terminal and derived artifacts intentionally share one exact chain verifier.
+// oxlint-disable-next-line complexity, max-params
+function verifyArtifactChain(policy: QualityCampaignAuthorityPolicy, artifact: RetainedArtifact,
+  identity: AttemptIdentity, value: unknown, context: RetentionContext,
+  terminalRequired: boolean): void {
+  const chain = exactRecord(value, ["artifactKind", "cancellationBoundary", "deadlineEpochMs",
+    "predecessorPlaintextSha256", "releaseDocumentSha256", "requestDigestSha256",
+    "resultDigestSha256", "signedDurableExchange", "signedProviderTerminal",
+    "spendReservationSha256"],
+  "retained artifact chain");
+  if (chain.artifactKind !== artifact.kind || chain.releaseDocumentSha256 !==
+    context.releaseDocumentSha256 || chain.spendReservationSha256 !==
+    identity.spendReservationSha256 || chain.cancellationBoundary !== "not_cancelled" ||
+    chain.predecessorPlaintextSha256 !== null &&
+      typeof chain.predecessorPlaintextSha256 !== "string") {
+    throw new Error("retained artifact chain binding is foreign");
+  }
+  digest(chain.requestDigestSha256, "artifact request");
+  if (!terminalRequired) {
+    if (chain.deadlineEpochMs !== null || chain.resultDigestSha256 !== null ||
+      chain.signedDurableExchange !== null || chain.signedProviderTerminal !== null) {
+      throw new Error("derived artifact contains orphan provider terminal evidence");
+    }
+    return;
+  }
+  const spend = context.spendReservations[identity.repetition - 1];
+  if (spend === undefined || !Number.isSafeInteger(chain.deadlineEpochMs) ||
+    Number(chain.deadlineEpochMs) <= context.effectVerificationEpochMs ||
+    Number(chain.deadlineEpochMs) >
+      spend.payload.expiresAtEpochMs || Number(chain.deadlineEpochMs) -
+      context.effectVerificationEpochMs > spend.payload.maximumEffectDurationMs ||
+      chain.resultDigestSha256 === null) {
+    throw new Error("provider terminal deadline is outside signed spend authority");
+  }
+  const authority = policy.authority("provider_result");
+  const receipt = verifyExternalSignedValue<Record<string, unknown>>(chain.signedProviderTerminal,
+    authority.keyId, authority.publicKeyPem, "retained provider terminal");
+  const payload = exactRecord(receipt.payload, ["attemptId", "callKind", "callOrdinal",
+    "campaignRootSha256", "questionDigestSha256", "questionId", "releaseRootSha256",
+    "repetition", "requestDigestSha256", "resultDigestSha256", "schemaVersion",
+    "spendReservationSha256", "state"], "retained provider terminal payload");
+  if (payload.schemaVersion !== "meeting_knowledge.semantic_quality_provider_terminal_payload.v4" ||
+    payload.state !== "terminal_success" || payload.requestDigestSha256 !==
+      chain.requestDigestSha256 || payload.resultDigestSha256 !== chain.resultDigestSha256 ||
+    canonicalJson({ attemptId: payload.attemptId, callKind: payload.callKind,
+      callOrdinal: payload.callOrdinal, campaignRootSha256: payload.campaignRootSha256,
+      questionDigestSha256: payload.questionDigestSha256, questionId: payload.questionId,
+      releaseRootSha256: payload.releaseRootSha256, repetition: payload.repetition,
+      spendReservationSha256: payload.spendReservationSha256 }) !== canonicalJson(identity)) {
+    throw new Error("provider terminal does not bind the exact retained artifact effect");
+  }
+  const durableRequired = ["adjudicator_1_result", "adjudicator_2_result", "resolver_result"]
+    .includes(artifact.kind);
+  if (durableRequired) {
+    verifyDurableReservedExchangeEvidence(policy, chain.signedDurableExchange, {
+      attempt: identity, cancellationBoundary: "not_cancelled",
+      deadlineEpochMs: Number(chain.deadlineEpochMs), releaseDocumentSha256:
+        context.releaseDocumentSha256, requestDigestSha256: String(chain.requestDigestSha256),
+      resultDigestSha256: String(chain.resultDigestSha256),
+      signedProviderTerminal: chain.signedProviderTerminal });
+  } else if (chain.signedDurableExchange !== null) {
+    throw new Error("non-adjudication artifact contains orphan durable exchange evidence");
   }
 }
 
@@ -350,6 +630,11 @@ function decodeCanonicalBase64(value: string, label: string): Uint8Array {
     throw new Error(`retained envelope ${label} is not canonical base64`);
   }
   return bytes;
+}
+
+function decodeCanonicalBase64Value(value: unknown, label: string): Uint8Array {
+  if (typeof value !== "string") {throw new Error(`${label} is not canonical base64`);}
+  return decodeCanonicalBase64(value, label);
 }
 
 function authenticateEnvelope(envelope: StoredEnvelope, key: Uint8Array): Uint8Array {

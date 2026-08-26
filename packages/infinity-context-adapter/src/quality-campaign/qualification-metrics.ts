@@ -21,12 +21,15 @@ export interface QualificationOutcome extends ExpectedOutcomeInventory {
 export interface QualificationMetricGroup {
   readonly abstentionCheckCount: number; readonly abstentionPassedCount: number;
   readonly applicableOutcomeCount: number; readonly citationCheckCount: number;
-  readonly citationPassedCount: number; readonly completeRecallAt5PassedCount: number;
+  readonly citationPassedCount: number; readonly completeRecallAt10PassedCount: number;
+  readonly completeRecallAt5PassedCount: number;
   readonly factualClaimCount: number; readonly firstRelevantReciprocalRankMillionthsTotal: number;
   readonly group: "automatic" | "independent_review" | "locale:en" | "locale:mixed" |
     "locale:ru" | "overall";
   readonly ndcgAt10MillionthsTotal: number; readonly relevantLocatorCount: number;
-  readonly retrievalLatencyP95Us: number; readonly retrievedRelevantLocatorCountAt5: number;
+  readonly retrievalApplicableOutcomeCount: number; readonly retrievalLatencyP95Us: number;
+  readonly retrievedRelevantLocatorCountAt10: number;
+  readonly retrievedRelevantLocatorCountAt5: number;
   readonly scopeLeakageCount: number; readonly speakerTimeCheckCount: number;
   readonly speakerTimePassedCount: number; readonly supportedFactualClaimCount: number;
   readonly thresholdPassed: boolean;
@@ -52,9 +55,11 @@ readonly QualificationMetricGroup[] {
     const latencies = applicable.map(({ retrievalLatencyUs }) => retrievalLatencyUs)
       .toSorted((left, right) => left - right);
     const retrievalLatencyP95Us = latencies[Math.ceil(latencies.length * 0.95) - 1]!;
-    const thresholdPassed = counters.completeRecallAt5PassedCount * 10 >= applicable.length * 9 &&
+    const thresholdPassed = counters.completeRecallAt5PassedCount * 10 >=
+      counters.retrievalApplicableOutcomeCount * 9 &&
       counters.retrievedRelevantLocatorCountAt5 * 10 >= counters.relevantLocatorCount * 9 &&
-      counters.firstRelevantReciprocalRankMillionthsTotal * 10 >= applicable.length * 9_000_000 &&
+      counters.firstRelevantReciprocalRankMillionthsTotal * 10 >=
+        counters.retrievalApplicableOutcomeCount * 9_000_000 &&
       counters.citationPassedCount === counters.citationCheckCount &&
       counters.supportedFactualClaimCount * 10 >= counters.factualClaimCount * 9 &&
       counters.speakerTimePassedCount === counters.speakerTimeCheckCount &&
@@ -67,22 +72,30 @@ readonly QualificationMetricGroup[] {
 
 function emptyMetricCounters(): Counters {
   return { abstentionCheckCount: 0, abstentionPassedCount: 0, citationCheckCount: 0,
-    citationPassedCount: 0, completeRecallAt5PassedCount: 0, factualClaimCount: 0,
+    citationPassedCount: 0, completeRecallAt10PassedCount: 0,
+    completeRecallAt5PassedCount: 0, factualClaimCount: 0,
     firstRelevantReciprocalRankMillionthsTotal: 0, ndcgAt10MillionthsTotal: 0,
-    relevantLocatorCount: 0, retrievedRelevantLocatorCountAt5: 0, scopeLeakageCount: 0,
+    relevantLocatorCount: 0, retrievalApplicableOutcomeCount: 0,
+    retrievedRelevantLocatorCountAt10: 0, retrievedRelevantLocatorCountAt5: 0,
+    scopeLeakageCount: 0,
     speakerTimeCheckCount: 0, speakerTimePassedCount: 0, supportedFactualClaimCount: 0 };
 }
 
 function accumulateOutcome(sum: Counters, outcome: QualificationOutcome): Counters {
   const relevant = new Set(outcome.relevantLocatorIds); const topFive = outcome.rankedLocatorIds.slice(0, 5);
   const retrievedRelevant = topFive.filter((id) => relevant.has(id)).length;
+  const topTen = outcome.rankedLocatorIds.slice(0, 10);
+  const retrievedRelevantAt10 = topTen.filter((id) => relevant.has(id)).length;
   const firstRelevantIndex = outcome.rankedLocatorIds.findIndex((id) => relevant.has(id));
-  const complete = outcome.relevantLocatorIds.every((id) => topFive.includes(id));
+  const retrievalApplicable = relevant.size > 0;
+  const complete = retrievalApplicable && outcome.relevantLocatorIds.every((id) => topFive.includes(id));
+  const completeAt10 = retrievalApplicable && outcome.relevantLocatorIds.every((id) =>
+    topTen.includes(id));
   const ideal = NDCG_DISCOUNTS.slice(0, Math.min(relevant.size, 10))
     .reduce((value, score) => value + score, 0);
   const observed = outcome.rankedLocatorIds.slice(0, 10).reduce((value, id, index) =>
     value + (relevant.has(id) ? NDCG_DISCOUNTS[index]! : 0), 0);
-  const ndcg = ideal === 0 ? 0 : Math.floor(observed * 1_000_000 / ideal);
+  const ndcg = retrievalApplicable ? Math.floor(observed * 1_000_000 / ideal) : 0;
   const speakerPassed = outcome.speakerTimeChecks.filter((check) =>
     check.expectedSpeakerId === check.observedSpeakerId &&
     Math.abs(check.expectedStartMs - check.observedStartMs) <= check.toleranceMs).length;
@@ -93,12 +106,17 @@ function accumulateOutcome(sum: Counters, outcome: QualificationOutcome): Counte
     citationCheckCount: sum.citationCheckCount + outcome.citationChecks.length,
     citationPassedCount: sum.citationPassedCount +
       outcome.citationChecks.filter(({ entailed }) => entailed).length,
+    completeRecallAt10PassedCount: sum.completeRecallAt10PassedCount + (completeAt10 ? 1 : 0),
     completeRecallAt5PassedCount: sum.completeRecallAt5PassedCount + (complete ? 1 : 0),
     factualClaimCount: sum.factualClaimCount + factualClaims.length,
     firstRelevantReciprocalRankMillionthsTotal: sum.firstRelevantReciprocalRankMillionthsTotal +
       (firstRelevantIndex < 0 ? 0 : Math.floor(1_000_000 / (firstRelevantIndex + 1))),
     ndcgAt10MillionthsTotal: sum.ndcgAt10MillionthsTotal + ndcg,
     relevantLocatorCount: sum.relevantLocatorCount + relevant.size,
+    retrievalApplicableOutcomeCount: sum.retrievalApplicableOutcomeCount +
+      (retrievalApplicable ? 1 : 0),
+    retrievedRelevantLocatorCountAt10: sum.retrievedRelevantLocatorCountAt10 +
+      retrievedRelevantAt10,
     retrievedRelevantLocatorCountAt5: sum.retrievedRelevantLocatorCountAt5 + retrievedRelevant,
     scopeLeakageCount: sum.scopeLeakageCount + outcome.scopeViolationLocatorIds.length,
     speakerTimeCheckCount: sum.speakerTimeCheckCount + outcome.speakerTimeChecks.length,

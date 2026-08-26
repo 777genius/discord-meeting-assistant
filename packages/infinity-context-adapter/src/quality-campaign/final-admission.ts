@@ -1,8 +1,10 @@
+/* oxlint-disable max-lines -- closed final-admission decoders stay co-located with the only API */
 import { MAIN_CARDINALITY, type CampaignQuestion,
   validateCampaignQuestion } from "./admission.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt } from "./cleanup-evidence.js";
-import { assertAttemptIdentity, type AttemptIdentity, verifyExternalSignedValue } from "./execution.js";
+import { assertAttemptIdentity, type AttemptIdentity, verifyExternalSignedValue,
+  verifySpendReservation } from "./execution.js";
 import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
   verifyPinnedReleaseDocument } from "./release.js";
 import { type CitationCheck, type ClaimCheck, type QualificationMetricGroup,
@@ -24,10 +26,25 @@ interface ExpectedRepetition {
   readonly authorizedLocatorIds: ReadonlySet<string>;
   readonly campaignRootSha256: string;
   readonly questions: readonly CampaignQuestion[];
+  readonly relevanceByQuestionId: ReadonlyMap<string, GoldRelevanceEntry>;
   readonly releaseRootSha256: string;
   readonly repetition: 1 | 2 | 3;
   readonly rootBindingSha256: string;
   readonly spendReservationSha256: string;
+}
+
+export interface GoldRelevanceEntry extends CampaignQuestion {
+  readonly campaignRootSha256: string;
+  readonly expectedAbstention: boolean;
+  readonly releaseRootSha256: string;
+  readonly relevantLocatorIds: readonly string[];
+}
+
+interface AuthoritativeGoldRelevance {
+  readonly campaignRootSha256: string;
+  readonly entries: readonly GoldRelevanceEntry[];
+  readonly releaseRootSha256: string;
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1";
 }
 
 interface AuthoritativeLocatorInventory {
@@ -39,9 +56,10 @@ interface AuthoritativeLocatorInventory {
 
 interface ReviewedMainQuestionSet {
   readonly campaignRootSha256: string;
+  readonly goldRelevanceReceiptSha256: string;
   readonly questions: readonly CampaignQuestion[];
   readonly releaseRootSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_reviewed_main_questions.v1";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_reviewed_main_questions.v2";
 }
 
 export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
@@ -50,10 +68,13 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
   readonly authorizedLocatorInventory: unknown; readonly campaignByteCeiling: number;
   readonly campaignRootSha256: string; readonly cleanupAuthorityKeyId: string;
   readonly cleanupReceipt: unknown;
-  readonly locatorAuthorityKeyId: string; readonly questionReviewReceipts: readonly [unknown, unknown];
+  readonly goldRelevanceReceipt: unknown; readonly locatorAuthorityKeyId: string;
+  readonly effectVerificationEpochMs: number;
+  readonly questionReviewReceipts: readonly [unknown, unknown];
   readonly release: PinnedReleaseDocument; readonly repetitionAuthorityKeyId: string;
   readonly repetitionEvidence: readonly unknown[]; readonly rootBindingSha256: string;
   readonly spendReservationSha256ByRepetition: readonly [string, string, string];
+  readonly spendReservationsByRepetition: readonly [unknown, unknown, unknown];
   readonly targetInventoryAuthorityKeyId: string;
   readonly targetInventoryReceipt: unknown }): Promise<{
     readonly finalAdmissionSha256: string; readonly inventorySha256: string;
@@ -61,16 +82,30 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
   digest(input.campaignRootSha256, "final campaign root");
   const release = verifyPinnedReleaseDocument(policy, input.release);
   const questions = verifyReviewedQuestionSet(policy, input.questionReviewReceipts,
-    input.campaignRootSha256, release.releaseRootSha256);
+    sha256(input.goldRelevanceReceipt), input.campaignRootSha256, release.releaseRootSha256);
   const authorizedLocatorIds = verifyAuthorizedLocatorInventory(policy,
     input.locatorAuthorityKeyId, input.authorizedLocatorInventory, input.campaignRootSha256,
     release.releaseRootSha256);
+  const relevance = verifyGoldRelevance(policy, input.locatorAuthorityKeyId,
+    input.goldRelevanceReceipt, questions, new Set(authorizedLocatorIds),
+    input.campaignRootSha256, release.releaseRootSha256);
   const spendReservations = input.spendReservationSha256ByRepetition.map((value) =>
     digest(value, "final spend reservation"));
+  const verifiedSpendReservations = input.spendReservationsByRepetition.map((reservation, index) => {
+    const verified = verifySpendReservation(policy, { campaignRootSha256:
+      input.campaignRootSha256, expectedRepetition: (index + 1) as 1 | 2 | 3,
+    nowEpochMs: input.effectVerificationEpochMs, releaseRootSha256: release.releaseRootSha256,
+    reservation });
+    if (verified.spendReservationSha256 !== spendReservations[index]) {
+      throw new Error("final spend reservation document differs from its bound digest");
+    }
+    return verified;
+  });
   const rootBindingSha256 = sha256({ authorizedLocatorSetSha256: sha256(authorizedLocatorIds),
     campaignRootSha256: input.campaignRootSha256, questionSetSha256: sha256(questions),
+    relevanceAuthoritySha256: sha256(relevance.entries),
     releaseRootSha256: release.releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v2",
+    schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v3",
     spendReservationSetSha256: sha256(spendReservations) });
   if (input.rootBindingSha256 !== rootBindingSha256) {
     throw new Error("final admission root binding does not reconstruct");
@@ -87,6 +122,7 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
       "repetition qualification evidence");
     const evidence = decodeRepetitionEvidence(receipt.payload, { authorizedLocatorIds:
       new Set(authorizedLocatorIds), campaignRootSha256: input.campaignRootSha256, questions,
+      relevanceByQuestionId: relevance.byQuestionId,
       releaseRootSha256: release.releaseRootSha256,
       repetition: (index + 1) as 1 | 2 | 3, rootBindingSha256,
       spendReservationSha256: spendReservations[index]! });
@@ -96,7 +132,9 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
   const inventory = await verifyExactRetentionInventory(policy, { artifacts: input.artifacts,
     artifactKeyCustodySha256: release.release.artifactKeyCustodySha256,
     campaignByteCeiling: input.campaignByteCeiling, custody: input.artifactCustody,
-    expectedOutcomes });
+    effectVerificationEpochMs: input.effectVerificationEpochMs, expectedOutcomes,
+    releaseDocumentSha256: sha256(input.release.document),
+    spendReservations: verifiedSpendReservations });
   policy.assertReference("cleanup", input.cleanupAuthorityKeyId);
   const targetInventory = verifyCampaignCreatedTargetInventory(policy, { authorityKeyId:
     input.targetInventoryAuthorityKeyId, campaignRootSha256: input.campaignRootSha256,
@@ -116,8 +154,58 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
     inventorySha256: inventory.inventorySha256, qualified: true });
 }
 
+// All seven bindings are intentionally explicit authority inputs.
+// oxlint-disable-next-line max-params
+function verifyGoldRelevance(policy: QualityCampaignAuthorityPolicy, authorityKeyId: string,
+  receiptValue: unknown, questions: readonly CampaignQuestion[],
+  authorizedLocatorIds: ReadonlySet<string>, campaignRootSha256: string,
+  releaseRootSha256: string): { readonly byQuestionId: ReadonlyMap<string, GoldRelevanceEntry>;
+    readonly entries: readonly GoldRelevanceEntry[] } {
+  const authority = policy.assertReference("locator", authorityKeyId);
+  const receipt = verifyExternalSignedValue<AuthoritativeGoldRelevance>(receiptValue,
+    authority.keyId, authority.publicKeyPem, "authoritative per-question gold relevance");
+  const record = exactRecord(receipt.payload, ["campaignRootSha256", "entries",
+    "releaseRootSha256", "schemaVersion"], "authoritative gold relevance payload");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_gold_relevance.v1" ||
+    record.campaignRootSha256 !== campaignRootSha256 ||
+    record.releaseRootSha256 !== releaseRootSha256 || !Array.isArray(record.entries) ||
+    record.entries.length !== questions.length) {
+    throw new Error("authoritative gold relevance is foreign or incomplete");
+  }
+  const entries = Object.freeze(record.entries.map((value, index) => {
+    const entry = exactRecord(value, ["campaignRootSha256", "expectedAbstention", "locale",
+      "questionDigestSha256", "questionId", "releaseRootSha256", "relevantLocatorIds",
+      "rubricDigestSha256", "source"],
+    "authoritative gold relevance entry");
+    const question = questions[index]!;
+    const relevantLocatorIds = decodeIdList(entry.relevantLocatorIds, "gold relevant locator",
+      100, true);
+    if (entry.campaignRootSha256 !== campaignRootSha256 ||
+      entry.releaseRootSha256 !== releaseRootSha256 ||
+      typeof entry.expectedAbstention !== "boolean" ||
+      canonicalJson({ locale: entry.locale, questionDigestSha256: entry.questionDigestSha256,
+        questionId: entry.questionId, rubricDigestSha256: entry.rubricDigestSha256,
+        source: entry.source }) !== canonicalJson(question) ||
+      relevantLocatorIds.some((id) => !authorizedLocatorIds.has(id)) ||
+      (entry.expectedAbstention && relevantLocatorIds.length !== 0) ||
+      (!entry.expectedAbstention && relevantLocatorIds.length === 0)) {
+      throw new Error("authoritative gold relevance does not bind its exact question");
+    }
+    return Object.freeze({ ...question, campaignRootSha256,
+      expectedAbstention: entry.expectedAbstention, releaseRootSha256, relevantLocatorIds });
+  }));
+  if (new Set(entries.map(({ questionId }) => questionId)).size !== questions.length ||
+    new Set(entries.map(({ questionDigestSha256 }) => questionDigestSha256)).size !==
+      questions.length) {
+    throw new Error("authoritative gold relevance question membership is not exact");
+  }
+  return Object.freeze({ byQuestionId: new Map(entries.map((entry) =>
+    [entry.questionId, entry] as const)), entries });
+}
+
 function verifyReviewedQuestionSet(policy: QualityCampaignAuthorityPolicy,
-  receipts: readonly [unknown, unknown], campaignRootSha256: string,
+  receipts: readonly [unknown, unknown], goldRelevanceReceiptSha256: string,
+  campaignRootSha256: string,
   releaseRootSha256: string): readonly CampaignQuestion[] {
   const roles = ["reviewer_1", "reviewer_2"] as const;
   const verified = receipts.map((receipt, index) => {
@@ -128,9 +216,11 @@ function verifyReviewedQuestionSet(policy: QualityCampaignAuthorityPolicy,
   if (canonicalJson(verified[0]!.payload) !== canonicalJson(verified[1]!.payload)) {
     throw new Error("independent reviewers did not sign the same main question set");
   }
-  const record = exactRecord(verified[0]!.payload, ["campaignRootSha256", "questions",
-    "releaseRootSha256", "schemaVersion"], "reviewed main question set payload");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_reviewed_main_questions.v1" ||
+  const record = exactRecord(verified[0]!.payload, ["campaignRootSha256",
+    "goldRelevanceReceiptSha256", "questions", "releaseRootSha256", "schemaVersion"],
+  "reviewed main question set payload");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_reviewed_main_questions.v2" ||
+    record.goldRelevanceReceiptSha256 !== goldRelevanceReceiptSha256 ||
     record.campaignRootSha256 !== campaignRootSha256 ||
     record.releaseRootSha256 !== releaseRootSha256 || !Array.isArray(record.questions)) {
     throw new Error("reviewed main question set is foreign");
@@ -234,8 +324,10 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
   assertAttemptIdentity(identity, expected);
   const question = questionById.get(identity.questionId);
   assertOutcomeQuestionBinding(record, identity, expected, question);
+  const relevance = expected.relevanceByQuestionId.get(identity.questionId);
+  if (relevance === undefined) {throw new Error("question lacks authoritative gold relevance");}
   const rankedLocatorIds = decodeIdList(record.rankedLocatorIds, "ranked locator", 10, false);
-  const relevantLocatorIds = decodeIdList(record.relevantLocatorIds, "relevant locator", 100, false);
+  const relevantLocatorIds = decodeIdList(record.relevantLocatorIds, "relevant locator", 100, true);
   const scopeViolationLocatorIds = decodeIdList(record.scopeViolationLocatorIds,
     "scope violation locator", 100, true);
   if (!Number.isSafeInteger(record.retrievalLatencyUs) || Number(record.retrievalLatencyUs) < 0 ||
@@ -255,6 +347,10 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
   if (citationChecks.some(({ claimId }) => !claimIds.has(claimId))) {
     throw new Error("citation check references a foreign claim ID");}
   const abstention = decodeAbstention(record.abstention);
+  if (canonicalJson(relevantLocatorIds) !== canonicalJson(relevance.relevantLocatorIds) ||
+    abstention.expected !== relevance.expectedAbstention) {
+    throw new Error("qualification outcome relevance differs from signed per-question gold");
+  }
   const factualClaimIds = claimChecks.filter(({ factual }) => factual)
     .map(({ claimId }) => claimId).toSorted();
   if (!abstention.expected && factualClaimIds.length === 0 || canonicalJson(factualClaimIds) !==

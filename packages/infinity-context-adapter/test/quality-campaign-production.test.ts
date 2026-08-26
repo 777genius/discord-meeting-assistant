@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- one complete 3x240 authority fixture prevents divergent test builders */
 import { createCipheriv, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,6 +16,7 @@ import {
   verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt, verifySpendReservation,
   verifyRetainedFinalAdjudication,
   type AdjudicationRequest, type ArtifactCustodyPort,
+  type AdjudicationEffectEvidence,
   type AttemptIdentity, type CampaignQuestion, type CanonicalAdjudicationDecision,
   type EncryptedArtifactKind,
   type PinnedReleaseDocument, type QualificationOutcome, type QualityCampaignRelease,
@@ -43,7 +45,6 @@ function authorityFixture() {
   const signers = { artifact_custody: signer("artifact-custody-authority"),
     cleanup: signer("cleanup-authority"),
     holdout_authorization: signer("holdout-authorization-authority"),
-    holdout_provider_result: signer("holdout-provider-result-authority"),
     holdout_question: signer("holdout-question-authority"),
     inventory: signer("target-inventory-authority"), locator: signer("locator-authority"),
     main_proof: signer("main-proof-authority"),
@@ -138,7 +139,8 @@ function encryptedArtifact(answerAttempt: AttemptIdentity, kind: EncryptedArtifa
     repetition: identity.repetition,
     schemaVersion: "meeting_knowledge.semantic_quality_artifact_aad.v3",
     spendReservationSha256: identity.spendReservationSha256 };
-  const nonce = Buffer.from(sha256(`${identity.attemptId}:${kind}`), "hex").subarray(0, 12);
+  const nonce = Buffer.from(sha256(`${identity.attemptId}:${kind}:${plaintextSha256}`), "hex")
+    .subarray(0, 12);
   const cipher = createCipheriv("aes-256-gcm", ARTIFACT_KEY, nonce);
   cipher.setAAD(Buffer.from(canonicalJson(aad)));
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
@@ -171,11 +173,12 @@ ArtifactCustodyPort {
       stored.get(envelopeSha256)?.envelopeBytes ?? null) };
 }
 
-function finalAdjudicationPlaintext(attempt: AttemptIdentity, resolverRequired: boolean,
-  authorities: ReturnType<typeof authorityFixture>): Uint8Array {
+function finalAdjudicationValue(attempt: AttemptIdentity, resolverRequired: boolean,
+  authorities: ReturnType<typeof authorityFixture>, predecessorPlaintextSha256 = d("9"),
+  answerComplete = true) {
   const outcomeDigestSha256 = sha256({ attemptId: attempt.attemptId, kind: "raw-outcome" });
   const encryptedEvidenceSha256 = sha256({ attemptId: attempt.attemptId, kind: "evidence" });
-  const decision = { answerComplete: true, claims: [{ abstentionCorrect: true,
+  const decision = { answerComplete, claims: [{ abstentionCorrect: true,
     citationEntailed: true, claimFactual: true, claimId: `final-${attempt.questionId}`,
     claimSupported: true, matchedGoldClaimId: `gold-${attempt.questionId}` }],
   outcomeDigestSha256, questionId: attempt.questionId };
@@ -203,9 +206,68 @@ function finalAdjudicationPlaintext(attempt: AttemptIdentity, resolverRequired: 
       firstDecisionDigestSha256: sha256(decision), resolverBindingSha256,
       secondDecisionDigestSha256: sha256(secondDecision) }));
   }
-  return Buffer.from(canonicalJson({ attempt, decision, decisionDigestSha256: sha256(decision),
-    encryptedEvidenceSha256, firstReceipt, outcomeDigestSha256, resolverReceipt,
-    schemaVersion: "meeting_knowledge.semantic_quality_final_adjudication.v2", secondReceipt }));
+  return { attempt, decision, decisionDigestSha256: sha256(decision),
+    encryptedEvidenceSha256, firstReceipt, outcomeDigestSha256, predecessorPlaintextSha256,
+    resolverReceipt,
+    schemaVersion: "meeting_knowledge.semantic_quality_final_adjudication.v2" as const,
+    secondReceipt };
+}
+
+function artifactChain(input: { readonly authorities: ReturnType<typeof authorityFixture>;
+  readonly identity: AttemptIdentity; readonly kind: EncryptedArtifactKind;
+  readonly predecessorPlaintextSha256: string | null; readonly terminal: boolean;
+  readonly requestDigestSha256?: string; readonly resultDigestSha256?: string }) {
+  const requestDigestSha256 = input.requestDigestSha256 ?? sha256({
+    attemptId: input.identity.attemptId, artifactKind: input.kind, direction: "request" });
+  const resultDigestSha256 = input.terminal ? input.resultDigestSha256 ?? sha256({
+    attemptId: input.identity.attemptId, artifactKind: input.kind, direction: "result" }) : null;
+  const signedProviderTerminal = input.terminal ?
+    input.authorities.signers.provider_result.signed({ ...input.identity, requestDigestSha256,
+      resultDigestSha256, schemaVersion:
+      "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+    state: "terminal_success" }) : null;
+  const durable = input.terminal && ["adjudicator_1_result", "adjudicator_2_result",
+    "resolver_result"].includes(input.kind) ? durableExchangeAttestation({ authorities:
+      input.authorities, identity: input.identity, requestDigestSha256,
+    resultDigestSha256: resultDigestSha256!, signedProviderTerminal }) : null;
+  return { artifactKind: input.kind, cancellationBoundary: "not_cancelled",
+    deadlineEpochMs: input.terminal ? 1_500 : null, predecessorPlaintextSha256:
+    input.predecessorPlaintextSha256, releaseDocumentSha256: sha256(FINAL_RELEASE_DOCUMENT),
+    requestDigestSha256, resultDigestSha256, signedDurableExchange: durable,
+    signedProviderTerminal,
+    spendReservationSha256: input.identity.spendReservationSha256 };
+}
+
+let FINAL_RELEASE_DOCUMENT: unknown;
+
+function durableExchangeAttestation(input: { readonly authorities:
+  ReturnType<typeof authorityFixture>; readonly identity: AttemptIdentity;
+  readonly requestDigestSha256: string; readonly resultDigestSha256: string;
+  readonly signedProviderTerminal: unknown }) {
+  const budgetClaim = { admissionId: `admission-${input.identity.attemptId}`,
+    attemptId: input.identity.attemptId, callKind: input.identity.callKind,
+    campaignRootSha256: input.identity.campaignRootSha256, repetition: input.identity.repetition,
+    requestedEncryptedBytes: 4_096, requestedTokens: 64,
+    requestDigestSha256: input.requestDigestSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_budget_claim.v1" as const,
+    spendReservationSha256: input.identity.spendReservationSha256 };
+  const reservation = { ...input.identity, requestDigestSha256: input.requestDigestSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3" as const,
+    state: "provider_reserved" as const };
+  const terminalRecord = { attemptId: input.identity.attemptId,
+    binding: (input.signedProviderTerminal as { readonly payload: unknown }).payload,
+    reservationSha256: sha256(reservation),
+    schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v4",
+    signedResult: input.signedProviderTerminal, state: "terminal_success" };
+  return input.authorities.signers.provider_result.signed({ budgetClaim,
+    budgetClaimSha256: sha256(budgetClaim), cancellationBoundary: "not_cancelled",
+    deadlineEpochMs: 1_500, effectState: "certain_success",
+    journalReconciliationState: "terminal_success",
+    releaseDocumentSha256: sha256(FINAL_RELEASE_DOCUMENT), reservation,
+    reservationSha256: sha256(reservation), resultDigestSha256: input.resultDigestSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_durable_exchange_attestation.v1",
+    signedProviderTerminalSha256: sha256(input.signedProviderTerminal),
+    terminalRecordSha256: sha256(terminalRecord) });
 }
 
 function adjudicationReceipt(value: TestSigner, selected: CanonicalAdjudicationDecision,
@@ -219,9 +281,27 @@ function adjudicationReceipt(value: TestSigner, selected: CanonicalAdjudicationD
     secondDecisionDigestSha256: request.secondDecisionDigestSha256 });
 }
 
+function adjudicationEffectEvidence(input: { readonly answerAttempt: AttemptIdentity;
+  readonly authorities: ReturnType<typeof authorityFixture>;
+  readonly kind: "adjudicator_1_result" | "adjudicator_2_result" | "resolver_result";
+  readonly requestDigestSha256: string; readonly result: unknown }): AdjudicationEffectEvidence {
+  const attempt = artifactAttemptIdentity(input.answerAttempt, input.kind);
+  const resultDigestSha256 = sha256(input.result);
+  const signedProviderTerminal = input.authorities.signers.provider_result.signed({ ...attempt,
+    requestDigestSha256: input.requestDigestSha256, resultDigestSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+    state: "terminal_success" });
+  return { attempt, cancellationBoundary: "not_cancelled", deadlineEpochMs: 1_500,
+    requestDigestSha256: input.requestDigestSha256, resultDigestSha256,
+    signedDurableExchange: durableExchangeAttestation({ authorities: input.authorities,
+      identity: attempt, requestDigestSha256: input.requestDigestSha256, resultDigestSha256,
+      signedProviderTerminal }), signedProviderTerminal };
+}
+
 function finalFixture() {
   const authorities = authorityFixture(); const targetInventoryAuthority = authorities.signers.inventory;
   const release = releaseFixture(authorities); const spendAuthority = authorities.signers.spend;
+  FINAL_RELEASE_DOCUMENT = release.document;
   const spends = ([1, 2, 3] as const).map((repetition) => spendReceipt({ authority:
     spendAuthority, releaseRootSha256: release.releaseRootSha256, repetition }));
   const spendDigests = spends.map((receipt) => sha256(receipt)) as [string, string, string];
@@ -232,15 +312,24 @@ function finalFixture() {
   const authorizedLocatorInventory = locatorAuthority.signed({ campaignRootSha256: CAMPAIGN_ROOT,
     locatorIds: authorizedLocatorIds, releaseRootSha256: release.releaseRootSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_locator_inventory.v1" });
-  const questionReviewPayload = { campaignRootSha256: CAMPAIGN_ROOT, questions,
+  const goldRelevanceEntries = questions.map((question) => ({ ...question,
+    campaignRootSha256: CAMPAIGN_ROOT, expectedAbstention: false,
     releaseRootSha256: release.releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_reviewed_main_questions.v1" };
+    relevantLocatorIds: authorizedLocatorIds.slice(0, 5) }));
+  const goldRelevanceReceipt = locatorAuthority.signed({ campaignRootSha256: CAMPAIGN_ROOT,
+    entries: goldRelevanceEntries, releaseRootSha256: release.releaseRootSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" });
+  const questionReviewPayload = { campaignRootSha256: CAMPAIGN_ROOT,
+    goldRelevanceReceiptSha256: sha256(goldRelevanceReceipt), questions,
+    releaseRootSha256: release.releaseRootSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_reviewed_main_questions.v2" };
   const questionReviewReceipts = [authorities.signers.reviewer_1.signed(questionReviewPayload),
     authorities.signers.reviewer_2.signed(questionReviewPayload)] as const;
   const rootBindingSha256 = sha256({ authorizedLocatorSetSha256: sha256(authorizedLocatorIds),
     campaignRootSha256: CAMPAIGN_ROOT, questionSetSha256: sha256(questions),
+    relevanceAuthoritySha256: sha256(goldRelevanceEntries),
     releaseRootSha256: release.releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v2",
+    schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v3",
     spendReservationSetSha256: sha256(spendDigests) });
   const stored = new Map<string, StoredEnvelope>(); const artifacts: RetainedArtifact[] = [];
   const outcomesByRepetition = ([1, 2, 3] as const).map((repetition) =>
@@ -253,23 +342,94 @@ function finalFixture() {
       const speakerTimeChecks = [{ canonicalTurnId: turnId, expectedSpeakerId: "speaker-1",
         expectedStartMs: 1_000, observedSpeakerId: "speaker-1", observedStartMs: 1_050,
         toleranceMs: 100 }];
-      const finalPlaintext = finalAdjudicationPlaintext(identity, resolverRequired, authorities);
-      const finalAdjudicationSha256 = sha256(finalPlaintext);
+      let finalValue = finalAdjudicationValue(identity, resolverRequired, authorities);
+      let finalPlaintext = Buffer.from(canonicalJson(finalValue));
+      let finalAdjudicationSha256 = sha256(finalPlaintext);
       const artifactBindingSha256ByKind: Record<string, string> = {};
       const kinds: readonly EncryptedArtifactKind[] = resolverRequired ?
-        [...KINDS, "resolver_result"] : KINDS;
+        [...KINDS.slice(0, -1), "resolver_result", "final_adjudication"] : KINDS;
+      let predecessorPlaintextSha256: string | null = null;
       for (const kind of kinds) {
         const artifactIdentity = artifactAttemptIdentity(identity, kind);
+        const providerRequestBytes = Buffer.from(canonicalJson({ callKind:
+          artifactIdentity.callKind, questionDigestSha256: artifactIdentity.questionDigestSha256,
+        schemaVersion: "meeting_knowledge.semantic_quality_test_provider_request.v1" }));
+        const providerResultBytes = Buffer.from(canonicalJson({ callKind:
+          artifactIdentity.callKind, questionId: artifactIdentity.questionId,
+        schemaVersion: "meeting_knowledge.semantic_quality_test_provider_result.v1" }));
+        const terminal = ["capability_response", "retrieval_response", "answer_response",
+          "raw_outcome", "adjudicator_1_result", "adjudicator_2_result", "resolver_result"]
+          .includes(kind);
+        const decisionReceipt = kind === "adjudicator_1_result" ? finalValue.firstReceipt :
+          kind === "adjudicator_2_result" ? finalValue.secondReceipt :
+          kind === "resolver_result" ? finalValue.resolverReceipt : undefined;
+        const adjudicationRequest = { attemptId: identity.attemptId,
+          encryptedEvidenceSha256: finalValue.encryptedEvidenceSha256,
+          firstDecisionDigestSha256: null, firstDecisionReceipt: null,
+          outcomeDigestSha256: finalValue.outcomeDigestSha256, questionId: identity.questionId,
+          resolverBindingSha256: null, secondDecisionDigestSha256: null,
+          secondDecisionReceipt: null };
+        const resolverBindingSha256 = sha256({ attemptId: identity.attemptId,
+          encryptedEvidenceSha256: finalValue.encryptedEvidenceSha256,
+          firstDecisionReceipt: finalValue.firstReceipt,
+          outcomeDigestSha256: finalValue.outcomeDigestSha256, questionId: identity.questionId,
+          schemaVersion: "meeting_knowledge.semantic_quality_resolver_binding.v1",
+          secondDecisionReceipt: finalValue.secondReceipt });
+        const resolverRequest = { ...adjudicationRequest,
+          firstDecisionDigestSha256: finalValue.firstReceipt.payload.decisionDigestSha256,
+          firstDecisionReceipt: finalValue.firstReceipt, resolverBindingSha256,
+          secondDecisionDigestSha256: finalValue.secondReceipt.payload.decisionDigestSha256,
+          secondDecisionReceipt: finalValue.secondReceipt };
+        const requestDigestSha256 = kind === "adjudicator_1_result" ||
+          kind === "adjudicator_2_result" ? sha256(adjudicationRequest) :
+          kind === "resolver_result" ? sha256(resolverRequest) :
+            ["capability_request", "capability_response", "retrieval_request",
+              "retrieval_response", "answer_request", "answer_response", "raw_outcome"]
+              .includes(kind) ? sha256(providerRequestBytes) : undefined;
+        const providerResultDigestSha256 = ["capability_response", "retrieval_response",
+          "answer_response", "raw_outcome"].includes(kind) ? sha256(providerResultBytes) :
+          decisionReceipt === undefined ? undefined : sha256(decisionReceipt);
+        const chain = artifactChain({ authorities, identity: artifactIdentity, kind,
+          predecessorPlaintextSha256, ...(requestDigestSha256 === undefined ? {} :
+            { requestDigestSha256 }), ...(providerResultDigestSha256 === undefined ? {} :
+            { resultDigestSha256: providerResultDigestSha256 }), terminal });
+        const base = { attempt: artifactIdentity, chain,
+          schemaVersion: `meeting_knowledge.semantic_quality_${kind}.v1` };
+        if (kind === "final_adjudication") {
+          finalValue = Object.assign({}, finalValue, { predecessorPlaintextSha256:
+            predecessorPlaintextSha256 ?? d("9") });
+          finalPlaintext = Buffer.from(canonicalJson(finalValue));
+          finalAdjudicationSha256 = sha256(finalPlaintext);
+        }
         const plaintext = kind === "final_adjudication" ? finalPlaintext :
           kind === "retrieval_response" ? Buffer.from(canonicalJson({ attempt: artifactIdentity,
-            latencyUs: 200_000, rankedLocatorIds,
+            chain, latencyUs: 200_000, rankedLocatorIds,
+            responseBytesBase64: providerResultBytes.toString("base64"),
             schemaVersion: "meeting_knowledge.semantic_quality_retrieval_evidence.v1",
             scopeViolationLocatorIds: [] })) : kind === "evidence" ?
-            Buffer.from(canonicalJson({ attempt: artifactIdentity, evidenceTurnIds: [turnId],
+            Buffer.from(canonicalJson({ attempt: artifactIdentity, chain,
+              evidenceTurnIds: [turnId],
               schemaVersion: "meeting_knowledge.semantic_quality_canonical_evidence.v1",
-              speakerTimeChecks })) : Buffer.from(`${identity.attemptId}:${kind}`);
+              speakerTimeChecks })) : kind === "raw_outcome" ? Buffer.from(canonicalJson({ ...base,
+                encryptedEvidenceSha256: finalValue.encryptedEvidenceSha256,
+                outcomeDigestSha256: finalValue.outcomeDigestSha256,
+                responseBytesBase64: providerResultBytes.toString("base64") })) :
+            kind === "adjudication_input" ? Buffer.from(canonicalJson({ ...base,
+              encryptedEvidenceSha256: finalValue.encryptedEvidenceSha256,
+              outcomeDigestSha256: finalValue.outcomeDigestSha256 })) :
+            kind === "answer_response" ? Buffer.from(canonicalJson({ ...base,
+              answerDigestSha256: chain.resultDigestSha256,
+              responseBytesBase64: providerResultBytes.toString("base64") })) :
+            ["capability_request", "retrieval_request", "answer_request"].includes(kind) ?
+              Buffer.from(canonicalJson({ ...base,
+                requestBytesBase64: providerRequestBytes.toString("base64") })) :
+            kind === "capability_response" ? Buffer.from(canonicalJson({ ...base,
+              responseBytesBase64: providerResultBytes.toString("base64") })) :
+            Buffer.from(canonicalJson({ ...base,
+              ...(decisionReceipt === undefined ? {} : { decisionReceipt }) }));
         const artifact = encryptedArtifact(identity, kind, plaintext, stored);
         artifacts.push(artifact); artifactBindingSha256ByKind[kind] = artifact.artifactBindingSha256;
+        predecessorPlaintextSha256 = artifact.plaintextSha256;
       }
       return { abstention: { expected: false, observed: false }, artifactBindingSha256ByKind,
         campaignRootSha256: CAMPAIGN_ROOT,
@@ -323,10 +483,13 @@ function finalFixture() {
     authorizedLocatorInventory,
     campaignByteCeiling: artifacts.reduce((total, artifact) => total + artifact.storedBytes, 0),
     campaignRootSha256: CAMPAIGN_ROOT, cleanupAuthorityKeyId: cleanupAuthority.keyId,
-    cleanupReceipt, locatorAuthorityKeyId: locatorAuthority.keyId, questionReviewReceipts,
+    effectVerificationEpochMs: 1_000,
+    cleanupReceipt, goldRelevanceReceipt, locatorAuthorityKeyId: locatorAuthority.keyId,
+    questionReviewReceipts,
     release: release.pinned,
     repetitionAuthorityKeyId: repetitionAuthority.keyId, repetitionEvidence: evidence,
     rootBindingSha256, spendReservationSha256ByRepetition: spendDigests,
+    spendReservationsByRepetition: spends as [unknown, unknown, unknown],
     targetInventoryAuthorityKeyId: targetInventoryAuthority.keyId, targetInventoryReceipt } as const;
   return { authorities, cleanupAuthority, evidence, input, outcomesByRepetition, questions, release,
     repetitionAuthority, spendAuthority, spends, stored, targetInventoryAuthority };
@@ -583,17 +746,73 @@ describe("production quality campaign effect evidence", () => {
       secondDecisionReceipt: secondReceipt };
     const resolverReceipt = adjudicationReceipt(FINAL.authorities.signers.resolver, decision,
       resolverRequest);
+    const firstEffectEvidence = adjudicationEffectEvidence({ answerAttempt: attempt,
+      authorities: FINAL.authorities, kind: "adjudicator_1_result",
+      requestDigestSha256: sha256(baseRequest),
+      result: firstReceipt });
+    const secondEffectEvidence = adjudicationEffectEvidence({ answerAttempt: attempt,
+      authorities: FINAL.authorities, kind: "adjudicator_2_result",
+      requestDigestSha256: sha256(baseRequest),
+      result: secondReceipt });
+    const resolverEffectEvidence = adjudicationEffectEvidence({ answerAttempt: attempt,
+      authorities: FINAL.authorities, kind: "resolver_result",
+      requestDigestSha256: sha256(resolverRequest), result: resolverReceipt });
     const vault = { reconstruct: vi.fn(async () =>
       ({ encryptedEvidenceSha256: d("8"), outcomeDigestSha256: d("6") })) };
     expect((await adjudicateOutcome(FINAL.authorities.policy,
       { attempt, expectedAttempt: expectedAttempt(attempt), firstReceipt,
-      rawOutcomeEnvelopeSha256: d("7"), resolverReceipt, secondReceipt, vault }))
+      effectVerificationEpochMs: 1_000, firstEffectEvidence, release: FINAL.release.pinned,
+      predecessorPlaintextSha256: d("9"), rawOutcomeEnvelopeSha256: d("7"), resolverReceipt,
+      resolverEffectEvidence, secondEffectEvidence, secondReceipt,
+      spendReservation: FINAL.spends[0], vault }))
       .decision.answerComplete)
       .toBe(true);
+    const durablePayload = (firstEffectEvidence.signedDurableExchange as {
+      readonly payload: Record<string, unknown> }).payload;
+    const reservation = durablePayload.reservation as Record<string, unknown>;
+    const changedReservation = { ...reservation, requestDigestSha256: d("a") };
+    const durableMutations = [{ ...durablePayload,
+      journalReconciliationState: "outcome_unknown" }, { ...durablePayload,
+      releaseDocumentSha256: d("b") }, { ...durablePayload, reservation: changedReservation,
+      reservationSha256: sha256(changedReservation) }, { ...durablePayload,
+      terminalRecordSha256: d("c") }];
+    for (const payload of durableMutations) {
+      const changedEvidence = { ...firstEffectEvidence,
+        signedDurableExchange: FINAL.authorities.signers.provider_result.signed(payload) };
+      await expect(adjudicateOutcome(FINAL.authorities.policy,
+        { attempt, expectedAttempt: expectedAttempt(attempt), firstReceipt,
+        effectVerificationEpochMs: 1_000, firstEffectEvidence: changedEvidence,
+        release: FINAL.release.pinned, predecessorPlaintextSha256: d("9"),
+        rawOutcomeEnvelopeSha256: d("7"), resolverReceipt, resolverEffectEvidence,
+        secondEffectEvidence, secondReceipt, spendReservation: FINAL.spends[0], vault }))
+        .rejects.toThrow(/durable reserved exchange/u);
+    }
+    const genericRequestEvidence = adjudicationEffectEvidence({ answerAttempt: attempt,
+      authorities: FINAL.authorities, kind: "adjudicator_1_result",
+      requestDigestSha256: sha256({ answerAttemptId: attempt.attemptId,
+        role: "adjudicator_1" }), result: firstReceipt });
+    await expect(adjudicateOutcome(FINAL.authorities.policy,
+      { attempt, expectedAttempt: expectedAttempt(attempt), firstReceipt,
+      effectVerificationEpochMs: 1_000, firstEffectEvidence: genericRequestEvidence,
+      release: FINAL.release.pinned, predecessorPlaintextSha256: d("9"),
+      rawOutcomeEnvelopeSha256: d("7"), resolverReceipt, resolverEffectEvidence,
+      secondEffectEvidence, secondReceipt, spendReservation: FINAL.spends[0], vault }))
+      .rejects.toThrow(/bounded terminal authorization/u);
+    vault.reconstruct.mockClear();
+    await expect(adjudicateOutcome(FINAL.authorities.policy, {
+      attempt, effectVerificationEpochMs: 1_000, expectedAttempt: expectedAttempt(attempt),
+      firstEffectEvidence: null as never, firstReceipt, predecessorPlaintextSha256: d("9"),
+      rawOutcomeEnvelopeSha256: d("7"), release: FINAL.release.pinned,
+      resolverEffectEvidence, resolverReceipt, secondEffectEvidence, secondReceipt,
+      spendReservation: FINAL.spends[0], vault })).rejects.toThrow(/terminal|record/u);
+    expect(vault.reconstruct).not.toHaveBeenCalled();
     vault.reconstruct.mockClear();
     await expect(adjudicateOutcome(FINAL.authorities.policy, { attempt,
       expectedAttempt: expectedAttempt(attempt), firstReceipt: secondReceipt,
-      rawOutcomeEnvelopeSha256: d("7"), resolverReceipt, secondReceipt: firstReceipt,
+      effectVerificationEpochMs: 1_000, firstEffectEvidence, release: FINAL.release.pinned,
+      predecessorPlaintextSha256: d("9"), rawOutcomeEnvelopeSha256: d("7"), resolverReceipt,
+      resolverEffectEvidence, secondEffectEvidence, secondReceipt: firstReceipt,
+      spendReservation: FINAL.spends[0],
       vault })).rejects.toThrow(/signer|signature/u);
     expect(vault.reconstruct).not.toHaveBeenCalled();
     vault.reconstruct.mockClear();
@@ -608,13 +827,19 @@ describe("production quality campaign effect evidence", () => {
     for (const mutation of mutations) {
       await expect(adjudicateOutcome(FINAL.authorities.policy, {
         attempt: mutation as AttemptIdentity,
+        effectVerificationEpochMs: 1_000,
         expectedAttempt: expectedAttempt(attempt), firstReceipt,
-        rawOutcomeEnvelopeSha256: d("7"), resolverReceipt, secondReceipt, vault })).rejects.toThrow();
+        firstEffectEvidence, release: FINAL.release.pinned,
+        predecessorPlaintextSha256: d("9"), rawOutcomeEnvelopeSha256: d("7"), resolverReceipt,
+        resolverEffectEvidence, secondEffectEvidence, secondReceipt,
+        spendReservation: FINAL.spends[0], vault })).rejects.toThrow();
       expect(vault.reconstruct).not.toHaveBeenCalled();
     }
   });
 });
 
+// The single block shares one immutable full-campaign fixture across all authority mutations.
+// oxlint-disable-next-line max-lines-per-function
 describe("production quality campaign final evidence", () => {
   it("qualifies real AES-GCM evidence and reconstructs all bounded metric groups", async () => {
     const result = await admitFinalCampaign(FINAL.authorities.policy, FINAL.input);
@@ -668,6 +893,77 @@ describe("production quality campaign final evidence", () => {
     }
   }, 30_000);
 
+  it("rejects every per-question gold membership permutation and local relevance selection", async () => {
+    const payload = FINAL.input.goldRelevanceReceipt.payload;
+    const entries = payload.entries;
+    const firstEntry = entries[0]!;
+    const without = (key: string) => Object.fromEntries(Object.entries(firstEntry)
+      .filter(([name]) => name !== key));
+    const replaceFirst = (entry: unknown) => [entry, ...entries.slice(1)];
+    const mutations = [entries.toReversed(), [entries[0]!, entries[0]!, ...entries.slice(2)],
+      entries.slice(1), [...entries, entries[0]!], entries.map((entry, index) => index === 0 ?
+        { ...entry, relevantLocatorIds: ["locator-5"] } : entry),
+      replaceFirst(without("campaignRootSha256")),
+      replaceFirst({ ...firstEntry, unexpectedRoot: CAMPAIGN_ROOT }),
+      replaceFirst({ ...firstEntry, campaignRootSha256: firstEntry.releaseRootSha256,
+        releaseRootSha256: firstEntry.campaignRootSha256 }),
+      replaceFirst({ ...firstEntry, campaignRootSha256: d("c") }),
+      replaceFirst({ ...firstEntry, releaseRootSha256: d("d") })];
+    for (const changedEntries of mutations) {
+      const goldRelevanceReceipt = FINAL.authorities.signers.locator.signed({ ...payload,
+        entries: changedEntries });
+      await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+        goldRelevanceReceipt })).rejects.toThrow(/gold|root|question/u);
+    }
+    const first = FINAL.evidence[0]!.payload;
+    const outcomes = first.outcomes.map((outcome, index) => index === 0 ? { ...outcome,
+      relevantLocatorIds: ["locator-5"] } : outcome);
+    const metrics = reconstructMetrics(outcomes);
+    const receipt = FINAL.repetitionAuthority.signed({ ...first, metrics,
+      metricsSha256: sha256(metrics), outcomes, outcomesSha256: sha256(outcomes) });
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      repetitionEvidence: [receipt, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
+      .rejects.toThrow(/signed per-question gold/u);
+  }, 30_000);
+
+  it("excludes isolated and mixed explicit abstentions from every retrieval total", () => {
+    const answerable = FINAL.outcomesByRepetition[0]![0]!;
+    const abstention = { ...answerable, abstention: { expected: true, observed: true },
+      citationChecks: [], claimChecks: [], rankedLocatorIds: [], relevantLocatorIds: [],
+      speakerTimeChecks: [] };
+    const isolated = reconstructMetrics([abstention]).find(({ group }) => group === "overall")!;
+    expect({ complete10: isolated.completeRecallAt10PassedCount,
+      complete5: isolated.completeRecallAt5PassedCount,
+      mrr: isolated.firstRelevantReciprocalRankMillionthsTotal,
+      ndcg: isolated.ndcgAt10MillionthsTotal,
+      recall10: isolated.retrievedRelevantLocatorCountAt10,
+      recall5: isolated.retrievedRelevantLocatorCountAt5,
+      relevant: isolated.relevantLocatorCount,
+      retrievalApplicable: isolated.retrievalApplicableOutcomeCount })
+      .toEqual({ complete10: 0, complete5: 0, mrr: 0, ndcg: 0, recall10: 0,
+        recall5: 0, relevant: 0, retrievalApplicable: 0 });
+    const answerableOnly = reconstructMetrics([answerable])
+      .find(({ group }) => group === "overall")!;
+    const mixed = reconstructMetrics([answerable, abstention])
+      .find(({ group }) => group === "overall")!;
+    expect({ complete10: mixed.completeRecallAt10PassedCount,
+      complete5: mixed.completeRecallAt5PassedCount,
+      mrr: mixed.firstRelevantReciprocalRankMillionthsTotal,
+      ndcg: mixed.ndcgAt10MillionthsTotal,
+      recall10: mixed.retrievedRelevantLocatorCountAt10,
+      recall5: mixed.retrievedRelevantLocatorCountAt5,
+      relevant: mixed.relevantLocatorCount,
+      retrievalApplicable: mixed.retrievalApplicableOutcomeCount })
+      .toEqual({ complete10: answerableOnly.completeRecallAt10PassedCount,
+        complete5: answerableOnly.completeRecallAt5PassedCount,
+        mrr: answerableOnly.firstRelevantReciprocalRankMillionthsTotal,
+        ndcg: answerableOnly.ndcgAt10MillionthsTotal,
+        recall10: answerableOnly.retrievedRelevantLocatorCountAt10,
+        recall5: answerableOnly.retrievedRelevantLocatorCountAt5,
+        relevant: answerableOnly.relevantLocatorCount,
+        retrievalApplicable: answerableOnly.retrievalApplicableOutcomeCount });
+  });
+
   it("derives impossible top-five recall, MRR, citation, precision, speaker/time, and abstention failures", async () => {
     const first = FINAL.evidence[0]!.payload;
     const outcomes = first.outcomes.map((outcome, index) => index < 25 ? {
@@ -686,8 +982,8 @@ describe("production quality campaign final evidence", () => {
       metricsSha256: sha256(metrics), outcomes, outcomesSha256: sha256(outcomes) });
     await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
       repetitionEvidence: [receipt, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
-      .rejects.toThrow(/thresholds/u);
-  }, 30_000);
+      .rejects.toThrow(/relevance|thresholds/u);
+  }, 90_000);
 
   it("binds final adjudication plaintext and authenticates canonical AES-256-GCM itself", async () => {
     const first = FINAL.evidence[0]!.payload;
@@ -752,6 +1048,138 @@ describe("production quality campaign final evidence", () => {
     }
   }, 30_000);
 
+  it("blocks answerComplete false and every retained artifact omission or binding swap", async () => {
+    const first = FINAL.evidence[0]!.payload;
+    const selected = first.outcomes[1]!;
+    const oldFinal = FINAL.input.artifacts.find(({ attemptId, kind }) =>
+      kind === "final_adjudication" && attemptId === artifactAttemptIdentity(selected.identity,
+        "final_adjudication").attemptId)!;
+    const predecessor = FINAL.input.artifacts.find(({ attemptId, kind }) =>
+      kind === "adjudicator_2_result" && attemptId === artifactAttemptIdentity(selected.identity,
+        "adjudicator_2_result").attemptId)!;
+    const incompleteValue = finalAdjudicationValue(selected.identity, false, FINAL.authorities,
+      predecessor.plaintextSha256, false);
+    const incompleteArtifact = encryptedArtifact(selected.identity, "final_adjudication",
+      Buffer.from(canonicalJson(incompleteValue)), FINAL.stored);
+    const incompleteOutcomes = first.outcomes.map((outcome, index) => index === 1 ? { ...outcome,
+      artifactBindingSha256ByKind: { ...outcome.artifactBindingSha256ByKind,
+        final_adjudication: incompleteArtifact.artifactBindingSha256 },
+      finalAdjudicationSha256: incompleteArtifact.plaintextSha256 } : outcome);
+    const incompleteMetrics = reconstructMetrics(incompleteOutcomes);
+    const incompleteReceipt = FINAL.repetitionAuthority.signed({ ...first,
+      metrics: incompleteMetrics, metricsSha256: sha256(incompleteMetrics),
+      outcomes: incompleteOutcomes, outcomesSha256: sha256(incompleteOutcomes) });
+    const incompleteArtifacts = FINAL.input.artifacts.map((artifact) => artifact === oldFinal ?
+      incompleteArtifact : artifact);
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      artifacts: incompleteArtifacts, campaignByteCeiling: incompleteArtifacts.reduce(
+        (total, artifact) => total + artifact.storedBytes, 0), repetitionEvidence:
+        [incompleteReceipt, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
+      .rejects.toThrow(/answerComplete/u);
+
+    const bindingKinds = [...KINDS.slice(0, -1), "resolver_result", "final_adjudication"] as const;
+    for (const kind of bindingKinds) {
+      const omitted = FINAL.input.artifacts.filter((artifact) => !(artifact.kind === kind &&
+        artifact.questionId === first.outcomes[0]!.identity.questionId &&
+        artifact.repetition === 1));
+      await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+        artifacts: omitted })).rejects.toThrow(/missing/u);
+    }
+    for (let index = 0; index < bindingKinds.length; index += 1) {
+      const left = bindingKinds[index]!;
+      const right = bindingKinds[(index + 1) % bindingKinds.length]!;
+      const original = first.outcomes[0]!;
+      const bindings = { ...original.artifactBindingSha256ByKind,
+        [left]: original.artifactBindingSha256ByKind[right] };
+      const outcomes = first.outcomes.map((outcome, outcomeIndex) => outcomeIndex === 0 ?
+        { ...outcome, artifactBindingSha256ByKind: bindings } : outcome);
+      const receipt = FINAL.repetitionAuthority.signed({ ...first, outcomes,
+        outcomesSha256: sha256(outcomes) });
+      await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+        repetitionEvidence: [receipt, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
+        .rejects.toThrow(/corruption/u);
+    }
+  }, 90_000);
+
+  it("rejects AES-valid rewritten requests and conflicting authoritative answer terminals", async () => {
+    const first = FINAL.evidence[0]!.payload;
+    const selected = first.outcomes[0]!;
+    const kinds = [...KINDS.slice(0, -1), "resolver_result", "final_adjudication"] as const;
+    const rewriteFrom = (startKind: (typeof kinds)[number], mutate: (value:
+      Record<string, unknown>) => Record<string, unknown>) => {
+      const bindings = { ...selected.artifactBindingSha256ByKind };
+      const replacements = new Map<string, RetainedArtifact>();
+      const start = kinds.indexOf(startKind);
+      let predecessor = start === 0 ? null : FINAL.input.artifacts.find(({ attemptId, kind }) =>
+        kind === kinds[start - 1] && attemptId === artifactAttemptIdentity(selected.identity,
+          kinds[start - 1]!).attemptId)!.plaintextSha256;
+      let finalAdjudicationSha256 = selected.finalAdjudicationSha256;
+      for (const kind of kinds.slice(start)) {
+        const identity = artifactAttemptIdentity(selected.identity, kind);
+        const oldArtifact = FINAL.input.artifacts.find(({ attemptId, kind: candidateKind }) =>
+          candidateKind === kind && attemptId === identity.attemptId)!;
+        const oldValue = JSON.parse(Buffer.from(FINAL.stored.get(oldArtifact.envelopeSha256)!
+          .plaintext).toString("utf8")) as Record<string, unknown>;
+        const chained = kind === "final_adjudication" ? { ...oldValue,
+          predecessorPlaintextSha256: predecessor } : { ...oldValue,
+          chain: { ...(oldValue.chain as Record<string, unknown>),
+            predecessorPlaintextSha256: predecessor } };
+        const changed = kind === startKind ? mutate(chained) : chained;
+        const replacement = encryptedArtifact(selected.identity, kind,
+          Buffer.from(canonicalJson(changed)), FINAL.stored);
+        replacements.set(`${replacement.attemptId}:${kind}`, replacement);
+        bindings[kind] = replacement.artifactBindingSha256;
+        predecessor = replacement.plaintextSha256;
+        if (kind === "final_adjudication") {
+          finalAdjudicationSha256 = replacement.plaintextSha256;
+        }
+      }
+      const artifacts = FINAL.input.artifacts.map((artifact) => replacements.get(
+        `${artifact.attemptId}:${artifact.kind}`) ?? artifact);
+      const outcomes = first.outcomes.map((outcome, index) => index === 0 ? { ...outcome,
+        artifactBindingSha256ByKind: bindings, finalAdjudicationSha256 } : outcome);
+      const receipt = FINAL.repetitionAuthority.signed({ ...first, outcomes,
+        outcomesSha256: sha256(outcomes) });
+      return { artifacts, campaignByteCeiling: artifacts.reduce((sum, artifact) =>
+        sum + artifact.storedBytes, 0), repetitionEvidence:
+        [receipt, FINAL.evidence[1]!, FINAL.evidence[2]!] as const };
+    };
+    const rewrittenRequest = rewriteFrom("capability_request", (value) => {
+      const requestBytes = Buffer.from(canonicalJson({ arbitrary: "AES-valid replacement" }));
+      return { ...value, chain: { ...(value.chain as Record<string, unknown>),
+        requestDigestSha256: sha256(requestBytes) },
+      requestBytesBase64: requestBytes.toString("base64") };
+    });
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      ...rewrittenRequest })).rejects.toThrow(/exact provider request|predecessor|follow/u);
+    const swappedKind = rewriteFrom("capability_request", (value) => ({ ...value,
+      schemaVersion: "meeting_knowledge.semantic_quality_retrieval_request.v1" }));
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      ...swappedKind })).rejects.toThrow(/foreign structure/u);
+    const swappedDirection = rewriteFrom("capability_request", (value) => {
+      const { requestBytesBase64: _, ...withoutRequest } = value;
+      return { ...withoutRequest, responseBytesBase64: Buffer.from("response").toString("base64"),
+        schemaVersion: "meeting_knowledge.semantic_quality_capability_response.v1" };
+    });
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      ...swappedDirection })).rejects.toThrow(/capability_request|record keys/u);
+
+    const conflictingRaw = rewriteFrom("raw_outcome", (value) => {
+      const responseBytes = Buffer.from(canonicalJson({ arbitrary: "second valid answer" }));
+      const resultDigestSha256 = sha256(responseBytes);
+      const chain = value.chain as Record<string, unknown>;
+      const signedProviderTerminal = FINAL.authorities.signers.provider_result.signed({
+        ...artifactAttemptIdentity(selected.identity, "raw_outcome"),
+        requestDigestSha256: chain.requestDigestSha256, resultDigestSha256,
+        schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+        state: "terminal_success" });
+      return { ...value, chain: { ...chain, resultDigestSha256, signedProviderTerminal },
+        responseBytesBase64: responseBytes.toString("base64") };
+    });
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      ...conflictingRaw })).rejects.toThrow(/one authoritative terminal/u);
+  }, 90_000);
+
   it("reconstructs cleanup only from a release-pinned signed target inventory", async () => {
     const forged = FINAL.cleanupAuthority.signed(FINAL.input.targetInventoryReceipt.payload);
     await expect(admitFinalCampaign(FINAL.authorities.policy,
@@ -797,7 +1225,7 @@ describe("production quality campaign final evidence", () => {
     expect(() => verifyCleanupAbsenceReceipt(FINAL.authorities.policy, { authorityKeyId:
       FINAL.cleanupAuthority.keyId, cleanupManifest: overlappingManifest as never,
     receipt: overlappingPresence })).toThrow(/overlap/u);
-  }, 30_000);
+  }, 90_000);
 
   it("derives the signed 30-question holdout without affecting main qualification", () => {
     const questions = sealedQuestions(30, "independent_review", "h");
