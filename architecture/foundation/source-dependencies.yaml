@@ -252,7 +252,8 @@ boundaries:
   - id: adapters.infinity-context
     roots:
       - packages/infinity-context-adapter/src
-    entrypoints: []
+    entrypoints:
+      - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
     allow:
       boundaries:
         - core.meeting.knowledge

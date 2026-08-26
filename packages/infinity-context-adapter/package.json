@@ -3,13 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "discord-meeting-quality-campaign": "./src/quality-campaign/production-entrypoint.ts"
+  },
   "exports": {
     ".": "./src/index.ts",
+    "./quality-campaign": "./src/quality-campaign/index.ts",
+    "./quality-campaign/cli": "./src/quality-campaign/production-entrypoint.ts",
     "./test-support": "./test/test-support.ts"
   },
   "scripts": {
     "check": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared && pnpm run test:prepared",
     "prepare:official-sdk": "node ../../vendor/infinity-context/prepare-official-sdk.mjs",
+    "quality-campaign": "node --import tsx/esm src/quality-campaign/production-entrypoint.ts",
     "test": "pnpm run prepare:official-sdk && pnpm run test:prepared",
     "test:semantic-quality-v4:gate": "vitest run test/semantic-quality-v4-evaluation.test.ts test/semantic-quality-v4-p0.test.ts test/semantic-quality-v4-qualification-tooling.test.ts test/semantic-quality-v4-workflow.test.ts --no-file-parallelism --test-timeout=30000",
     "test:semantic-quality-v4": "node --import tsx/esm test/run-semantic-quality-v4.ts",

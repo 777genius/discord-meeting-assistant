@@ -39,7 +39,7 @@
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "packages/infinity-context-adapter": {
-      "entry": ["src/index.ts"],
+      "entry": ["src/index.ts", "src/quality-campaign/production-entrypoint.ts"],
       "ignoreDependencies": ["@huggingface/tokenizers"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },

@@ -1,6 +1,6 @@
 ---
 id: ADR-0052
-status: proposed
+status: accepted
 supersedes: []
 superseded_by: []
 ---
@@ -9,8 +9,9 @@ superseded_by: []
 
 ## Status
 
-Proposed on 2026-08-25. This proposal narrows qualification evidence without
-changing ADR-0049 retrieval ownership or enabling serving.
+Accepted on 2026-08-26. The production runner now establishes the executable
+qualification boundary without changing ADR-0049 retrieval ownership or
+enabling serving.
 
 ## Context
 
@@ -20,7 +21,7 @@ contains prose expected answers rather than sealed atomic claims, and digest
 shapes cannot establish independent review. Provider execution needs durable
 unknown-outcome handling and exact original/repair input accounting.
 
-## Proposed decision
+## Decision
 
 - Rehydrated evaluation turns carry canonical turn identity and the opaque block
   locator that admitted them. Retrieval metrics score blocks; citation,
@@ -61,7 +62,7 @@ unknown-outcome handling and exact original/repair input accounting.
 - The bounded-context owner is the quality-campaign module in Discord's Infinity
   adapter. Its operational sources live under
   `packages/infinity-context-adapter/src/quality-campaign`; they
-  orchestrates the already classified `adapters.infinity-context` production
+  orchestrate the already classified `adapters.infinity-context` production
   runner and exact consumer-owned ports without adding a generic platform.
 - The custody seal never authorizes provider execution. A separate signed,
   expiring execution authorization binds the exact acceptance receipt, corpus,
@@ -140,9 +141,13 @@ unknown-outcome handling and exact original/repair input accounting.
 
 ## Consequences
 
-Provider-free fixtures remain arithmetic evidence only. Private text stays in
-path-injected encrypted create-only artifacts; public manifests contain safe
-counts, metrics, digests, versions, and signatures. This proposal does not set
+Provider-free fixtures remain arithmetic evidence only. The installed production
+entrypoint admits the exact sealed manifest and separate execution authorization,
+runs a bounded deadline-bound 3 x 240 schedule with durable exact-attempt recovery,
+composes external review, exact derived cleanup and isolated holdout execution,
+and delegates final qualification to exact campaign admission. Private text stays
+in path-injected encrypted create-only artifacts; public manifests contain safe
+counts, metrics, digests, versions, and signatures. This decision does not set
 `ACCEPTED_TWO_HOUR_QUALIFICATION`, enable Retrieval V2 serving, or establish a
 quality pass.
 

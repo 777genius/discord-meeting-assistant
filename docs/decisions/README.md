@@ -3,7 +3,6 @@
 ## Proposed
 
 - [ADR-0026: Host subscription account pool](0026-host-subscription-account-pool.md)
-- [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)
 - [ADR-0053: V2-only meeting retrieval composition](0053-v2-only-meeting-retrieval.md)
 - [ADR-0057: Exact-document live-memory reconciliation](0057-exact-document-live-reconciliation.md)
 
@@ -54,6 +53,7 @@
 - [ADR-0049: Locator-only upstream retrieval with downstream evidence authority](0049-locator-only-upstream-retrieval.md)
 - [ADR-0050: Persisted Retrieval V2 serving binding and official SDK custody](0050-persisted-retrieval-v2-serving-binding.md)
 - [ADR-0051: Provider-attested greeting and ready-only recording publication](0051-greeting-playback-and-recording-readiness.md)
+- [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)
 - [ADR-0054: Official-SDK finalized-live memory projection](0054-official-sdk-live-memory-projection.md)
 - [ADR-0055: Deadline-bound durable participant greetings](0055-deadline-bound-durable-participant-greetings.md)
 - [ADR-0056: Terminal-evidence greeting reconciliation](0056-terminal-evidence-greeting-reconciliation.md)
