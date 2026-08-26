@@ -256,13 +256,12 @@ describe("focused locator Retrieval V2 confusable identity admission", () => {
   it.each([
     "Аlice",
     "Αlice",
-    "Ａｌｉｃｅ",
-    "𝐀𝐥𝐢𝐜𝐞",
     "аӏісе",
     "АLІСЕ",
     "A\u0338lice",
-  ])("filters and redacts the package-qualified Alice skeleton %s", async (variant) => {
+  ])("denies a skeleton-only Alice collision before I/O: %s", async (variant) => {
     const { store } = fixture();
+    const listPlans = vi.spyOn(store, "listCurrentRoomPlans");
     const certainAliceSkeletons = Object.freeze({
       skeleton: (value: string) => {
         const canonical = value.normalize("NFKC").toLocaleLowerCase("und");
@@ -278,13 +277,20 @@ describe("focused locator Retrieval V2 confusable identity admission", () => {
       question: `What did ${variant} decide about обычный релиз?`,
       roomId: "room-1", scopeId: "scope-1" });
 
-    expect(request?.filters.actorKeys).toEqual(["opaque-alice"]);
-    expect(request?.queries[0]?.query).toBe(
-      "what did participant decide about обычный релиз?",
-    );
+    expect(request).toBeNull();
+    expect(listPlans).not.toHaveBeenCalled();
   });
 
-  it.each(["Аli\u200Bce", "Αli\u202Ece", "Аli\u2063ce", "Аli\u034Fce"])(
+  it.each([
+    "Аli\u200Bce",
+    "Αli\u202Ece",
+    "Аli\u2063ce",
+    "Аli\u034Fce",
+    "Ali\u0000ce",
+    "Ali\u2060ce",
+    "Ali\uFE0Fce",
+    "Ali\u{E0061}ce",
+  ])(
     "fails before I/O when an Alice-like mixed-script token is uncertain: %s",
     async (variant) => {
       const { store } = fixture();
@@ -293,7 +299,8 @@ describe("focused locator Retrieval V2 confusable identity admission", () => {
         skeleton: (value: string) => {
           const canonical = value.normalize("NFKC").toLocaleLowerCase("und");
           const alias = canonical === "alice";
-          const risky = /[\u034F\u200B\u202E\u2063]/u.test(canonical);
+          const risky = ["\u0000", "\u034F", "\u200B", "\u202E", "\u2060", "\u2063",
+            "\uFE0F", "\u{E0061}"].some((character) => canonical.includes(character));
           return Object.freeze({ canonical,
             certainty: risky ? "uncertain" as const : "certain" as const,
             skeleton: alias || risky ? "alice" : canonical });
@@ -309,6 +316,70 @@ describe("focused locator Retrieval V2 confusable identity admission", () => {
       expect(listPlans).not.toHaveBeenCalled();
     },
   );
+
+  it("checks every alias occurrence before admitting or redacting", async () => {
+    const { store } = fixture();
+    const listPlans = vi.spyOn(store, "listCurrentRoomPlans");
+    const skeletons = Object.freeze({
+      skeleton: (value: string) => {
+        const canonical = value.normalize("NFKC").toLocaleLowerCase("und");
+        const unsafe = canonical.includes("\u200B");
+        return Object.freeze({ canonical,
+          certainty: unsafe ? "uncertain" as const : "certain" as const,
+          skeleton: unsafe ? canonical.replace("\u200B", "") : canonical });
+      },
+    });
+    const request = await new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(), identitySkeletons: skeletons, providerBinding,
+      speakerAliases: [{ actorKeys: ["opaque-alice"], aliases: ["Alice"] }], store,
+    }).prepare({ currentMeetingId: "current-meeting",
+      question: "What did Alice and Ali\u200Bce decide?",
+      roomId: "room-1", scopeId: "scope-1" });
+
+    expect(request).toBeNull();
+    expect(listPlans).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Boba", "Вова", "boba"],
+    ["Hopa", "Нора", "hopa"],
+    ["Pay", "Рау", "pay"],
+  ])("denies semantic cross-script collision %s / %s", async (
+    alias, questionAlias, denySkeleton,
+  ) => {
+    const { store } = fixture();
+    const listPlans = vi.spyOn(store, "listCurrentRoomPlans");
+    const skeletons = Object.freeze({
+      skeleton: (value: string) => {
+        const canonical = value.normalize("NFKC").toLocaleLowerCase("und");
+        return Object.freeze({ canonical, certainty: "certain" as const,
+          skeleton: canonical === alias.toLocaleLowerCase("und") ||
+            canonical === questionAlias.toLocaleLowerCase("und")
+            ? denySkeleton : canonical });
+      },
+    });
+    const request = await new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(), identitySkeletons: skeletons, providerBinding,
+      speakerAliases: [{ actorKeys: ["opaque-owner"], aliases: [alias] }], store,
+    }).prepare({ currentMeetingId: "current-meeting",
+      question: `Что решил ${questionAlias}?`, roomId: "room-1", scopeId: "scope-1" });
+
+    expect(request).toBeNull();
+    expect(listPlans).not.toHaveBeenCalled();
+  });
+
+  it("does not join identity tokens across whitespace controls", async () => {
+    const { store } = fixture();
+    const request = await new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(), identitySkeletons, providerBinding,
+      speakerAliases: [{ actorKeys: ["opaque-alice"], aliases: ["Alice"] }], store,
+    }).prepare({ currentMeetingId: "current-meeting",
+      question: "What did Ali\nce decide?", roomId: "room-1", scopeId: "scope-1" });
+
+    expect(request).not.toBeNull();
+    expect(request?.filters.actorKeys).toEqual([]);
+    expect(request?.queries[0]?.query).toBe("what did ali\nce decide?");
+  });
 
   it("fails before I/O when configured aliases have no skeleton authority", async () => {
     const { store } = fixture();

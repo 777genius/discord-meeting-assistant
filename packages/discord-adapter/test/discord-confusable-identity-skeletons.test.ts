@@ -14,7 +14,7 @@ describe("Discord confusable identity skeletons", () => {
     "аӏісе",
     "АLІСЕ",
     "A\u0338lice",
-  ])("maps the all-script Alice lookalike %s to one certain skeleton", (value) => {
+  ])("maps safe Alice lookalikes to one deny skeleton: %s", (value) => {
     expect(skeletons.skeleton(value)).toMatchObject({
       certainty: "certain",
       skeleton: "alice",
@@ -26,6 +26,11 @@ describe("Discord confusable identity skeletons", () => {
     "Αli\u202Ece",
     "Аli\u2063ce",
     "Аli\u034Fce",
+    "Ali\u0000ce",
+    "Ali\u2060ce",
+    "Ali\uFE0Fce",
+    "Ali\u{E0061}ce",
+    "Ali\u{E0100}ce",
   ])("marks invisible or bidi identity text uncertain: %s", (value) => {
     expect(skeletons.skeleton(value)).toMatchObject({
       certainty: "uncertain",
@@ -33,14 +38,31 @@ describe("Discord confusable identity skeletons", () => {
     });
   });
 
-  it("does not collapse unrelated Russian, English, symbols, or CJK into Alice", () => {
-    expect(skeletons.skeleton("обычный").certainty).toBe("uncertain");
+  it("keeps safe exact Russian, English, symbol, and CJK tokens certain", () => {
+    expect(skeletons.skeleton("обычный").certainty).toBe("certain");
     expect(skeletons.skeleton("ordinary")).toMatchObject({
       certainty: "certain",
       skeleton: "ordinary",
     });
-    expect(skeletons.skeleton("🔥").certainty).toBe("uncertain");
-    expect(skeletons.skeleton("普通").certainty).toBe("uncertain");
+    expect(skeletons.skeleton("🔥").certainty).toBe("certain");
+    expect(skeletons.skeleton("普通").certainty).toBe("certain");
     expect(skeletons.skeleton("обычный").skeleton).not.toBe("ordinary");
+  });
+
+  it.each([
+    ["Boba", "Вова", "boba"],
+    ["Hopa", "Нора", "hopa"],
+    ["Pay", "Рау", "pay"],
+  ])("exposes %s / %s only as a deny collision", (latin, cyrillic, denySkeleton) => {
+    expect(skeletons.skeleton(latin)).toMatchObject({
+      canonical: latin.toLocaleLowerCase("und"),
+      certainty: "certain",
+      skeleton: denySkeleton,
+    });
+    expect(skeletons.skeleton(cyrillic)).toMatchObject({
+      canonical: cyrillic.toLocaleLowerCase("und"),
+      certainty: "certain",
+      skeleton: denySkeleton,
+    });
   });
 });

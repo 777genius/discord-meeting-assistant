@@ -17,7 +17,11 @@ export interface IdentitySkeletonV1 {
   readonly skeleton: string;
 }
 
-/** Consumer-owned deterministic port implemented at the Discord boundary. */
+/**
+ * Consumer-owned deterministic deny/ambiguity port implemented at the identity
+ * adapter boundary. A skeleton collision is never positive identity authority;
+ * only equal canonical tokens that are both certain may resolve an alias.
+ */
 export interface IdentitySkeletonPortV1 {
   readonly skeleton: (value: string) => IdentitySkeletonV1;
 }
@@ -59,6 +63,7 @@ interface IdentityToken extends IdentitySkeletonV1 {
 const ambiguousEnglishAliasTokens = new Set([
   "bill", "mark", "may", "will",
 ]);
+const identityWhitespaceControlCodes = new Set([9, 10, 11, 12, 13]);
 
 export function resolveRequestedSpeakerIds(
   question: string,
@@ -166,7 +171,9 @@ export function hasUncertainRequestedActorAlias(
   skeletons?: IdentitySkeletonPortV1,
 ): boolean {
   return aliases.some(({ aliases: values }) => values.some((alias) =>
-    matchAlias(question, alias, skeletons)?.certainty === "uncertain"
+    identityAliasSpans(question, alias, skeletons).some(
+      ({ certainty }) => certainty === "uncertain",
+    )
   ));
 }
 
@@ -283,7 +290,15 @@ function identityTokens(
   value: string,
   skeletons?: IdentitySkeletonPortV1,
 ): readonly IdentityToken[] {
-  return Object.freeze([...value.matchAll(/[\p{L}\p{N}\p{M}\p{Cf}]+/gu)]
+  // Keep embedded non-whitespace C0/C1 controls in the candidate token so the
+  // adapter can collapse them into a comparable deny skeleton. Whitespace
+  // controls remain separators and cannot join otherwise separate words.
+  const separatedWhitespaceControls = value.split("").map((character) =>
+    identityWhitespaceControlCodes.has(character.charCodeAt(0)) ? " " : character
+  ).join("");
+  return Object.freeze([...separatedWhitespaceControls.matchAll(
+    /[\p{L}\p{N}\p{M}\p{Cf}\p{Cc}]+/gu,
+  )]
     .flatMap((match) => {
       const text = match[0];
       if (!/[\p{L}\p{N}]/u.test(text)) {
@@ -307,14 +322,14 @@ function compareIdentityToken(
     return "different";
   }
   if (question.canonical === alias.canonical) {
-    return "certain";
+    return question.certainty === "certain" && alias.certainty === "certain"
+      ? "certain"
+      : "uncertain";
   }
   if (question.skeleton !== alias.skeleton) {
     return "different";
   }
-  return question.certainty === "certain" && alias.certainty === "certain"
-    ? "certain"
-    : "uncertain";
+  return "uncertain";
 }
 
 function canonicalIdentityText(value: string): string {

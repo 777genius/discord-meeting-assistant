@@ -1,29 +1,29 @@
-import { confusablesMap, remove } from "confusables";
+import { remove } from "confusables";
 
 import type { IdentitySkeletonPortV1, IdentitySkeletonV1 } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 
-const unsafeIdentityFormatting =
-  /[\p{Bidi_Control}\p{Join_Control}\u034F\u061C\u180E\u200B\u2060\u2061-\u2064\u206A-\u206F\uFEFF]/u;
-const asciiIdentitySkeleton = /^[a-z0-9]+$/u;
-const asciiIdentityCharacter = /^[a-z0-9]$/u;
+const unsafeIdentityCharacter =
+  /(?:\p{Default_Ignorable_Code_Point}|\p{Bidi_Control}|\p{Join_Control}|\p{Cc})/u;
 
-/** Discord-owned deterministic adapter over the reviewed confusable mapping. */
+/**
+ * Discord-owned deterministic deny-only adapter over the reviewed confusable
+ * mapping. Its skeleton can identify ambiguity but can never authorize an
+ * identity match; Meeting Core reserves that to safe canonical equality.
+ */
 export class DiscordConfusableIdentitySkeletons implements IdentitySkeletonPortV1 {
   public skeleton(value: string): IdentitySkeletonV1 {
     const canonical = value.normalize("NFKC").toLocaleLowerCase("und");
-    const skeleton = remove(canonical).normalize("NFKC").toLocaleLowerCase("und");
-    const mappedCompletely = asciiIdentitySkeleton.test(skeleton) &&
-      Array.from(canonical).every((character) =>
-        !/[\p{L}\p{N}]/u.test(character) ||
-        asciiIdentityCharacter.test(character) ||
-        confusablesMap.has(character)
-      );
+    const characters = Array.from(canonical);
+    const denyComparable = characters.filter((character) =>
+      !unsafeIdentityCharacter.test(character)
+    ).join("");
+    const skeleton = remove(denyComparable).normalize("NFKC").toLocaleLowerCase("und");
     return Object.freeze({
       canonical,
-      certainty: !unsafeIdentityFormatting.test(value) && mappedCompletely
-        ? "certain" as const
-        : "uncertain" as const,
+      certainty: characters.some((character) => unsafeIdentityCharacter.test(character))
+        ? "uncertain" as const
+        : "certain" as const,
       skeleton,
     });
   }

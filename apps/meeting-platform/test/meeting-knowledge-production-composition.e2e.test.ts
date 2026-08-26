@@ -5,6 +5,7 @@ import {
 } from "@discord-meeting/infinity-context-adapter/test-support";
 import { MeetingSourceConfiguration } from "@discord-meeting/meeting-routing-core";
 import {
+  FocusedHistoricalEvidenceV2,
   GroundedMeetingAnswer,
   LiveFinalizedMemoryWorker,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
@@ -73,6 +74,11 @@ const unicodePrivacyProfiles = Object.freeze({
     displayName: "Ｖｌａｄ",
     greetingLocale: "en" as const,
     spokenName: "🔥",
+  }),
+  [historicalActorB]: Object.freeze({
+    displayName: "Boba",
+    greetingLocale: "en" as const,
+    spokenName: "Hopa",
   }),
 });
 
@@ -149,7 +155,7 @@ describe("Meeting Knowledge V2 production composition", () => {
 
         const live = await createLiveProjection(pool, current, controller.signal);
         const authorization = allowOnlySyntheticRoom();
-        const question = `How does <@${historicalActorA}> ＶＬＡＤ---Ｖｌａｄ, Ѵӏаԁ, 𝐕𝐥𝐚𝐝, V̸lad, 🔥 / 🔥 ANCHOR connect to PINE-GOLF?`;
+        const question = `How does <@${historicalActorA}> ＶＬＡＤ---Ｖｌａｄ, 𝐕𝐥𝐚𝐝, 🔥 / 🔥 ANCHOR connect to PINE-GOLF?`;
         const groundedFixture = compositionGroundedAnswers();
         const groundedAnswerUseCase = groundedFixture.answers;
         const platformBaseConfig = platformConfig(
@@ -163,6 +169,16 @@ describe("Meeting Knowledge V2 production composition", () => {
         if (providerBinding === undefined) {
           throw new Error("synthetic Retrieval V2 binding is missing");
         }
+        await proveConfusableIdentityAdmissionFailsBeforeInfinity({
+          authorization,
+          currentMeetingId,
+          infinity,
+          providerBinding,
+          roomId,
+          runtime: servingRuntime,
+          scopeId,
+          signal: controller.signal,
+        });
         const admittedRequest = await servingRuntime
           .createRetrievalV2Admission(providerBinding)
           .prepare({
@@ -359,6 +375,61 @@ function compositionGroundedAnswers(): {
     resetValidated: () => { validated = 0; },
     validatedCount: () => validated,
   };
+}
+
+async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
+  readonly authorization: ReturnType<typeof allowOnlySyntheticRoom>;
+  readonly currentMeetingId: string;
+  readonly infinity: Awaited<ReturnType<typeof startDisposableInfinityHttpService>>;
+  readonly providerBinding:
+    NonNullable<PlatformConfig["meetingKnowledge"]>["retrievalV2ProviderBinding"];
+  readonly roomId: string;
+  readonly runtime: PlatformHistoricalMemoryRuntime;
+  readonly scopeId: string;
+  readonly signal: AbortSignal;
+}): Promise<void> {
+  if (input.providerBinding === undefined) {
+    throw new Error("synthetic Retrieval V2 binding is missing");
+  }
+  const retrieval = new FocusedHistoricalEvidenceV2({
+    admission: input.runtime.createRetrievalV2Admission(input.providerBinding),
+    retrieval: input.runtime.createFocusedLocatorRetrievalV2(input.authorization),
+  });
+  const allParsedBefore = input.infinity.endpoint.requests.length;
+  const allRawBefore = input.infinity.endpoint.exactHttpRequests.length;
+  const parsedBefore = input.infinity.endpoint.requests.filter(
+    ({ path }) => path === "/v1/context/retrieve",
+  ).length;
+  const rawBefore = input.infinity.endpoint.exactHttpRequests.filter(
+    ({ path }) => path === "/v1/context/retrieve",
+  ).length;
+  for (const question of [
+    "What did Vlad and Ѵӏаԁ decide?",
+    "Что решила Вова?",
+    "Что решила Нора?",
+    "What did Vl\u0000ad decide?",
+    "What did Vl\u2060ad decide?",
+    "What did Vl\uFE0Fad decide?",
+    "What did Vl\u{E0061}ad decide?",
+  ]) {
+    await expect(retrieval.retrieve({
+      authorizationPrincipalRef: "synthetic-principal",
+      currentMeetingId: input.currentMeetingId,
+      maximumCandidates: 24,
+      question,
+      roomId: input.roomId,
+      scopeId: input.scopeId,
+      signal: input.signal,
+    })).resolves.toEqual({ status: "unavailable" });
+  }
+  expect(input.infinity.endpoint.requests.filter(
+    ({ path }) => path === "/v1/context/retrieve",
+  )).toHaveLength(parsedBefore);
+  expect(input.infinity.endpoint.exactHttpRequests.filter(
+    ({ path }) => path === "/v1/context/retrieve",
+  )).toHaveLength(rawBefore);
+  expect(input.infinity.endpoint.requests).toHaveLength(allParsedBefore);
+  expect(input.infinity.endpoint.exactHttpRequests).toHaveLength(allRawBefore);
 }
 
 async function proveFinalReplyFactoryRuntime(input: {
@@ -562,7 +633,7 @@ function assertRetrievalRequestPrivacy(
     ]);
     expect(JSON.stringify(request.body)).not.toMatch(
       new RegExp([currentActor, historicalActorA, historicalActorB,
-        "Vlad", "Ｖｌａｄ", "Ѵӏаԁ", "𝐕𝐥𝐚𝐝", "V̸lad", "🔥"].join("|"), "u"),
+        "Vlad", "Ｖｌａｄ", "𝐕𝐥𝐚𝐝", "🔥", "Boba", "Hopa"].join("|"), "u"),
     );
     expect(JSON.stringify(request.body)).toMatch(/anchor.*pine-golf/u);
     expect(projectedActorKeys).toEqual(expect.arrayContaining(
@@ -576,7 +647,7 @@ function assertRetrievalRequestPrivacy(
   for (const body of exactRetrievalBodies) {
     expect(body).not.toMatch(
       new RegExp([currentActor, historicalActorA, historicalActorB,
-        "Vlad", "Ｖｌａｄ", "Ѵӏаԁ", "𝐕𝐥𝐚𝐝", "V̸lad", "🔥"].join("|"), "iu"),
+        "Vlad", "Ｖｌａｄ", "𝐕𝐥𝐚𝐝", "🔥", "Boba", "Hopa"].join("|"), "iu"),
     );
     expect(body).toMatch(/anchor.*pine-golf/u);
   }
