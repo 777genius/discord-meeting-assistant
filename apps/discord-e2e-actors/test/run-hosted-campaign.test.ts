@@ -379,14 +379,14 @@ describe("run-hosted-campaign CLI", () => {
 });
 
 describe("Craig pre-provision fence", () => {
-  it("bounds unrecovered failure admission without deleting retained evidence", async () => {
+  it("fails closed on failure evidence without mutation custody without deleting evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "craig-retention-admission-"));
     for (let index = 0; index < MAX_UNRECOVERED_CRAIG_STACKS; index += 1) {
       const control = join(root, `failed-${index}`, "control");
       await mkdir(control, { recursive: true, mode: 0o700 });
       await writeFile(join(control, "craig-stack-failure.json"), "{}\n", { mode: 0o600 });
     }
-    await expect(assertCraigFailedStackRetentionAdmission(root)).rejects.toThrow(/run recovery first/u);
+    await expect(assertCraigFailedStackRetentionAdmission(root)).rejects.toThrow(/without mutation custody/u);
     await expect(stat(join(root, "failed-1", "control", "craig-stack-failure.json"))).resolves.toBeDefined();
   });
 

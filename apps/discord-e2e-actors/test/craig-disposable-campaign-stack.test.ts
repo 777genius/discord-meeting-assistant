@@ -21,7 +21,8 @@ import {
 import { validateRenderedCraigCompose } from "../src/craig-campaign-compose-validation.js";
 import { digestCanonical } from "../src/hosted-campaign-local-admission.js";
 import type { HostedCampaignLeaseHandle } from "../src/hosted-campaign-coordinator.js";
-import { recoverCraigFailedCampaignStack } from "../src/recover-craig-failed-campaign-stack.js";
+import { assertCraigFailedStackRetentionAdmission, MAX_UNRECOVERED_CRAIG_STACKS,
+  recoverCraigFailedCampaignStack } from "../src/recover-craig-failed-campaign-stack.js";
 import { verifyCraigFailedStackRecoveryReceipt } from "../src/craig-campaign-stack-evidence.js";
 import { removeCraigCampaignFirewall } from "../src/craig-campaign-network-lifecycle.js";
 
@@ -150,22 +151,11 @@ class Harness {
     const args = request.args;
     const firewallResult = this.#handleFirewall(request);
     if (firewallResult !== undefined) { return firewallResult; }
+    const custodyResult = this.#handleCustody(args);
+    if (custodyResult !== undefined) { return custodyResult; }
     const lifecycleResult = this.#handleLifecycle(args);
     if (lifecycleResult !== undefined) { return lifecycleResult; }
     if (args.includes("config")) { return result(0, JSON.stringify(rendered(this.input))); }
-    if (args[0] === "volume" && args[1] === "inspect") { return result(1, "", "No such volume"); }
-    if ((args[0] === "volume" || args[0] === "network") && args[1] === "ls") { return result(); }
-    if (args[0] === "network" && args[1] === "inspect") {
-      if (!this.databaseUp || this.resourcesDown) { return result(1, "", "No such network"); }
-      return result(0, JSON.stringify([{ Driver: "bridge", Id: "a".repeat(64),
-        Labels: { "com.docker.compose.project": craigProjectName(this.input.campaignId, release) },
-        Name: this.input.networkPolicy.name,
-        Options: { "com.docker.network.bridge.name": this.input.networkPolicy.bridgeInterface } }]));
-    }
-    if (args[0] === "image" && args[1] === "inspect") {
-      const repositoryDigest = args[2]!;
-      return result(0, JSON.stringify([{ Id: image, RepoDigests: [repositoryDigest] }]));
-    }
     if (args.includes("psql")) {
       return result(0, args.at(-1)?.includes("ORDER BY version") === true
         ? this.migrationOutput : "craig|craig\n");
@@ -175,29 +165,76 @@ class Harness {
     if (args.includes("--quiet") && args.at(-1) === "bot") {
       return result(0, this.botStopped ? "" : `${id}\n`);
     }
-    if (args[0] === "inspect") {
-      if (args[1] === databaseId) { return result(0, JSON.stringify([{ Id: databaseId,
+    if ((args[0] === "inspect") || (args[0] === "container" && args[1] === "inspect")) {
+      const inspectedId = args[0] === "inspect" ? args[1] : args[2];
+      if (this.resourcesDown) { return result(1, "", "No such container"); }
+      const project = craigProjectName(this.input.campaignId, release);
+      if (inspectedId === databaseId) { return result(0, JSON.stringify([{ Id: databaseId, Image: image,
+        Name: `/${project}-${this.input.database.service}-1`,
+        Config: { Env: ["POSTGRES_DB=craig", "POSTGRES_PASSWORD=fresh-campaign-password-0123456789",
+          "POSTGRES_USER=craig"], Image: this.input.database.imageIdentity.repositoryDigest, Labels: {
+          "com.docker.compose.container-number": "1", "com.docker.compose.image": image,
+          "com.docker.compose.oneoff": "False", "com.docker.compose.project": project,
+          "com.docker.compose.project.config_files": "-", "com.docker.compose.project.working_dir": "/",
+          "com.docker.compose.service": this.input.database.service,
+        } },
+        Mounts: [{ Destination: "/var/lib/postgresql/data", Driver: "local",
+          Name: `${project}_${this.input.database.volume}`, Type: "volume" }],
         NetworkSettings: { Networks: { [this.input.networkPolicy.name]: {
           IPAddress: this.input.networkPolicy.databaseIpv4, NetworkID: "a".repeat(64),
         } } } }])); }
       const configDigest = digestCanonical(rendered(this.input));
       return result(0, JSON.stringify([{ Id: id, Image: image, Config: { Image: repository,
         Env: [`E2E_CAMPAIGN_ID=${this.input.campaignId}`, `E2E_SOURCE_REVISION=${revision}`,
-          `DISCORD_APPLICATION_ID=${this.input.serviceIdentity.applicationId}`],
-        Labels: { "com.docker.compose.project": craigProjectName(this.input.campaignId, release),
+          `DISCORD_APPLICATION_ID=${this.input.serviceIdentity.applicationId}`,
+          "DATABASE_URL=postgresql://craig:fresh-campaign-password-0123456789@database:5432/craig"],
+        Labels: { "com.docker.compose.container-number": "1", "com.docker.compose.image": image,
+          "com.docker.compose.oneoff": "False", "com.docker.compose.project": project,
+          "com.docker.compose.project.config_files": "-", "com.docker.compose.project.working_dir": "/",
           "com.docker.compose.service": "bot", "e2e.compose-config-sha256": configDigest } },
+        Mounts: [], Name: `/${project}-${this.input.service}-1`,
         NetworkSettings: { Networks: { [this.input.networkPolicy.name]: {
           IPAddress: this.input.networkPolicy.botIpv4, NetworkID: "a".repeat(64),
         } } }, State: { Health: { Status: "healthy" }, Running: true } }]));
     }
     return result();
   });
+  #handleCustody(args: readonly string[]): CraigCampaignStackCommandResult | undefined {
+    const project = craigProjectName(this.input.campaignId, release);
+    if (args[0] === "volume" && args[1] === "inspect") {
+      if (!this.databaseUp || this.resourcesDown) { return result(1, "", "No such volume"); }
+      return result(0, JSON.stringify([{ Driver: "local", Labels: {
+        "com.docker.compose.project": project, "com.docker.compose.volume": this.input.database.volume,
+      }, Name: `${project}_${this.input.database.volume}` }]));
+    }
+    if ((args[0] === "volume" || args[0] === "network") && args[1] === "ls") {
+      if (!this.databaseUp || this.resourcesDown) { return result(); }
+      return result(0, args[0] === "volume" ? `${project}_${this.input.database.volume}\n` : `${"a".repeat(64)}\n`);
+    }
+    if (args[0] === "container" && args[1] === "ls") {
+      return !this.databaseUp || this.resourcesDown ? result() : result(0, `${databaseId}\n${id}\n`);
+    }
+    if (args[0] === "network" && args[1] === "inspect") {
+      if (!this.databaseUp || this.resourcesDown) { return result(1, "", "No such network"); }
+      return result(0, JSON.stringify([{ Driver: "bridge", Id: "a".repeat(64), Internal: false,
+        IPAM: { Config: [{ Subnet: this.input.networkPolicy.subnet }] },
+        Labels: { "com.docker.compose.network": this.input.networkPolicy.name,
+          "com.docker.compose.project": project }, Name: this.input.networkPolicy.name,
+        Options: { "com.docker.network.bridge.name": this.input.networkPolicy.bridgeInterface } }]));
+    }
+    if (args[0] === "image" && args[1] === "inspect") {
+      const repositoryDigest = args[2]!;
+      return result(0, JSON.stringify([{ Config: { Volumes: repositoryDigest.startsWith("postgres@")
+        ? { "/var/lib/postgresql/data": {} } : {} }, Id: image, RepoDigests: [repositoryDigest] }]));
+    }
+    return undefined;
+  }
   #handleLifecycle(args: readonly string[]): CraigCampaignStackCommandResult | undefined {
     if (args.includes("up") && args.at(-1) === "database") { this.databaseUp = true; return result(); }
     if (args.includes("stop") && args.at(-1) === "bot") { this.botStopped = true; return result(); }
     if (args.includes("down")) { this.resourcesDown = true; return result(); }
-    if (args[0] === "container" && args[1] === "inspect") {
-      return this.resourcesDown ? result(1, "", "No such container") : result();
+    if (args.includes("ps") && args.includes("--all") && args.includes("--quiet")) {
+      return result(0, this.databaseUp && !this.resourcesDown ? `${databaseId}\n${id}\n` : "");
     }
     return undefined;
   }
@@ -343,21 +380,8 @@ describe("Craig disposable private-campaign stack", () => {
     const input = await fixture("campaign-failed-recovery");
     const harness = new Harness(input);
     const lease = await leaseFor(input);
-    const plan = planCraigDisposableCampaignStack(input);
     await provisionCraigDisposableCampaignStack(input, harness.ports(), lease);
-    const mutationContent = { campaignId: input.campaignId, campaignLeaseSha256: lease.leaseSha256,
-      composeCanonicalSha256: input.composeCanonicalSha256, hostedPlanSha256: lease.planSha256,
-      kind: "craig-stack-mutation-start" as const, networkPolicy: input.networkPolicy,
-      planSha256: plan.planSha256, projectName: plan.projectName, release: input.release,
-      schemaVersion: 1 as const, startedAt: "2026-08-26T12:00:00.000Z" };
-    const mutation = { ...mutationContent, receiptSha256: digestCanonical(mutationContent) };
-    const failureContent = { campaignId: input.campaignId, campaignLeaseSha256: lease.leaseSha256,
-      campaignRoot: lease.campaignRoot, failedAt: "2026-08-26T12:00:01.000Z", failureClass: "Error",
-      failureSha256: "7".repeat(64), hostedPlanSha256: lease.planSha256,
-      kind: "craig-failed-stack" as const, mutationReceiptSha256: mutation.receiptSha256,
-      planSha256: plan.planSha256, projectName: plan.projectName, release: input.release,
-      schemaVersion: 1 as const };
-    const failure = { ...failureContent, receiptSha256: digestCanonical(failureContent) };
+    const { failure, mutation, plan } = failedStackEvidence(input, lease);
     const recovery = await recoverCraigFailedCampaignStack(input, mutation, failure,
       { execute: harness.execute }, () => Date.parse("2026-08-26T12:00:02.000Z"));
     expect(recovery).toMatchObject({ campaignId: input.campaignId, campaignLeaseRemoved: true,
@@ -370,7 +394,7 @@ describe("Craig disposable private-campaign stack", () => {
       receiptSha256: digestCanonical(mutatedRecovery) }, failure, mutation)).toThrow();
   });
 
-  it("retries firewall uninstall after an exact dispatch was already deleted", async () => {
+  it("refuses partial firewall custody after an exact dispatch was already deleted", async () => {
     const input = await fixture("campaign-firewall-retry");
     let saves = 0;
     const calls: string[][] = [];
@@ -387,12 +411,126 @@ describe("Craig disposable private-campaign stack", () => {
       }
       return result();
     });
-    await removeCraigCampaignFirewall(input, execute, { botStopped: true });
-    expect(calls).toContainEqual(["-C", "INPUT", "-i", input.networkPolicy.bridgeInterface,
-      "-s", `${input.networkPolicy.botIpv4}/32`, "-j", input.networkPolicy.inputChain]);
-    expect(calls).not.toContainEqual(["-D", "INPUT", "-i", input.networkPolicy.bridgeInterface,
-      "-s", `${input.networkPolicy.botIpv4}/32`, "-j", input.networkPolicy.inputChain]);
+    await expect(removeCraigCampaignFirewall(input, execute, { botStopped: true }))
+      .rejects.toThrow(/complete exact installed policy or complete absence/u);
+    expect(calls.some((args) => ["-D", "-F", "-X"].includes(args[0] ?? ""))).toBe(false);
   });
+
+  it("refuses an unsupported owned-chain rule without flushing or deleting evidence", async () => {
+    const input = await fixture("campaign-firewall-unsupported");
+    const calls: string[][] = [];
+    const altered = `*filter\n:INPUT ACCEPT [0:0]\n:FORWARD DROP [0:0]\n:${input.networkPolicy.chain} - [0:0]\n-A ${input.networkPolicy.chain} -m owner --uid-owner 1000 -j DROP\nCOMMIT\n`;
+    const execute = vi.fn(async (request: CraigCampaignStackCommandRequest) => {
+      calls.push([...request.args]);
+      return request.executable === "/usr/sbin/iptables-save" ? result(0, altered) : result();
+    });
+    await expect(removeCraigCampaignFirewall(input, execute, { botStopped: true }))
+      .rejects.toThrow(/complete exact installed policy or complete absence/u);
+    expect(calls.some((args) => ["-D", "-F", "-X"].includes(args[0] ?? ""))).toBe(false);
+  });
+
+  it("accepts complete firewall absence as an idempotent retry without delete commands", async () => {
+    const input = await fixture("campaign-firewall-absent");
+    const calls: string[][] = [];
+    const execute = vi.fn(async (request: CraigCampaignStackCommandRequest) => {
+      calls.push([...request.args]);
+      if (request.executable === "/usr/sbin/iptables-save") {
+        return result(0, "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD DROP [0:0]\nCOMMIT\n");
+      }
+      return request.args[0] === "-C" || request.args[0] === "-S"
+        ? result(1, "", "No such rule or chain") : result();
+    });
+    await expect(removeCraigCampaignFirewall(input, execute, { botStopped: true })).resolves.toBeUndefined();
+    expect(calls.some((args) => ["-D", "-F", "-X"].includes(args[0] ?? ""))).toBe(false);
+  });
+
+  it("counts every mutation-only remnant and fails closed on foreign custody without deleting evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "craig-mutation-retention-"));
+    const receipts: string[] = [];
+    for (let index = 0; index < MAX_UNRECOVERED_CRAIG_STACKS + 1; index += 1) {
+      const campaignId = `crash-${index}`;
+      const control = join(root, campaignId, "control");
+      await mkdir(control, { recursive: true, mode: 0o700 });
+      const networkPolicy = deriveCraigCampaignNetworkPolicy(campaignId, release,
+        { end: 65_535, start: 1_024 });
+      const content = { campaignId, campaignLeaseSha256: "3".repeat(64),
+        composeCanonicalSha256: "4".repeat(64), hostedPlanSha256: "5".repeat(64),
+        kind: "craig-stack-mutation-start" as const, networkPolicy, planSha256: "6".repeat(64),
+        projectName: craigProjectName(campaignId, release), release, schemaVersion: 1 as const,
+        startedAt: "2026-08-26T12:00:00.000Z" };
+      const path = join(control, "craig-stack-mutation-start.json");
+      await writeFile(path, `${JSON.stringify({ ...content, receiptSha256: digestCanonical(content) })}\n`,
+        { mode: 0o600 });
+      receipts.push(path);
+    }
+    await expect(assertCraigFailedStackRetentionAdmission(root)).rejects.toThrow(/9 unrecovered/u);
+    await expect(Promise.all(receipts.map((path) => stat(path)))).resolves.toHaveLength(9);
+
+    const foreign = JSON.parse(await readFile(receipts[0]!, "utf8")) as Record<string, unknown>;
+    foreign.campaignId = "foreign-campaign";
+    const { receiptSha256: _receiptSha256, ...foreignContent } = foreign;
+    await writeFile(receipts[0]!, `${JSON.stringify({ ...foreignContent,
+      receiptSha256: digestCanonical(foreignContent) })}\n`, { mode: 0o600 });
+    await expect(assertCraigFailedStackRetentionAdmission(root)).rejects.toThrow(/foreign campaign root/u);
+    await expect(stat(receipts[0]!)).resolves.toBeDefined();
+  });
+
+  it("rejects every foreign Docker custody mutation before stop, firewall removal, or down", async () => {
+    const cases: readonly [string, (request: CraigCampaignStackCommandRequest,
+      value: unknown) => unknown][] = [
+      ["container image", (request, value) => request.args[0] === "container"
+        && request.args[1] === "inspect" && request.args[2] === id
+        ? mutateInspection(value, (item) => { item.Image = `sha256:${"f".repeat(64)}`; }) : value],
+      ["container repository", (request, value) => request.args[0] === "container"
+        && request.args[1] === "inspect" && request.args[2] === id
+        ? mutateInspection(value, (item) => { item.Config!.Image = "evil.invalid/foreign@sha256:"
+          + "e".repeat(64); }) : value],
+      ["host network", (request, value) => request.args[0] === "network" && request.args[1] === "inspect"
+        ? mutateInspection(value, (item) => { item.Driver = "host"; }) : value],
+      ["altered subnet", (request, value) => request.args[0] === "network" && request.args[1] === "inspect"
+        ? mutateInspection(value, (item) => { item.IPAM!.Config = [{ Subnet: "192.0.2.0/24" }]; }) : value],
+      ["altered bridge", (request, value) => request.args[0] === "network" && request.args[1] === "inspect"
+        ? mutateInspection(value, (item) => { item.Options = {
+          "com.docker.network.bridge.name": "foreign0",
+        }; }) : value],
+      ["network label collision", (request, value) => request.args[0] === "network"
+        && request.args[1] === "inspect" ? mutateInspection(value, (item) => {
+          item.Labels!["com.docker.compose.network"] = "foreign";
+        }) : value],
+      ["foreign volume driver", (request, value) => request.args[0] === "volume"
+        && request.args[1] === "inspect" ? mutateInspection(value, (item) => { item.Driver = "foreign"; }) : value],
+      ["volume label collision", (request, value) => request.args[0] === "volume"
+        && request.args[1] === "inspect" ? mutateInspection(value, (item) => {
+          item.Labels!["com.docker.compose.volume"] = "foreign";
+        }) : value],
+    ];
+    for (const [name, mutate] of cases) {
+      const input = await fixture(`campaign-foreign-${name.replaceAll(" ", "-")}`);
+      const harness = new Harness(input);
+      const lease = await leaseFor(input);
+      await provisionCraigDisposableCampaignStack(input, harness.ports(), lease);
+      const evidence = failedStackEvidence(input, lease);
+      const base = harness.execute.getMockImplementation();
+      if (base === undefined) { throw new Error("missing harness implementation"); }
+      const destructiveStart = harness.calls.length;
+      harness.execute.mockImplementation(async (request) => {
+        const response = await base(request);
+        const inspection = request.args[0] === "container" && request.args[1] === "inspect"
+          || request.args[0] === "network" && request.args[1] === "inspect"
+          || request.args[0] === "volume" && request.args[1] === "inspect";
+        if (!inspection || response.exitCode !== 0 || response.stdout === "") { return response; }
+        const changed = mutate(request, JSON.parse(response.stdout));
+        return changed === undefined ? response : result(0, JSON.stringify(changed));
+      });
+      await expect(recoverCraigFailedCampaignStack(input, evidence.mutation, evidence.failure,
+        { execute: harness.execute }), name).rejects.toThrow(/custody|exact/u);
+      const recoveryCalls = harness.calls.slice(destructiveStart);
+      expect(recoveryCalls.some(({ executable, args }) => executable === "/usr/bin/docker"
+        && (args.includes("stop") || args.includes("down"))), name).toBe(false);
+      expect(recoveryCalls.some(({ executable, args }) => executable === "/usr/sbin/iptables"
+        && ["-D", "-F", "-X"].includes(args[0] ?? "")), name).toBe(false);
+    }
+  }, 20_000);
 
 });
 
@@ -557,6 +695,38 @@ async function leaseFor(input: CraigCampaignStackInput): Promise<HostedCampaignL
   return { campaignId: input.campaignId, campaignRoot, device: status.dev, inode: status.ino,
     leaseSha256: createHash("sha256").update(contents).digest("hex"),
     planSha256: "9".repeat(64) } as HostedCampaignLeaseHandle;
+}
+
+function failedStackEvidence(input: CraigCampaignStackInput, lease: HostedCampaignLeaseHandle) {
+  const plan = planCraigDisposableCampaignStack(input);
+  const mutationContent = { campaignId: input.campaignId, campaignLeaseSha256: lease.leaseSha256,
+    composeCanonicalSha256: input.composeCanonicalSha256, hostedPlanSha256: lease.planSha256,
+    kind: "craig-stack-mutation-start" as const, networkPolicy: input.networkPolicy,
+    planSha256: plan.planSha256, projectName: plan.projectName, release: input.release,
+    schemaVersion: 1 as const, startedAt: "2026-08-26T12:00:00.000Z" };
+  const mutation = { ...mutationContent, receiptSha256: digestCanonical(mutationContent) };
+  const failureContent = { campaignId: input.campaignId, campaignLeaseSha256: lease.leaseSha256,
+    campaignRoot: lease.campaignRoot, failedAt: "2026-08-26T12:00:01.000Z", failureClass: "Error",
+    failureSha256: "7".repeat(64), hostedPlanSha256: lease.planSha256,
+    kind: "craig-failed-stack" as const, mutationReceiptSha256: mutation.receiptSha256,
+    planSha256: plan.planSha256, projectName: plan.projectName, release: input.release,
+    schemaVersion: 1 as const };
+  return { failure: { ...failureContent, receiptSha256: digestCanonical(failureContent) }, mutation, plan };
+}
+
+type MutableInspection = {
+  Config?: { Image?: string };
+  Driver?: string;
+  Image?: string;
+  IPAM?: { Config?: { Subnet?: string }[] };
+  Labels?: Record<string, string>;
+  Options?: Record<string, string>;
+};
+
+function mutateInspection(value: unknown, mutate: (item: MutableInspection) => void): unknown {
+  const clone = structuredClone(value) as [MutableInspection];
+  mutate(clone[0]);
+  return clone;
 }
 
 function result(exitCode = 0, stdout = "", stderr = ""): CraigCampaignStackCommandResult {

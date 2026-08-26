@@ -28,6 +28,7 @@ export const craigFailedStackReceiptV1Schema = z.object({
 export type CraigFailedStackReceiptV1 = Readonly<z.infer<typeof craigFailedStackReceiptV1Schema>>;
 
 const recoveryAbsenceSchema = z.object({
+  absentAnonymousVolumeNames: z.array(craigSha256Schema).max(3),
   absentContainerIds: z.array(craigSha256Schema).max(3), absentNetworkId: craigSha256Schema.nullable(),
   absentNetworkName: craigComposeCoordinateSchema, absentVolumeName: craigComposeCoordinateSchema,
   campaignId: craigIdentifierSchema, kind: z.literal("craig-recovery-absence-proof"),

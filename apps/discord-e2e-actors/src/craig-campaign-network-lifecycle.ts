@@ -82,9 +82,9 @@ export async function proveInstalledCraigCampaignFirewall(value: Readonly<{
 }
 
 export async function removeCraigCampaignFirewall(input: CraigCampaignStackInput, executeRequest: ExecuteRequest,
-  proof: Readonly<{ botStopped: true }>,
+  proof: Readonly<{ botStopped: boolean }>,
 ): Promise<void> {
-  if (proof.botStopped !== true) { throw new Error("Craig firewall removal requires a proved-stopped bot"); }
+  if (!proof.botStopped) { throw new Error("Craig firewall removal requires a proved-stopped bot"); }
   const address = `${input.networkPolicy.botIpv4}/32`;
   const bridge = input.networkPolicy.bridgeInterface;
   const chain = input.networkPolicy.chain;
@@ -200,14 +200,20 @@ function assertOnlyOwnedPartialPolicy(saved: string, input: CraigCampaignStackIn
     rule.chain === policy.chain || rule.chain === policy.inputChain
       || rule.target === policy.chain || rule.target === policy.inputChain);
   const allowedDigests = new Set(allowed.map((rule) => digestCanonical(rule)));
-  const observedDigests = rules.map((rule) => digestCanonical({ ...rule, unsupported: undefined }));
+  const observedDigests = rules.map((rule) => digestCanonical(rule));
   const declarations = saved.split("\n").map((line) => line.trim()).filter((line) =>
     line.startsWith(`:${policy.chain} `) || line.startsWith(`:${policy.inputChain} `));
-  if (observedDigests.some((digest) => !allowedDigests.has(digest))
-    || new Set(observedDigests).size !== observedDigests.length || declarations.length > 2
-    || declarations.some((line) => line !== `:${policy.chain} - [0:0]`
-      && line !== `:${policy.inputChain} - [0:0]`)) {
-    throw new Error("Craig firewall ownership contains an unexpected or duplicate rule");
+  const relevantLines = saved.split("\n").map((line) => line.trim()).filter((line) =>
+    line.includes(policy.chain) || line.includes(policy.inputChain));
+  const expectedDeclarations = new Set([`:${policy.chain} - [0:0]`, `:${policy.inputChain} - [0:0]`]);
+  const fullyAbsent = rules.length === 0 && declarations.length === 0 && relevantLines.length === 0;
+  const exactlyInstalled = rules.length === allowed.length && declarations.length === expectedDeclarations.size
+    && relevantLines.length === allowed.length + expectedDeclarations.size
+    && observedDigests.every((digest) => allowedDigests.has(digest))
+    && new Set(observedDigests).size === observedDigests.length
+    && declarations.every((line) => expectedDeclarations.has(line));
+  if (!fullyAbsent && !exactlyInstalled) {
+    throw new Error("Craig firewall ownership is not the complete exact installed policy or complete absence");
   }
 }
 
