@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { digest, exactRecord, safeId } from "./canonical.js";
-import type { AdjudicationAuthorityPort } from "./adjudication.js";
 import type { ProviderExchangePort } from "./execution.js";
+import { createLocalEvidenceCustody } from "./production-evidence-custody.js";
 import type { QualityCampaignRelease } from "./release.js";
 import type { CampaignCallContext, CampaignProviderPorts,
   QualityCampaignProductionPorts } from "./production-ports.js";
@@ -20,9 +20,15 @@ interface HttpConnectionConfiguration {
   readonly deletionAuthority: HttpAuthority;
   readonly deletionEndpoint: string;
   readonly evidenceEndpoint: string;
+  readonly evidenceAuthority: HttpAuthority;
+  readonly evidenceKeyId: string;
+  readonly evidenceKeyPath: string;
   readonly holdoutAnswerEndpoint: string;
   readonly holdoutCapabilityEndpoint: string;
   readonly holdoutEvidenceEndpoint: string;
+  readonly holdoutEvidenceAuthority: HttpAuthority;
+  readonly holdoutEvidenceKeyId: string;
+  readonly holdoutEvidenceKeyPath: string;
   readonly holdoutProviderResultAuthority: HttpAuthority;
   readonly holdoutRetrievalEndpoint: string;
   readonly providerResultAuthority: HttpAuthority;
@@ -55,12 +61,16 @@ Promise<QualityCampaignProductionPorts> {
     resultAuthority: Awaited<ReturnType<typeof authority>>): CampaignProviderPorts =>
     ({ answer: exchange(answer, token), capability: exchange(capability, token),
       resultAuthority, retrieval: exchange(retrieval, token) });
-  const reviewers = await Promise.all(config.adjudicators.map(async (value) => ({
-    authorityId: value.keyId, publicKeyPem: (await authority(value)).publicKeyPem,
-    signerKeyId: value.keyId,
-    adjudicate: async (input) => await requestJson(value.endpoint, token,
-      withoutSignal(input), context(input)),
-  } satisfies AdjudicationAuthorityPort)));
+  const evidenceAuthority = await authority(config.evidenceAuthority);
+  const mainEvidenceCustody = createLocalEvidenceCustody({ authority: evidenceAuthority,
+    key: decodeAesKey(await readFile(absolute(config.evidenceKeyPath), "utf8")),
+    keyId: config.evidenceKeyId });
+  const holdoutEvidenceCustody = createLocalEvidenceCustody({ authority:
+    await authority(config.holdoutEvidenceAuthority), key: decodeAesKey(await readFile(
+      absolute(config.holdoutEvidenceKeyPath), "utf8")), keyId: config.holdoutEvidenceKeyId });
+  const evidenceCustody = Object.freeze({ open: async (input: Parameters<
+    typeof mainEvidenceCustody.open>[0]) => input.kind === "main" ?
+      await mainEvidenceCustody.open(input) : await holdoutEvidenceCustody.open(input) });
   return Object.freeze({
     absence: { authorityId: config.absenceAuthority.keyId,
       observe: async (input: AbsenceInput) => await requestJson(config.absenceEndpoint, token,
@@ -69,6 +79,9 @@ Promise<QualityCampaignProductionPorts> {
       loadKey: async ({ keyId }: { readonly keyId: string }) =>
         keyId === config.artifactCustody.keyId ? {
         key: await readFile(absolute(config.artifactCustody.keyPath)),
+        authorityKeyId: config.artifactCustody.keyId,
+        authorityPublicKeyFingerprintSha256: digest(config.artifactCustody.keyCustodySha256,
+          "artifact custody authority fingerprint"),
         keyCustodySha256: config.artifactCustody.keyCustodySha256 } : null,
       readEnvelope: async ({ envelopeSha256 }: { readonly envelopeSha256: string }) => {
         if (!/^[a-f0-9]{64}$/u.test(envelopeSha256)) {return null;}
@@ -83,28 +96,28 @@ Promise<QualityCampaignProductionPorts> {
       deleteDerived: async (input: DeletionInput) => await requestJson(config.deletionEndpoint,
         token, withoutContext(input), input.context) as never },
     evidence: {
-      holdout: async (input: HoldoutEvidenceInput) => await requestJson(
-        config.holdoutEvidenceEndpoint, token, withoutContext(input), input.context) as never,
-      main: async (input: MainEvidenceInput) => await requestJson(config.evidenceEndpoint, token,
-        withoutContext(input), input.context) as never,
+      holdout: async (input: HoldoutEvidenceInput) => decodeRawEvidence(await requestJson(
+        config.holdoutEvidenceEndpoint, token, withoutContext(input), input.context)),
+      main: async (input: MainEvidenceInput) => decodeRawEvidence(await requestJson(
+        config.evidenceEndpoint, token, withoutContext(input), input.context)),
     },
+    evidenceCustody,
     holdoutProvider: provider(config.holdoutCapabilityEndpoint,
       config.holdoutRetrievalEndpoint, config.holdoutAnswerEndpoint, holdoutResultAuthority),
     mainProvider: provider(config.capabilityEndpoint, config.retrievalEndpoint,
       config.answerEndpoint, mainResultAuthority),
     release: { observe: async (callContext: CampaignCallContext) => await requestJson(
       config.releaseObservationEndpoint, token, {}, callContext) as QualityCampaignRelease },
-    review: { first: reviewers[0]!, second: reviewers[1]!, resolver: reviewers[2]!,
-      rawOutcomeEnvelopeSha256: async (attemptId: string, callContext: CampaignCallContext) => {
+    review: {
+      receipts: async (attemptId: string, callContext: CampaignCallContext) => {
         const value = await requestJson(config.rawOutcomeEndpoint, token, { attemptId },
-          callContext) as { readonly rawOutcomeEnvelopeSha256?: unknown };
-        if (typeof value.rawOutcomeEnvelopeSha256 !== "string") {
-          throw new Error("raw outcome authority returned an invalid envelope");
-        }
-        return value.rawOutcomeEnvelopeSha256;
+          callContext);
+        return exactRecord(value, ["firstReceipt", "rawOutcomeEnvelopeSha256",
+          "resolverReceipt", "secondReceipt"], "authenticated adjudication evidence") as never;
       },
       vault: { reconstruct: async (input: VaultInput) => await requestJson(
-        config.rawOutcomeEndpoint, token, withoutSignal(input), context(input)) as never } },
+        config.rawOutcomeEndpoint, token, input, { deadlineEpochMs: Date.now() + 120_000,
+          signal: new AbortController().signal }) as never } },
   });
 }
 
@@ -140,8 +153,10 @@ async function load(path: string): Promise<HttpConnectionConfiguration> {
   const keys = ["absenceAuthority", "absenceEndpoint", "adjudicators", "answerEndpoint",
     "artifactCustody",
     "capabilityEndpoint", "credentialPath", "deletionAuthority", "deletionEndpoint",
-    "evidenceEndpoint", "holdoutAnswerEndpoint", "holdoutCapabilityEndpoint",
-    "holdoutEvidenceEndpoint", "holdoutProviderResultAuthority", "holdoutRetrievalEndpoint",
+    "evidenceAuthority", "evidenceEndpoint", "evidenceKeyId", "evidenceKeyPath",
+    "holdoutAnswerEndpoint", "holdoutCapabilityEndpoint", "holdoutEvidenceAuthority",
+    "holdoutEvidenceEndpoint", "holdoutEvidenceKeyId", "holdoutEvidenceKeyPath",
+    "holdoutProviderResultAuthority", "holdoutRetrievalEndpoint",
     "providerResultAuthority", "rawOutcomeEndpoint", "releaseObservationEndpoint",
     "retrievalEndpoint", "schemaVersion"];
   const record = exactRecord(JSON.parse(await readFile(absolute(path), "utf8")) as unknown,
@@ -168,16 +183,26 @@ async function authority(value: HttpAuthority) {
   return Object.freeze({ keyId: value.keyId,
     publicKeyPem: await readFile(absolute(value.publicKeyPath), "utf8") });
 }
-function context(input: { readonly deadlineEpochMs: number; readonly signal: AbortSignal }) {
-  return { deadlineEpochMs: input.deadlineEpochMs, signal: input.signal };
-}
-function withoutSignal<T extends { readonly signal: AbortSignal }>(input: T) {
-  const { signal: _signal, ...rest } = input; return rest;
-}
 function withoutContext<T extends { readonly context: CampaignCallContext }>(input: T) {
   const { context: _context, ...rest } = input; return rest;
 }
 function absolute(path: string): string {
   if (!isAbsolute(path) || path.includes("\0")) {throw new Error("production path must be absolute");}
   return resolve(path);
+}
+
+function decodeAesKey(value: string): Buffer {
+  const key = Buffer.from(value.trim(), "base64");
+  if (key.byteLength !== 32) {throw new Error("evidence custody key is invalid");}
+  return key;
+}
+
+function decodeRawEvidence(value: unknown) {
+  const record = exactRecord(value, ["envelopeBase64", "signedReceipt"],
+    "authenticated evidence delivery");
+  if (typeof record.envelopeBase64 !== "string") {
+    throw new Error("authenticated evidence envelope is invalid");
+  }
+  return Object.freeze({ envelopeBytes: Buffer.from(record.envelopeBase64, "base64"),
+    signedReceipt: record.signedReceipt });
 }

@@ -14,6 +14,7 @@ import {
   type HostedCampaignProductionPolicy,
 } from "./hosted-campaign-production-policy.js";
 import type { HostedCampaignReleaseReferenceV1 } from "./hosted-campaign-pass-receipt.js";
+import type { CraigCampaignStackReceiptV2 } from "./craig-disposable-campaign-stack.js";
 
 export type HostedCampaignProductionCompositionFailureReason =
   | "RELEASE_BINDING_REQUIRED"
@@ -40,6 +41,7 @@ export interface HostedCampaignProductionComposition {
   }>): HostedCampaignRemoteAdmissionProbe;
   authorizeFreshAdmission(input: Readonly<{
     bindings: unknown;
+    craigStack?: CraigCampaignStackReceiptV2;
     deadlineEpochMs: number;
     definition: unknown;
     minimumHeadroomMs: number;
@@ -65,6 +67,12 @@ export function createHostedCampaignProductionComposition(
     authorizeFreshAdmission: async (input) => {
       input.signal.throwIfAborted();
       assertHeadroom(input.deadlineEpochMs, input.minimumHeadroomMs, now());
+      if (input.craigStack === undefined) {
+        throw new HostedCampaignProductionCompositionError(
+          "REMOTE_READINESS_INCOMPLETE",
+          "Fresh campaign authorization requires the provisioned dynamic Craig stack receipt",
+        );
+      }
       const exactCandidate = candidate(input);
       const remote = await evaluateHostedRemoteAdmission(
         createProbe(policy, exactCandidate),
@@ -115,6 +123,7 @@ export function createHostedCampaignProductionComposition(
 
 function candidate(input: Readonly<{
   bindings: unknown;
+  craigStack?: CraigCampaignStackReceiptV2;
   definition: unknown;
   plan: unknown;
 }>): HostedCampaignProductionCandidate {
@@ -131,6 +140,7 @@ function candidate(input: Readonly<{
     meetingPlatformRevision: definition.revisions.meetingPlatform,
     plan,
     planSha256: digestCanonical(plan),
+    ...(input.craigStack === undefined ? {} : { craigStack: input.craigStack }),
   });
 }
 

@@ -1,22 +1,22 @@
 import { admitIsolatedHoldout } from "./holdout.js";
 import { sha256 } from "./canonical.js";
-import type { PinnedReleaseDocument } from "./release.js";
+import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy } from "./release.js";
 import { executeHoldoutSchedule } from "./production-scheduler.js";
 import type { CampaignClockPort, CampaignProviderPorts } from "./production-ports.js";
 
 export async function executeIsolatedProductionHoldout(input: {
-  readonly admission: Parameters<typeof admitIsolatedHoldout>[0]; readonly clock: CampaignClockPort;
+  readonly admission: Parameters<typeof admitIsolatedHoldout>[1]; readonly clock: CampaignClockPort;
   readonly concurrency: number; readonly deadlineEpochMs: number;
   readonly journalRoot: string; readonly ports: CampaignProviderPorts;
   readonly provider: string; readonly release: PinnedReleaseDocument;
-  readonly spendAuthority: { readonly keyId: string; readonly publicKeyPem: string };
+  readonly policy: QualityCampaignAuthorityPolicy;
   readonly spendReservation: unknown; readonly spendReservationSha256: string;
 }): Promise<Readonly<Record<string, unknown>>> {
-  const admitted = admitIsolatedHoldout(input.admission);
+  const admitted = admitIsolatedHoldout(input.policy, input.admission);
   const scheduled = await executeHoldoutSchedule({ binding: { campaignRootSha256:
     admitted.authorization.holdoutRootSha256, provider: input.provider, release: input.release,
-    releaseRootSha256: admitted.authorization.mainReleaseRootSha256,
-    spendAuthority: input.spendAuthority, spendReservation: input.spendReservation,
+    policy: input.policy, releaseRootSha256: admitted.authorization.mainReleaseRootSha256,
+    spendReservation: input.spendReservation,
     spendReservationSha256: input.spendReservationSha256 }, clock: input.clock,
   concurrency: input.concurrency, deadlineEpochMs: input.deadlineEpochMs,
   journalRoot: input.journalRoot, ports: input.ports, questions: admitted.questions });

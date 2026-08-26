@@ -192,9 +192,11 @@ const executableSchema = z.object({
   }).strict().optional(),
 }).strict();
 
-const targetSchema = z.object(
-  Object.fromEntries(Object.entries(HOSTED_CAMPAIGN_TARGET).map(([key, value]) => [key, z.literal(value)])),
-).strict();
+const targetSchema = z.object({
+  ...Object.fromEntries(Object.entries(HOSTED_CAMPAIGN_TARGET)
+    .filter(([key]) => key !== "craigProject").map(([key, value]) => [key, z.literal(value)])),
+  craigProject: z.string().regex(/^(?:craig-meeting-e2e|craig-e2e-[a-f\d]{20})$/u),
+}).strict();
 
 const planSchema = z.object({
   children: z.array(executableSchema).min(1),

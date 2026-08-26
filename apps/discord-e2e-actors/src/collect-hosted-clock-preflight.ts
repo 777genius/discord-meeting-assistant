@@ -11,12 +11,13 @@ import {
 import { SshHostedServiceLevelRawProbe } from "./hosted-service-level-raw-probe.js";
 
 const absolutePath = z.string().refine(isAbsolute, "Expected an absolute path");
+const craigProject = z.string().regex(/^(?:craig-meeting-e2e|craig-e2e-[a-f\d]{20})$/u);
 
 const hostedClockPreflightProducerConfigSchema = z.object({
   outputPath: absolutePath,
   remote: z.object({
     composeFile: absolutePath,
-    craigProjectName: z.literal(HOSTED_CAMPAIGN_TARGET.craigProject),
+    craigProjectName: craigProject,
     craigServiceName: z.literal("bot"),
     environmentFile: absolutePath,
     host: z.literal(HOSTED_CAMPAIGN_TARGET.host),
@@ -54,7 +55,7 @@ const environmentSchema = z.looseObject({
   DISCORD_E2E_CLOCK_PREFLIGHT_OUTPUT: absolutePath,
   DISCORD_E2E_MUTATION_TARGET: z.literal(HOSTED_CAMPAIGN_TARGET.mutationTarget),
   DISCORD_E2E_REMOTE_COMPOSE_FILE: absolutePath,
-  DISCORD_E2E_REMOTE_CRAIG_PROJECT: z.literal(HOSTED_CAMPAIGN_TARGET.craigProject),
+  DISCORD_E2E_REMOTE_CRAIG_PROJECT: craigProject,
   DISCORD_E2E_REMOTE_CRAIG_SERVICE: z.literal("bot"),
   DISCORD_E2E_REMOTE_ENV_FILE: absolutePath,
   DISCORD_E2E_REMOTE_HOST: z.literal(HOSTED_CAMPAIGN_TARGET.host),

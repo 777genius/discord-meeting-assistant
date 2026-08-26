@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { link, mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { assertAttemptIdentity, CALL_KINDS, type AttemptIdentity, type CallKind,
   type JournalState, type SignedValue, type SpendReservation, type TerminalState,
   type VerifiedSpendReservation, verifyExternalSignedValue } from "./execution.js";
-import { QualityCampaignAuthorityPolicy } from "./release.js";
+import { QualityCampaignAuthorityPolicy, type QualityAuthorityRole } from "./release.js";
 
 interface ReservationRecord extends AttemptIdentity {
   readonly requestDigestSha256: string; readonly state: "provider_reserved";
@@ -46,13 +46,15 @@ interface BlockedRecord {
 
 export class DurableAttemptJournal {
   private readonly root: string;
-  public constructor(root: string, public readonly authorityPolicy: QualityCampaignAuthorityPolicy) {
+  public constructor(root: string, public readonly authorityPolicy: QualityCampaignAuthorityPolicy,
+    private readonly resultAuthorityRole: Extract<QualityAuthorityRole,
+    "holdout_provider_result" | "provider_result"> = "provider_result") {
     if (!isAbsolute(root) || root.includes("\0")) {throw new Error("journal root must be absolute");}
-    this.root = resolve(root);
+    this.root = resolvePath(root);
   }
 
   private get resultAuthority(): { readonly keyId: string; readonly publicKeyPem: string } {
-    return this.authorityPolicy.authority("provider_result");
+    return this.authorityPolicy.authority(this.resultAuthorityRole);
   }
 
   private async reserve(input: { readonly identity: AttemptIdentity;
@@ -226,17 +228,20 @@ export class DurableAttemptJournal {
 }
 async function writeCreateOnly(path: string, bytes: string | Uint8Array): Promise<void> {
   await ensureDirectory(dirname(path));
-  const handle = await open(path, "wx", 0o600).catch(async (error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {throw error;}
-    const existing = await readFile(path);
-    const requested = Buffer.from(bytes);
-    if (!existing.equals(requested)) {throw new Error("create-only artifact conflicts");}
-    return null;
-  });
-  if (handle === null) {return;}
+  const temporaryPath = `${path}.${randomUUID()}.pending`;
+  const handle = await open(temporaryPath, "wx", 0o600);
   try {await handle.writeFile(bytes); await handle.sync();} finally {await handle.close();}
-  const directory = await open(dirname(path), "r");
-  try {await directory.sync();} finally {await directory.close();}
+  try {
+    await link(temporaryPath, path);
+    const directory = await open(dirname(path), "r");
+    try {await directory.sync();} finally {await directory.close();}
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {throw error;}
+    const existing = await readFile(path); const requested = Buffer.from(bytes);
+    if (!existing.equals(requested)) {
+      throw new Error("create-only artifact conflicts", { cause: error });
+    }
+  } finally {await unlink(temporaryPath);}
 }
 
 async function appendDurableLine(path: string, line: string): Promise<void> {
@@ -255,8 +260,7 @@ async function appendDurableLine(path: string, line: string): Promise<void> {
 
 async function readBudgetClaims(path: string, spendReservationSha256: string,
   campaignRootSha256: string): Promise<readonly BudgetClaim[]> {
-  const text = (await readFile(path)).toString("utf8");
-  if (!text.endsWith("\n")) {throw new Error("budget ledger contains a partial claim");}
+  const text = await readCompleteLedger(path);
   return Object.freeze(text.slice(0, -1).split("\n").map((line) => {
     let value: unknown;
     try {value = JSON.parse(line) as unknown;} catch {throw new Error("budget claim is not JSON");}
@@ -276,6 +280,18 @@ async function readBudgetClaims(path: string, spendReservationSha256: string,
       "budget attempt ID"); digest(record.requestDigestSha256, "budget request digest");
     return record as unknown as BudgetClaim;
   }));
+}
+
+async function readCompleteLedger(path: string): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const text = (await readFile(path)).toString("utf8");
+    if (text.endsWith("\n")) {return text;}
+    // A single O_APPEND write is the ordering primitive. A concurrent reader may
+    // briefly observe that write before its final byte; yield without accepting
+    // or repairing the record. A persistently torn record remains fail-closed.
+    await new Promise<void>((resolve) => {setImmediate(resolve);});
+  }
+  throw new Error("budget ledger contains a partial claim");
 }
 
 function admittedBudgetClaims(claims: readonly BudgetClaim[], spend: SpendReservation):

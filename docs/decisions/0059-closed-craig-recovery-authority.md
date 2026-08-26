@@ -1,21 +1,21 @@
 ---
-id: ADR-0056
+id: ADR-0059
 status: accepted
-supersedes: [ADR-0055]
+supersedes: [ADR-0058]
 superseded_by: []
 ---
 
-# ADR-0056: Closed Craig recovery authority
+# ADR-0059: Closed Craig recovery authority
 
 ## Status
 
-Accepted on 2026-08-26. This decision supersedes ADR-0055's partial-firewall
+Accepted on 2026-08-26. This decision supersedes ADR-0058's partial-firewall
 recovery and persisted-receipt terminality while carrying forward its exact
 preflight, ownership, retained-failure, bounded-admission, and no-Discord rules.
 
 ## Context
 
-ADR-0055 authorized exact recovery of a retained Craig Compose project, but its
+ADR-0058 authorized exact recovery of a retained Craig Compose project, but its
 firewall fence allowed known partial policy to be completed destructively. Its
 mutation receipt also lacked Compose's per-service configuration identity, and
 an existing recovery receipt could be treated as terminal without proving that

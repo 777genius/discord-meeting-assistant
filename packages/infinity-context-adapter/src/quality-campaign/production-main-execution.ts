@@ -1,19 +1,19 @@
 import type { CampaignQuestion } from "./admission.js";
-import type { PinnedReleaseDocument } from "./release.js";
-import type { VerifiedSpendReservation } from "./spend.js";
+import type { PinnedReleaseDocument, QualityCampaignAuthorityPolicy } from "./release.js";
+import type { VerifiedSpendReservation } from "./execution.js";
 import type { CampaignClockPort, CampaignProviderPorts } from "./production-ports.js";
 import { executeMainCampaignSchedule } from "./production-scheduler.js";
 
 export async function executeProductionMain(input: { readonly campaignRootSha256: string;
   readonly clock: CampaignClockPort; readonly concurrency: number; readonly deadlineEpochMs: number;
   readonly journalRoot: string; readonly ports: CampaignProviderPorts;
+  readonly policy: QualityCampaignAuthorityPolicy;
   readonly questions: readonly CampaignQuestion[]; readonly release: PinnedReleaseDocument;
-  readonly spendAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly spendDocuments: readonly unknown[];
   readonly reservations: readonly VerifiedSpendReservation[] }) {
   return await executeMainCampaignSchedule({ binding: { campaignRootSha256:
     input.campaignRootSha256, release: input.release,
-    releaseRootSha256: input.release.releaseRootSha256, spendAuthority: input.spendAuthority },
+    policy: input.policy, releaseRootSha256: input.release.releaseRootSha256 },
   clock: input.clock, concurrency: input.concurrency, deadlineEpochMs: input.deadlineEpochMs,
   journalRoot: input.journalRoot, ports: input.ports, questions: input.questions,
   spendByRepetition: {

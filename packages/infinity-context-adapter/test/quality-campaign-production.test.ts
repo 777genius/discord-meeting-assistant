@@ -43,6 +43,7 @@ function authorityFixture() {
   const signers = { artifact_custody: signer("artifact-custody-authority"),
     cleanup: signer("cleanup-authority"),
     holdout_authorization: signer("holdout-authorization-authority"),
+    holdout_provider_result: signer("holdout-provider-result-authority"),
     holdout_question: signer("holdout-question-authority"),
     inventory: signer("target-inventory-authority"), locator: signer("locator-authority"),
     main_proof: signer("main-proof-authority"),

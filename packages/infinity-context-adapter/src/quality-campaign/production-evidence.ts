@@ -2,6 +2,8 @@ import type { CampaignQuestion } from "./admission.js";
 import type { FinalAdjudicationEnvelope } from "./adjudication.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import type { AttemptIdentity } from "./execution.js";
+import type { QualityCampaignAuthorityPolicy } from "./release.js";
+import { assertTerminalChain } from "./production-evidence-terminals.js";
 import { verifyExactRetentionInventory, type ArtifactCustodyPort,
   type RetainedArtifact, type RetainedArtifactKind } from "./retention.js";
 
@@ -13,6 +15,7 @@ export interface ExactOutcomeEvidence {
   readonly campaignRootSha256: string;
   readonly citationLocatorDigests: readonly string[];
   readonly evidenceLocatorDigests: readonly string[];
+  readonly evidenceTurnIds: readonly string[];
   readonly expectedAnswer: "answerable" | "abstain";
   readonly finalAdjudicationSha256: string;
   readonly forbiddenLocatorDigests: readonly string[];
@@ -23,6 +26,20 @@ export interface ExactOutcomeEvidence {
   readonly relevantLocatorDigests: readonly string[];
   readonly repetition: 1 | 2 | 3;
   readonly retrievalLatencyUs: number;
+  readonly scopeViolationLocatorIds: readonly string[];
+  readonly speakerTimeChecks: readonly unknown[];
+  readonly terminalChain: readonly ExactTerminalEvidence[];
+}
+
+export interface ExactTerminalEvidence {
+  readonly attemptId: string;
+  readonly callKind: "answer" | "capability" | "retrieval";
+  readonly callOrdinal: number;
+  readonly predecessorResultDigestSha256: string | null;
+  readonly requestDigestSha256: string;
+  readonly resultEnvelopeDigestSha256: string;
+  readonly signedResult: unknown;
+  readonly terminalDigestSha256: string;
 }
 
 export interface ExactAdjudicationEvidence extends FinalAdjudicationEnvelope {
@@ -35,9 +52,11 @@ export interface ExactAdjudicationEvidence extends FinalAdjudicationEnvelope {
 export interface ExactCampaignEvidence {
   readonly adjudications: readonly ExactAdjudicationEvidence[];
   readonly artifacts: readonly RetainedArtifact[];
+  readonly authorizedLocatorInventory: unknown;
   readonly authorizedLocatorIds: readonly string[];
   readonly campaignByteCeiling: number;
   readonly outcomes: readonly ExactOutcomeEvidence[];
+  readonly questionReviewReceipts: readonly [unknown, unknown];
   readonly repetitionEvidence: readonly unknown[];
 }
 
@@ -62,10 +81,14 @@ const RATIO_THRESHOLDS = Object.freeze({
 } as const);
 
 export async function reconstructExactMainEvidence(input: {
+  readonly authorityPolicy: QualityCampaignAuthorityPolicy;
   readonly artifactKeyCustodySha256: string; readonly custody: ArtifactCustodyPort;
   readonly campaignRootSha256: string;
   readonly evidence: ExactCampaignEvidence;
+  readonly providerResultAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly questions: readonly CampaignQuestion[];
+  readonly releaseRootSha256: string;
+  readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
 }): Promise<{ readonly inventorySha256: string; readonly metrics: readonly LocallyComputedMetrics[];
   readonly metricsSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>> }> {
   const expected = ([1, 2, 3] as const).flatMap((repetition) => input.questions.map((question) => {
@@ -77,18 +100,37 @@ export async function reconstructExactMainEvidence(input: {
   }));
   assertExactMembership(input.campaignRootSha256, expected, input.evidence.outcomes,
     input.evidence.adjudications);
+  for (const outcome of input.evidence.outcomes) {
+    const question = input.questions.find(({ questionId }) => questionId === outcome.questionId);
+    if (question === undefined) {throw new Error("terminal chain question is foreign");}
+    assertTerminalChain({ authority: input.providerResultAuthority, outcome, question,
+      releaseRootSha256: input.releaseRootSha256, root: input.campaignRootSha256,
+      spendReservationSha256: input.spendReservationSha256ByRepetition[outcome.repetition] });
+  }
   const adjudicationByAttempt = new Map(input.evidence.adjudications.map((value) =>
     [value.attemptId, value]));
-  const retained = await verifyExactRetentionInventory({ artifacts: input.evidence.artifacts,
+  const retained = await verifyExactRetentionInventory(input.authorityPolicy, {
+    artifacts: input.evidence.artifacts,
     artifactKeyCustodySha256: input.artifactKeyCustodySha256,
     campaignByteCeiling: input.evidence.campaignByteCeiling,
     custody: input.custody, expectedOutcomes: expected.map(({ attempt }) => {
       const outcome = input.evidence.outcomes.find(({ identity }) =>
         identity.attemptId === attempt.attemptId)!;
       return { artifactBindingSha256ByKind: outcome.artifactBindingSha256ByKind,
+        abstention: { expected: outcome.expectedAnswer === "abstain",
+          observed: outcome.answerAbstained },
+        citationChecks: adjudicationByAttempt.get(attempt.attemptId)!.decision.claims.map(
+          ({ claimId, citationEntailed }) => ({ claimId, entailed: citationEntailed })),
+        claimChecks: adjudicationByAttempt.get(attempt.attemptId)!.decision.claims.map(
+          ({ claimFactual, claimId, claimSupported }) => ({ claimId, factual: claimFactual,
+            supported: claimSupported })), evidenceTurnIds: outcome.evidenceTurnIds,
         finalAdjudicationSha256: outcome.finalAdjudicationSha256, identity: attempt,
-      resolverRequired: adjudicationByAttempt.get(attempt.attemptId)?.resolverReceiptSha256 !==
-        null }; }) });
+        rankedLocatorIds: outcome.rankedLocatorDigests,
+        relevantLocatorIds: outcome.relevantLocatorDigests,
+      resolverRequired: adjudicationByAttempt.get(attempt.attemptId)?.resolverReceipt !==
+        null, retrievalLatencyUs: outcome.retrievalLatencyUs,
+        scopeViolationLocatorIds: outcome.scopeViolationLocatorIds,
+        speakerTimeChecks: outcome.speakerTimeChecks }; }) });
   const metrics = ([1, 2, 3] as const).map((repetition) => computeMetrics({ adjudications:
     input.evidence.adjudications.filter((value) => value.repetition === repetition), outcomes:
     input.evidence.outcomes.filter((value) => value.repetition === repetition), repetition }));
@@ -100,7 +142,10 @@ export async function reconstructExactMainEvidence(input: {
 
 export function reconstructExactHoldoutEvidence(input: {
   readonly campaignRootSha256: string; readonly adjudications: readonly ExactAdjudicationEvidence[];
-  readonly outcomes: readonly ExactOutcomeEvidence[]; readonly questions: readonly CampaignQuestion[];
+  readonly outcomes: readonly ExactOutcomeEvidence[];
+  readonly providerResultAuthority: { readonly keyId: string; readonly publicKeyPem: string };
+  readonly questions: readonly CampaignQuestion[]; readonly releaseRootSha256: string;
+  readonly spendReservationSha256: string;
 }): { readonly metrics: LocallyComputedMetrics; readonly metricsSha256: string } {
   const expected = input.questions.map((question) => {
     const outcome = input.outcomes.find((candidate) => candidate.questionId === question.questionId);
@@ -109,6 +154,12 @@ export function reconstructExactHoldoutEvidence(input: {
   });
   assertExactMembership(input.campaignRootSha256, expected, input.outcomes,
     input.adjudications);
+  for (const outcome of input.outcomes) {
+    const question = input.questions.find(({ questionId }) => questionId === outcome.questionId)!;
+    assertTerminalChain({ authority: input.providerResultAuthority, outcome, question,
+      releaseRootSha256: input.releaseRootSha256, root: input.campaignRootSha256,
+      spendReservationSha256: input.spendReservationSha256 });
+  }
   const metrics = computeMetrics({ adjudications: input.adjudications, outcomes: input.outcomes,
     repetition: 1 });
   assertThresholds(metrics);
@@ -144,9 +195,10 @@ function assertExactMembership(campaignRootSha256: string, expected: readonly {
       adjudication.decisionDigestSha256 !== sha256(adjudication.decision)) {
       throw new Error("adjudication evidence is not bound to the exact outcome inventory");
     }
-    for (const receiptDigest of [adjudication.firstReceiptSha256, adjudication.secondReceiptSha256,
-      adjudication.outcomeDigestSha256, ...(adjudication.resolverReceiptSha256 === null ? [] :
-        [adjudication.resolverReceiptSha256])]) {digest(receiptDigest, "adjudication evidence");}
+    for (const receiptDigest of [sha256(adjudication.firstReceipt),
+      sha256(adjudication.secondReceipt), adjudication.outcomeDigestSha256,
+      ...(adjudication.resolverReceipt === null ? [] :
+        [sha256(adjudication.resolverReceipt)])]) {digest(receiptDigest, "adjudication evidence");}
   }
 }
 
@@ -154,8 +206,9 @@ function decodeOutcome(value: ExactOutcomeEvidence): void {
   exactRecord(value, ["answerAbstained", "attemptId", "campaignRootSha256",
     "artifactBindingSha256ByKind", "citationLocatorDigests", "evidenceLocatorDigests",
     "expectedAnswer", "finalAdjudicationSha256", "forbiddenLocatorDigests", "identity",
-    "questionDigestSha256", "questionId",
-    "rankedLocatorDigests", "relevantLocatorDigests", "repetition", "retrievalLatencyUs"],
+    "questionDigestSha256", "questionId", "rankedLocatorDigests", "relevantLocatorDigests",
+    "repetition", "retrievalLatencyUs", "scopeViolationLocatorIds", "speakerTimeChecks",
+    "terminalChain", "evidenceTurnIds"],
   "exact outcome evidence");
   safeId(value.attemptId, "outcome attempt"); safeId(value.questionId, "outcome question");
   digest(value.campaignRootSha256, "outcome root");

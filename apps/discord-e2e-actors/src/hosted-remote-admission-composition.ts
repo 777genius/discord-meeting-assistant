@@ -84,6 +84,7 @@ export interface HostedRemoteAdmissionCompositionConfig {
   readonly craig: Readonly<{
     containerId: string;
     imageDigestSha256: string;
+    projectName?: string;
     sourceRevision: string;
   }>;
   readonly meetingPlatformRevision: string;

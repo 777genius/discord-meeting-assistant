@@ -256,17 +256,21 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/adjudication.ts
       - packages/infinity-context-adapter/src/quality-campaign/admission.ts
       - packages/infinity-context-adapter/src/quality-campaign/artifacts.ts
+      - packages/infinity-context-adapter/src/quality-campaign/attempt-journal.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical.ts
+      - packages/infinity-context-adapter/src/quality-campaign/cleanup-evidence.ts
       - packages/infinity-context-adapter/src/quality-campaign/execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/final-admission.ts
       - packages/infinity-context-adapter/src/quality-campaign/holdout.ts
       - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-evidence.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-evidence-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-ports.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
+      - packages/infinity-context-adapter/src/quality-campaign/qualification-metrics.ts
       - packages/infinity-context-adapter/src/quality-campaign/release.ts
       - packages/infinity-context-adapter/src/quality-campaign/retention.ts
     allow:
@@ -320,6 +324,7 @@ boundaries:
     entrypoints: []
     allow:
       boundaries:
+        - composition.infinity-quality-campaign
         - core.meeting.knowledge
       packages:
         - "@discord-meeting/meeting-core"

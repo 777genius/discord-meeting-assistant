@@ -57,6 +57,7 @@
 - [ADR-0054: Official-SDK finalized-live memory projection](0054-official-sdk-live-memory-projection.md)
 - [ADR-0055: Deadline-bound durable participant greetings](0055-deadline-bound-durable-participant-greetings.md)
 - [ADR-0056: Terminal-evidence greeting reconciliation](0056-terminal-evidence-greeting-reconciliation.md)
+- [ADR-0059: Closed Craig recovery authority](0059-closed-craig-recovery-authority.md)
 
 ## Superseded
 
@@ -65,3 +66,4 @@
 - [ADR-0030: Memory-backed grounded final reply](0030-local-final-reply.md)
 - [ADR-0031: Infinity Context historical memory](0031-infinity-context-historical-memory.md)
 - [ADR-0033: Adaptive bounded current grounding](0033-adaptive-current-grounding.md)
+- [ADR-0058: Exact Craig hosted stack recovery](0058-exact-craig-hosted-stack-recovery.md)

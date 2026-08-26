@@ -271,6 +271,16 @@
       "id": "ADR-0056",
       "path": "docs/decisions/0056-terminal-evidence-greeting-reconciliation.md",
       "immutableDigest": "sha256:2ac50a56e85b9eaae0c98a318ec51c07d760e8bd4937760cebe56e26c40a13fb"
+    },
+    {
+      "id": "ADR-0058",
+      "path": "docs/decisions/0058-exact-craig-hosted-stack-recovery.md",
+      "immutableDigest": "sha256:a74101ddb986c8d9f9c16a45fb149177aef35c90ae738ae9d3ce9d20844e9040"
+    },
+    {
+      "id": "ADR-0059",
+      "path": "docs/decisions/0059-closed-craig-recovery-authority.md",
+      "immutableDigest": "sha256:c5135c931aa44fd528cdcf57d745b9509cddc4321be498b153438f5305e9561a"
     }
   ]
 }

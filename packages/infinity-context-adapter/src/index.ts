@@ -75,3 +75,4 @@ export {
   type SemanticQualityV4RunnerOutcome,
   type SemanticQualityV4RetrievalPhaseOutcome,
 } from "./semantic-quality-v4-runner.js";
+export * from "./quality-campaign/index.js";

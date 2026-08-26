@@ -3,9 +3,10 @@ import { isAbsolute, resolve } from "node:path";
 
 import { type AdmittedMainCampaign, type AdmissionAuthority,
   type CampaignQuestion } from "./admission.js";
-import { canonicalJson, digest, exactRecord } from "./canonical.js";
+import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256 } from "./canonical.js";
 import { verifyExternalSignedValue, verifySpendReservation } from "./execution.js";
 import type { HoldoutAuthorization } from "./holdout.js";
+import { QUALITY_AUTHORITY_ROLES, QualityCampaignAuthorityPolicy } from "./release.js";
 import type { ProtectedCampaignEvidence } from "./production-cleanup.js";
 import type { DerivedCampaignArtifact, QualityCampaignProductionPorts } from
   "./production-ports.js";
@@ -13,6 +14,7 @@ import type { DerivedCampaignArtifact, QualityCampaignProductionPorts } from
 export interface ProductionOperatorConfiguration {
   readonly absenceAuthorityPath: string;
   readonly admissionAuthorityPath: string;
+  readonly authorityPolicyPath: string;
   readonly adjudicationAuthorityPaths: readonly [string, string, string];
   readonly authoritativeEvidenceInventoryPath: string;
   readonly checkpointRoot: string;
@@ -29,7 +31,7 @@ export interface ProductionOperatorConfiguration {
   readonly releaseRootPath: string;
   readonly repetitionAuthorityPath: string;
   readonly reviewerAuthorityPaths: readonly [string, string];
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_production_operator.v2";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_production_operator.v4";
   readonly spendAuthorityPath: string;
   readonly spendReservationsPath: string;
 }
@@ -48,6 +50,7 @@ export interface CanonicalCustodyEvidence {
 export async function loadProductionConfiguration(path: string):
 Promise<ProductionOperatorConfiguration> {
   const keys = ["absenceAuthorityPath", "adjudicationAuthorityPaths", "admissionAuthorityPath",
+    "authorityPolicyPath",
     "authoritativeEvidenceInventoryPath", "checkpointRoot", "cleanupPlanPath", "concurrency",
     "deletionAuthorityPath", "holdoutAuthorityPath", "holdoutCleanupPlanPath",
     "holdoutInputPath", "holdoutJournalRoot", "journalRoot", "mainManifestPath",
@@ -56,7 +59,7 @@ Promise<ProductionOperatorConfiguration> {
     "schemaVersion", "spendAuthorityPath", "spendReservationsPath"];
   const record = exactRecord(await readProductionJson(path, "production operator configuration"),
     keys, "production operator configuration");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_production_operator.v2" ||
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_production_operator.v4" ||
     !Array.isArray(record.reviewerAuthorityPaths) || record.reviewerAuthorityPaths.length !== 2 ||
     !Array.isArray(record.adjudicationAuthorityPaths) ||
     record.adjudicationAuthorityPaths.length !== 3 || typeof record.concurrency !== "number") {
@@ -67,6 +70,20 @@ Promise<ProductionOperatorConfiguration> {
     if (key.endsWith("Paths")) {for (const item of value as unknown[]) {absolute(String(item), key);}}
   }
   return record as unknown as ProductionOperatorConfiguration;
+}
+
+export async function loadProductionAuthorityPolicy(path: string):
+Promise<QualityCampaignAuthorityPolicy> {
+  const record = exactRecord(await readProductionJson(path, "quality authority policy"),
+    QUALITY_AUTHORITY_ROLES, "quality authority policy paths");
+  const entries = await Promise.all(QUALITY_AUTHORITY_ROLES.map(async (role) => {
+    const authority = await loadProductionAuthority(absolute(String(record[role]),
+      `${role} authority`));
+    return [role, Object.freeze({ keyId: authority.keyId,
+      publicKeyFingerprintSha256: publicKeyFingerprintSha256(authority.publicKeyPem,
+        `${role} authority`), publicKeyPem: authority.publicKeyPem })] as const;
+  }));
+  return new QualityCampaignAuthorityPolicy(Object.fromEntries(entries) as never);
 }
 
 export async function loadProductionAuthority(path: string): Promise<AdmissionAuthority> {
@@ -122,6 +139,7 @@ Promise<readonly DerivedCampaignArtifact[]> {
 export async function loadProductionHoldout(input: { readonly admitted: AdmittedMainCampaign;
   readonly authority: AdmissionAuthority; readonly custody: CanonicalCustodyEvidence;
   readonly nowEpochMs: number; readonly path: string;
+  readonly policy: QualityCampaignAuthorityPolicy;
   readonly ports: QualityCampaignProductionPorts; readonly releaseRootSha256: string }) {
   const record = exactRecord(await readProductionJson(input.path, "holdout input"),
     ["authorizationReceiptPath", "locatorDigestsPath", "mainProofAuthorityPath",
@@ -154,15 +172,16 @@ export async function loadProductionHoldout(input: { readonly admitted: Admitted
     "holdout spend authority"));
   const spendReservation = await readProductionJson(absolute(String(record.spendReservationPath),
     "holdout spend reservation"), "holdout spend reservation");
-  const verifiedSpend = verifySpendReservation({ authorityKeyId: spendAuthority.keyId,
-    authorityPublicKeyPem: spendAuthority.publicKeyPem,
+  input.policy.assertReference("spend", spendAuthority.keyId);
+  const verifiedSpend = verifySpendReservation(input.policy, {
     campaignRootSha256: authorizationReceipt.payload.holdoutRootSha256,
     expectedRepetition: 1, nowEpochMs: input.nowEpochMs,
     releaseRootSha256: input.releaseRootSha256, reservation: spendReservation });
   assertHoldoutIsolation({ authorization: authorizationReceipt.payload, holdoutLocatorDigests, input,
     questions, tuningEvidenceDigests });
-  return { admission: { authorization, authorizationAuthority: input.authority,
-    holdoutLocatorDigests, main, mainAuthority, questionAuthority, questionReceipt, questions },
+  return { admission: { authorization, authorizationAuthorityKeyId: input.authority.keyId,
+    holdoutLocatorDigests, main, mainAuthorityKeyId: mainAuthority.keyId,
+    questionAuthorityKeyId: questionAuthority.keyId, questionReceipt, questions },
   authorization: authorizationReceipt.payload, holdoutLocatorDigests, main, questions,
   provider: verifiedSpend.payload.provider, spendAuthority, spendReservation, spendReservationSha256:
     verifiedSpend.spendReservationSha256 };

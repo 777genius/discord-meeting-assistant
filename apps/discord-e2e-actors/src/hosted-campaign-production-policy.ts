@@ -6,6 +6,7 @@ import {
   type HostedCampaignReleaseTrustRootV1,
 } from "./hosted-campaign-release-binding.js";
 import type { HostedCampaignReleaseReferenceV1 } from "./hosted-campaign-pass-receipt.js";
+import type { CraigCampaignStackReceiptV2 } from "./craig-disposable-campaign-stack.js";
 
 export const HOSTED_CAMPAIGN_PRODUCTION_POLICY = Object.freeze({
   kind: "hosted-campaign-production-policy",
@@ -49,4 +50,5 @@ export interface HostedCampaignProductionCandidate {
   readonly meetingPlatformRevision: string;
   readonly plan: unknown;
   readonly planSha256: string;
+  readonly craigStack?: CraigCampaignStackReceiptV2;
 }

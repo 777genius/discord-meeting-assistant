@@ -52,6 +52,22 @@ export interface OperatorResult {
   readonly status: OperatorStatus;
 }
 
+export function createOperatorSafeReceipt(campaignRootSha256: string,
+  values: Readonly<Record<string, unknown>>): OperatorSafeReceipt {
+  const counters: Record<string, number> = {};
+  const digests: Record<string, string> = { campaignRootSha256 };
+  for (const [key, value] of Object.entries(values)) {
+    if (SAFE_OPERATOR_COUNTERS.includes(key as SafeOperatorCounter) && typeof value === "number") {
+      counters[key] = value;
+    }
+    if (SAFE_OPERATOR_DIGESTS.includes(key as SafeOperatorDigest) && typeof value === "string") {
+      digests[key] = value;
+    }
+  }
+  return Object.freeze({ counters: Object.freeze(counters), digests: Object.freeze(digests),
+    errorCode: null });
+}
+
 export interface QualityCampaignOperatorHandlers {
   run(input: { readonly command: QualityCampaignCommand;
     readonly phaseInput: Readonly<Record<string, unknown>> }): Promise<OperatorResult>;

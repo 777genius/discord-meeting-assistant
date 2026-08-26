@@ -1,22 +1,22 @@
 import { exactRecord } from "./canonical.js";
-import { verifySpendReservations } from "./execution.js";
-import { assertObservedRelease, verifyReleaseRoot } from "./release.js";
-import { loadProductionAuthority, readProductionArray, readProductionJson, readProductionText,
+import { verifySpendReservation } from "./execution.js";
+import { assertObservedRelease, type QualityCampaignAuthorityPolicy,
+  verifyReleaseRoot } from "./release.js";
+import { readProductionArray, readProductionJson,
   type ProductionOperatorConfiguration } from "./production-inputs.js";
 import type { QualityCampaignProductionPorts } from "./production-ports.js";
 
 const AUTHORITY_CALL_DEADLINE_MS = 120_000;
 
-export async function loadPinnedProductionRelease(config: ProductionOperatorConfiguration,
+export async function loadPinnedProductionRelease(policy: QualityCampaignAuthorityPolicy,
+  config: ProductionOperatorConfiguration,
   ports: QualityCampaignProductionPorts) {
-  const authorityPublicKeyPem = await readProductionText(config.releaseAuthorityPublicKeyPath,
-    "release authority public key");
   const document = await readProductionJson(config.releaseRootPath, "release root");
   const record = exactRecord(document, ["payload", "signatureBase64", "signerKeyId"],
     "release root");
-  const verified = verifyReleaseRoot({ authorityKeyId: String(record.signerKeyId),
-    authorityPublicKeyPem, document });
-  const pinned = { authorityKeyId: verified.authorityKeyId, authorityPublicKeyPem, document,
+  const verified = verifyReleaseRoot(policy, { authorityKeyId: String(record.signerKeyId),
+    document });
+  const pinned = { authorityKeyId: verified.authorityKeyId, document,
     releaseRootSha256: verified.releaseRootSha256 };
   const deadlineEpochMs = ports.clock.nowEpochMs() + AUTHORITY_CALL_DEADLINE_MS;
   const controller = new AbortController();
@@ -27,15 +27,22 @@ export async function loadPinnedProductionRelease(config: ProductionOperatorConf
   return Object.freeze({ pinned, verified });
 }
 
-export async function loadVerifiedProductionSpend(input: { readonly campaignRootSha256: string;
+export async function loadVerifiedProductionSpend(policy: QualityCampaignAuthorityPolicy,
+  input: { readonly campaignRootSha256: string;
   readonly config: ProductionOperatorConfiguration; readonly nowEpochMs: number;
   readonly releaseRootSha256: string }) {
-  const authority = await loadProductionAuthority(input.config.spendAuthorityPath);
   const documents = await readProductionArray(input.config.spendReservationsPath,
     "spend reservations");
-  const reservations = verifySpendReservations({ authorityKeyId: authority.keyId,
-    authorityPublicKeyPem: authority.publicKeyPem, campaignRootSha256: input.campaignRootSha256,
-    nowEpochMs: input.nowEpochMs, releaseRootSha256: input.releaseRootSha256,
-    reservations: documents });
-  return Object.freeze({ authority, documents, reservations });
+  if (documents.length !== 3) {
+    throw new Error("production campaign requires three signed spend reservations");
+  }
+  const reservations = ([1, 2, 3] as const).map((expectedRepetition, index) =>
+    verifySpendReservation(policy, { campaignRootSha256: input.campaignRootSha256,
+      expectedRepetition, nowEpochMs: input.nowEpochMs,
+      releaseRootSha256: input.releaseRootSha256, reservation: documents[index] }));
+  if (new Set(reservations.map(({ spendReservationSha256 }) =>
+    spendReservationSha256)).size !== 3) {
+    throw new Error("production spend reservations are not independently bound");
+  }
+  return Object.freeze({ documents, reservations });
 }

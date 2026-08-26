@@ -51,6 +51,7 @@ export interface HostedCampaignProcessAdapterOptions {
   readonly outputLimitBytes?: number; readonly terminationGraceMilliseconds?: number;
   readonly releaseBindingPath?: string;
   readonly planPath?: string;
+  readonly craigProject?: string;
   readonly trustedRuntimeEnvironment: HostedCampaignTrustedRuntimeEnvironment;
 }
 export {
@@ -93,7 +94,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     const phase = typeof phaseOrBounded === "string" ? phaseOrBounded : "connection";
     const bounded = typeof phaseOrBounded === "string" ? explicitBounded : phaseOrBounded;
     if (bounded === undefined) { throw new Error("Hosted actor gate requires a bounded signal"); }
-    assertPinnedTarget(spec);
+    assertPinnedTarget(spec, this.#options.craigProject ?? HOSTED_CAMPAIGN_TARGET.craigProject);
     await publishHostedActorGate({ artifactStore: this.#options.artifactStore, bounded, phase, spec });
   }
   async publishSupplementalGate(
@@ -101,7 +102,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     phase: "connection" | "playback",
     bounded: HostedCampaignBoundedSignal,
   ): Promise<void> {
-    assertPinnedTarget(spec);
+    assertPinnedTarget(spec, this.#options.craigProject ?? HOSTED_CAMPAIGN_TARGET.craigProject);
     await publishHostedSupplementalGate({ bounded, phase, spec });
   }
   async awaitBarrier<Action extends HostedCampaignBarrierAction>(action: Action, bounded: HostedCampaignBoundedSignal) {
@@ -172,7 +173,7 @@ export class HostedCampaignProcessAdapter implements HostedCampaignPorts {
     if (this.#children.has(spec.childId)) {
       throw new Error(`Hosted campaign child already started: ${spec.childId}`);
     }
-    assertPinnedTarget(spec);
+    assertPinnedTarget(spec, this.#options.craigProject ?? HOSTED_CAMPAIGN_TARGET.craigProject);
     const environment = {
       ...(SSH_RUNTIME_ENTRYPOINTS.has(spec.entrypoint) ? this.#trustedRuntimeEnvironment : {}),
       ...validateChildEnvironment(spec.environment),
@@ -372,7 +373,7 @@ async function raceWithTimeout<T>(promise: Promise<T>, milliseconds: number, mes
     void promise.then(resolve, reject).finally(() => { clearTimeout(timer); });
   });
 }
-function assertPinnedTarget(spec: HostedCampaignExecutableSpec): void {
+function assertPinnedTarget(spec: HostedCampaignExecutableSpec, craigProject: string): void {
   const expected = HOSTED_CAMPAIGN_TARGET;
   if (spec.entrypoint === "actor") {
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_GUILD_ID", expected.guildId);
@@ -391,7 +392,7 @@ function assertPinnedTarget(spec: HostedCampaignExecutableSpec): void {
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_MUTATION_TARGET", expected.mutationTarget);
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_HOST", expected.host);
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_PROJECT", expected.project);
-    assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_CRAIG_PROJECT", expected.craigProject);
+    assertEnvironmentCoordinate(spec, "DISCORD_E2E_REMOTE_CRAIG_PROJECT", craigProject);
   }
   if (spec.entrypoint === "replay-attestation-publisher") {
     assertEnvironmentCoordinate(spec, "DISCORD_E2E_REPLAY_MUTATION_TARGET", expected.mutationTarget);

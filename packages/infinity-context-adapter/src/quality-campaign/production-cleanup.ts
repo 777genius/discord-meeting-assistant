@@ -1,8 +1,9 @@
 import { PROTECTED_SOURCE_KINDS, verifyCampaignCreatedTargetInventory,
-  verifyCleanupAbsenceReceipt } from "./retention.js";
+  verifyCleanupAbsenceReceipt } from "./cleanup-evidence.js";
 import { canonicalJson, digest, sha256 } from "./canonical.js";
 import type { CampaignDeletionPort, CanonicalAbsencePort,
   CampaignCallContext } from "./production-ports.js";
+import type { QualityCampaignAuthorityPolicy } from "./release.js";
 
 export interface ProtectedCampaignEvidence {
   readonly artifactSha256: string;
@@ -26,6 +27,7 @@ export async function executeDerivedCleanup(input: {
   readonly campaignRootSha256: string; readonly deletion: CampaignDeletionPort;
   readonly context: CampaignCallContext;
   readonly observation: CanonicalAbsencePort;
+  readonly policy: QualityCampaignAuthorityPolicy;
   readonly protectedEvidence: readonly ProtectedCampaignEvidence[];
   readonly releaseRootSha256: string;
   readonly targetInventoryAuthority: { readonly keyId: string; readonly publicKeyPem: string };
@@ -33,8 +35,8 @@ export async function executeDerivedCleanup(input: {
   readonly targetInventoryReceipt: unknown;
 }): Promise<StrictCleanupReceipt> {
   assertCanonicalProtectedEvidence(input.protectedEvidence);
-  const inventory = verifyCampaignCreatedTargetInventory({ authority:
-    input.targetInventoryAuthority, campaignRootSha256: input.campaignRootSha256,
+  const inventory = verifyCampaignCreatedTargetInventory(input.policy, { authorityKeyId:
+    input.targetInventoryAuthority.keyId, campaignRootSha256: input.campaignRootSha256,
   receipt: input.targetInventoryReceipt, releaseRootSha256: input.releaseRootSha256,
   targetInventoryAuthorityKeySha256: input.targetInventoryAuthorityKeySha256 });
   const manifest = inventory.manifest;
@@ -49,8 +51,8 @@ export async function executeDerivedCleanup(input: {
   const rawObservation = await input.observation.observe({ campaignRootSha256:
     input.campaignRootSha256, cleanupManifestSha256, context: input.context,
     targetArtifactIds: targetIds });
-  const signed = verifyCleanupAbsenceReceipt({ authorityKeyId: input.absenceAuthority.keyId,
-    authorityPublicKeyPem: input.absenceAuthority.publicKeyPem, cleanupManifest: manifest,
+  const signed = verifyCleanupAbsenceReceipt(input.policy, { authorityKeyId:
+    input.absenceAuthority.keyId, cleanupManifest: manifest,
     receipt: rawObservation });
   for (const evidence of input.protectedEvidence) {digest(evidence.artifactSha256,
     "protected evidence digest");}

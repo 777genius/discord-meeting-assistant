@@ -5,7 +5,6 @@ import { verifyExternalSignedValue } from "./execution.js";
 import type { ExactCampaignEvidence } from "./production-evidence.js";
 import type { CampaignEvidenceCustodyPort, RawAuthenticatedEvidence } from
   "./production-ports.js";
-import type { RetainedArtifact } from "./retention.js";
 
 interface EvidenceReceiptPayload {
   readonly attemptInventorySha256: string;
@@ -39,10 +38,6 @@ export function createLocalEvidenceCustody(input: { readonly authority: {
     }
     const plaintext = openEnvelope(request.delivery, input.key, payload);
     const decoded = decodeEvidence(JSON.parse(plaintext.toString("utf8")) as unknown);
-    for (const artifact of decoded.artifacts) {
-      openRetainedArtifact(artifact, input.key, request.campaignRootSha256,
-        request.releaseRootSha256, input.keyId);
-    }
     return Object.freeze(decoded);
   } });
 }
@@ -82,30 +77,6 @@ function openEnvelope(delivery: RawAuthenticatedEvidence, key: Uint8Array,
   return plaintext;
 }
 
-function openRetainedArtifact(artifact: RetainedArtifact, key: Uint8Array, campaignRootSha256: string,
-  releaseRootSha256: string, keyId: string): void {
-  const bytes = Buffer.from(artifact.envelopeBase64, "base64");
-  if (bytes.byteLength !== artifact.storedBytes || sha256(bytes) !== artifact.envelopeSha256 ||
-    artifact.campaignRootSha256 !== campaignRootSha256 || artifact.releaseRootSha256 !==
-    releaseRootSha256 || artifact.keyId !== keyId) {
-    throw new Error("retained artifact bytes or custody identity are substituted");
-  }
-  const envelope = decodeEnvelope(JSON.parse(bytes.toString("utf8")) as unknown);
-  const expectedAad = { artifactCallKind: artifact.artifactCallKind,
-    artifactCallOrdinal: artifact.artifactCallOrdinal, artifactKind: artifact.kind,
-    attemptId: artifact.attemptId, campaignRootSha256, keyId, plaintextSha256:
-    artifact.plaintextSha256, questionDigestSha256: artifact.questionDigestSha256,
-    questionId: artifact.questionId, releaseRootSha256, repetition: artifact.repetition,
-    schemaVersion: "meeting_knowledge.semantic_quality_retained_artifact_aad.v1" };
-  if (canonicalJson(envelope.aad) !== canonicalJson(expectedAad)) {
-    throw new Error("retained artifact AAD is not exact");
-  }
-  const plaintext = decrypt(envelope, key, expectedAad);
-  if (sha256(plaintext) !== artifact.plaintextSha256) {
-    throw new Error("retained artifact plaintext digest is invalid");
-  }
-}
-
 function decodeEnvelope(value: unknown): { readonly aad: unknown; readonly algorithm: "A256GCM";
   readonly ciphertextBase64: string; readonly nonceBase64: string; readonly tagBase64: string } {
   const record = exactRecord(value, ["aad", "algorithm", "ciphertextBase64", "nonceBase64",
@@ -130,8 +101,9 @@ function decrypt(envelope: ReturnType<typeof decodeEnvelope>, key: Uint8Array, a
 }
 
 function decodeEvidence(value: unknown): ExactCampaignEvidence {
-  const record = exactRecord(value, ["adjudications", "artifacts", "campaignByteCeiling",
-    "outcomes"], "decrypted exact campaign evidence");
+  const record = exactRecord(value, ["adjudications", "artifacts", "authorizedLocatorIds",
+    "authorizedLocatorInventory", "campaignByteCeiling", "outcomes",
+    "questionReviewReceipts", "repetitionEvidence"], "decrypted exact campaign evidence");
   if (!Array.isArray(record.adjudications) || !Array.isArray(record.artifacts) ||
     !Array.isArray(record.outcomes) || !Number.isSafeInteger(record.campaignByteCeiling) ||
     (record.campaignByteCeiling as number) < 1) {

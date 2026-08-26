@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdir, open, readdir, rm, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
@@ -21,11 +21,13 @@ interface ActionArtifact {
 
 export class HostedCampaignArtifactStore {
   readonly #campaignId: string;
+  readonly #planSha256: string;
   readonly #rootPath: string;
 
-  constructor(rootPath: string, campaignId: string) {
+  constructor(rootPath: string, campaignId: string, planSha256 = "0".repeat(64)) {
     this.#rootPath = rootPath;
     this.#campaignId = campaignId;
+    this.#planSha256 = planSha256;
   }
 
   async initialize(): Promise<void> {
@@ -69,12 +71,18 @@ export class HostedCampaignArtifactStore {
       0o600,
     );
     try {
-      await handle.writeFile(`${this.#campaignId}\n`, "utf8");
+      const content = `${JSON.stringify({ campaignId: this.#campaignId,
+        campaignRoot: dirname(this.#rootPath), planSha256: this.#planSha256 })}\n`;
+      await handle.writeFile(content, "utf8");
       await handle.sync();
+      const status = await handle.stat();
+      return { campaignId: this.#campaignId, campaignRoot: dirname(this.#rootPath),
+        device: status.dev, inode: status.ino,
+        leaseSha256: createHash("sha256").update(content).digest("hex"),
+        planSha256: this.#planSha256 } as HostedCampaignLeaseHandle;
     } finally {
       await handle.close();
     }
-    return { campaignId: this.#campaignId } as HostedCampaignLeaseHandle;
   }
 
   async releaseLease(expected: HostedCampaignLeaseHandle): Promise<Readonly<{

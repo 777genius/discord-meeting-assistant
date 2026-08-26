@@ -1,7 +1,9 @@
 import { MAIN_CARDINALITY, type CampaignQuestion } from "./admission.js";
 import { canonicalJson, sha256 } from "./canonical.js";
-import { attemptIdentity, DurableAttemptJournal, executeReservedExchange } from "./execution.js";
-import { type PinnedReleaseDocument, verifyPinnedReleaseDocument } from "./release.js";
+import { DurableAttemptJournal } from "./attempt-journal.js";
+import { attemptIdentity, executeReservedExchange } from "./execution.js";
+import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
+  verifyPinnedReleaseDocument } from "./release.js";
 import type { CampaignClockPort, CampaignProviderPorts } from "./production-ports.js";
 
 const PER_CALL_DEADLINE_MS = 120_000;
@@ -12,7 +14,7 @@ export interface FrozenExecutionBinding {
   readonly provider: string;
   readonly release: PinnedReleaseDocument;
   readonly releaseRootSha256: string;
-  readonly spendAuthority: { readonly keyId: string; readonly publicKeyPem: string };
+  readonly policy: QualityCampaignAuthorityPolicy;
   readonly spendReservation: unknown;
   readonly spendReservationSha256: string;
 }
@@ -57,7 +59,8 @@ export async function executeHoldoutSchedule(input: {
     concurrency: input.concurrency, deadlineEpochMs: input.deadlineEpochMs,
     jobs: input.questions.map((question, questionIndex) =>
       ({ question, questionIndex, repetition: 1 as const })),
-    journalRoot: input.journalRoot, ports: input.ports });
+    journalRoot: input.journalRoot, ports: input.ports,
+    resultAuthorityRole: "holdout_provider_result" });
 }
 
 async function executeSchedule(input: {
@@ -67,11 +70,13 @@ async function executeSchedule(input: {
   readonly jobs: readonly { readonly question: CampaignQuestion; readonly questionIndex: number;
     readonly repetition: 1 | 2 | 3 }[]; readonly journalRoot: string;
   readonly ports: CampaignProviderPorts;
+  readonly resultAuthorityRole?: "holdout_provider_result" | "provider_result";
 }): Promise<ScheduledCampaignResult> {
   if (!Number.isSafeInteger(input.concurrency) || input.concurrency < 2 || input.concurrency > 32) {
     throw new Error("production concurrency must be bounded between 2 and 32");
   }
-  const journal = new DurableAttemptJournal(input.journalRoot, input.ports.resultAuthority);
+  const journal = new DurableAttemptJournal(input.journalRoot, input.bindingFor(1).policy,
+    input.resultAuthorityRole);
   let cursor = 0; let active = 0; let maximumObservedConcurrency = 0;
   let outcomeUnknown = false;
   const terminalAttemptIds: string[] = [];
@@ -107,7 +112,7 @@ async function executeQuestion(input: {
   readonly ports: CampaignProviderPorts;
 }): Promise<string | null> {
   let answerAttemptId = "";
-  for (const [callIndex, callKind] of CALLS.entries()) {
+  for (const callKind of CALLS) {
     const nowEpochMs = input.clock.nowEpochMs();
     if (!Number.isSafeInteger(nowEpochMs) || nowEpochMs >= input.deadlineEpochMs) {
       throw new Error("shared 72 hour campaign deadline exceeded");
@@ -125,7 +130,7 @@ async function executeQuestion(input: {
       campaignRootSha256: input.binding.campaignRootSha256,
       questionDigestSha256: input.job.question.questionDigestSha256,
       questionId: input.job.question.questionId,
-      release: verifyPinnedReleaseDocument(input.binding.release).release,
+      release: verifyPinnedReleaseDocument(input.binding.policy, input.binding.release).release,
       releaseRootSha256: input.binding.releaseRootSha256, repetition: input.job.repetition,
       schemaVersion: "meeting_knowledge.semantic_quality_provider_request.v1",
       spendReservationSha256: input.binding.spendReservationSha256 }));
@@ -136,13 +141,10 @@ async function executeQuestion(input: {
     try {
       state = await executeReservedExchange({ campaignRootSha256:
         input.binding.campaignRootSha256, deadlineEpochMs: callDeadlineEpochMs,
-      effectUsage: { callsConsumed: input.job.questionIndex * CALLS.length + callIndex,
-        encryptedBytesConsumed: 0, requestedEncryptedBytes: request.byteLength,
-        requestedTokens: 1, tokensConsumed: input.job.questionIndex * CALLS.length + callIndex },
+      effectReservation: { requestedEncryptedBytes: request.byteLength, requestedTokens: 1 },
       identity, journal: input.journal, nowEpochMs, port: input.ports[callKind],
       provider: input.binding.provider, release: input.binding.release, request,
-      signal: controller.signal, spendAuthority: input.binding.spendAuthority,
-      spendReservation: input.binding.spendReservation });
+      signal: controller.signal, spendReservation: input.binding.spendReservation });
     } catch (error) {
       if (controller.signal.aborted || (error as Error).name === "AbortError") {return null;}
       throw error;

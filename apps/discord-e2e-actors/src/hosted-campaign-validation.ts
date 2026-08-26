@@ -17,9 +17,14 @@ import { governedCampaignObservationPolicyV1Schema } from
 
 function assertExactTarget(target: HostedCampaignTarget): void {
   for (const [key, expected] of Object.entries(HOSTED_CAMPAIGN_TARGET)) {
+    if (key === "craigProject") { continue; }
     if (target[key as keyof HostedCampaignTarget] !== expected) {
       throw new Error(`Hosted campaign target mismatch for ${key}`);
     }
+  }
+  if (!/^craig-e2e-[a-f\d]{20}$/u.test(target.craigProject)
+    && target.craigProject !== HOSTED_CAMPAIGN_TARGET.craigProject) {
+    throw new Error("Hosted campaign target mismatch for craigProject");
   }
   if (Object.keys(target).length !== Object.keys(HOSTED_CAMPAIGN_TARGET).length) {
     throw new Error("Hosted campaign target contains unsupported fields");

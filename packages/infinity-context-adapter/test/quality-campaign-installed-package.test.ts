@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -48,7 +48,7 @@ async function packAndInstall() {
   await mkdir(join(packageRoot, "dist", "test"), { recursive: true });
   await writeFile(join(packageRoot, "dist", "test", "stale-generated.test.js"), "stale");
   const packRoot = await mkdtemp(join(tmpdir(), "quality-npm-pack-"));
-  const packed = await execute("npm", ["pack", "--json", "--pack-destination", packRoot], {
+  const packed = await execute("npm", ["pack", "--silent", "--json", "--pack-destination", packRoot], {
     cwd: packageRoot, timeout: 120_000 });
   const result = (JSON.parse(packed.stdout) as { readonly filename: string;
     readonly files: readonly { readonly path: string }[] }[])[0]!;
@@ -72,44 +72,59 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const base = `http://127.0.0.1:${address.port}`;
   const authorities = Object.fromEntries(["absence", "custody", "deletion", "evidence",
     "execution", "holdout", "holdout-evidence", "holdout-result", "holdout-spend-call", "judge1",
-    "judge2", "main-result", "resolver", "reviewer1", "reviewer2", "spend", "spend-call"]
+    "judge2", "main-result", "release", "resolver", "reviewer1", "reviewer2", "spend", "spend-call"]
     .map((name) => [name, localSigner(name)]));
   const authorityPaths: Record<string, string> = {};
   for (const [name, value] of Object.entries(authorities)) {const publicKeyPath = join(root,
     `${name}.pem`); await writeFile(publicKeyPath, value.publicKeyPem); const path = join(root,
       `${name}-authority.json`); await writeFile(path, canonicalJson({ keyId: value.keyId,
         publicKeyPath })); authorityPaths[name] = path;}
-  const releaseSigner = localSigner("release"); const releasePublicKeyPath = join(root,
-    "release.pem"); await writeFile(releasePublicKeyPath, releaseSigner.publicKeyPem);
+  const releaseSigner = authorities.release!; const releasePublicKeyPath = join(root,
+    "release.pem");
+  const roleNames = { artifact_custody: "custody", cleanup: "absence",
+    holdout_authorization: "holdout", holdout_provider_result: "holdout-result",
+    holdout_question: "holdout-evidence",
+    inventory: "deletion", locator: "evidence", main_proof: "execution",
+    provider_result: "main-result", release: "release", repetition: "judge1",
+    resolver: "resolver", reviewer_1: "reviewer1", reviewer_2: "reviewer2",
+    spend: "spend" } as const;
+  const policyInput = Object.fromEntries(Object.entries(roleNames).map(([role, name]) => {
+    const authority = authorities[name]!; return [role, { keyId: authority.keyId,
+      publicKeyFingerprintSha256: fingerprint(authority.publicKeyPem),
+      publicKeyPem: authority.publicKeyPem }];}));
+  const policyBindingSha256 = sha256(Object.entries(roleNames).map(([role, name]) => ({ keyId:
+    authorities[name]!.keyId, publicKeyFingerprintSha256: fingerprint(
+      authorities[name]!.publicKeyPem), role })));
+  const authorityPolicyPath = join(root, "authority-policy.json"); await writeFile(
+    authorityPolicyPath, canonicalJson(Object.fromEntries(Object.entries(roleNames).map(
+      ([role, name]) => [role, authorityPaths[name]]))));
   const d = (value: string) => digest(value); release = { answerImageSha256: d("answer-image"),
     answerProcessIdentitySha256: d("answer-process"), answerReleaseSha256: d("answer-release"),
+    artifactKeyCustodySha256: fingerprint(authorities.custody!.publicKeyPem),
+    authorityPolicySha256: policyBindingSha256,
     discordCommitSha256: d("discord-commit"), discordImageSha256: d("discord-image"),
     discordReleaseSha256: d("discord-release"), infinityCapabilitySha256: d("capability"),
     infinityCommitSha256: d("infinity-commit"), infinityImageSha256: d("infinity-image"),
     infinityProfileSha256: d("profile"), infinityReleaseSha256: d("infinity-release"),
     mapperSha256: d("mapper"), model: "gpt-5.6-sol", policySha256: d("policy"),
     promptSha256: d("prompt"), reasoning: "xhigh", sdkArchiveSha256: d("sdk"),
-    serviceTier: "default", tokenizerSha256: d("tokenizer") };
+    serviceTier: "default", targetInventoryAuthorityKeySha256:
+    fingerprint(authorities.deletion!.publicKeyPem), tokenizerSha256: d("tokenizer") };
   const releaseDocument = releaseSigner.signed(release); const releaseRootSha256 = sha256(
     releaseDocument); const releaseRootPath = join(root, "release.json"); await writeFile(
       releaseRootPath, canonicalJson(releaseDocument));
   const question = (source: "automatic" | "independent_review", prefix: string, index: number) => {
-    const id = `${prefix}-${index}`; const turn = digest(`turn:${id}`); return { expectedAnswer:
-      "answerable", forbiddenLocatorDigests: [digest(`forbidden:${id}`)], goldClaimIds:
-      [`gold-${id}`], goldSpeakerAttributions: [{ speakerDigestSha256: digest(`speaker:${id}`),
-        turnDigestSha256: turn }], goldTimeAttributions: [{ endMs: 2_000, startMs: 1_000,
-        turnDigestSha256: turn }], locale: index % 2 === 0 ? "en" : "ru",
+    const id = `${prefix}-${index}`; return { locale: index % 2 === 0 ? "en" : "ru",
       questionDigestSha256: digest(`question:${id}`), questionId: id,
-      relevantBlockLocatorDigests: [digest(`block:${id}`)], relevantTurnDigests: [turn],
-      requiredAnswerSections: ["answer"], rubricDigestSha256: digest(`rubric:${id}`), source };};
+      rubricDigestSha256: digest(`rubric:${id}`), source };};
   const automatic = Array.from({ length: 200 }, (_, index) => question("automatic", "a", index));
   const reviewed = Array.from({ length: 40 }, (_, index) => question("independent_review", "r", index));
   const questions = [...automatic, ...reviewed]; const custody = authorities.custody!;
-  const execution = authorities.execution!; const corpusDigestSha256 = d("corpus");
+  const corpusDigestSha256 = d("corpus");
   const reviewerDigestSha256 = d("reviewers"); const sourceDigestSha256 = d("source");
   const acceptance = custody.signed({ corpusDigestSha256, purpose: "custody_only",
     reviewerDigestSha256, schemaVersion: "meeting_knowledge.semantic_quality_acceptance.v1",
-    sourceDigestSha256 }); const authorization = execution.signed({ acceptanceReceiptSha256:
+    sourceDigestSha256 }); const authorization = custody.signed({ acceptanceReceiptSha256:
     sha256(acceptance), authorizedProviderExecution: true, corpusDigestSha256,
     expiresAtEpochMs: 4_000_000_000_000, releaseRootSha256, schemaVersion:
     "meeting_knowledge.semantic_quality_execution_authorization.v1" });
@@ -137,11 +152,20 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
       sealedAutomaticQuestionsPath: "automatic.json", sourceDigestSha256,
       turnToBlockManifestPath: "mapping.json" }));
   const probe = await execute(process.execPath, ["--input-type=module", "--eval",
-    `import{admitMainCampaign}from"@discord-meeting/infinity-context-adapter/quality-campaign";const a=await admitMainCampaign(${JSON.stringify({ authority: publicAuthority(custody),
-      executionAuthority: publicAuthority(execution), manifestPath, nowEpochMs: Date.now(),
-      releaseRootSha256, reviewerAuthorities: [publicAuthority(authorities.reviewer1!),
-        publicAuthority(authorities.reviewer2!)] })});process.stdout.write(a.rootBindingSha256)`],
+    `import{admitMainCampaign,QualityCampaignAuthorityPolicy}from"@discord-meeting/infinity-context-adapter/quality-campaign";const p=new QualityCampaignAuthorityPolicy(${JSON.stringify(policyInput)});const a=await admitMainCampaign(p,${JSON.stringify({ authorityKeyId: custody.keyId,
+      manifestPath, nowEpochMs: Date.now(), releaseRootSha256,
+      reviewerAuthorityKeyIds: [authorities.reviewer1!.keyId,
+        authorities.reviewer2!.keyId] })});process.stdout.write(a.rootBindingSha256)`],
   { cwd: consumerRoot, timeout: 30_000 }); const mainRootSha256 = probe.stdout;
+  const spendReservationsPath = join(root, "spend.json");
+  await writeFile(spendReservationsPath, canonicalJson(([1, 2, 3] as const).map((repetition) =>
+    authorities.spend!.signed({ allowedCallKinds: ["answer", "capability", "retrieval",
+      "adjudicator_1", "adjudicator_2", "resolver"], campaignRootSha256: mainRootSha256,
+    expiresAtEpochMs: 4_000_000_000_000, maxCalls: 720, maxEncryptedBytes: 100_000_000,
+    maxCallsByKind: { adjudicator_1: 1, adjudicator_2: 1, answer: 240, capability: 240,
+      resolver: 1, retrieval: 240 }, maximumEffectDurationMs: 120_000,
+    maxTokens: 10_000_000, model: "gpt-5.6-sol", provider: "local-fake-http",
+    reasoning: "xhigh", releaseRootSha256, repetition, serviceTier: "default" }))));
   const protectedEvidence = ["original_craig_recording", "final_transcript", "meeting_database",
     "frozen_snapshot", "frozen_signed_root"].map((kind) => ({ artifactSha256: d(kind), kind }));
   const custodyPath = join(root, "custody.json"); await writeFile(custodyPath, canonicalJson(
@@ -159,36 +183,35 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   await writeFile(connectionsPath, canonicalJson({ absenceAuthority: publicHttp(authorities.absence!, root),
     absenceEndpoint: `${base}/absence`, adjudicators: ["judge1", "judge2", "resolver"].map((name) => ({
       ...publicHttp(authorities[name]!, root), endpoint })), answerEndpoint: endpoint,
-    answerStatusEndpoint: endpoint, capabilityEndpoint: endpoint, capabilityStatusEndpoint: endpoint,
+    artifactCustody: { envelopeRoot: root, keyCustodySha256:
+      fingerprint(authorities.custody!.publicKeyPem), keyId: "retention-key",
+      keyPath: evidenceKeyPath }, capabilityEndpoint: endpoint,
     credentialPath: tokenPath, deletionAuthority: publicHttp(authorities.deletion!, root),
     deletionEndpoint: `${base}/deletion`, evidenceAuthority: publicHttp(authorities.evidence!, root),
     evidenceEndpoint: endpoint, evidenceKeyId: "main-key", evidenceKeyPath,
-    holdoutAnswerEndpoint: endpoint, holdoutAnswerStatusEndpoint: endpoint,
-    holdoutCapabilityEndpoint: endpoint, holdoutCapabilityStatusEndpoint: endpoint,
+    holdoutAnswerEndpoint: endpoint, holdoutCapabilityEndpoint: endpoint,
     holdoutEvidenceAuthority: publicHttp(authorities["holdout-evidence"]!, root),
     holdoutEvidenceEndpoint: endpoint, holdoutEvidenceKeyId: "holdout-key", holdoutEvidenceKeyPath,
     holdoutProviderResultAuthority: publicHttp(authorities["holdout-result"]!, root),
-    holdoutRetrievalEndpoint: endpoint, holdoutRetrievalStatusEndpoint: endpoint,
-    holdoutSpendAuthority: publicHttp(authorities["holdout-spend-call"]!, root),
-    holdoutSpendEndpoint: endpoint, providerResultAuthority: publicHttp(authorities["main-result"]!, root),
+    holdoutRetrievalEndpoint: endpoint,
+    providerResultAuthority: publicHttp(authorities["main-result"]!, root),
     rawOutcomeEndpoint: endpoint, releaseObservationEndpoint: `${base}/release`, retrievalEndpoint:
-    endpoint, retrievalStatusEndpoint: endpoint, schemaVersion:
-    "meeting_knowledge.semantic_quality_http_connections.v3", spendAuthority:
-    publicHttp(authorities["spend-call"]!, root), spendEndpoint: endpoint }));
+    endpoint, schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v3" }));
   const unused = join(root, "unused.json"); const configPath = join(root, "operator.json");
   await writeFile(configPath, canonicalJson({ absenceAuthorityPath: authorityPaths.absence,
     adjudicationAuthorityPaths: [authorityPaths.judge1, authorityPaths.judge2,
       authorityPaths.resolver], admissionAuthorityPath: authorityPaths.custody,
-    authoritativeEvidenceInventoryPath: custodyPath, checkpointRoot: join(root, "checkpoints"),
+    authoritativeEvidenceInventoryPath: custodyPath, authorityPolicyPath,
+    checkpointRoot: join(root, "checkpoints"),
     cleanupPlanPath: unused, concurrency: 2, deletionAuthorityPath: authorityPaths.deletion,
-    executionAuthorityPath: authorityPaths.execution, holdoutAuthorityPath: authorityPaths.holdout,
+    holdoutAuthorityPath: authorityPaths.holdout,
     holdoutCleanupPlanPath: unused, holdoutInputPath: unused, holdoutJournalRoot: join(root,
-      "holdout-journal"), holdoutSpendAuthorityPath: authorityPaths.spend,
-    holdoutSpendReservationPath: unused, journalRoot: join(root, "journal"), mainManifestPath:
+      "holdout-journal"), journalRoot: join(root, "journal"), mainManifestPath:
     manifestPath, releaseAuthorityPublicKeyPath: releasePublicKeyPath, releaseRootPath,
+    repetitionAuthorityPath: authorityPaths.judge1,
     reviewerAuthorityPaths: [authorityPaths.reviewer1, authorityPaths.reviewer2], schemaVersion:
-    "meeting_knowledge.semantic_quality_production_operator.v3", spendAuthorityPath:
-    authorityPaths.spend, spendReservationsPath: unused }));
+    "meeting_knowledge.semantic_quality_production_operator.v4", spendAuthorityPath:
+    authorityPaths.spend, spendReservationsPath }));
   const phasePath = join(root, "phase.json"); await writeFile(phasePath, canonicalJson({ payload:
     { configurationPath: configPath, connectionsPath }, schemaVersion:
     "meeting_knowledge.semantic_quality_production_phase.v1" }));
@@ -199,8 +222,6 @@ function localSigner(keyId: string) {const pair = generateKeyPairSync("ed25519")
   pair.publicKey.export({ format: "pem", type: "spki" }).toString(); return { keyId, publicKeyPem,
   signed<T>(payload: T) {return { payload, signatureBase64: sign(null, Buffer.from(canonicalJson(
     payload)), pair.privateKey).toString("base64"), signerKeyId: keyId };} };}
-function publicAuthority(value: ReturnType<typeof localSigner>) {return { keyId: value.keyId,
-  publicKeyPem: value.publicKeyPem };}
 function publicHttp(value: ReturnType<typeof localSigner>, root: string) {return { keyId:
   value.keyId, publicKeyPath: join(root, `${value.keyId}.pem`) };}
 function canonicalJson(value: unknown): string {return JSON.stringify(canonical(value));}
@@ -212,3 +233,5 @@ function sha256(value: unknown) {return digestBytes(value instanceof Uint8Array 
   canonicalJson(value)));}
 function digestBytes(value: Uint8Array) {return createHash("sha256").update(value).digest("hex");}
 function digest(value: string) {return digestBytes(Buffer.from(value));}
+function fingerprint(publicKeyPem: string) {return createHash("sha256").update(createPublicKey(
+  publicKeyPem).export({ format: "der", type: "spki" })).digest("hex");}

@@ -1,11 +1,11 @@
 ---
-id: ADR-0055
+id: ADR-0058
 status: superseded
 supersedes: []
-superseded_by: [ADR-0056]
+superseded_by: [ADR-0059]
 ---
 
-# ADR-0055: Exact Craig hosted stack recovery
+# ADR-0058: Exact Craig hosted stack recovery
 
 ## Status
 
