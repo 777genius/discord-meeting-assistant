@@ -103,6 +103,22 @@ unknown-outcome handling and exact original/repair input accounting.
   at an explicit deterministic time. The core checks provider/model/reasoning,
   exact attempt and call kind, expiry, and projected call/token/encrypted-byte
   totals before the effect port can be reached; digest strings are not authority.
+- Operator/composition constructs one immutable role-separated authority policy.
+  Requests carry only exact key-ID references and signed documents; they never
+  carry public keys. Release, spend, provider-result, main-review, repetition,
+  locator, gold-relevance, inventory, cleanup, adjudicator, resolver, holdout-provider,
+  artifact-custody, main-proof, and holdout keys have distinct IDs and canonical
+  fingerprints, and the signed release binds the complete policy digest.
+- The durable attempt journal appends one bounded create-only budget claim before
+  exchange. Append order atomically determines the one admitted claim per exact
+  attempt and cumulative call, call-kind, token, and encrypted-byte ceilings.
+  Unknown outcomes remain charged. Authenticated terminal reconciliation changes
+  outcome state but never refunds the claim; restart derives state from the claim
+  and attempt records without leases, wall-clock guesses, or orphan locks.
+- Each effect carries an explicit deadline bounded by the signed reservation and
+  an abort signal. The durable claim binds the exact request digest, campaign,
+  repetition, call kind, ordinal, spend reservation, and attempt before the
+  exchange port is reachable.
 - Final admission consumes signed repetition documents containing the exact
   3x240 outcomes rather than caller-attested pass booleans or opaque report
   digests. It reconstructs question membership, attempt identity, structural

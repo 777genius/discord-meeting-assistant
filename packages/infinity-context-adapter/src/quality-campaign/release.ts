@@ -11,9 +11,9 @@ export const FROZEN_ANSWER_EXECUTION = Object.freeze({
 });
 
 export const QUALITY_AUTHORITY_ROLES = Object.freeze(["artifact_custody", "cleanup",
-  "holdout_authorization", "holdout_provider_result", "holdout_question", "inventory", "locator",
-  "main_proof", "provider_result", "release", "repetition", "resolver", "reviewer_1", "reviewer_2",
-  "spend"] as const);
+  "gold_relevance", "holdout_authorization", "holdout_provider_result", "holdout_question",
+  "inventory", "locator", "main_proof", "provider_result", "release", "repetition", "resolver",
+  "reviewer_1", "reviewer_2", "spend"] as const);
 export type QualityAuthorityRole = typeof QUALITY_AUTHORITY_ROLES[number];
 
 export interface TrustedAuthorityPin {

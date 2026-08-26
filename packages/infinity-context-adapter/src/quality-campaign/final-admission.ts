@@ -68,7 +68,8 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
   readonly authorizedLocatorInventory: unknown; readonly campaignByteCeiling: number;
   readonly campaignRootSha256: string; readonly cleanupAuthorityKeyId: string;
   readonly cleanupReceipt: unknown;
-  readonly goldRelevanceReceipt: unknown; readonly locatorAuthorityKeyId: string;
+  readonly goldRelevanceAuthorityKeyId: string; readonly goldRelevanceReceipt: unknown;
+  readonly locatorAuthorityKeyId: string;
   readonly effectVerificationEpochMs: number;
   readonly questionReviewReceipts: readonly [unknown, unknown];
   readonly release: PinnedReleaseDocument; readonly repetitionAuthorityKeyId: string;
@@ -86,7 +87,7 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
   const authorizedLocatorIds = verifyAuthorizedLocatorInventory(policy,
     input.locatorAuthorityKeyId, input.authorizedLocatorInventory, input.campaignRootSha256,
     release.releaseRootSha256);
-  const relevance = verifyGoldRelevance(policy, input.locatorAuthorityKeyId,
+  const relevance = verifyGoldRelevance(policy, input.goldRelevanceAuthorityKeyId,
     input.goldRelevanceReceipt, questions, new Set(authorizedLocatorIds),
     input.campaignRootSha256, release.releaseRootSha256);
   const spendReservations = input.spendReservationSha256ByRepetition.map((value) =>
@@ -161,7 +162,7 @@ function verifyGoldRelevance(policy: QualityCampaignAuthorityPolicy, authorityKe
   authorizedLocatorIds: ReadonlySet<string>, campaignRootSha256: string,
   releaseRootSha256: string): { readonly byQuestionId: ReadonlyMap<string, GoldRelevanceEntry>;
     readonly entries: readonly GoldRelevanceEntry[] } {
-  const authority = policy.assertReference("locator", authorityKeyId);
+  const authority = policy.assertReference("gold_relevance", authorityKeyId);
   const receipt = verifyExternalSignedValue<AuthoritativeGoldRelevance>(receiptValue,
     authority.keyId, authority.publicKeyPem, "authoritative per-question gold relevance");
   const record = exactRecord(receipt.payload, ["campaignRootSha256", "entries",

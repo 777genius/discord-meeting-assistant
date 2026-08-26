@@ -44,6 +44,7 @@ type TestSigner = ReturnType<typeof signer>;
 function authorityFixture() {
   const signers = { artifact_custody: signer("artifact-custody-authority"),
     cleanup: signer("cleanup-authority"),
+    gold_relevance: signer("gold-relevance-authority"),
     holdout_authorization: signer("holdout-authorization-authority"),
     holdout_question: signer("holdout-question-authority"),
     inventory: signer("target-inventory-authority"), locator: signer("locator-authority"),
@@ -316,7 +317,8 @@ function finalFixture() {
     campaignRootSha256: CAMPAIGN_ROOT, expectedAbstention: false,
     releaseRootSha256: release.releaseRootSha256,
     relevantLocatorIds: authorizedLocatorIds.slice(0, 5) }));
-  const goldRelevanceReceipt = locatorAuthority.signed({ campaignRootSha256: CAMPAIGN_ROOT,
+  const goldRelevanceAuthority = authorities.signers.gold_relevance;
+  const goldRelevanceReceipt = goldRelevanceAuthority.signed({ campaignRootSha256: CAMPAIGN_ROOT,
     entries: goldRelevanceEntries, releaseRootSha256: release.releaseRootSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" });
   const questionReviewPayload = { campaignRootSha256: CAMPAIGN_ROOT,
@@ -484,15 +486,17 @@ function finalFixture() {
     campaignByteCeiling: artifacts.reduce((total, artifact) => total + artifact.storedBytes, 0),
     campaignRootSha256: CAMPAIGN_ROOT, cleanupAuthorityKeyId: cleanupAuthority.keyId,
     effectVerificationEpochMs: 1_000,
-    cleanupReceipt, goldRelevanceReceipt, locatorAuthorityKeyId: locatorAuthority.keyId,
+    cleanupReceipt, goldRelevanceAuthorityKeyId: goldRelevanceAuthority.keyId,
+    goldRelevanceReceipt, locatorAuthorityKeyId: locatorAuthority.keyId,
     questionReviewReceipts,
     release: release.pinned,
     repetitionAuthorityKeyId: repetitionAuthority.keyId, repetitionEvidence: evidence,
     rootBindingSha256, spendReservationSha256ByRepetition: spendDigests,
     spendReservationsByRepetition: spends as [unknown, unknown, unknown],
     targetInventoryAuthorityKeyId: targetInventoryAuthority.keyId, targetInventoryReceipt } as const;
-  return { authorities, cleanupAuthority, evidence, input, outcomesByRepetition, questions, release,
-    repetitionAuthority, spendAuthority, spends, stored, targetInventoryAuthority };
+  return { authorities, cleanupAuthority, evidence, goldRelevanceAuthority, input,
+    outcomesByRepetition, questions, release, repetitionAuthority, spendAuthority, spends, stored,
+    targetInventoryAuthority };
 }
 
 const FINAL = finalFixture();
@@ -664,6 +668,8 @@ describe("production quality campaign authority", () => {
       readonly publicKeyFingerprintSha256: string; readonly publicKeyPem: string }>;
     const swapped = { ...pins, spend: { ...pins.release! } };
     expect(() => new QualityCampaignAuthorityPolicy(swapped as never)).toThrow(/separated/u);
+    const sharedGold = { ...pins, gold_relevance: { ...pins.locator! } };
+    expect(() => new QualityCampaignAuthorityPolicy(sharedGold as never)).toThrow(/separated/u);
   });
 
   it("atomically charges distinct and identical attempts and reconciles unknown without refund", async () => {
@@ -865,6 +871,18 @@ describe("production quality campaign final evidence", () => {
     const callerLocator = caller.signed(FINAL.input.authorizedLocatorInventory.payload);
     await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
       authorizedLocatorInventory: callerLocator })).rejects.toThrow(/signer|signature/u);
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      goldRelevanceAuthorityKeyId: FINAL.input.locatorAuthorityKeyId })).rejects
+      .toThrow(/gold_relevance authority reference/u);
+    const locatorAuthoredGold = FINAL.authorities.signers.locator.signed(
+      FINAL.input.goldRelevanceReceipt.payload);
+    const locatorReviewPayload = { ...FINAL.input.questionReviewReceipts[0].payload,
+      goldRelevanceReceiptSha256: sha256(locatorAuthoredGold) };
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      goldRelevanceReceipt: locatorAuthoredGold, questionReviewReceipts: [
+        FINAL.authorities.signers.reviewer_1.signed(locatorReviewPayload),
+        FINAL.authorities.signers.reviewer_2.signed(locatorReviewPayload)] }))
+      .rejects.toThrow(/signer|signature/u);
   });
 
   it("rejects all-automatic admission, duplicate/foreign/rank-overflow locators, and absent groups", async () => {
@@ -910,10 +928,15 @@ describe("production quality campaign final evidence", () => {
       replaceFirst({ ...firstEntry, campaignRootSha256: d("c") }),
       replaceFirst({ ...firstEntry, releaseRootSha256: d("d") })];
     for (const changedEntries of mutations) {
-      const goldRelevanceReceipt = FINAL.authorities.signers.locator.signed({ ...payload,
+      const goldRelevanceReceipt = FINAL.goldRelevanceAuthority.signed({ ...payload,
         entries: changedEntries });
+      const reviewPayload = { ...FINAL.input.questionReviewReceipts[0].payload,
+        goldRelevanceReceiptSha256: sha256(goldRelevanceReceipt) };
+      const questionReviewReceipts = [FINAL.authorities.signers.reviewer_1.signed(reviewPayload),
+        FINAL.authorities.signers.reviewer_2.signed(reviewPayload)] as const;
       await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
-        goldRelevanceReceipt })).rejects.toThrow(/gold|root|question/u);
+        goldRelevanceReceipt, questionReviewReceipts })).rejects
+        .toThrow(/gold|root|question/u);
     }
     const first = FINAL.evidence[0]!.payload;
     const outcomes = first.outcomes.map((outcome, index) => index === 0 ? { ...outcome,
@@ -924,6 +947,26 @@ describe("production quality campaign final evidence", () => {
     await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
       repetitionEvidence: [receipt, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
       .rejects.toThrow(/signed per-question gold/u);
+  }, 30_000);
+
+  it("accepts alternative gold with recomputed reviewers before later repetition gates", async () => {
+    const goldEntries = FINAL.input.goldRelevanceReceipt.payload.entries.map((entry) => ({
+      ...entry, relevantLocatorIds: [...entry.relevantLocatorIds].toReversed() }));
+    const goldRelevanceReceipt = FINAL.goldRelevanceAuthority.signed({
+      ...FINAL.input.goldRelevanceReceipt.payload, entries: goldEntries });
+    const reviewPayload = { ...FINAL.input.questionReviewReceipts[0].payload,
+      goldRelevanceReceiptSha256: sha256(goldRelevanceReceipt) };
+    const questionReviewReceipts = [FINAL.authorities.signers.reviewer_1.signed(reviewPayload),
+      FINAL.authorities.signers.reviewer_2.signed(reviewPayload)] as const;
+    const rootBindingSha256 = sha256({ authorizedLocatorSetSha256: sha256(
+      FINAL.input.authorizedLocatorInventory.payload.locatorIds), campaignRootSha256: CAMPAIGN_ROOT,
+    questionSetSha256: sha256(FINAL.questions), relevanceAuthoritySha256: sha256(goldEntries),
+    releaseRootSha256: FINAL.release.releaseRootSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v3",
+    spendReservationSetSha256: sha256(FINAL.input.spendReservationSha256ByRepetition) });
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      goldRelevanceReceipt, questionReviewReceipts, repetitionEvidence: [],
+      rootBindingSha256 })).rejects.toThrow(/three authenticated repetitions/u);
   }, 30_000);
 
   it("excludes isolated and mixed explicit abstentions from every retrieval total", () => {
