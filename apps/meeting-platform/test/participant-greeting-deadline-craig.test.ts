@@ -227,7 +227,9 @@ describe("ParticipantGreetingBridge lifecycle cancellation", () => {
       settlements += 1;
       return settlements === 1
         ? new Promise<"partial">((resolve) => {
-            releaseFirst = () => resolve("partial");
+            releaseFirst = () => {
+              resolve("partial");
+            };
           })
         : Promise.resolve("played");
     };
@@ -238,7 +240,9 @@ describe("ParticipantGreetingBridge lifecycle cancellation", () => {
     };
 
     context.bridge.participantJoined(participantId, occurredAt);
-    await vi.waitFor(() => expect(context.coordinator.calls).toHaveLength(1));
+    await vi.waitFor(() => {
+      expect(context.coordinator.calls).toHaveLength(1);
+    });
     context.bridge.participantJoined(secondParticipantId, occurredAt);
 
     await context.bridge.settle();

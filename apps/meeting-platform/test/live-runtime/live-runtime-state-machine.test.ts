@@ -56,7 +56,7 @@ it("serializes deferred target resolution, packets and terminal events per recor
   await runtime.close();
 });
 
-it("drains a start admitted before shutdown instead of leaving a ghost live state", async () => {
+it("drains an admitted start and asks lifecycle producers to retry after shutdown", async () => {
   const meetings = new MemoryLiveMeetingRepository();
   const actualStart = new StartLiveMeeting({ meetings });
   const startGate = deferred<void>();
@@ -75,8 +75,8 @@ it("drains a start admitted before shutdown instead of leaving a ghost live stat
   await Promise.all([lifecycle, closing]);
 
   expect(meetings.snapshot).toMatchObject({ status: "ended" });
-  await expect(runtime.acceptLifecycle(started())).resolves.toBeUndefined();
-  await expect(runtime.acceptLifecycle(ended())).resolves.toBeUndefined();
+  await expect(runtime.acceptLifecycle(started())).resolves.toBe("retry");
+  await expect(runtime.acceptLifecycle(ended())).resolves.toBe("retry");
 });
 
 it("propagates a durable start failure and never admits packets into an absent state", async () => {

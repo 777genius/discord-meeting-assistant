@@ -12,6 +12,10 @@ import {
   PlatformRecordingIngress,
 } from "../src/application/platform-ingress.js";
 import {
+  DerivedGreetingTerminalRetention,
+  derivedGreetingTerminalRetentionMilliseconds,
+} from "../src/application/derived-greeting-obligations.js";
+import {
   canonicalLiveAudioFormat,
   RecordingIngressRejectedError,
   type DerivedLiveLifecycleEvent,
@@ -69,6 +73,30 @@ const failureClassifier = { classify: () => null } as const;
 const defaultPublicationTargets = {
   resolve: async () => "1533228891827736657",
 } as const;
+
+it("applies the owned 90-day greeting terminal-retention cutoff", async () => {
+  const nowMilliseconds = Date.parse("2026-08-26T00:00:00.000Z");
+  const purgeTerminal = vi.fn(async () => ({
+    capacityAdmissionsDeleted: 2,
+    meetingsProcessed: 1,
+    obligationsDeleted: 2,
+  }));
+  const retention = new DerivedGreetingTerminalRetention({
+    nowMilliseconds: () => nowMilliseconds,
+    retention: { purgeTerminal },
+  });
+
+  await expect(retention.execute(25)).resolves.toEqual({
+    capacityAdmissionsDeleted: 2,
+    meetingsProcessed: 1,
+    obligationsDeleted: 2,
+  });
+  expect(purgeTerminal).toHaveBeenCalledWith({
+    limit: 25,
+    terminalBeforeMilliseconds: nowMilliseconds -
+      derivedGreetingTerminalRetentionMilliseconds,
+  });
+});
 
 function authoritativeTrackReceipt() {
   return {

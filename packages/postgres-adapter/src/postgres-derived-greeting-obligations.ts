@@ -1,6 +1,9 @@
 import type { Pool } from "pg";
 
-import { receiptIdentity } from "./postgres-conversation-one-shot-receipt-values.js";
+import {
+  greetingScopeIdentity,
+  receiptIdentity,
+} from "./postgres-conversation-one-shot-receipt-values.js";
 
 export interface DerivedGreetingObligation {
   readonly eventId: string;
@@ -133,6 +136,84 @@ export class PostgresDerivedGreetingObligationStore {
         [eventId],
       );
       await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Purges only ended-meeting operational rows; provider-start receipts remain evidence. */
+  public async purgeTerminal(input: {
+    readonly limit: number;
+    readonly terminalBeforeMilliseconds: number;
+  }): Promise<{
+    readonly capacityAdmissionsDeleted: number;
+    readonly meetingsProcessed: number;
+    readonly obligationsDeleted: number;
+  }> {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 1_000 ||
+      !Number.isSafeInteger(input.terminalBeforeMilliseconds) ||
+      input.terminalBeforeMilliseconds < 0) {
+      throw new RangeError("derived greeting terminal retention input is invalid");
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const meetings = await client.query<{ readonly meeting_id: string }>(
+        `SELECT meeting_id
+         FROM meeting_core.live_meetings
+         WHERE snapshot ->> 'status' = 'ended'
+           AND updated_at < to_timestamp($1 / 1000.0)
+           AND NOT EXISTS (
+             SELECT 1
+             FROM meeting_core.derived_greeting_obligations AS pending
+             WHERE pending.recording_id = live_meetings.meeting_id
+               AND pending.state = 'pending'
+           )
+         ORDER BY updated_at, meeting_id
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED`,
+        [input.terminalBeforeMilliseconds, input.limit],
+      );
+      const meetingIds = meetings.rows.map(({ meeting_id }) => meeting_id);
+      if (meetingIds.length === 0) {
+        await client.query("COMMIT");
+        return {
+          capacityAdmissionsDeleted: 0,
+          meetingsProcessed: 0,
+          obligationsDeleted: 0,
+        };
+      }
+      const scopeIds = meetingIds.map(greetingScopeIdentity);
+      const admissions = await client.query(
+        `DELETE FROM meeting_core.conversation_greeting_capacity_admissions AS admission
+         WHERE admission.scope_id = ANY($1::text[])
+           AND NOT EXISTS (
+             SELECT 1
+             FROM meeting_core.conversation_greeting_capacity_admissions AS scoped
+             LEFT JOIN meeting_core.conversation_one_shot_receipts AS receipt
+               ON receipt.receipt_id = scoped.receipt_id
+             WHERE scoped.scope_id = admission.scope_id
+               AND (receipt.receipt_id IS NULL OR
+                 receipt.state NOT IN ('played', 'suppressed'))
+           )`,
+        [scopeIds],
+      );
+      const obligations = await client.query(
+        `DELETE FROM meeting_core.derived_greeting_obligations
+         WHERE recording_id = ANY($1::text[])
+           AND state IN ('delivered', 'expired')
+           AND terminal_at < to_timestamp($2 / 1000.0)`,
+        [meetingIds, input.terminalBeforeMilliseconds],
+      );
+      await client.query("COMMIT");
+      return {
+        capacityAdmissionsDeleted: admissions.rowCount ?? 0,
+        meetingsProcessed: meetingIds.length,
+        obligationsDeleted: obligations.rowCount ?? 0,
+      };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

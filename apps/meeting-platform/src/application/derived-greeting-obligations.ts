@@ -19,6 +19,44 @@ export interface DerivedGreetingObligationPort {
   markExpired(eventId: string): Promise<void>;
 }
 
+export interface DerivedGreetingTerminalRetentionPort {
+  purgeTerminal(input: {
+    readonly limit: number;
+    readonly terminalBeforeMilliseconds: number;
+  }): Promise<{
+    readonly capacityAdmissionsDeleted: number;
+    readonly meetingsProcessed: number;
+    readonly obligationsDeleted: number;
+  }>;
+}
+
+export const derivedGreetingTerminalRetentionMilliseconds = 90 * 24 * 60 * 60 * 1_000;
+
+/** Bounded maintenance for operational rows; provider-start evidence is outside this port. */
+export class DerivedGreetingTerminalRetention {
+  public constructor(private readonly dependencies: {
+    readonly nowMilliseconds: () => number;
+    readonly retention: DerivedGreetingTerminalRetentionPort;
+  }) {}
+
+  public execute(limit = 100): Promise<{
+    readonly capacityAdmissionsDeleted: number;
+    readonly meetingsProcessed: number;
+    readonly obligationsDeleted: number;
+  }> {
+    const nowMilliseconds = this.dependencies.nowMilliseconds();
+    if (!Number.isSafeInteger(nowMilliseconds) || nowMilliseconds <
+      derivedGreetingTerminalRetentionMilliseconds) {
+      throw new Error("derived greeting retention clock is unavailable");
+    }
+    return this.dependencies.retention.purgeTerminal({
+      limit,
+      terminalBeforeMilliseconds: nowMilliseconds -
+        derivedGreetingTerminalRetentionMilliseconds,
+    });
+  }
+}
+
 interface DerivedGreetingLivePort {
   acceptLifecycle(
     event: DerivedLiveLifecycleEvent,

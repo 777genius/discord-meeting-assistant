@@ -321,7 +321,7 @@ export function createRunningPlatformRuntime(
   }, outboxReconcileIntervalMilliseconds);
   outboxReconcileTimer.unref();
   const greetingObligationReconcileTimer = setInterval(() => {
-    void resources.greetingObligationDispatcher.dispatchPendingGreetings().catch((error) => {
+    void resources.greetingObligationDispatcher.dispatchPendingGreetings().catch((error: unknown) => {
       resources.logger.warn("Derived greeting obligation reconciliation failed", {
         errorName: error instanceof Error ? error.name : "UnknownError",
       });

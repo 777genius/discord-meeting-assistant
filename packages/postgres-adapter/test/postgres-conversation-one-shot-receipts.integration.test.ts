@@ -1,8 +1,10 @@
+import { LiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
 import { describe, expect, it } from "vitest";
 
 import {
   PostgresConversationOneShotReceiptStore,
   PostgresDerivedGreetingObligationStore,
+  PostgresLiveMeetingRepository,
 } from "../src/index.js";
 import {
   databaseOrSkip,
@@ -639,5 +641,105 @@ describe("PostgreSQL conversation one-shot receipts", () => {
     })).resolves.toEqual({ status: "completed" });
     await expect(obligations.listPending()).resolves.not.toContainEqual(obligation);
   });
+
+  it("purges only ended-meeting terminal operations while retaining receipt evidence",
+    async (context) => {
+      const database = databaseOrSkip(context);
+      const meetingId = "terminal-greeting-retention-meeting-1";
+      const activeMeetingId = "active-greeting-retention-meeting-1";
+      const subjectId = "terminal-participant-1";
+      const repository = new PostgresLiveMeetingRepository(database);
+      const meeting = LiveMeeting.start({
+        meetingId,
+        publicationTargetId: "terminal-retention-channel-1",
+        startedAtMs: 1_000,
+      });
+      await repository.save(meeting.toSnapshot(), null);
+      const initialRevision = meeting.revision;
+      meeting.end(2_000);
+      await repository.save(meeting.toSnapshot(), initialRevision);
+      await repository.save(LiveMeeting.start({
+        meetingId: activeMeetingId,
+        publicationTargetId: "active-retention-channel-1",
+        startedAtMs: 1_000,
+      }).toSnapshot(), null);
+
+      const obligations = new PostgresDerivedGreetingObligationStore(database);
+      const terminal = {
+        eventId: "terminal-greeting-retention-event-1",
+        notAfterMilliseconds: 6_000,
+        occurredAt: "1970-01-01T00:00:01.000Z",
+        participantId: subjectId,
+        recordingId: meetingId,
+      } as const;
+      const pending = {
+        ...terminal,
+        eventId: "pending-greeting-retention-event-1",
+        participantId: "pending-participant-1",
+        recordingId: activeMeetingId,
+      } as const;
+      await obligations.accept(terminal);
+      await obligations.markDelivered(terminal.eventId);
+      await obligations.accept(pending);
+
+      const receipts = new PostgresConversationOneShotReceiptStore(database);
+      await receipts.reconcileGreetingCapacity({
+        capacity: 12,
+        kind: "greeting",
+        meetingId,
+        orderedSubjectIds: [subjectId],
+      });
+      const reservation = await receipts.reserve({
+        kind: "greeting",
+        leaseSeconds: 120,
+        meetingId,
+        subjectId,
+      });
+      if (reservation.status !== "reserved" || reservation.providerCommandId === undefined) {
+        throw new Error("terminal greeting retention receipt was not reserved");
+      }
+      await receipts.beginGreetingAttempt({
+        kind: "greeting",
+        leaseToken: reservation.leaseToken,
+        locale: "en",
+        meetingId,
+        prompt: "Hi!",
+        providerCommandId: reservation.providerCommandId,
+        subjectId,
+      });
+      await receipts.confirmGreetingStarted({
+        kind: "greeting",
+        leaseToken: reservation.leaseToken,
+        meetingId,
+        providerCommandId: reservation.providerCommandId,
+        startedAtMilliseconds: 3_000,
+        subjectId,
+      });
+      await receipts.settleGreeting({
+        kind: "greeting",
+        leaseToken: reservation.leaseToken,
+        meetingId,
+        outcome: "played",
+        subjectId,
+      });
+
+      const result = await obligations.purgeTerminal({
+        limit: 10,
+        terminalBeforeMilliseconds: Date.now() + 60_000,
+      });
+
+      expect(result).toEqual({
+        capacityAdmissionsDeleted: 1,
+        meetingsProcessed: 1,
+        obligationsDeleted: 1,
+      });
+      await expect(obligations.listPending()).resolves.toContainEqual(pending);
+      await expect(receipts.reserve({
+        kind: "greeting",
+        leaseSeconds: 120,
+        meetingId,
+        subjectId,
+      })).resolves.toEqual({ status: "completed" });
+    });
 
 });
