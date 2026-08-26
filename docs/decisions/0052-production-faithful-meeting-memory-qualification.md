@@ -91,6 +91,15 @@ unknown-outcome handling and exact original/repair input accounting.
   canonical attempt, artifact kind, key ID, and plaintext digest. Artifact
   retention, derived Infinity deletion, and authoritative canonical absence are
   separate signed bindings.
+- Terminal replay reconstructs the complete reserved exchange and accepts a
+  terminal only when its signed inner payload and create-only wrapper bind the
+  same attempt, call identity, campaign, question, repetition, request, state,
+  and result. Corrupt or foreign evidence is an explicit blocked state.
+- Reviewer, adjudicator, and resolver independence is established by distinct
+  signer key IDs and distinct canonical public-key fingerprints. Role labels do
+  not establish independence.
+- Public operator status uses only closed blocker/error vocabularies, bounded
+  counters, and named SHA-256 fields. Private handler text is never status data.
 
 ## Consequences
 

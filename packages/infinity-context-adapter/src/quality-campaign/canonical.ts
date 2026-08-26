@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey } from "node:crypto";
 
 export const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 export const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -37,6 +37,15 @@ export function safeId(value: unknown, label: string): string {
     throw new Error(`${label} is invalid`);
   }
   return value;
+}
+
+export function publicKeyFingerprintSha256(publicKeyPem: string, label: string): string {
+  try {
+    const der = createPublicKey(publicKeyPem).export({ format: "der", type: "spki" });
+    return createHash("sha256").update(der).digest("hex");
+  } catch {
+    throw new Error(`${label} public key is invalid`);
+  }
 }
 
 function canonical(value: unknown, path: string): unknown {

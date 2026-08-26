@@ -1,5 +1,6 @@
 export * from "./admission.js";
 export * from "./adjudication.js";
+export * from "./artifacts.js";
 export * from "./canonical.js";
 export * from "./execution.js";
 export * from "./holdout.js";

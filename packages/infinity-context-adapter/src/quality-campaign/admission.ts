@@ -2,7 +2,8 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 
-import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256, safeId,
+  sha256 } from "./canonical.js";
 
 export const MAIN_CARDINALITY = Object.freeze({
   automatic: 200,
@@ -71,6 +72,10 @@ export async function admitMainCampaign(input: {
   const manifestPath = absolute(input.manifestPath, "input manifest");
   const manifestBytes = await readFile(manifestPath);
   const manifest = decodeManifest(JSON.parse(manifestBytes.toString("utf8")) as unknown);
+  assertIndependentReviewers(input.reviewerAuthorities);
+  if (manifest.questionReviewReceiptPaths.length !== 2) {
+    throw new Error("exactly two question review receipts are required");
+  }
   const base = dirname(manifestPath);
   const inventory = await verifyInventory(base, manifest.checksumInventory);
   const requiredInventoryPaths = [manifest.acceptanceReceiptPath,
@@ -112,8 +117,7 @@ export async function admitMainCampaign(input: {
   const questionSetSha256 = sha256(questions);
   const reviewReceipts = await Promise.all(manifest.questionReviewReceiptPaths.map(async (path,
     index) => await readSigned(base, path, input.reviewerAuthorities[index]!)));
-  if (reviewReceipts.length !== 2 || new Set(reviewReceipts.map(({ signerKeyId }) =>
-    signerKeyId)).size !== 2 || reviewReceipts.some(({ payload }) => {
+  if (reviewReceipts.some(({ payload }) => {
       const record = exactRecord(payload, ["corpusDigestSha256", "questionSetSha256",
         "reviewerDigestSha256", "rubricSetSha256", "schemaVersion"], "review receipt");
       return record.schemaVersion !== "meeting_knowledge.semantic_quality_question_review.v1" ||
@@ -149,6 +153,16 @@ export async function admitMainCampaign(input: {
     reviewerReceiptSetSha256: root.reviewerReceiptSetSha256,
     rootBindingSha256: sha256(root), snapshotSha256,
     turnToBlockManifestSha256: root.turnToBlockManifestSha256 });
+}
+
+function assertIndependentReviewers(authorities: readonly AdmissionAuthority[]): void {
+  const keyIds = authorities.map(({ keyId }) => safeId(keyId, "reviewer key ID"));
+  const fingerprints = authorities.map(({ publicKeyPem }, index) =>
+    publicKeyFingerprintSha256(publicKeyPem, `reviewer ${index + 1}`));
+  if (new Set(keyIds).size !== authorities.length ||
+    new Set(fingerprints).size !== authorities.length) {
+    throw new Error("question reviewers are not cryptographically independent");
+  }
 }
 
 function assertExecutionAuthorization(authPayload: Record<string, unknown>, acceptance: unknown,

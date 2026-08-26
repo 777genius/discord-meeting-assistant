@@ -1,4 +1,4 @@
-import { createCipheriv, createHash, createPublicKey, randomBytes, verify } from "node:crypto";
+import { createPublicKey, verify } from "node:crypto";
 import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -65,7 +65,8 @@ export function verifySpendReservations(input: {
 export type CallKind = "adjudicator_1" | "adjudicator_2" | "answer" | "capability" |
   "resolver" | "retrieval";
 export type TerminalState = "terminal_failure" | "terminal_success" | "outcome_unknown";
-export type JournalState = "never_reserved" | "provider_reserved" | TerminalState;
+export type JournalState = "blocked_evidence" | "never_reserved" | "provider_reserved" |
+  TerminalState;
 
 export interface AttemptIdentity {
   readonly attemptId: string;
@@ -81,8 +82,10 @@ export function attemptIdentity(input: Omit<AttemptIdentity, "attemptId"> & {
   digest(input.campaignRootSha256, "campaign root");
   digest(input.questionDigestSha256, "question digest");
   safeId(input.questionId, "question ID");
-  if (![1, 2, 3].includes(input.repetition) || !Number.isSafeInteger(input.callOrdinal) ||
-    input.callOrdinal < 0) {throw new Error("attempt identity is invalid");}
+  if (!CALL_KINDS.includes(input.callKind) || ![1, 2, 3].includes(input.repetition) ||
+    !Number.isSafeInteger(input.callOrdinal) || input.callOrdinal < 0) {
+    throw new Error("attempt identity is invalid");
+  }
   return Object.freeze({ attemptId: `sqv4-${sha256({ ...input,
     schemaVersion: "meeting_knowledge.semantic_quality_attempt.v2" })}`,
     callKind: input.callKind, callOrdinal: input.callOrdinal,
@@ -97,13 +100,27 @@ interface ReservationRecord extends AttemptIdentity {
   readonly state: "provider_reserved";
 }
 
+export interface ProviderTerminalPayload extends Omit<ReservationRecord, "schemaVersion" | "state"> {
+  readonly resultDigestSha256: string;
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v3";
+  readonly state: Exclude<TerminalState, "outcome_unknown">;
+}
+
 interface TerminalRecord {
   readonly attemptId: string;
+  readonly binding: ProviderTerminalPayload;
   readonly reservationSha256: string;
-  readonly resultDigestSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v2";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v3";
   readonly signedResult: SignedValue<unknown>;
-  readonly state: TerminalState;
+  readonly state: Exclude<TerminalState, "outcome_unknown">;
+}
+
+interface BlockedRecord {
+  readonly attemptId: string;
+  readonly reasonCode: "terminal_binding_invalid";
+  readonly reservationSha256: string;
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_blocked.v1";
+  readonly state: "blocked_evidence";
 }
 
 export class DurableAttemptJournal {
@@ -117,6 +134,7 @@ export class DurableAttemptJournal {
   public async reserve(input: { readonly campaignRootSha256: string;
     readonly identity: AttemptIdentity; readonly requestDigestSha256: string }):
   Promise<ReservationRecord> {
+    assertAttemptIdentity(input.identity, input.campaignRootSha256);
     const record = Object.freeze({ ...input.identity, campaignRootSha256:
       digest(input.campaignRootSha256, "campaign root"), requestDigestSha256:
       digest(input.requestDigestSha256, "request digest"),
@@ -128,48 +146,89 @@ export class DurableAttemptJournal {
 
   public async terminal(input: { readonly identity: AttemptIdentity;
     readonly reservation: ReservationRecord; readonly signedResult: unknown;
-    readonly state: TerminalState }): Promise<TerminalRecord> {
+    readonly state: TerminalState; readonly expectedResultDigestSha256: string }):
+  Promise<TerminalRecord> {
     if (input.state === "outcome_unknown") {
       throw new Error("outcome_unknown is inferred from uncertain effect, never asserted by a provider");
     }
     const signedResult = verifyExternalSignedValue(input.signedResult, this.resultAuthority.keyId,
       this.resultAuthority.publicKeyPem, "provider result");
-    const result = exactRecord(signedResult.payload, ["attemptId", "resultDigestSha256",
-      "state"], "provider result payload");
-    if (result.attemptId !== input.identity.attemptId || result.state !== input.state) {
-      throw new Error("terminal result does not bind the stable attempt");
-    }
     const reservation = await this.requireReservation(input.identity.attemptId);
+    assertAttemptIdentity(input.identity, reservation.campaignRootSha256);
     if (canonicalJson(reservation) !== canonicalJson(input.reservation)) {
       throw new Error("terminal result reservation is stale");
     }
-    const record = Object.freeze({ attemptId: input.identity.attemptId,
+    const result = decodeProviderTerminalPayload(signedResult.payload);
+    if (result.resultDigestSha256 !== digest(input.expectedResultDigestSha256,
+      "expected terminal result digest")) {
+      throw new Error("terminal result digest differs from the exact provider response");
+    }
+    const expected = { ...reservation, resultDigestSha256: result.resultDigestSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v3" as const,
+      state: input.state };
+    if (canonicalJson(result) !== canonicalJson(expected)) {
+      throw new Error("terminal result does not bind the exact reserved exchange");
+    }
+    const record = Object.freeze({ attemptId: input.identity.attemptId, binding: result,
       reservationSha256: sha256(reservation),
-      resultDigestSha256: digest(result.resultDigestSha256, "terminal result digest"),
-      schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v2" as const,
+      schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v3" as const,
       signedResult, state: input.state });
     await writeCreateOnly(this.path(input.identity.attemptId, "terminal"), canonicalJson(record));
     return record;
   }
 
   /** A durable reservation without an authenticated terminal is never retryable after restart. */
-  public async recoveredState(identity: AttemptIdentity): Promise<JournalState> {
-    const terminal = await readOptional(this.path(identity.attemptId, "terminal"));
-    if (terminal !== null) {
-      const record = decodeTerminal(terminal);
-      if (record.attemptId !== identity.attemptId) {throw new Error("terminal membership is corrupt");}
-      verifyExternalSignedValue(record.signedResult, this.resultAuthority.keyId,
-        this.resultAuthority.publicKeyPem, "provider result");
-      return record.state;
+  public async recoveredState(input: { readonly campaignRootSha256: string;
+    readonly identity: AttemptIdentity; readonly requestDigestSha256: string }):
+  Promise<JournalState> {
+    try {
+      assertAttemptIdentity(input.identity, input.campaignRootSha256);
+      const [blockedValue, reservationValue, terminalValue] = await Promise.all([
+        readOptional(this.path(input.identity.attemptId, "blocked")),
+        readOptional(this.path(input.identity.attemptId, "reserved")),
+        readOptional(this.path(input.identity.attemptId, "terminal")),
+      ]);
+      if (reservationValue === null && terminalValue === null && blockedValue === null) {
+        return "never_reserved";
+      }
+      if (reservationValue === null) {return "blocked_evidence";}
+      const reservation = decodeReservation(reservationValue);
+      const expectedReservation = { ...input.identity,
+        campaignRootSha256: digest(input.campaignRootSha256, "campaign root"),
+        requestDigestSha256: digest(input.requestDigestSha256, "request digest"),
+        schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v2" as const,
+        state: "provider_reserved" as const };
+      if (canonicalJson(reservation) !== canonicalJson(expectedReservation)) {
+        return "blocked_evidence";
+      }
+      if (blockedValue !== null) {
+        const blocked = decodeBlocked(blockedValue);
+        if (blocked.attemptId !== input.identity.attemptId ||
+          blocked.reservationSha256 !== sha256(reservation)) {
+          throw new Error("blocked evidence membership is corrupt");
+        }
+      }
+      if (terminalValue === null) {
+        return blockedValue === null ? "outcome_unknown" : "blocked_evidence";
+      }
+      const terminal = decodeTerminal(terminalValue);
+      const signed = verifyExternalSignedValue<ProviderTerminalPayload>(terminal.signedResult,
+        this.resultAuthority.keyId, this.resultAuthority.publicKeyPem, "provider result");
+      const payload = decodeProviderTerminalPayload(signed.payload);
+      if (blockedValue !== null) {return "blocked_evidence";}
+      if (terminal.attemptId !== input.identity.attemptId ||
+        terminal.reservationSha256 !== sha256(reservation) || terminal.state !== payload.state ||
+        canonicalJson(terminal.binding) !== canonicalJson(payload) ||
+        canonicalJson(payload) !== canonicalJson({ ...reservation,
+          resultDigestSha256: payload.resultDigestSha256,
+          schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v3",
+          state: terminal.state })) {
+        return "blocked_evidence";
+      }
+      return terminal.state;
+    } catch {
+      return "blocked_evidence";
     }
-    const reservation = await readOptional(this.path(identity.attemptId, "reserved"));
-    if (reservation === null) {return "never_reserved";}
-    const decoded = decodeReservation(reservation);
-    if (decoded.attemptId !== identity.attemptId || canonicalJson(identity) !== canonicalJson({
-      attemptId: decoded.attemptId, callKind: decoded.callKind, callOrdinal: decoded.callOrdinal,
-      questionDigestSha256: decoded.questionDigestSha256, questionId: decoded.questionId,
-      repetition: decoded.repetition })) {throw new Error("reservation membership is corrupt");}
-    return "outcome_unknown";
   }
 
   private async requireReservation(attemptId: string): Promise<ReservationRecord> {
@@ -177,75 +236,22 @@ export class DurableAttemptJournal {
     if (value === null) {throw new Error("provider terminal lacks a durable reservation");}
     return decodeReservation(value);
   }
-  private path(attemptId: string, kind: "reserved" | "terminal"): string {
+  public async blockEvidence(reservation: ReservationRecord): Promise<void> {
+    const record: BlockedRecord = { attemptId: reservation.attemptId,
+      reasonCode: "terminal_binding_invalid", reservationSha256: sha256(reservation),
+      schemaVersion: "meeting_knowledge.semantic_quality_provider_blocked.v1",
+      state: "blocked_evidence" };
+    await writeCreateOnly(this.path(reservation.attemptId, "blocked"), canonicalJson(record));
+  }
+  private path(attemptId: string, kind: "blocked" | "reserved" | "terminal"): string {
     return join(this.root, attemptId, `${kind}.json`);
-  }
-}
-
-export type EncryptedArtifactKind = "adjudication_input" | "adjudication_result" |
-  "answer_request" | "answer_response" | "capability_request" | "capability_response" |
-  "evidence" | "raw_outcome" | "retrieval_request" | "retrieval_response";
-
-export interface ArtifactReceipt {
-  readonly aadSha256: string;
-  readonly artifactKind: EncryptedArtifactKind;
-  readonly attemptId: string;
-  readonly envelopeSha256: string;
-  readonly keyId: string;
-  readonly plaintextBytes: number;
-  readonly plaintextSha256: string;
-  readonly storedBytes: number;
-}
-
-export class CampaignEncryptedArtifactStore {
-  private consumedBytes = 0;
-  private readonly root: string;
-  public constructor(root: string, private readonly maximumCampaignBytes: number) {
-    if (!isAbsolute(root) || root.includes("\0") || !Number.isSafeInteger(maximumCampaignBytes) ||
-      maximumCampaignBytes < 1) {throw new Error("encrypted artifact store configuration is invalid");}
-    this.root = resolve(root);
-  }
-  public async seal(input: { readonly artifactKind: EncryptedArtifactKind;
-    readonly campaignRootSha256: string; readonly identity: AttemptIdentity;
-    readonly key: Uint8Array; readonly keyId: string; readonly plaintext: Uint8Array;
-    readonly releaseRootSha256: string }): Promise<ArtifactReceipt> {
-    if (input.key.byteLength !== 32 || input.plaintext.byteLength < 1) {
-      throw new Error("artifact encryption input is invalid");
-    }
-    safeId(input.keyId, "artifact key ID");
-    const plaintextSha256 = createHash("sha256").update(input.plaintext).digest("hex");
-    const aad = { artifactKind: input.artifactKind, attemptId: input.identity.attemptId,
-      callOrdinal: input.identity.callOrdinal, campaignRootSha256: input.campaignRootSha256,
-      keyId: input.keyId, plaintextSha256, questionDigestSha256:
-      input.identity.questionDigestSha256, questionId: input.identity.questionId,
-      releaseRootSha256: input.releaseRootSha256, repetition: input.identity.repetition,
-      schemaVersion: "meeting_knowledge.semantic_quality_artifact_aad.v2" };
-    digest(input.campaignRootSha256, "campaign root");
-    digest(input.releaseRootSha256, "release root");
-    const nonce = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", input.key, nonce);
-    cipher.setAAD(Buffer.from(canonicalJson(aad)));
-    const ciphertext = Buffer.concat([cipher.update(input.plaintext), cipher.final()]);
-    const envelope = { aad, algorithm: "A256GCM", ciphertextBase64:
-      ciphertext.toString("base64"), nonceBase64: nonce.toString("base64"),
-      tagBase64: cipher.getAuthTag().toString("base64") };
-    const bytes = Buffer.from(canonicalJson(envelope));
-    if (this.consumedBytes + bytes.byteLength > this.maximumCampaignBytes) {
-      throw new Error("campaign encrypted byte ceiling exceeded");
-    }
-    const envelopeSha256 = sha256(bytes);
-    await writeCreateOnly(join(this.root, `${envelopeSha256}.enc.json`), bytes);
-    this.consumedBytes += bytes.byteLength;
-    return Object.freeze({ aadSha256: sha256(aad), artifactKind: input.artifactKind,
-      attemptId: input.identity.attemptId, envelopeSha256, keyId: input.keyId,
-      plaintextBytes: input.plaintext.byteLength, plaintextSha256,
-      storedBytes: bytes.byteLength });
   }
 }
 
 export interface ProviderExchangePort {
   exchange(input: { readonly attemptId: string; readonly request: Uint8Array }): Promise<{
     readonly effect: "certain_failure" | "certain_success" | "unknown";
+    readonly resultDigestSha256?: string;
     readonly signedResult?: unknown;
   }>;
 }
@@ -255,16 +261,28 @@ export async function executeReservedExchange(input: { readonly campaignRootSha2
   readonly identity: AttemptIdentity; readonly journal: DurableAttemptJournal;
   readonly port: ProviderExchangePort; readonly request: Uint8Array }):
 Promise<JournalState> {
-  const recovered = await input.journal.recoveredState(input.identity);
+  assertAttemptIdentity(input.identity, input.campaignRootSha256);
+  const requestDigestSha256 = sha256(input.request);
+  const recovered = await input.journal.recoveredState({
+    campaignRootSha256: input.campaignRootSha256, identity: input.identity, requestDigestSha256 });
   if (recovered !== "never_reserved") {return recovered;}
   const reservation = await input.journal.reserve({ campaignRootSha256: input.campaignRootSha256,
-    identity: input.identity, requestDigestSha256: sha256(input.request) });
+    identity: input.identity, requestDigestSha256 });
   const result = await input.port.exchange({ attemptId: input.identity.attemptId,
     request: input.request });
-  if (result.effect === "unknown" || result.signedResult === undefined) {return "outcome_unknown";}
-  return (await input.journal.terminal({ identity: input.identity, reservation,
-    signedResult: result.signedResult, state: result.effect === "certain_success" ?
-      "terminal_success" : "terminal_failure" })).state;
+  if (result.effect === "unknown") {return "outcome_unknown";}
+  if (result.signedResult === undefined || result.resultDigestSha256 === undefined) {
+    await input.journal.blockEvidence(reservation).catch(() => null);
+    return "blocked_evidence";
+  }
+  try {
+    return (await input.journal.terminal({ identity: input.identity, reservation,
+      expectedResultDigestSha256: result.resultDigestSha256, signedResult: result.signedResult,
+      state: result.effect === "certain_success" ? "terminal_success" : "terminal_failure" })).state;
+  } catch {
+    await input.journal.blockEvidence(reservation).catch(() => null);
+    return "blocked_evidence";
+  }
 }
 
 export function verifyExternalSignedValue<T>(value: unknown, keyId: string,
@@ -308,15 +326,73 @@ async function readOptional(path: string): Promise<unknown> {
 }
 
 function decodeReservation(value: unknown): ReservationRecord {
-  return exactRecord(value, ["attemptId", "callKind", "callOrdinal", "campaignRootSha256",
+  const record = exactRecord(value, ["attemptId", "callKind", "callOrdinal", "campaignRootSha256",
     "questionDigestSha256", "questionId", "repetition", "requestDigestSha256",
-    "schemaVersion", "state"], "reservation") as unknown as ReservationRecord;
+    "schemaVersion", "state"], "reservation");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_provider_reservation.v2" ||
+    record.state !== "provider_reserved" || !CALL_KINDS.includes(record.callKind as CallKind) ||
+    !Number.isSafeInteger(record.callOrdinal) || Number(record.callOrdinal) < 0 ||
+    ![1, 2, 3].includes(record.repetition as number)) {
+    throw new Error("reservation is invalid");
+  }
+  safeId(record.attemptId, "reserved attempt ID");
+  safeId(record.questionId, "reserved question ID");
+  digest(record.campaignRootSha256, "reserved campaign root");
+  digest(record.questionDigestSha256, "reserved question digest");
+  digest(record.requestDigestSha256, "reserved request digest");
+  return record as unknown as ReservationRecord;
 }
 function decodeTerminal(value: unknown): TerminalRecord {
-  const record = exactRecord(value, ["attemptId", "reservationSha256", "resultDigestSha256",
-    "schemaVersion", "signedResult", "state"], "terminal result") as unknown as TerminalRecord;
-  if (!["terminal_failure", "terminal_success"].includes(record.state)) {
+  const record = exactRecord(value, ["attemptId", "binding", "reservationSha256",
+    "schemaVersion", "signedResult", "state"], "terminal result");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_provider_terminal.v3" ||
+    !["terminal_failure", "terminal_success"].includes(String(record.state))) {
     throw new Error("terminal state is invalid");
   }
-  return record;
+  safeId(record.attemptId, "terminal attempt ID");
+  digest(record.reservationSha256, "terminal reservation");
+  decodeProviderTerminalPayload(record.binding);
+  return record as unknown as TerminalRecord;
+}
+
+function decodeBlocked(value: unknown): BlockedRecord {
+  const record = exactRecord(value, ["attemptId", "reasonCode", "reservationSha256",
+    "schemaVersion", "state"], "blocked evidence");
+  if (record.reasonCode !== "terminal_binding_invalid" ||
+    record.schemaVersion !== "meeting_knowledge.semantic_quality_provider_blocked.v1" ||
+    record.state !== "blocked_evidence") {throw new Error("blocked evidence is invalid");}
+  safeId(record.attemptId, "blocked attempt ID");
+  digest(record.reservationSha256, "blocked reservation");
+  return record as unknown as BlockedRecord;
+}
+
+const CALL_KINDS: readonly CallKind[] = ["adjudicator_1", "adjudicator_2", "answer",
+  "capability", "resolver", "retrieval"];
+
+function assertAttemptIdentity(identity: AttemptIdentity, campaignRootSha256: string): void {
+  const expected = attemptIdentity({ callKind: identity.callKind, callOrdinal: identity.callOrdinal,
+    campaignRootSha256, questionDigestSha256: identity.questionDigestSha256,
+    questionId: identity.questionId, repetition: identity.repetition });
+  if (canonicalJson(identity) !== canonicalJson(expected)) {
+    throw new Error("attempt identity does not reconstruct from the exact campaign binding");
+  }
+}
+
+function decodeProviderTerminalPayload(value: unknown): ProviderTerminalPayload {
+  const record = exactRecord(value, ["attemptId", "callKind", "callOrdinal",
+    "campaignRootSha256", "questionDigestSha256", "questionId", "repetition",
+    "requestDigestSha256", "resultDigestSha256", "schemaVersion", "state"],
+  "provider result payload");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_provider_terminal_payload.v3" ||
+    !["terminal_failure", "terminal_success"].includes(String(record.state))) {
+    throw new Error("provider terminal payload is invalid");
+  }
+  digest(record.resultDigestSha256, "terminal result digest");
+  const { resultDigestSha256, ...reservationFields } = record;
+  const reservation = decodeReservation({ ...reservationFields,
+    schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v2",
+    state: "provider_reserved" });
+  return { ...reservation, resultDigestSha256: String(resultDigestSha256),
+    schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v3",
+    state: record.state as ProviderTerminalPayload["state"] };
 }

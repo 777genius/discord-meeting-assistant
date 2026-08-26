@@ -1,4 +1,4 @@
-import { digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import { digest, exactRecord, publicKeyFingerprintSha256, safeId, sha256 } from "./canonical.js";
 import { type AttemptIdentity, type SignedValue, verifyExternalSignedValue } from "./execution.js";
 
 export interface CanonicalClaimDecision {
@@ -20,8 +20,11 @@ export interface CanonicalAdjudicationDecision {
 export interface AdjudicationAuthorityPort {
   readonly authorityId: string;
   readonly publicKeyPem: string;
+  readonly signerKeyId: string;
   adjudicate(input: { readonly attemptId: string; readonly encryptedEvidenceSha256: string;
-    readonly outcomeDigestSha256: string }): Promise<unknown>;
+    readonly firstDecisionDigestSha256: string | null; readonly outcomeDigestSha256: string;
+    readonly questionId: string; readonly secondDecisionDigestSha256: string | null }):
+  Promise<unknown>;
 }
 
 export interface RawOutcomeVaultPort {
@@ -44,13 +47,14 @@ export async function adjudicateOutcome(input: { readonly attempt: AttemptIdenti
   readonly first: AdjudicationAuthorityPort; readonly rawOutcomeEnvelopeSha256: string;
   readonly resolver: AdjudicationAuthorityPort; readonly second: AdjudicationAuthorityPort;
   readonly vault: RawOutcomeVaultPort }): Promise<FinalAdjudicationEnvelope> {
-  const ids = [input.first.authorityId, input.second.authorityId, input.resolver.authorityId];
-  if (new Set(ids).size !== 3) {throw new Error("adjudication authorities are not independent");}
+  assertIndependentAuthorities([input.first, input.second, input.resolver]);
   const raw = await input.vault.reconstruct({ attempt: input.attempt,
     envelopeSha256: digest(input.rawOutcomeEnvelopeSha256, "raw outcome envelope") });
   const request = { attemptId: input.attempt.attemptId,
     encryptedEvidenceSha256: digest(raw.encryptedEvidenceSha256, "encrypted evidence"),
-    outcomeDigestSha256: digest(raw.outcomeDigestSha256, "raw outcome") };
+    firstDecisionDigestSha256: null,
+    outcomeDigestSha256: digest(raw.outcomeDigestSha256, "raw outcome"),
+    questionId: input.attempt.questionId, secondDecisionDigestSha256: null };
   const [firstRaw, secondRaw] = await Promise.all([
     input.first.adjudicate(request), input.second.adjudicate(request),
   ]);
@@ -59,8 +63,11 @@ export async function adjudicateOutcome(input: { readonly attempt: AttemptIdenti
   let decision = first.payload.decision;
   let resolverReceiptSha256: string | null = null;
   if (first.payload.decisionDigestSha256 !== second.payload.decisionDigestSha256) {
-    const resolverRaw = await input.resolver.adjudicate(request);
-    const resolver = verifyDecisionReceipt(resolverRaw, input.resolver, request);
+    const resolverRequest = { ...request,
+      firstDecisionDigestSha256: first.payload.decisionDigestSha256,
+      secondDecisionDigestSha256: second.payload.decisionDigestSha256 };
+    const resolverRaw = await input.resolver.adjudicate(resolverRequest);
+    const resolver = verifyDecisionReceipt(resolverRaw, input.resolver, resolverRequest);
     decision = resolver.payload.decision;
     resolverReceiptSha256 = sha256(resolver);
   }
@@ -71,26 +78,48 @@ export async function adjudicateOutcome(input: { readonly attempt: AttemptIdenti
 
 function verifyDecisionReceipt(value: unknown, authority: AdjudicationAuthorityPort,
   request: { readonly attemptId: string; readonly encryptedEvidenceSha256: string;
-    readonly outcomeDigestSha256: string }): SignedValue<{
+    readonly firstDecisionDigestSha256: string | null; readonly outcomeDigestSha256: string;
+    readonly questionId: string; readonly secondDecisionDigestSha256: string | null }): SignedValue<{
       readonly attemptId: string; readonly decision: CanonicalAdjudicationDecision;
       readonly decisionDigestSha256: string; readonly encryptedEvidenceSha256: string;
-      readonly outcomeDigestSha256: string }> {
+      readonly firstDecisionDigestSha256: string | null; readonly outcomeDigestSha256: string;
+      readonly questionId: string; readonly secondDecisionDigestSha256: string | null }> {
   const receipt = verifyExternalSignedValue<{
     readonly attemptId: string; readonly decision: CanonicalAdjudicationDecision;
     readonly decisionDigestSha256: string; readonly encryptedEvidenceSha256: string;
-    readonly outcomeDigestSha256: string }>(value, authority.authorityId, authority.publicKeyPem,
+    readonly firstDecisionDigestSha256: string | null; readonly outcomeDigestSha256: string;
+    readonly questionId: string; readonly secondDecisionDigestSha256: string | null }>(value,
+      authority.signerKeyId, authority.publicKeyPem,
       "adjudication receipt");
   const payload = exactRecord(receipt.payload, ["attemptId", "decision",
-    "decisionDigestSha256", "encryptedEvidenceSha256", "outcomeDigestSha256"],
+    "decisionDigestSha256", "encryptedEvidenceSha256", "firstDecisionDigestSha256",
+    "outcomeDigestSha256", "questionId", "secondDecisionDigestSha256"],
   "adjudication result");
   const decision = decodeDecision(payload.decision);
   if (payload.attemptId !== request.attemptId ||
     payload.encryptedEvidenceSha256 !== request.encryptedEvidenceSha256 ||
+    payload.firstDecisionDigestSha256 !== request.firstDecisionDigestSha256 ||
     payload.outcomeDigestSha256 !== request.outcomeDigestSha256 ||
+    payload.questionId !== request.questionId ||
+    payload.secondDecisionDigestSha256 !== request.secondDecisionDigestSha256 ||
+    decision.questionId !== request.questionId ||
+    decision.outcomeDigestSha256 !== request.outcomeDigestSha256 ||
     payload.decisionDigestSha256 !== sha256(decision)) {
     throw new Error("adjudication result does not reconstruct from exact raw evidence");
   }
   return receipt;
+}
+
+function assertIndependentAuthorities(authorities: readonly AdjudicationAuthorityPort[]): void {
+  const authorityIds = authorities.map(({ authorityId }) => safeId(authorityId, "authority ID"));
+  const signerKeyIds = authorities.map(({ signerKeyId }) => safeId(signerKeyId, "signer key ID"));
+  const fingerprints = authorities.map(({ publicKeyPem }, index) =>
+    publicKeyFingerprintSha256(publicKeyPem, `authority ${index + 1}`));
+  if (new Set(authorityIds).size !== authorities.length ||
+    new Set(signerKeyIds).size !== authorities.length ||
+    new Set(fingerprints).size !== authorities.length) {
+    throw new Error("adjudication authorities are not cryptographically independent");
+  }
 }
 
 function decodeDecision(value: unknown): CanonicalAdjudicationDecision {
