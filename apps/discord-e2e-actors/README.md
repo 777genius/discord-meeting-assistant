@@ -98,7 +98,9 @@ entrypoints, build/config/secret inputs, namespace sharing, and mounts fail
 closed. A campaign/release-only bridge, subnet, static database/bot addresses,
 and firewall chain allow exact PostgreSQL TCP 5432, Discord TCP 443, the compiled
 UDP range, and established/related returns before the real Craig service starts;
-one terminal drop denies everything else. Docker receives only the retained Compose stdin, a closed environment,
+one terminal drop denies everything else. A separate exact `INPUT` dispatch and
+terminal-drop chain denies bridge gateway and all other host-local escape; the
+stack requires no host-local database exception. Docker receives only the retained Compose stdin, a closed environment,
 fixed source-owned arguments, and the fixed `/` resolution context.
 Production accepts only the reviewed Craig V1 command
 `/app/bin/craig-control readiness --format=json`; the separately tagged
@@ -158,6 +160,22 @@ absence. Any earlier failure retains the stack, lease, and evidence.
 Before the first credential or Docker effect, provisioning durably writes
 `control/craig-stack-mutation-start.json`; every later failure quarantines the
 lease and any partially created stack even when no complete stack handle exists.
+After child shutdown it also retains strict `control/craig-stack-failure.json`.
+Fresh admission stops when eight failed stacks remain unrecovered; it never
+deletes evidence or adopts a failed project. Recover one exact project with:
+
+```sh
+pnpm --filter @discord-meeting/discord-e2e-actors recover:craig-stack -- \
+  /absolute/campaign/control/craig-stack-input.json \
+  /absolute/campaign/control/craig-stack-mutation-start.json \
+  /absolute/campaign/control/craig-stack-failure.json \
+  /absolute/campaign/control/craig-stack-recovery.json
+```
+
+Recovery proves retained failure/lease/plan/release custody and Docker ownership,
+stops the bot before retry-idempotent policy removal, proves exact containers,
+network, and volume absent, removes the retained lease, and publishes a strict
+create-only receipt. It has no Discord or provider path.
 
 ## Supplemental Speaker D playback
 

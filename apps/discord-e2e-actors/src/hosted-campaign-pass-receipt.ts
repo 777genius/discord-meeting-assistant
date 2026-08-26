@@ -16,6 +16,7 @@ import {
   hostedCampaignReleaseReferenceV1Schema,
   type HostedCampaignReleaseReferenceV1,
 } from "./hosted-campaign-release-reference.js";
+import type { CraigCampaignStackAbsenceProofV1 } from "./craig-campaign-stack-runtime-proof.js";
 
 const identifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const revisionsSchema = z.object({
@@ -89,10 +90,17 @@ export function createCampaignLeaseReceipt(lease: HostedCampaignLeaseHandle) {
 }
 
 export function createCraigStackTeardownReceipt(input: Readonly<{
+  absenceProof: CraigCampaignStackAbsenceProofV1;
   completedAt: string; leaseReceiptSha256: string; lease: HostedCampaignLeaseHandle;
   passReceiptSha256: string; projectName: string; stackReceiptSha256: string;
 }>) {
+  if (input.absenceProof.campaignId !== input.lease.campaignId
+    || input.absenceProof.planSha256 === "0".repeat(64)
+    || input.absenceProof.projectName !== input.projectName) {
+    throw new Error("Craig teardown absence proof contradicts campaign custody");
+  }
   const content = { campaignLeaseReceiptSha256: input.leaseReceiptSha256,
+    absenceProof: input.absenceProof,
     campaignLeaseSha256: input.lease.leaseSha256, completedAt: input.completedAt,
     hostedPlanSha256: input.lease.planSha256, kind: "craig-stack-teardown" as const,
     passReceiptSha256: input.passReceiptSha256, projectName: input.projectName,

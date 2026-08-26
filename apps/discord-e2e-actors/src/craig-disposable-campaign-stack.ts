@@ -18,9 +18,11 @@ import {
 } from "./craig-campaign-stack-custody.js";
 import {
   assertCraigResourcesAbsent,
+  proveCraigResourcesAbsentAfterDown,
   verifyCraigDatabase,
   verifyCraigMigration,
   verifyCraigPinnedImages,
+  type CraigCampaignStackAbsenceProofV1,
 } from "./craig-campaign-stack-runtime-proof.js";
 import { installCraigCampaignFirewall, proveInstalledCraigCampaignFirewall,
   removeCraigCampaignFirewall } from "./craig-campaign-network-lifecycle.js";
@@ -39,14 +41,12 @@ export { craigCampaignComposeProjectSchema, craigProjectName, deriveCraigCampaig
   "./craig-campaign-network-plan.js";
 export type { CraigCampaignStackInput } from "./craig-campaign-stack-schemas.js";
 
-export interface CraigCampaignStackCommandRequest {
-  readonly args: readonly string[]; readonly environment: Readonly<Record<string, string>>; readonly executable: string;
-  readonly standardInput?: string; readonly timeoutMilliseconds: number; readonly workingDirectory: string;
-}
+export interface CraigCampaignStackCommandRequest { readonly args: readonly string[];
+  readonly environment: Readonly<Record<string, string>>; readonly executable: string; readonly standardInput?: string;
+  readonly timeoutMilliseconds: number; readonly workingDirectory: string }
 
-export interface CraigCampaignStackCommandResult {
-  readonly exitCode: number; readonly stderr: string; readonly stdout: string;
-}
+export interface CraigCampaignStackCommandResult { readonly exitCode: number; readonly stderr: string;
+  readonly stdout: string }
 
 export interface CraigCampaignStackPorts {
   readonly commands: {
@@ -72,16 +72,17 @@ export interface CraigCampaignStackMutationStartV1 {
   readonly projectName: string; readonly release: HostedCampaignReleaseReferenceV1; readonly schemaVersion: 1;
 }
 
-export interface CraigCredentialFileIdentityV1 {
-  readonly device: number; readonly gid: number; readonly inode: number; readonly linkCount: 1;
-  readonly mode: "0600"; readonly sha256: string; readonly uid: number;
-}
+export interface CraigCredentialFileIdentityV1 { readonly device: number; readonly gid: number;
+  readonly inode: number; readonly linkCount: 1; readonly mode: "0600"; readonly sha256: string; readonly uid: number }
 
 export interface PlannedCraigCampaignStackV1 {
-  readonly campaignId: string; readonly credentialFile: string;
-  readonly kind: "planned-craig-campaign-stack"; readonly planSha256: string;
+  readonly campaignId: string; readonly campaignRoot: string; readonly composeCanonicalSha256: string;
+  readonly composeFile: string; readonly credentialFile: string;
+  readonly credentialSecret: Readonly<{ authority: "compiled-release-sha256"; sha256: string }>;
+  readonly hostedPlanSha256?: string; readonly kind: "planned-craig-campaign-stack"; readonly planSha256: string;
   readonly networkPolicy: z.infer<typeof networkPolicySchema>;
   readonly projectName: string; readonly release: HostedCampaignReleaseReferenceV1;
+  readonly readinessTimeoutSeconds: number;
   readonly schemaVersion: 1;
 }
 
@@ -112,6 +113,10 @@ export interface CraigCampaignStackReceiptV2 {
 
 export function planCraigDisposableCampaignStack(candidate: unknown): PlannedCraigCampaignStackV1 {
   const input = inputSchema.parse(candidate);
+  if (createHash("sha256").update(input.composeCanonical).digest("hex") !== input.composeCanonicalSha256) {
+    throw new Error("Craig canonical Compose bytes do not match their admitted digest");
+  }
+  validateSourceCraigCompose(input.composeCanonical, input);
   const expectedNetworkPolicy = deriveCraigCampaignNetworkPolicy(
     input.campaignId, input.release, input.networkPolicy.udpDestinationPorts,
   );
@@ -123,10 +128,12 @@ export function planCraigDisposableCampaignStack(candidate: unknown): PlannedCra
     throw new Error("Craig credential reservation must belong to the canonical campaign control root");
   }
   const content = {
-    campaignId: input.campaignId,
+    campaignId: input.campaignId, campaignRoot: input.campaignRoot,
     composeCanonicalSha256: input.composeCanonicalSha256,
     composeFile: input.composeFile,
     credentialFile: input.credentialFile,
+    credentialSecret: { authority: "compiled-release-sha256" as const,
+      sha256: createHash("sha256").update(input.database.password).digest("hex") },
     database: { imageIdentity: input.database.imageIdentity, migrations: input.database.migrations,
       migrationTable: input.database.migrationTable, name: input.database.name,
       schema: input.database.schema, service: input.database.service, user: input.database.user,
@@ -136,6 +143,7 @@ export function planCraigDisposableCampaignStack(candidate: unknown): PlannedCra
     migrationService: input.migrationService,
     networkPolicy: input.networkPolicy,
     projectName: craigProjectName(input.campaignId, input.release),
+    readinessTimeoutSeconds: input.readinessTimeoutSeconds,
     release: input.release,
     schemaVersion: 1 as const,
     service: input.service,
@@ -144,12 +152,6 @@ export function planCraigDisposableCampaignStack(candidate: unknown): PlannedCra
   return Object.freeze({ ...content, planSha256: digestCanonical(content) });
 }
 
-/**
- * Provisions under the caller's already-acquired canonical campaign lease.
- * The release identifies immutable inputs; this create-only receipt contributes
- * the runtime container identity in one direction and is never fed back into
- * the release digest or project-name derivation.
- */
 export async function provisionCraigDisposableCampaignStack(
   candidate: unknown,
   ports: CraigCampaignStackPorts,
@@ -277,7 +279,7 @@ export async function teardownSuccessfulCraigCampaignStack(
   candidate: unknown,
   lease: HostedCampaignLeaseHandle,
   ports: Pick<CraigCampaignStackPorts, "commands">,
-): Promise<void> {
+): Promise<CraigCampaignStackAbsenceProofV1> {
   const receipt = verifyCraigCampaignStackReceiptV2(receiptValue);
   const input = inputSchema.parse(candidate);
   validateSourceCraigCompose(input.composeCanonical, input);
@@ -310,9 +312,15 @@ export async function teardownSuccessfulCraigCampaignStack(
   const stopped = await execute([...compose, "ps", "--quiet", input.service]);
   requireSuccess(stopped, "Craig stopped service verification");
   if (stopped.stdout.trim() !== "") { throw new Error("Craig service remained runnable before firewall removal"); }
-  await removeCraigCampaignFirewall(input, (request) => ports.commands.execute(request));
+  await removeCraigCampaignFirewall(input, (request) => ports.commands.execute(request), { botStopped: true });
   const result = await execute([...compose, "down", "--volumes", "--remove-orphans", "--timeout", "30"]);
   requireSuccess(result, "Craig successful campaign teardown");
+  return proveCraigResourcesAbsentAfterDown(execute, compose, {
+    campaignId: receipt.campaignId, containerIds: [receipt.containerId, receipt.databaseContainerId],
+    networkId: receipt.networkPolicy.networkId, networkName: receipt.networkPolicy.name,
+    planSha256: receipt.planSha256, projectName: receipt.projectName, release: receipt.release,
+    volumeName: receipt.databaseVolume,
+  });
 }
 
 export const craigCampaignStackReceiptV2Schema = z.object({

@@ -128,6 +128,13 @@ Voicetext canary, and clock preflight. Operator-authored capability files are
 retained declarations only and cannot authorize a campaign; an absent probe
 always leaves admission blocked.
 
+Disposable Craig qualification covers the zero-effect complete preflight,
+container-to-host `INPUT` escape denial, crash/retry firewall uninstall, exact
+post-down Docker absence, and the explicit retained-failure recovery command.
+The real local profile uses only synthetic credentials and disposable
+Docker/PostgreSQL projects, and must prove no container, network, volume, or
+firewall delta after both a fresh lifecycle and a failed-stack recovery.
+
 ## Summary-first E2E
 
 The critical flow is:

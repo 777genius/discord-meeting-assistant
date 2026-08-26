@@ -26,6 +26,9 @@ import { FileCraigCampaignCredentialStore, provisionCraigDisposableCampaignStack
   "./craig-disposable-campaign-stack.js";
 import { LocalDockerCommandExecutor, writeCreateOnlyPrivateJson } from
   "./craig-campaign-stack-local-adapters.js";
+import type { CraigCampaignStackAbsenceProofV1 } from "./craig-campaign-stack-runtime-proof.js";
+import type { CraigStackMutationStartReceiptV1 } from "./craig-campaign-stack-evidence.js";
+import { assertCraigFailedStackRetentionAdmission } from "./recover-craig-failed-campaign-stack.js";
 import { digestCanonical } from "./hosted-campaign-local-admission.js";
 import { assertCraigStackInputMatchesCompiledTrustRoot } from "./hosted-campaign-release-binding.js";
 import { assertPlannedCraigStackMatchesHostedCampaign } from "./craig-stack-preprovision-fence.js";
@@ -52,14 +55,18 @@ export interface HostedCampaignCliDependencies {
   readonly readPlan: (path: string) => Promise<unknown>;
   readonly releaseReference?: HostedCampaignReleaseReferenceV1;
   readonly plannedCraigStack?: PlannedCraigCampaignStackV1;
-  readonly provisionCraigStack?: (lease: HostedCampaignLeaseHandle, onMutationStarted: () => void) =>
+  readonly provisionCraigStack?: (lease: HostedCampaignLeaseHandle,
+    onMutationStarted: (receipt: CraigStackMutationStartReceiptV1) => void) =>
     Promise<CraigCampaignStackReceiptV2>;
   readonly retainCampaignLeaseReceipt?: (receipt: Readonly<Record<string, unknown>>) => Promise<void>;
   readonly retainCampaignLeaseCleanupReceipt?: (receipt: Readonly<Record<string, unknown>>) => Promise<void>;
   readonly retainCraigStackReceipt?: (receipt: CraigCampaignStackReceiptV2) => Promise<void>;
+  readonly retainCraigFailureReceipt?: (input: Readonly<{ failure: unknown; lease: HostedCampaignLeaseHandle;
+    mutation: CraigStackMutationStartReceiptV1; planned: PlannedCraigCampaignStackV1 }>) => Promise<void>;
   readonly rereadCraigStackReceipt?: (expected: CraigCampaignStackReceiptV2) => Promise<CraigCampaignStackReceiptV2>;
   readonly retainCraigTeardownReceipt?: (receipt: Readonly<Record<string, unknown>>) => Promise<void>;
-  readonly teardownCraigStack?: (receipt: CraigCampaignStackReceiptV2, lease: HostedCampaignLeaseHandle) => Promise<void>;
+  readonly teardownCraigStack?: (receipt: CraigCampaignStackReceiptV2, lease: HostedCampaignLeaseHandle) =>
+    Promise<CraigCampaignStackAbsenceProofV1>;
   readonly writeReceipt: (path: string, receipt: HostedCampaignPassReceiptV2) => Promise<void>;
   readonly writeClockPreflightProof: typeof writeCreateOnlyClockPreflightProof;
 }
@@ -72,8 +79,7 @@ type HostedCampaignControlPaths = Readonly<{
   releaseBindingPath?: string;
   craigStackInputPath?: string;
 }>;
-interface HostedCampaignFreshAuthorizationInvocation
-{
+interface HostedCampaignFreshAuthorizationInvocation {
   readonly bindings: unknown;
   readonly craigStack?: CraigCampaignStackReceiptV2;
   readonly deadlineEpochMs: number;
@@ -83,8 +89,7 @@ interface HostedCampaignFreshAuthorizationInvocation
   readonly signal: AbortSignal;
 }
 
-export class HostedCampaignInterruptedError extends Error {
-  readonly exitCode: 130 | 143;
+export class HostedCampaignInterruptedError extends Error { readonly exitCode: 130 | 143;
 
   constructor(readonly signal: "SIGINT" | "SIGTERM") {
     super(`Received ${signal}`);
@@ -98,8 +103,7 @@ export async function runHostedCampaignCli(
   dependencies: HostedCampaignCliDependencies,
   signal: AbortSignal,
 ): Promise<HostedCampaignPassReceiptV2> {
-  const config = parseHostedCampaignArguments(arguments_);
-  await dependencies.assertReceiptAbsent(config.receiptPath);
+  const config = parseHostedCampaignArguments(arguments_); await dependencies.assertReceiptAbsent(config.receiptPath);
   const suppliedPlan = parseHostedCampaignPlan(await dependencies.readPlan(config.planPath));
   const nowEpochMs = dependencies.now();
   const [admission, definition, bindings] = await Promise.all([
@@ -122,12 +126,13 @@ export async function runHostedCampaignCli(
     dependencies.plannedCraigStack, dependencies.provisionCraigStack !== undefined);
   const ports = await dependencies.createPorts(input);
   let craigStack: CraigCampaignStackReceiptV2 | undefined; let craigMutationStarted = false;
-  let finalReceipt: HostedCampaignPassReceiptV2 | undefined;
-  let retainedLeaseReceipt: Readonly<{ receiptSha256: string }> | undefined;
-  let retainedTeardownReceipt: Readonly<{ receiptSha256: string }> | undefined;
+  let craigMutationReceipt: CraigStackMutationStartReceiptV1 | undefined;
+  let finalReceipt: HostedCampaignPassReceiptV2 | undefined; let retainedLeaseReceipt: Readonly<{ receiptSha256: string }> | undefined; let retainedTeardownReceipt: Readonly<{ receiptSha256: string }> | undefined;
   await runHostedCampaign(input, ports, { deadlineEpochMilliseconds, signal }, {
     authorizeAfterLease: async (lease) => {
-      craigStack = await dependencies.provisionCraigStack?.(lease, () => { craigMutationStarted = true; });
+      craigStack = await dependencies.provisionCraigStack?.(lease, (receipt) => {
+        craigMutationReceipt = receipt; craigMutationStarted = true;
+      });
       if (craigStack !== undefined && (dependencies.plannedCraigStack === undefined
         || craigStack.projectName !== input.target.craigProject
         || craigStack.projectName !== dependencies.plannedCraigStack.projectName
@@ -142,8 +147,6 @@ export async function runHostedCampaignCli(
         ...(craigStack === undefined ? {} : { craigStack }),
         signal,
       });
-      // Fresh admission includes the remote Craig official-bot identity proof.
-      // Publish the create-only stack receipt only after that proof succeeds.
       if (craigStack !== undefined) { await dependencies.retainCraigStackReceipt?.(craigStack); }
       const freshClockProof = hostedClockPreflightReceiptV2Schema.parse(fresh.clockPreflightProof);
       await dependencies.writeClockPreflightProof(clockPreflightPath, freshClockProof);
@@ -205,9 +208,12 @@ export async function runHostedCampaignCli(
         || JSON.stringify(teardownStack) !== JSON.stringify(craigStack)) {
         throw new Error("Reread Craig stack receipt changed before teardown");
       }
-      await dependencies.teardownCraigStack?.(teardownStack, lease);
+      const absenceProof = await dependencies.teardownCraigStack?.(teardownStack, lease);
+      if (absenceProof === undefined) {
+        throw new Error("Craig teardown requires an independent Docker absence proof");
+      }
       retainedTeardownReceipt = createCraigStackTeardownReceipt({
-        completedAt: new Date(dependencies.now()).toISOString(), lease,
+        absenceProof, completedAt: new Date(dependencies.now()).toISOString(), lease,
         leaseReceiptSha256: retainedLeaseReceipt.receiptSha256,
         passReceiptSha256: retained.receiptSha256, projectName: craigStack.projectName,
         stackReceiptSha256: craigStack.receiptSha256 });
@@ -228,6 +234,15 @@ export async function runHostedCampaignCli(
         teardownReceiptSha256: retainedTeardownReceipt.receiptSha256 }));
     },
     retainLeaseOnFailure: () => craigMutationStarted || craigStack !== undefined,
+    retainFailureUnderLease: async (failure, lease) => {
+      if (!craigMutationStarted) { return; }
+      if (craigMutationReceipt === undefined || dependencies.plannedCraigStack === undefined
+        || dependencies.retainCraigFailureReceipt === undefined) {
+        throw new Error("Mutated Craig failure requires a strict retained failure receipt");
+      }
+      await dependencies.retainCraigFailureReceipt({ failure, lease, mutation: craigMutationReceipt,
+        planned: dependencies.plannedCraigStack });
+    },
   });
   if (finalReceipt === undefined) { throw new Error("Hosted campaign pass finalization did not commit"); }
   return finalReceipt;
@@ -293,21 +308,6 @@ export async function createProductionHostedCampaignPorts(
   });
 }
 
-async function main(): Promise<void> {
-  const controller = new AbortController();
-  const forwardSignal = (signal: "SIGINT" | "SIGTERM"): void => {
-    controller.abort(new HostedCampaignInterruptedError(signal));
-  };
-  process.once("SIGINT", forwardSignal);
-  process.once("SIGTERM", forwardSignal);
-  try {
-    await runProductionHostedCampaignCli(process.argv.slice(2), process.env, controller.signal);
-  } finally {
-    process.off("SIGINT", forwardSignal);
-    process.off("SIGTERM", forwardSignal);
-  }
-}
-
 export async function runProductionHostedCampaignCli(
   arguments_: readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -334,6 +334,10 @@ export async function runProductionHostedCampaignCli(
     throw new Error("Production hosted campaign requires the real Craig application protocol contract");
   }
   assertCraigStackInputMatchesCompiledTrustRoot(craigStackInput, releaseReference);
+  await assertCraigFailedStackRetentionAdmission(craigStackInput.campaignRoot);
+  const preflightHostedPlan = parseHostedCampaignPlan(await readStablePrivateJson(config.planPath));
+  const plannedCraigStack = { ...planCraigDisposableCampaignStack(craigStackInput),
+    hostedPlanSha256: digestCanonical(preflightHostedPlan) };
   const commandExecutor = new LocalDockerCommandExecutor();
   return runHostedCampaignCli(arguments_, {
     assertReceiptAbsent: assertHostedCampaignReceiptAbsent,
@@ -349,7 +353,7 @@ export async function runProductionHostedCampaignCli(
     readBindings: readPrivateHostedCampaignPlan,
     readDefinition: readPrivateHostedCampaignPlan,
     readPlan: readPrivateHostedCampaignPlan,
-    plannedCraigStack: planCraigDisposableCampaignStack(craigStackInput),
+    plannedCraigStack,
     releaseReference,
     provisionCraigStack: (lease, onMutationStarted) => provisionCraigDisposableCampaignStack(craigStackInput, {
       commands: commandExecutor,
@@ -357,11 +361,12 @@ export async function runProductionHostedCampaignCli(
       mutationJournal: {
         markStarted: async (mutation: CraigCampaignStackMutationStartV1) => {
           const content = { ...mutation, startedAt: new Date(Date.now()).toISOString() };
+          const receipt = { ...content, receiptSha256: digestCanonical(content) };
           await writeCreateOnlyPrivateJson(
             join(dirname(craigStackInput.credentialFile), "craig-stack-mutation-start.json"),
-            { ...content, receiptSha256: digestCanonical(content) },
+            receipt,
           );
-          onMutationStarted();
+          onMutationStarted(receipt);
         },
       },
     }, lease),
@@ -374,6 +379,18 @@ export async function runProductionHostedCampaignCli(
     retainCraigStackReceipt: (receipt) => writeCreateOnlyPrivateJson(
       join(dirname(receipt.credentialFile), "craig-stack-receipt.json"), receipt,
     ),
+    retainCraigFailureReceipt: ({ failure, lease, mutation, planned }) => {
+      const failureIdentity = failure instanceof Error
+        ? { message: failure.message, name: failure.name } : { message: "non-error", name: "UnknownFailure" };
+      const content = { campaignId: planned.campaignId, campaignLeaseSha256: lease.leaseSha256,
+        campaignRoot: lease.campaignRoot, failedAt: new Date(Date.now()).toISOString(),
+        failureClass: failureIdentity.name, failureSha256: digestCanonical(failureIdentity),
+        hostedPlanSha256: lease.planSha256, kind: "craig-failed-stack" as const,
+        mutationReceiptSha256: mutation.receiptSha256, planSha256: planned.planSha256,
+        projectName: planned.projectName, release: planned.release, schemaVersion: 1 as const };
+      return writeCreateOnlyPrivateJson(join(dirname(craigStackInput.credentialFile), "craig-stack-failure.json"),
+        { ...content, receiptSha256: digestCanonical(content) });
+    },
     rereadCraigStackReceipt: async (expected) => verifyCraigCampaignStackReceiptV2(
       await readStablePrivateJson(join(dirname(craigStackInput.credentialFile), "craig-stack-receipt.json")),
       { campaignId: expected.campaignId, campaignRoot: expected.campaignRoot,
@@ -389,12 +406,4 @@ export async function runProductionHostedCampaignCli(
     writeReceipt: writeCreateOnlyHostedCampaignReceipt,
     writeClockPreflightProof: writeCreateOnlyClockPreflightProof,
   }, signal);
-}
-
-if (process.argv[1]?.replaceAll("\\", "/").endsWith("/run-hosted-campaign.js") === true) {
-  void main().catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : "Unknown hosted campaign failure";
-    process.stderr.write(`Hosted campaign failed: ${message}\n`);
-    process.exitCode = error instanceof HostedCampaignInterruptedError ? error.exitCode : 1;
-  });
 }

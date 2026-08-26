@@ -12,6 +12,11 @@ import { buildResolvedHostedCampaignPlanV1 } from "../src/hosted-campaign-plan-b
 import { compileHostedCampaignPlanCli } from "../src/compile-hosted-campaign-plan.js";
 import { deriveHostedClockPreflightReceiptV2 } from "../src/hosted-clock-proof-v2.js";
 import { parseHostedCampaignArguments, parseHostedCampaignPlan } from "../src/hosted-campaign-run-config.js";
+import { digestCraigCampaignStackCanonical } from "../src/craig-campaign-stack-digest.js";
+import { deriveCraigCampaignNetworkPolicy } from "../src/craig-campaign-network-plan.js";
+import type { PlannedCraigCampaignStackV1 } from "../src/craig-disposable-campaign-stack.js";
+import { assertCraigFailedStackRetentionAdmission, MAX_UNRECOVERED_CRAIG_STACKS } from
+  "../src/recover-craig-failed-campaign-stack.js";
 import {
   assertHostedCampaignReceiptAbsent,
   createProductionHostedCampaignPorts,
@@ -61,9 +66,23 @@ const releaseReference = { releaseBindingSha256: "1".repeat(64), releaseId: "rel
   trustRootSha256: "2".repeat(64) } as const;
 const releasedDefinition = () => ({ ...definition(), craigRelease: releaseReference });
 const releasedPlan = () => buildResolvedHostedCampaignPlanV1(releasedDefinition(), bindings());
-const plannedCraigStack = () => ({ campaignId: "campaign-1", credentialFile: "/private/craig.env",
-  kind: "planned-craig-campaign-stack", networkPolicy: {} as never, planSha256: "3".repeat(64),
-  projectName: releasedPlan().target.craigProject, release: releaseReference, schemaVersion: 1 } as const);
+const plannedCraigStack = () => {
+  const content = { campaignId: "campaign-1", campaignRoot: releasedDefinition().campaignRoot,
+    composeCanonicalSha256: "4".repeat(64), composeFile: "/private/craig-compose.yaml",
+    credentialFile: "/private/evidence/campaigns/campaign-1/control/craig.env",
+    credentialSecret: { authority: "compiled-release-sha256" as const, sha256: "5".repeat(64) },
+    kind: "planned-craig-campaign-stack" as const,
+    networkPolicy: deriveCraigCampaignNetworkPolicy("campaign-1", releaseReference,
+      { end: 65_535, start: 1_024 }),
+    projectName: releasedPlan().target.craigProject, readinessTimeoutSeconds: 45,
+    release: releaseReference, schemaVersion: 1 as const };
+  return { ...content, hostedPlanSha256: digestCraigCampaignStackCanonical(releasedPlan()),
+    planSha256: digestCraigCampaignStackCanonical(content) } as const;
+};
+function recomputePlannedCraigStack(value: PlannedCraigCampaignStackV1) {
+  const { hostedPlanSha256, planSha256: _planSha256, ...content } = value;
+  return { ...content, hostedPlanSha256, planSha256: digestCraigCampaignStackCanonical(content) };
+}
 
 const admittedReceipt = () => ({
   clockPreflightProof: clockProof(),
@@ -360,6 +379,17 @@ describe("run-hosted-campaign CLI", () => {
 });
 
 describe("Craig pre-provision fence", () => {
+  it("bounds unrecovered failure admission without deleting retained evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "craig-retention-admission-"));
+    for (let index = 0; index < MAX_UNRECOVERED_CRAIG_STACKS; index += 1) {
+      const control = join(root, `failed-${index}`, "control");
+      await mkdir(control, { recursive: true, mode: 0o700 });
+      await writeFile(join(control, "craig-stack-failure.json"), "{}\n", { mode: 0o600 });
+    }
+    await expect(assertCraigFailedStackRetentionAdmission(root)).rejects.toThrow(/run recovery first/u);
+    await expect(stat(join(root, "failed-1", "control", "craig-stack-failure.json"))).resolves.toBeDefined();
+  });
+
   it("rejects every Craig campaign/project/release pre-provision mismatch with zero effects", async () => {
     const cases = [
       { craig: plannedCraigStack(), definition: definition(), plan: plan() },
@@ -368,6 +398,15 @@ describe("Craig pre-provision fence", () => {
       { craig: { ...plannedCraigStack(), projectName: "craig-e2e-00000000000000000000" },
         definition: releasedDefinition(), plan: releasedPlan() },
       { craig: { ...plannedCraigStack(), release: { ...releaseReference, releaseId: "other-release" } },
+        definition: releasedDefinition(), plan: releasedPlan() },
+      { craig: recomputePlannedCraigStack({ ...plannedCraigStack(), campaignRoot: "/different/root" }),
+        definition: releasedDefinition(), plan: releasedPlan() },
+      { craig: recomputePlannedCraigStack({ ...plannedCraigStack(), credentialFile: "/different/root/control/craig.env" }),
+        definition: releasedDefinition(), plan: releasedPlan() },
+      { craig: recomputePlannedCraigStack({ ...plannedCraigStack(), networkPolicy: {
+        ...plannedCraigStack().networkPolicy, botIpv4: "10.64.1.99",
+      } }), definition: releasedDefinition(), plan: releasedPlan() },
+      { craig: { ...plannedCraigStack(), planSha256: "0".repeat(64) },
         definition: releasedDefinition(), plan: releasedPlan() },
     ];
     for (const testCase of cases) {
@@ -387,7 +426,7 @@ describe("Craig pre-provision fence", () => {
       )).rejects.toThrow(/before provisioning/u);
       expect(effects).toEqual([]);
     }
-  });
+  }, 15_000);
 });
 
 describe("run-hosted-campaign launch authorization", () => {
@@ -410,15 +449,16 @@ describe("run-hosted-campaign launch authorization", () => {
         now: Date.now,
         plannedCraigStack: plannedCraigStack(), releaseReference,
         provisionCraigStack: async (_lease, onMutationStarted) => {
-          effects.push("mutation-receipt"); onMutationStarted();
+          effects.push("mutation-receipt"); onMutationStarted({ receiptSha256: "6".repeat(64) } as never);
           effects.push("docker-effect"); throw new Error("partial provisioning failed");
         },
+        retainCraigFailureReceipt: async () => { effects.push("failure-receipt"); },
         readAdmission: async () => ({}), readBindings: async () => bindings(),
         readDefinition: async () => releasedDefinition(), readPlan: async () => releasedPlan(),
         writeReceipt: async () => {}, writeClockPreflightProof: async () => {},
       }, new AbortController().signal,
     )).rejects.toThrow("partial provisioning failed");
-    expect(effects).toEqual(["acquire", "mutation-receipt", "docker-effect"]);
+    expect(effects).toEqual(["acquire", "mutation-receipt", "docker-effect", "failure-receipt"]);
   });
 
   it("acquires the lease before fresh authorization and releases it without spawning on failure", async () => {
@@ -445,7 +485,12 @@ describe("run-hosted-campaign launch authorization", () => {
           projectName: plannedCraigStack().projectName, release: releaseReference,
         } as never; },
         retainCraigStackReceipt: async () => { effects.push("retain-stack-evidence"); },
-        teardownCraigStack: async () => { effects.push("teardown-stack"); },
+        teardownCraigStack: async () => { effects.push("teardown-stack"); return {
+          absentContainerIds: ["a".repeat(64), "b".repeat(64)], absentNetworkId: "c".repeat(64),
+          absentNetworkName: "network", absentVolumeName: "volume", campaignId: "campaign-1",
+          kind: "craig-stack-absence-proof", planSha256: plannedCraigStack().planSha256,
+          projectName: plannedCraigStack().projectName, release: releaseReference, schemaVersion: 1,
+        }; },
 
         readAdmission: async () => ({}), readBindings: async () => bindings(),
         readDefinition: async () => releasedDefinition(), readPlan: async () => releasedPlan(), writeReceipt: async () => {},

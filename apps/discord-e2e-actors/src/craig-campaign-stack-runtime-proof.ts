@@ -5,10 +5,52 @@ import type {
   CraigCampaignStackCommandResult,
   CraigCampaignStackInput,
 } from "./craig-disposable-campaign-stack.js";
+import type { HostedCampaignReleaseReferenceV1 } from "./hosted-campaign-release-reference.js";
 
 type Execute = (args: readonly string[]) => Promise<CraigCampaignStackCommandResult>;
 const imageId = z.string().regex(/^sha256:[a-f\d]{64}$/u);
 const repositoryDigest = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
+
+export interface CraigCampaignStackAbsenceProofV1 {
+  readonly absentContainerIds: readonly [string, string]; readonly absentNetworkId: string;
+  readonly absentNetworkName: string; readonly absentVolumeName: string; readonly campaignId: string;
+  readonly kind: "craig-stack-absence-proof"; readonly planSha256: string; readonly projectName: string;
+  readonly release: HostedCampaignReleaseReferenceV1; readonly schemaVersion: 1;
+}
+
+export async function proveCraigResourcesAbsentAfterDown(execute: Execute, compose: readonly string[], input: Readonly<{
+  campaignId: string; containerIds: readonly [string, string]; networkId: string; networkName: string;
+  planSha256: string; projectName: string; release: HostedCampaignReleaseReferenceV1; volumeName: string;
+}>): Promise<CraigCampaignStackAbsenceProofV1> {
+  const project = await execute([...compose, "ps", "--all", "--quiet"]);
+  requireSuccess(project, "Craig post-down Compose container absence proof");
+  if (project.stdout.trim() !== "") { throw new Error("Craig containers remain after Compose down"); }
+  for (const containerId of input.containerIds) {
+    requireDockerObjectAbsent(await execute(["container", "inspect", containerId]), "container");
+  }
+  for (const type of ["volume", "network"] as const) {
+    const labeled = await execute([type, "ls", "--quiet", "--filter",
+      `label=com.docker.compose.project=${input.projectName}`]);
+    requireSuccess(labeled, `Craig post-down labeled ${type} absence proof`);
+    if (labeled.stdout.trim() !== "") { throw new Error(`Craig labeled ${type} remains after Compose down`); }
+  }
+  requireDockerObjectAbsent(await execute(["network", "inspect", input.networkId]), "network");
+  requireDockerObjectAbsent(await execute(["network", "inspect", input.networkName]), "network");
+  requireDockerObjectAbsent(await execute(["volume", "inspect", input.volumeName]), "volume");
+  return Object.freeze({ absentContainerIds: input.containerIds, absentNetworkId: input.networkId,
+    absentNetworkName: input.networkName, absentVolumeName: input.volumeName, campaignId: input.campaignId,
+    kind: "craig-stack-absence-proof", planSha256: input.planSha256, projectName: input.projectName,
+    release: input.release, schemaVersion: 1 });
+}
+
+function requireDockerObjectAbsent(result: CraigCampaignStackCommandResult,
+  kind: "container" | "network" | "volume"): void {
+  const absent = kind === "container" ? /no such (?:object|container)/iu
+    : kind === "network" ? /(?:no such network|network\s+\S+\s+not found)/iu : /no such volume/iu;
+  if (result.exitCode === 0 || result.exitCode !== 1 || !absent.test(result.stderr)) {
+    throw new Error(`Craig ${kind} could not be independently proved absent after down`);
+  }
+}
 
 export async function assertCraigResourcesAbsent(
   execute: Execute,

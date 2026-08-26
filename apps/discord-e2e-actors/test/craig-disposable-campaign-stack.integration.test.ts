@@ -11,10 +11,14 @@ import {
   FileCraigCampaignCredentialStore,
   craigProjectName,
   deriveCraigCampaignNetworkPolicy,
+  planCraigDisposableCampaignStack,
   provisionCraigDisposableCampaignStack,
   teardownSuccessfulCraigCampaignStack,
 } from "../src/craig-disposable-campaign-stack.js";
 import { LocalDockerCommandExecutor } from "../src/craig-campaign-stack-local-adapters.js";
+import { recoverCraigFailedCampaignStack } from "../src/recover-craig-failed-campaign-stack.js";
+import { digestCanonical } from "../src/hosted-campaign-local-admission.js";
+import type { HostedCampaignLeaseHandle } from "../src/hosted-campaign-coordinator.js";
 
 const executeFile = promisify(execFile);
 const release = { releaseBindingSha256: "a".repeat(64), releaseId: "local-integration",
@@ -118,6 +122,7 @@ networks:
     } as const;
     const commands = new LocalDockerCommandExecutor();
     let receipt;
+    let retainedProject = project;
     try {
       receipt = await provisionCraigDisposableCampaignStack(input, {
         commands, credentials: new FileCraigCampaignCredentialStore(),
@@ -126,10 +131,58 @@ networks:
       expect(receipt).toMatchObject({ database: { name: "craig", schema: "public", user: "craig" },
         projectName: project, serviceHealth: "healthy" });
       await teardownSuccessfulCraigCampaignStack(receipt, input, lease, { commands });
+      const recoveryCampaignId = `${campaignId}-recovery`;
+      const recoveryPolicy = deriveCraigCampaignNetworkPolicy(recoveryCampaignId, release,
+        { end: 65_535, start: 1_024 });
+      const recoveryRoot = join(root, recoveryCampaignId);
+      await mkdir(join(recoveryRoot, "control"), { recursive: true, mode: 0o700 });
+      await mkdir(join(recoveryRoot, "barriers"), { recursive: true, mode: 0o700 });
+      const recoveryPlanSha256 = "f".repeat(64);
+      const recoveryLeaseContents = `${JSON.stringify({ campaignId: recoveryCampaignId,
+        campaignRoot: recoveryRoot, planSha256: recoveryPlanSha256 })}\n`;
+      const recoveryLeasePath = join(recoveryRoot, "barriers", "campaign.lease");
+      await writeFile(recoveryLeasePath, recoveryLeaseContents, { mode: 0o600 });
+      const recoveryLeaseStatus = await stat(recoveryLeasePath);
+      const recoveryLease = { campaignId: recoveryCampaignId, campaignRoot: recoveryRoot,
+        device: recoveryLeaseStatus.dev, inode: recoveryLeaseStatus.ino,
+        leaseSha256: createHash("sha256").update(recoveryLeaseContents).digest("hex"),
+        planSha256: recoveryPlanSha256 } as HostedCampaignLeaseHandle;
+      const recoveryCompose = compose.replaceAll(campaignId, recoveryCampaignId)
+        .replaceAll(networkPolicy.name, recoveryPolicy.name)
+        .replaceAll(networkPolicy.databaseIpv4, recoveryPolicy.databaseIpv4)
+        .replaceAll(networkPolicy.botIpv4, recoveryPolicy.botIpv4)
+        .replaceAll(networkPolicy.bridgeInterface, recoveryPolicy.bridgeInterface)
+        .replaceAll(networkPolicy.subnet, recoveryPolicy.subnet);
+      const recoveryInput = { ...input, campaignId: recoveryCampaignId, composeCanonical: recoveryCompose,
+        composeCanonicalSha256: createHash("sha256").update(recoveryCompose).digest("hex"),
+        credentialFile: join(recoveryRoot, "control", "craig.env"), networkPolicy: recoveryPolicy };
+      const recoveryPlan = planCraigDisposableCampaignStack(recoveryInput);
+      retainedProject = recoveryPlan.projectName;
+      await provisionCraigDisposableCampaignStack(recoveryInput, {
+        commands, credentials: new FileCraigCampaignCredentialStore(),
+        mutationJournal: { markStarted: async () => {} },
+      }, recoveryLease);
+      const mutationContent = { campaignId: recoveryCampaignId,
+        campaignLeaseSha256: recoveryLease.leaseSha256,
+        composeCanonicalSha256: recoveryInput.composeCanonicalSha256,
+        hostedPlanSha256: recoveryLease.planSha256, kind: "craig-stack-mutation-start" as const,
+        networkPolicy: recoveryPolicy, planSha256: recoveryPlan.planSha256,
+        projectName: recoveryPlan.projectName, release, schemaVersion: 1 as const,
+        startedAt: "2026-08-26T12:00:00.000Z" };
+      const mutation = { ...mutationContent, receiptSha256: digestCanonical(mutationContent) };
+      const failureContent = { campaignId: recoveryCampaignId,
+        campaignLeaseSha256: recoveryLease.leaseSha256, campaignRoot: recoveryRoot,
+        failedAt: "2026-08-26T12:00:01.000Z", failureClass: "Error", failureSha256: "e".repeat(64),
+        hostedPlanSha256: recoveryLease.planSha256, kind: "craig-failed-stack" as const,
+        mutationReceiptSha256: mutation.receiptSha256, planSha256: recoveryPlan.planSha256,
+        projectName: recoveryPlan.projectName, release, schemaVersion: 1 as const };
+      const failure = { ...failureContent, receiptSha256: digestCanonical(failureContent) };
+      await expect(recoverCraigFailedCampaignStack(recoveryInput, mutation, failure, commands))
+        .resolves.toMatchObject({ campaignId: recoveryCampaignId, campaignLeaseRemoved: true });
     } catch (error) {
       // Failed infrastructure is deliberately retained. Emit its exact project
       // for local diagnosis; never clean it through the failure path.
-      process.stderr.write(`Retained failed disposable Craig project ${project}\n`);
+      process.stderr.write(`Retained failed disposable Craig project ${retainedProject}\n`);
       throw error;
     }
   }, 120_000);

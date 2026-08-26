@@ -21,6 +21,9 @@ import {
 import { validateRenderedCraigCompose } from "../src/craig-campaign-compose-validation.js";
 import { digestCanonical } from "../src/hosted-campaign-local-admission.js";
 import type { HostedCampaignLeaseHandle } from "../src/hosted-campaign-coordinator.js";
+import { recoverCraigFailedCampaignStack } from "../src/recover-craig-failed-campaign-stack.js";
+import { verifyCraigFailedStackRecoveryReceipt } from "../src/craig-campaign-stack-evidence.js";
+import { removeCraigCampaignFirewall } from "../src/craig-campaign-network-lifecycle.js";
 
 const release = {
   releaseBindingSha256: "1".repeat(64), releaseId: "release-42", trustRootSha256: "2".repeat(64),
@@ -139,6 +142,7 @@ class Harness {
   protocolOutput = protocolResponse;
   databaseUp = false;
   botStopped = false;
+  resourcesDown = false;
   firewallRemoved = false;
   constructor(readonly input: CraigCampaignStackInput) {}
   readonly execute = vi.fn(async (request: CraigCampaignStackCommandRequest): Promise<CraigCampaignStackCommandResult> => {
@@ -146,11 +150,13 @@ class Harness {
     const args = request.args;
     const firewallResult = this.#handleFirewall(request);
     if (firewallResult !== undefined) { return firewallResult; }
+    const lifecycleResult = this.#handleLifecycle(args);
+    if (lifecycleResult !== undefined) { return lifecycleResult; }
     if (args.includes("config")) { return result(0, JSON.stringify(rendered(this.input))); }
     if (args[0] === "volume" && args[1] === "inspect") { return result(1, "", "No such volume"); }
     if ((args[0] === "volume" || args[0] === "network") && args[1] === "ls") { return result(); }
     if (args[0] === "network" && args[1] === "inspect") {
-      if (!this.databaseUp) { return result(1, "", "No such network"); }
+      if (!this.databaseUp || this.resourcesDown) { return result(1, "", "No such network"); }
       return result(0, JSON.stringify([{ Driver: "bridge", Id: "a".repeat(64),
         Labels: { "com.docker.compose.project": craigProjectName(this.input.campaignId, release) },
         Name: this.input.networkPolicy.name,
@@ -164,8 +170,6 @@ class Harness {
       return result(0, args.at(-1)?.includes("ORDER BY version") === true
         ? this.migrationOutput : "craig|craig\n");
     }
-    if (args.includes("up") && args.at(-1) === "database") { this.databaseUp = true; return result(); }
-    if (args.includes("stop") && args.at(-1) === "bot") { this.botStopped = true; return result(); }
     if (args.includes("/app/bin/craig-control")) { return result(0, this.protocolOutput); }
     if (args.includes("--quiet") && args.at(-1) === "database") { return result(0, `${databaseId}\n`); }
     if (args.includes("--quiet") && args.at(-1) === "bot") {
@@ -188,6 +192,15 @@ class Harness {
     }
     return result();
   });
+  #handleLifecycle(args: readonly string[]): CraigCampaignStackCommandResult | undefined {
+    if (args.includes("up") && args.at(-1) === "database") { this.databaseUp = true; return result(); }
+    if (args.includes("stop") && args.at(-1) === "bot") { this.botStopped = true; return result(); }
+    if (args.includes("down")) { this.resourcesDown = true; return result(); }
+    if (args[0] === "container" && args[1] === "inspect") {
+      return this.resourcesDown ? result(1, "", "No such container") : result();
+    }
+    return undefined;
+  }
   #handleFirewall(request: CraigCampaignStackCommandRequest): CraigCampaignStackCommandResult | undefined {
     if (request.executable === "/usr/sbin/iptables-save") {
       return result(0, this.firewallRemoved ? "*filter\n:FORWARD DROP [0:0]\nCOMMIT\n" : firewall(this.input));
@@ -207,7 +220,10 @@ function firewall(input: CraigCampaignStackInput): string {
   const policy = input.networkPolicy;
   return `*filter
 :FORWARD DROP [0:0]
+:INPUT ACCEPT [0:0]
 :${policy.chain} - [0:0]
+:${policy.inputChain} - [0:0]
+-A INPUT -i ${policy.bridgeInterface} -s ${policy.botIpv4}/32 -j ${policy.inputChain}
 -A FORWARD -i ${policy.bridgeInterface} -s ${policy.botIpv4}/32 -j ${policy.chain}
 -A FORWARD -o ${policy.bridgeInterface} -d ${policy.botIpv4}/32 -j ${policy.chain}
 -A ${policy.chain} -i ${policy.bridgeInterface} -s ${policy.botIpv4}/32 -d ${policy.databaseIpv4}/32 -p tcp -m conntrack --ctstate NEW,ESTABLISHED --dport 5432 -j ACCEPT
@@ -215,6 +231,7 @@ function firewall(input: CraigCampaignStackInput): string {
 -A ${policy.chain} -i ${policy.bridgeInterface} -s ${policy.botIpv4}/32 -p udp -m conntrack --ctstate NEW,ESTABLISHED --dport ${policy.udpDestinationPorts.start}:${policy.udpDestinationPorts.end} -j ACCEPT
 -A ${policy.chain} -o ${policy.bridgeInterface} -d ${policy.botIpv4}/32 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 -A ${policy.chain} -j DROP
+-A ${policy.inputChain} -j DROP
 COMMIT
 `;
 }
@@ -315,11 +332,71 @@ describe("Craig disposable private-campaign stack", () => {
     expect(teardownCalls.findIndex(({ args }) => args.includes("stop")))
       .toBeLessThan(teardownCalls.findIndex(({ executable, args }) =>
         executable === "/usr/sbin/iptables" && args[0] === "-D"));
-    expect(teardownCalls.at(-1)?.args).toContain("--volumes");
+    expect(teardownCalls.some(({ args }) => args.includes("down") && args.includes("--volumes"))).toBe(true);
+    expect(teardownCalls.at(-1)?.args).toEqual(["volume", "inspect", receipt.databaseVolume]);
     await expect(teardownSuccessfulCraigCampaignStack(
       { ...receipt, receiptSha256: "0".repeat(64) }, input, lease, harness.ports()))
       .rejects.toThrow(/digest is invalid/u);
   });
+
+  it("recovers an exact retained failed stack and rejects mutated recovery evidence", async () => {
+    const input = await fixture("campaign-failed-recovery");
+    const harness = new Harness(input);
+    const lease = await leaseFor(input);
+    const plan = planCraigDisposableCampaignStack(input);
+    await provisionCraigDisposableCampaignStack(input, harness.ports(), lease);
+    const mutationContent = { campaignId: input.campaignId, campaignLeaseSha256: lease.leaseSha256,
+      composeCanonicalSha256: input.composeCanonicalSha256, hostedPlanSha256: lease.planSha256,
+      kind: "craig-stack-mutation-start" as const, networkPolicy: input.networkPolicy,
+      planSha256: plan.planSha256, projectName: plan.projectName, release: input.release,
+      schemaVersion: 1 as const, startedAt: "2026-08-26T12:00:00.000Z" };
+    const mutation = { ...mutationContent, receiptSha256: digestCanonical(mutationContent) };
+    const failureContent = { campaignId: input.campaignId, campaignLeaseSha256: lease.leaseSha256,
+      campaignRoot: lease.campaignRoot, failedAt: "2026-08-26T12:00:01.000Z", failureClass: "Error",
+      failureSha256: "7".repeat(64), hostedPlanSha256: lease.planSha256,
+      kind: "craig-failed-stack" as const, mutationReceiptSha256: mutation.receiptSha256,
+      planSha256: plan.planSha256, projectName: plan.projectName, release: input.release,
+      schemaVersion: 1 as const };
+    const failure = { ...failureContent, receiptSha256: digestCanonical(failureContent) };
+    const recovery = await recoverCraigFailedCampaignStack(input, mutation, failure,
+      { execute: harness.execute }, () => Date.parse("2026-08-26T12:00:02.000Z"));
+    expect(recovery).toMatchObject({ campaignId: input.campaignId, campaignLeaseRemoved: true,
+      kind: "craig-failed-stack-recovery", projectName: plan.projectName });
+    await expect(stat(join(lease.campaignRoot, "barriers", "campaign.lease")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    const { receiptSha256: _receiptSha256, ...recoveryContent } = recovery;
+    const mutatedRecovery = { ...recoveryContent, unexpected: true };
+    expect(() => verifyCraigFailedStackRecoveryReceipt({ ...mutatedRecovery,
+      receiptSha256: digestCanonical(mutatedRecovery) }, failure, mutation)).toThrow();
+  });
+
+  it("retries firewall uninstall after an exact dispatch was already deleted", async () => {
+    const input = await fixture("campaign-firewall-retry");
+    let saves = 0;
+    const calls: string[][] = [];
+    const execute = vi.fn(async (request: CraigCampaignStackCommandRequest) => {
+      calls.push([...request.args]);
+      if (request.executable === "/usr/sbin/iptables-save") {
+        saves += 1;
+        return result(0, saves === 1 ? firewall(input).replace(
+          `-A INPUT -i ${input.networkPolicy.bridgeInterface} -s ${input.networkPolicy.botIpv4}/32 -j ${input.networkPolicy.inputChain}\n`,
+          "") : "*filter\n:INPUT ACCEPT [0:0]\n:FORWARD DROP [0:0]\nCOMMIT\n");
+      }
+      if (request.args[0] === "-C" && request.args[1] === "INPUT") {
+        return result(1, "", "Bad rule (does a matching rule exist in that chain?).");
+      }
+      return result();
+    });
+    await removeCraigCampaignFirewall(input, execute, { botStopped: true });
+    expect(calls).toContainEqual(["-C", "INPUT", "-i", input.networkPolicy.bridgeInterface,
+      "-s", `${input.networkPolicy.botIpv4}/32`, "-j", input.networkPolicy.inputChain]);
+    expect(calls).not.toContainEqual(["-D", "INPUT", "-i", input.networkPolicy.bridgeInterface,
+      "-s", `${input.networkPolicy.botIpv4}/32`, "-j", input.networkPolicy.inputChain]);
+  });
+
+});
+
+describe("Craig disposable stack closed-input and custody continuation", () => {
 
   it("rejects a second credential reservation for a reused campaign", async () => {
     const input = await fixture("campaign-reuse");

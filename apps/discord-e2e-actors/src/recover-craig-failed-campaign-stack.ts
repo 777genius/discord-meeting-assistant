@@ -1,0 +1,257 @@
+import { createHash } from "node:crypto";
+import { lstat, readFile, readdir, unlink } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { z } from "zod";
+
+import { readStablePrivateJson } from "./compile-hosted-campaign-plan.js";
+import { removeCraigCampaignFirewall } from "./craig-campaign-network-lifecycle.js";
+import { validateRenderedCraigCompose } from "./craig-campaign-compose-validation.js";
+import { craigCredentialEnvironment } from "./craig-campaign-stack-credentials.js";
+import { digestCraigCampaignStackCanonical as digestCanonical } from "./craig-campaign-stack-digest.js";
+import { verifyCraigFailedStackReceipt, verifyCraigFailedStackRecoveryReceipt,
+  type CraigFailedStackRecoveryReceiptV1 } from "./craig-campaign-stack-evidence.js";
+import { LocalDockerCommandExecutor, trustedDockerEnvironment, writeCreateOnlyPrivateJson } from
+  "./craig-campaign-stack-local-adapters.js";
+import { craigCampaignStackInputSchema, craigSha256Schema } from "./craig-campaign-stack-schemas.js";
+import { planCraigDisposableCampaignStack, type CraigCampaignStackCommandResult } from
+  "./craig-disposable-campaign-stack.js";
+
+export const MAX_UNRECOVERED_CRAIG_STACKS = 8;
+
+type Executor = Pick<LocalDockerCommandExecutor, "execute">;
+
+export async function assertCraigFailedStackRetentionAdmission(campaignRoot: string): Promise<void> {
+  let entries;
+  try { entries = await readdir(campaignRoot, { withFileTypes: true }); } catch (error) {
+    if (errorCode(error) === "ENOENT") { return; }
+    throw error;
+  }
+  let unrecovered = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) { continue; }
+    const control = join(campaignRoot, entry.name, "control");
+    const failurePath = join(control, "craig-stack-failure.json");
+    if (!await exists(failurePath)) { continue; }
+    const recoveryPath = join(control, "craig-stack-recovery.json");
+    if (!await exists(recoveryPath)) { unrecovered += 1; continue; }
+    const mutationPath = join(control, "craig-stack-mutation-start.json");
+    const [mutation, failure, recovery] = await Promise.all([readStablePrivateJson(mutationPath),
+      readStablePrivateJson(failurePath), readStablePrivateJson(recoveryPath)]);
+    verifyCraigFailedStackRecoveryReceipt(recovery, failure, mutation);
+  }
+  if (unrecovered >= MAX_UNRECOVERED_CRAIG_STACKS) {
+    throw new Error(`Craig fresh admission blocked by ${unrecovered} unrecovered failed stacks; run recovery first`);
+  }
+}
+
+export async function recoverCraigFailedCampaignStack(inputValue: unknown, mutationValue: unknown,
+  failureValue: unknown, commands: Executor = new LocalDockerCommandExecutor(),
+  now: () => number = Date.now): Promise<CraigFailedStackRecoveryReceiptV1> {
+  const input = craigCampaignStackInputSchema.parse(inputValue);
+  const planned = planCraigDisposableCampaignStack(input);
+  const failure = verifyCraigFailedStackReceipt(failureValue, mutationValue);
+  const campaignPath = join(input.campaignRoot, input.campaignId);
+  if (failure.campaignId !== input.campaignId || failure.campaignRoot !== campaignPath
+    || failure.planSha256 !== planned.planSha256 || failure.projectName !== planned.projectName
+    || JSON.stringify(failure.release) !== JSON.stringify(input.release)) {
+    throw new Error("Craig recovery input does not match the exact retained failure plan/release/root");
+  }
+  const leasePresent = await verifyAndRemoveRetainedLease(campaignPath, failure.campaignLeaseSha256,
+    failure.hostedPlanSha256, input.campaignId, false);
+  const environment = Object.freeze({ ...trustedDockerEnvironment(),
+    ...craigCredentialEnvironment(input, planned.projectName) });
+  const compose = ["compose", "--project-name", planned.projectName, "--file", "-"] as const;
+  const execute = (args: readonly string[]) => commands.execute({ args, environment,
+    executable: "/usr/bin/docker", standardInput: input.composeCanonical, timeoutMilliseconds: 60_000,
+    workingDirectory: "/" });
+  const renderedResult = await execute([...compose, "config", "--format", "json"]);
+  requireSuccess(renderedResult, "Craig recovery rendered Compose configuration");
+  validateRenderedCraigCompose(renderedResult.stdout, input, planned.projectName,
+    `${planned.projectName}_${input.database.volume}`);
+  const observedContainerIds = await inspectOwnedContainers(execute, compose, planned.projectName,
+    new Set([input.service, input.database.service]));
+  const networkId = await inspectOwnedNetwork(execute, input.networkPolicy.name, planned.projectName,
+    input.networkPolicy.bridgeInterface);
+  await inspectOwnedVolume(execute, `${planned.projectName}_${input.database.volume}`, planned.projectName);
+  requireSuccess(await execute([...compose, "stop", "--timeout", "30", input.service]),
+    "Craig failed-stack bot stop");
+  const stopped = await execute([...compose, "ps", "--quiet", input.service]);
+  requireSuccess(stopped, "Craig failed-stack stopped-bot proof");
+  if (stopped.stdout.trim() !== "") { throw new Error("Craig failed-stack bot may still run"); }
+  await removeCraigCampaignFirewall(input, (request) => commands.execute(request), { botStopped: true });
+  requireSuccess(await execute([...compose, "down", "--volumes", "--remove-orphans", "--timeout", "30"]),
+    "Craig failed-stack Compose cleanup");
+  await proveRecoveryResourcesAbsent(execute, { compose, ids: observedContainerIds,
+    networkId, networkName: input.networkPolicy.name, projectName: planned.projectName,
+    volumeName: `${planned.projectName}_${input.database.volume}` });
+  if (leasePresent) {
+    await verifyAndRemoveRetainedLease(campaignPath, failure.campaignLeaseSha256,
+      failure.hostedPlanSha256, input.campaignId, true);
+  }
+  const absenceProof = { absentContainerIds: observedContainerIds, absentNetworkId: networkId,
+    absentNetworkName: input.networkPolicy.name, absentVolumeName: `${planned.projectName}_${input.database.volume}`,
+    campaignId: input.campaignId, kind: "craig-recovery-absence-proof" as const,
+    planSha256: planned.planSha256, projectName: planned.projectName, release: input.release,
+    schemaVersion: 1 as const };
+  const content = { absenceProof, campaignId: input.campaignId, campaignLeaseRemoved: true as const,
+    completedAt: new Date(now()).toISOString(), failureReceiptSha256: failure.receiptSha256,
+    hostedPlanSha256: failure.hostedPlanSha256, kind: "craig-failed-stack-recovery" as const,
+    mutationReceiptSha256: failure.mutationReceiptSha256, planSha256: planned.planSha256,
+    projectName: planned.projectName, release: input.release, schemaVersion: 1 as const };
+  return verifyCraigFailedStackRecoveryReceipt({ ...content, receiptSha256: digestCanonical(content) },
+    failureValue, mutationValue);
+}
+
+async function inspectOwnedContainers(execute: (args: readonly string[]) => Promise<CraigCampaignStackCommandResult>,
+  compose: readonly string[], projectName: string,
+  services: ReadonlySet<string>): Promise<string[]> {
+  const listed = await execute([...compose, "ps", "--all", "--quiet"]);
+  requireSuccess(listed, "Craig failed-stack container enumeration");
+  const ids = listed.stdout.trim() === "" ? [] : listed.stdout.trim().split(/\s+/u);
+  for (const id of ids) {
+    craigSha256Schema.parse(id);
+    const inspected = await execute(["container", "inspect", id]);
+    requireSuccess(inspected, "Craig failed-stack container ownership inspection");
+    const value = z.array(z.object({ Id: z.literal(id), Config: z.object({ Labels: z.record(z.string(), z.string())
+      }).loose() }).loose()).length(1).parse(JSON.parse(inspected.stdout))[0]!;
+    const labels = value.Config.Labels;
+    if (labels["com.docker.compose.project"] !== projectName
+      || !services.has(labels["com.docker.compose.service"] ?? "")) {
+      throw new Error("Craig recovery refuses a container outside exact project/service ownership");
+    }
+  }
+  return ids.toSorted();
+}
+
+async function inspectOwnedNetwork(execute: (args: readonly string[]) => Promise<CraigCampaignStackCommandResult>,
+  name: string, projectName: string, bridge: string): Promise<string | null> {
+  const result = await execute(["network", "inspect", name]);
+  if (isAbsent(result, "network")) { return null; }
+  requireSuccess(result, "Craig failed-stack network ownership inspection");
+  const value = z.array(z.object({ Id: craigSha256Schema, Labels: z.record(z.string(), z.string()),
+    Name: z.literal(name), Options: z.record(z.string(), z.string()).nullable() }).loose()).length(1)
+    .parse(JSON.parse(result.stdout))[0]!;
+  if (value.Labels["com.docker.compose.project"] !== projectName
+    || value.Options?.["com.docker.network.bridge.name"] !== bridge) {
+    throw new Error("Craig recovery refuses a network outside exact project/bridge ownership");
+  }
+  return value.Id;
+}
+
+async function inspectOwnedVolume(execute: (args: readonly string[]) => Promise<CraigCampaignStackCommandResult>,
+  name: string, projectName: string): Promise<void> {
+  const result = await execute(["volume", "inspect", name]);
+  if (isAbsent(result, "volume")) { return; }
+  requireSuccess(result, "Craig failed-stack volume ownership inspection");
+  const value = z.array(z.object({ Labels: z.record(z.string(), z.string()), Name: z.literal(name) }).loose())
+    .length(1).parse(JSON.parse(result.stdout))[0]!;
+  if (value.Labels["com.docker.compose.project"] !== projectName) {
+    throw new Error("Craig recovery refuses a volume outside exact project ownership");
+  }
+}
+
+async function proveRecoveryResourcesAbsent(execute: (args: readonly string[]) => Promise<CraigCampaignStackCommandResult>,
+  input: Readonly<{ compose: readonly string[]; ids: readonly string[]; networkId: string | null;
+    networkName: string; projectName: string; volumeName: string }>): Promise<void> {
+  const project = await execute([...input.compose, "ps", "--all", "--quiet"]);
+  requireSuccess(project, "Craig recovery post-down Compose absence proof");
+  if (project.stdout.trim() !== "") { throw new Error("Craig recovery left Compose containers"); }
+  for (const id of input.ids) { if (!isAbsent(await execute(["container", "inspect", id]), "container")) {
+    throw new Error("Craig recovery left an owned container"); } }
+  for (const identity of [input.networkName, ...(input.networkId === null ? [] : [input.networkId])]) {
+    if (!isAbsent(await execute(["network", "inspect", identity]), "network")) {
+      throw new Error("Craig recovery left its exact network");
+    }
+  }
+  if (!isAbsent(await execute(["volume", "inspect", input.volumeName]), "volume")) {
+    throw new Error("Craig recovery left its exact volume");
+  }
+  for (const type of ["network", "volume"] as const) {
+    const labeled = await execute([type, "ls", "--quiet", "--filter",
+      `label=com.docker.compose.project=${input.projectName}`]);
+    requireSuccess(labeled, `Craig recovery labeled ${type} absence proof`);
+    if (labeled.stdout.trim() !== "") { throw new Error(`Craig recovery left a labeled ${type}`); }
+  }
+}
+
+async function verifyAndRemoveRetainedLease(campaignRoot: string, expectedSha256: string,
+  expectedPlanSha256: string, campaignId: string, remove: boolean): Promise<boolean> {
+  const path = join(campaignRoot, "barriers", "campaign.lease");
+  let status;
+  try { status = await lstat(path); } catch (error) {
+    if (errorCode(error) === "ENOENT" && !remove) { return false; }
+    throw error;
+  }
+  if (!status.isFile() || status.isSymbolicLink() || status.nlink !== 1) {
+    throw new Error("Craig recovery lease custody is unsafe");
+  }
+  const bytes = await readFile(path, "utf8");
+  const parsed = z.object({ campaignId: z.literal(campaignId), campaignRoot: z.literal(campaignRoot),
+    planSha256: z.literal(expectedPlanSha256) }).strict().parse(JSON.parse(bytes));
+  void parsed;
+  if (createHash("sha256").update(bytes).digest("hex") !== expectedSha256) {
+    throw new Error("Craig recovery lease digest is not the retained failure lease");
+  }
+  if (remove) {
+    await unlink(path);
+    if (await exists(path)) { throw new Error("Craig recovery lease remains after unlink"); }
+  }
+  return true;
+}
+
+function isAbsent(result: CraigCampaignStackCommandResult, kind: "container" | "network" | "volume"): boolean {
+  if (result.exitCode !== 1) { return false; }
+  return (kind === "container" ? /no such (?:object|container)/iu
+    : kind === "network" ? /(?:no such network|network\s+\S+\s+not found)/iu : /no such volume/iu)
+    .test(result.stderr);
+}
+
+function requireSuccess(result: CraigCampaignStackCommandResult, label: string): void {
+  if (result.exitCode !== 0) { throw new Error(`${label} failed closed (exit ${result.exitCode})`); }
+}
+async function exists(path: string): Promise<boolean> {
+  try { await lstat(path); return true; } catch (error) { if (errorCode(error) === "ENOENT") { return false; } throw error; }
+}
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code : undefined;
+}
+
+export function parseCraigRecoveryArguments(arguments_: readonly string[]) {
+  const values = arguments_[0] === "--" ? arguments_.slice(1) : arguments_;
+  if (values.length !== 4 || values.some((value) => !value.startsWith("/"))) {
+    throw new Error("Usage: recover:craig-stack <stack-input.json> <mutation.json> <failure.json> <recovery.json>");
+  }
+  const [inputPath, mutationPath, failurePath, recoveryPath] = values as [string, string, string, string];
+  const control = dirname(inputPath);
+  if (basename(inputPath) !== "craig-stack-input.json"
+    || [mutationPath, failurePath, recoveryPath].some((path) => dirname(path) !== control)) {
+    throw new Error("Craig recovery inputs and receipt must use one exact retained control directory");
+  }
+  return { failurePath, inputPath, mutationPath, recoveryPath };
+}
+
+async function main(): Promise<void> {
+  const paths = parseCraigRecoveryArguments(process.argv.slice(2));
+  const [input, mutation, failure] = await Promise.all([readStablePrivateJson(paths.inputPath),
+    readStablePrivateJson(paths.mutationPath), readStablePrivateJson(paths.failurePath)]);
+  if (await exists(paths.recoveryPath)) {
+    verifyCraigFailedStackRecoveryReceipt(await readStablePrivateJson(paths.recoveryPath), failure, mutation);
+    const retainedInput = craigCampaignStackInputSchema.parse(input);
+    if (await exists(join(retainedInput.campaignRoot, retainedInput.campaignId, "barriers", "campaign.lease"))) {
+      throw new Error("Craig recovery receipt exists while its retained campaign lease is present");
+    }
+    return;
+  }
+  const receipt = await recoverCraigFailedCampaignStack(input, mutation, failure);
+  await writeCreateOnlyPrivateJson(paths.recoveryPath, receipt);
+  process.stdout.write(`${JSON.stringify({ campaignId: receipt.campaignId, kind: receipt.kind,
+    receiptSha256: receipt.receiptSha256, status: "recovered" })}\n`);
+}
+
+if (process.argv[1]?.replaceAll("\\", "/").endsWith("/recover-craig-failed-campaign-stack.js") === true) {
+  void main().catch((error: unknown) => {
+    process.stderr.write(`Craig failed-stack recovery failed: ${error instanceof Error ? error.message : "unknown"}\n`);
+    process.exitCode = 1;
+  });
+}

@@ -39,12 +39,17 @@ const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
     transcriptExpectationSha256: pinnedCanary.transcriptExpectation.sha256 },
   clockMaximumSkewMs: 250, deployRoot: "/srv/e2e", discordReceiptTtlMs: 30_000,
   craigNetworkPolicy: { bridgeInterface: "br-craige2e", chain: "CRAIG_E2E",
-    databaseIpv4: "172.28.0.3", networkName: "discord-meeting-e2e", projectName: "craig-meeting-e2e",
+    databaseIpv4: "172.28.0.3", inputChain: "CRAIG_E2E_INPUT",
+    networkName: "discord-meeting-e2e", projectName: "craig-meeting-e2e",
     tcpDestinationPort: 443,
     udpDestinationPorts: { end: 65_535, start: 1_024 } },
   craigStack: {
     applicationId: "1533877611258708230", composeCanonical: stackCompose,
     composeCanonicalSha256: createHash("sha256").update(stackCompose).digest("hex"),
+    composeFile: "/srv/e2e/source/craig-compose.yaml", credentialAuthority: "compiled-release-sha256",
+    databaseMigrationTable: "migrations", databaseName: "craig",
+    databasePasswordSha256: createHash("sha256").update("password-012345678901234567890123").digest("hex"),
+    databaseSchema: "public", databaseUser: "craig", databaseVolume: "postgres-data",
     databaseImageIdentity: { imageId: `sha256:${"f".repeat(64)}`,
       repositoryDigest: `registry.test/postgres@sha256:${"f".repeat(64)}` }, databaseService: "database",
     migrationImageIdentity: { imageId: `sha256:${"e".repeat(64)}`,
@@ -53,12 +58,12 @@ const trust = hostedCampaignReleaseTrustRootV1Schema.parse({
     migrationSetSha256: createHash("sha256").update(JSON.stringify(stackMigrations)).digest("hex"),
     protocol: { command: ["/app/bin/craig-control", "readiness", "--format=json"],
       expectedResponseSha256: "9".repeat(64), kind: "craig-application",
-      name: "craig-control-readiness", version: "v1" }, service: "bot",
+      name: "craig-control-readiness", version: "v1" }, readinessTimeoutSeconds: 45, service: "bot",
     serviceImageIdentity: { imageId: `sha256:${"a".repeat(64)}`,
       repositoryDigest: `registry.test/craig@sha256:${"a".repeat(64)}` }, sourceRevision: "a".repeat(40),
   },
   environmentFile: "/srv/e2e/source.env", host: "codex-workers-eu-01",
-  remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 5,
+  remoteComposeFile: "/srv/e2e/source/compose.yaml", schemaVersion: 6,
   secretDirectory: "/run/secrets/discord-e2e",
   services: services.map(([component, composeProject, composeService, digit]) => ({
     component, composeProject, composeService, imageId: `sha256:${digit.repeat(64)}`,
@@ -109,6 +114,9 @@ describe("hosted campaign release binding", () => {
         repositoryDigest: stack.serviceImageIdentity.repositoryDigest, sourceRevision: stack.sourceRevision },
     } as CraigCampaignStackInput;
     const dockerCalls: string[] = [];
+    expect(() => { assertCraigStackInputMatchesCompiledTrustRoot({ ...input,
+      credentialFile: "/different/root/craig.env",
+    }, input.release, trust); }).toThrow("credential path");
     expect(() => { assertCraigStackInputMatchesCompiledTrustRoot({ ...input,
       migrationImageIdentity: { ...input.migrationImageIdentity,
         repositoryDigest: `registry.test/other@sha256:${"0".repeat(64)}` },

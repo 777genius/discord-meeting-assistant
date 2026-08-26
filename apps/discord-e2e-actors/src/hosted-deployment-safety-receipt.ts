@@ -112,6 +112,7 @@ export const hostedCraigNetworkPolicyV1Schema = z.object({
   bridgeInterface: linuxInterfaceSchema,
   chain: iptablesChainSchema,
   databaseIpv4: ipv4Schema,
+  inputChain: iptablesChainSchema,
   networkName: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,62}$/u),
   projectName: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u),
   tcpDestinationPort: z.literal(443),

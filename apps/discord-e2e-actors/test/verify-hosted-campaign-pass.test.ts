@@ -42,6 +42,15 @@ describe("hosted campaign pass verification arguments", () => {
     await expect(verifyCleanup(root)).rejects.toThrow(/contradicts retained/u);
   });
 
+  it("rejects a recomputed lease cleanup object with an unknown field", async () => {
+    const root = await campaignRoot();
+    const content = { ...cleanupContent(root), unexpected: true };
+    await writeFile(join(root, "control/campaign-lease-cleanup.json"), JSON.stringify({
+      ...content, receiptSha256: digestCanonical(content),
+    }), { mode: 0o600 });
+    await expect(verifyCleanup(root)).rejects.toThrow(/contradicts retained/u);
+  });
+
   it("accepts only the exact absent-lease cleanup identity", async () => {
     const root = await campaignRoot();
     const content = cleanupContent(root);

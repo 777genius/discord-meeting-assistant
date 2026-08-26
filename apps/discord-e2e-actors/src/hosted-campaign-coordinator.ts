@@ -256,6 +256,8 @@ export interface HostedCampaignRuntimeAuthorization {
   ) => Promise<void>;
   /** Failed provisioned stacks quarantine their lease and evidence root. */
   retainLeaseOnFailure?(): boolean;
+  /** Retains a closed failure receipt after children stop and before a failed stack remains quarantined. */
+  retainFailureUnderLease?(failure: unknown, lease: HostedCampaignLeaseHandle): Promise<void>;
 }
 export interface HostedCampaignPorts {
   acquireCampaignLease(

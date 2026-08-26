@@ -13,6 +13,7 @@ export const craigCampaignNetworkPolicySchema = z.object({
   bridgeInterface: z.string().regex(/^[a-z][a-z0-9]{0,14}$/u),
   chain: z.string().regex(/^[A-Z][A-Z0-9_]{0,27}$/u),
   databaseIpv4: canonicalIpv4,
+  inputChain: z.string().regex(/^[A-Z][A-Z0-9_]{0,27}$/u),
   name: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,62}$/u),
   subnet: z.string().regex(/^(?:10|172)\.(?:\d{1,3}\.){2}0\/24$/u),
   tcpDestinationPort: z.literal(443),
@@ -30,6 +31,7 @@ export function deriveCraigCampaignNetworkPolicy(campaignId: string, release: Ho
   return craigCampaignNetworkPolicySchema.parse({ botIpv4: `10.${secondOctet}.${thirdOctet}.2`,
     bridgeInterface: `ce2e${identity.slice(0, 10)}`, chain: `CE2E_${identity.slice(0, 20).toUpperCase()}`,
     databaseIpv4: `10.${secondOctet}.${thirdOctet}.3`, name: `${projectName}-network`,
+    inputChain: `CE2E_${identity.slice(0, 18).toUpperCase()}_I`,
     subnet: `10.${secondOctet}.${thirdOctet}.0/24`, tcpDestinationPort: 443, udpDestinationPorts });
 }
 

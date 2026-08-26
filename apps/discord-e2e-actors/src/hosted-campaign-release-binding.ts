@@ -90,7 +90,7 @@ export const hostedCampaignReleaseTrustRootV1Schema = z.object({
   discordReceiptTtlMs: z.number().int().positive().max(60_000), environmentFile: absolutePath,
   host: z.literal(HOSTED_CAMPAIGN_TARGET.host),
   remoteComposeFile: absolutePath,
-  schemaVersion: z.literal(5),
+  schemaVersion: z.literal(6),
   secretDirectory: absolutePath, services: z.array(service.omit({ containerId: true })).length(4),
   sourceRoot: absolutePath,
   voicetextReceiptTtlMs: z.number().int().positive().max(60_000),

@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-import { proveCraigFirewallPolicy } from "./craig-network-policy-proof.js";
+import { parseCraigFilterRulesForOwnership, proveCraigFirewallPolicy,
+  type CraigParsedFirewallRule } from "./craig-network-policy-proof.js";
+import { digestCraigCampaignStackCanonical as digestCanonical } from "./craig-campaign-stack-digest.js";
 import type {
   CraigCampaignStackCommandRequest,
   CraigCampaignStackCommandResult,
@@ -26,7 +28,7 @@ export interface CraigInstalledNetworkPolicyV1 {
   readonly bridgeInterface: string; readonly chain: string; readonly containerIpv4: string;
   readonly containerId: string;
   readonly databaseContainerId: string;
-  readonly databaseIpv4: string; readonly networkId: string; readonly networkName: string;
+  readonly databaseIpv4: string; readonly inputChain: string; readonly networkId: string; readonly networkName: string;
   readonly projectName: string; readonly semanticPolicySha256: string; readonly tcpDestinationPort: 443;
   readonly udpDestinationPorts: Readonly<{ end: number; start: number }>;
 }
@@ -43,8 +45,10 @@ export async function installCraigCampaignFirewall(input: CraigCampaignStackInpu
   const database = `${input.networkPolicy.databaseIpv4}/32`;
   const bridge = input.networkPolicy.bridgeInterface;
   const chain = input.networkPolicy.chain;
+  const inputChain = input.networkPolicy.inputChain;
   const commands: readonly (readonly string[])[] = [
     ["-N", chain],
+    ["-N", inputChain],
     ["-A", chain, "-i", bridge, "-s", address, "-d", database, "-p", "tcp", "-m", "conntrack",
       "--ctstate", "NEW,ESTABLISHED", "--dport", "5432", "-j", "ACCEPT"],
     ["-A", chain, "-i", bridge, "-s", address, "-p", "tcp", "-m", "conntrack", "--ctstate",
@@ -55,6 +59,8 @@ export async function installCraigCampaignFirewall(input: CraigCampaignStackInpu
     ["-A", chain, "-o", bridge, "-d", address, "-m", "conntrack", "--ctstate",
       "ESTABLISHED,RELATED", "-j", "ACCEPT"],
     ["-A", chain, "-j", "DROP"],
+    ["-A", inputChain, "-j", "DROP"],
+    ["-I", "INPUT", "1", "-i", bridge, "-s", address, "-j", inputChain],
     ["-I", "FORWARD", "1", "-o", bridge, "-d", address, "-j", chain],
     ["-I", "FORWARD", "1", "-i", bridge, "-s", address, "-j", chain],
   ];
@@ -76,21 +82,43 @@ export async function proveInstalledCraigCampaignFirewall(value: Readonly<{
 }
 
 export async function removeCraigCampaignFirewall(input: CraigCampaignStackInput, executeRequest: ExecuteRequest,
+  proof: Readonly<{ botStopped: true }>,
 ): Promise<void> {
+  if (proof.botStopped !== true) { throw new Error("Craig firewall removal requires a proved-stopped bot"); }
   const address = `${input.networkPolicy.botIpv4}/32`;
   const bridge = input.networkPolicy.bridgeInterface;
   const chain = input.networkPolicy.chain;
+  const inputChain = input.networkPolicy.inputChain;
+  const savedBefore = await executeFirewall(executeRequest, "/usr/sbin/iptables-save", ["-c", "-t", "filter"]);
+  requireSuccess(savedBefore, "Craig campaign firewall ownership inspection");
+  assertOnlyOwnedPartialPolicy(savedBefore.stdout, input);
   for (const args of [
+    ["-D", "INPUT", "-i", bridge, "-s", address, "-j", inputChain],
     ["-D", "FORWARD", "-i", bridge, "-s", address, "-j", chain],
     ["-D", "FORWARD", "-o", bridge, "-d", address, "-j", chain],
-    ["-F", chain], ["-X", chain],
   ] as const) {
-    requireSuccess(await executeFirewall(executeRequest, "/usr/sbin/iptables", args),
-      "Craig campaign firewall removal");
+    const check = await executeFirewall(executeRequest, "/usr/sbin/iptables", ["-C", ...args.slice(1)]);
+    if (check.exitCode === 0) {
+      requireSuccess(await executeFirewall(executeRequest, "/usr/sbin/iptables", args),
+        "Craig campaign firewall dispatch removal");
+    } else if (check.exitCode !== 1) {
+      throw new Error(`Craig campaign firewall dispatch inspection failed closed (exit ${check.exitCode})`);
+    }
+  }
+  for (const ownedChain of [chain, inputChain]) {
+    const check = await executeFirewall(executeRequest, "/usr/sbin/iptables", ["-S", ownedChain]);
+    if (check.exitCode === 0) {
+      requireSuccess(await executeFirewall(executeRequest, "/usr/sbin/iptables", ["-F", ownedChain]),
+        "Craig campaign firewall chain flush");
+      requireSuccess(await executeFirewall(executeRequest, "/usr/sbin/iptables", ["-X", ownedChain]),
+        "Craig campaign firewall chain deletion");
+    } else if (check.exitCode !== 1) {
+      throw new Error(`Craig campaign firewall chain inspection failed closed (exit ${check.exitCode})`);
+    }
   }
   const saved = await executeFirewall(executeRequest, "/usr/sbin/iptables-save", ["-c", "-t", "filter"]);
   requireSuccess(saved, "Craig campaign firewall removal proof");
-  if (saved.stdout.split("\n").some((line) => line.includes(chain))) {
+  if (saved.stdout.split("\n").some((line) => line.includes(chain) || line.includes(inputChain))) {
     throw new Error("Craig campaign firewall chain or dispatch remains after removal");
   }
 }
@@ -143,9 +171,44 @@ async function proveInstalledPolicy(input: CraigCampaignStackInput, projectName:
 
 function hostedPolicy(input: CraigCampaignStackInput, projectName: string) {
   return { bridgeInterface: input.networkPolicy.bridgeInterface, chain: input.networkPolicy.chain,
-    databaseIpv4: input.networkPolicy.databaseIpv4, networkName: input.networkPolicy.name, projectName,
+    databaseIpv4: input.networkPolicy.databaseIpv4, inputChain: input.networkPolicy.inputChain,
+    networkName: input.networkPolicy.name, projectName,
     tcpDestinationPort: input.networkPolicy.tcpDestinationPort,
     udpDestinationPorts: input.networkPolicy.udpDestinationPorts } as const;
+}
+
+function assertOnlyOwnedPartialPolicy(saved: string, input: CraigCampaignStackInput): void {
+  const policy = input.networkPolicy;
+  const address = `${policy.botIpv4}/32`;
+  const database = `${policy.databaseIpv4}/32`;
+  const allowed: readonly CraigParsedFirewallRule[] = [
+    { chain: "INPUT", input: policy.bridgeInterface, source: address, target: policy.inputChain },
+    { chain: "FORWARD", input: policy.bridgeInterface, source: address, target: policy.chain },
+    { chain: "FORWARD", destination: address, output: policy.bridgeInterface, target: policy.chain },
+    { chain: policy.chain, destination: database, destinationPort: "5432", input: policy.bridgeInterface,
+      protocol: "tcp", source: address, states: ["ESTABLISHED", "NEW"], target: "ACCEPT" },
+    { chain: policy.chain, destinationPort: "443", input: policy.bridgeInterface, protocol: "tcp",
+      source: address, states: ["ESTABLISHED", "NEW"], target: "ACCEPT" },
+    { chain: policy.chain, destinationPort: `${policy.udpDestinationPorts.start}:${policy.udpDestinationPorts.end}`,
+      input: policy.bridgeInterface, protocol: "udp", source: address,
+      states: ["ESTABLISHED", "NEW"], target: "ACCEPT" },
+    { chain: policy.chain, destination: address, output: policy.bridgeInterface,
+      states: ["ESTABLISHED", "RELATED"], target: "ACCEPT" },
+    { chain: policy.chain, target: "DROP" }, { chain: policy.inputChain, target: "DROP" },
+  ];
+  const rules = parseCraigFilterRulesForOwnership(saved).filter((rule) =>
+    rule.chain === policy.chain || rule.chain === policy.inputChain
+      || rule.target === policy.chain || rule.target === policy.inputChain);
+  const allowedDigests = new Set(allowed.map((rule) => digestCanonical(rule)));
+  const observedDigests = rules.map((rule) => digestCanonical({ ...rule, unsupported: undefined }));
+  const declarations = saved.split("\n").map((line) => line.trim()).filter((line) =>
+    line.startsWith(`:${policy.chain} `) || line.startsWith(`:${policy.inputChain} `));
+  if (observedDigests.some((digest) => !allowedDigests.has(digest))
+    || new Set(observedDigests).size !== observedDigests.length || declarations.length > 2
+    || declarations.some((line) => line !== `:${policy.chain} - [0:0]`
+      && line !== `:${policy.inputChain} - [0:0]`)) {
+    throw new Error("Craig firewall ownership contains an unexpected or duplicate rule");
+  }
 }
 
 function executeFirewall(executeRequest: ExecuteRequest, executable: string, args: readonly string[]) {

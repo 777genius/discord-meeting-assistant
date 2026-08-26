@@ -66,7 +66,7 @@ function assertActive(bounded: HostedCampaignBoundedSignal): void {
     throw bounded.signal.reason ?? new Error("Hosted campaign cancelled");
   }
   if (!Number.isSafeInteger(bounded.deadlineEpochMilliseconds) || bounded.deadlineEpochMilliseconds <= Date.now()) {
-    throw new Error("Hosted campaign deadline has expired");
+    throw new Error("Hosted campaign deadline expired");
   }
 }
 
@@ -197,6 +197,17 @@ async function executeActions(
   }
 }
 
+async function retainFailedCampaignEvidence(input: Readonly<{
+  childrenStopped: boolean; failure: unknown; lease: HostedCampaignLeaseHandle | undefined;
+  retainFailureUnderLease?: ((failure: unknown, lease: HostedCampaignLeaseHandle) => Promise<void>) | undefined;
+  retainLeaseOnFailure: boolean;
+}>): Promise<void> {
+  if (input.failure !== undefined && input.lease !== undefined && input.childrenStopped
+    && input.retainLeaseOnFailure && input.retainFailureUnderLease !== undefined) {
+    await input.retainFailureUnderLease(input.failure, input.lease);
+  }
+}
+
 async function cleanupCampaign(
   input: Readonly<{
     failure: unknown;
@@ -205,17 +216,21 @@ async function cleanupCampaign(
     leaseQuarantined: boolean;
     ports: HostedCampaignPorts;
     retainLeaseOnFailure: boolean;
+    retainFailureUnderLease?: ((failure: unknown, lease: HostedCampaignLeaseHandle) => Promise<void>) | undefined;
     finalizeAfterLeaseCleanup?: ((cleanup: HostedCampaignLeaseCleanupProof,
       lease: HostedCampaignLeaseHandle) => Promise<void>) | undefined;
   }>,
 ): Promise<void> {
-  const { failure, finalizeAfterLeaseCleanup, handles, lease, leaseQuarantined, ports, retainLeaseOnFailure } = input;
+  const { failure, finalizeAfterLeaseCleanup, handles, lease, leaseQuarantined, ports,
+    retainFailureUnderLease, retainLeaseOnFailure } = input;
   const cleanupFailures: unknown[] = [];
   let childrenStopped = false;
   try {
     await stopEveryChild(handles, ports);
     childrenStopped = true;
   } catch (error) { cleanupFailures.push(error); }
+  try { await retainFailedCampaignEvidence({ childrenStopped, failure, lease,
+    retainFailureUnderLease, retainLeaseOnFailure }); } catch (error) { cleanupFailures.push(error); }
   // The lease is also the quarantine for an incompletely reaped process tree.
   // Releasing it after any stop failure could admit a second campaign beside a
   // surviving child with the same external credentials and artifact scope.
@@ -281,6 +296,7 @@ export async function runHostedCampaign(
   } catch (error) { failure = error; }
   await cleanupCampaign({ failure, handles: state.handles, lease,
     finalizeAfterLeaseCleanup: authorization?.finalizeAfterLeaseCleanup,
+    retainFailureUnderLease: authorization?.retainFailureUnderLease,
     leaseQuarantined: state.barrierTeardownIncomplete, ports,
     retainLeaseOnFailure: authorization?.retainLeaseOnFailure?.() === true });
   if (failure !== undefined) {throw failure instanceof Error

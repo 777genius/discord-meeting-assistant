@@ -14,6 +14,9 @@ import { craigCampaignStackReceiptV2Schema, verifyCraigCampaignStackInputBinding
   type CraigCampaignStackReceiptV2 } from
   "./craig-disposable-campaign-stack.js";
 import { digestCanonical } from "./hosted-campaign-local-admission.js";
+import { verifyCraigMutationStartReceipt as parseCraigMutationStartReceipt } from
+  "./craig-campaign-stack-evidence.js";
+import { hostedCampaignReleaseReferenceV1Schema } from "./hosted-campaign-release-reference.js";
 
 export function parsePassVerificationArguments(arguments_: readonly string[]): {
   readonly artifactRoot: string;
@@ -66,20 +69,18 @@ async function verifyCraigMutationStartReceipt(
     readStablePrivateJson(join(artifactRoot, "control/craig-stack-mutation-start.json")),
     readStablePrivateJson(join(artifactRoot, "control/craig-stack-receipt.json")),
   ]);
-  if (!isRecord(value) || !isRecord(stack) || value.kind !== "craig-stack-mutation-start"
-    || value.schemaVersion !== 1 || value.campaignId !== pass.campaignId
-    || value.hostedPlanSha256 !== pass.planSha256 || value.projectName !== pass.craigStack.projectName
-    || value.planSha256 !== stack.planSha256 || value.campaignLeaseSha256 !== (stack.campaignLease as
-      Record<string, unknown> | undefined)?.sha256
-    || value.composeCanonicalSha256 !== (stack.composeFileIdentity as Record<string, unknown> | undefined)?.sha256
-    || JSON.stringify(value.release) !== JSON.stringify(pass.release)
-    || typeof value.startedAt !== "string" || !Number.isSafeInteger(Date.parse(value.startedAt))
-    || typeof value.receiptSha256 !== "string" || !/^[a-f\d]{64}$/u.test(value.receiptSha256)) {
+  const mutation = parseCraigMutationStartReceipt(value);
+  const retainedStack = craigCampaignStackReceiptV2Schema.parse(stack);
+  const { containerId: _containerId, databaseContainerId: _databaseContainerId,
+    networkId: _networkId, semanticPolicySha256: _semanticPolicySha256,
+    ...stackNetworkPolicy } = retainedStack.networkPolicy;
+  if (mutation.campaignId !== pass.campaignId || mutation.hostedPlanSha256 !== pass.planSha256
+    || mutation.projectName !== pass.craigStack.projectName || mutation.planSha256 !== retainedStack.planSha256
+    || mutation.campaignLeaseSha256 !== retainedStack.campaignLease.sha256
+    || mutation.composeCanonicalSha256 !== retainedStack.composeFileIdentity.sha256
+    || digestCanonical(mutation.networkPolicy) !== digestCanonical(stackNetworkPolicy)
+    || JSON.stringify(mutation.release) !== JSON.stringify(pass.release)) {
     throw new Error("Craig mutation-start receipt does not match the retained pass and stack receipts");
-  }
-  const { receiptSha256, ...content } = value;
-  if (digestCanonical(content) !== receiptSha256) {
-    throw new Error("Craig mutation-start receipt digest is invalid");
   }
 }
 
@@ -89,16 +90,16 @@ async function verifyCampaignLeaseReceipt(
   pass: ReturnType<typeof verifyHostedCampaignPassReceiptPlan>,
   stack: CraigCampaignStackReceiptV2,
 ): Promise<Record<string, unknown>> {
-  const value = await readStablePrivateJson(join(artifactRoot, "control/campaign-lease-receipt.json"));
-  if (!isRecord(value) || value.kind !== "campaign-lease-receipt" || value.schemaVersion !== 1
-    || value.campaignId !== pass.campaignId || value.hostedPlanSha256 !== pass.planSha256
-    || value.campaignRoot !== artifactRoot || typeof value.device !== "number"
-    || !Number.isSafeInteger(value.device) || value.device < 0 || typeof value.inode !== "number"
-    || !Number.isSafeInteger(value.inode) || value.inode < 0 || typeof value.leaseSha256 !== "string"
-    || !/^[a-f\d]{64}$/u.test(value.leaseSha256) || typeof value.receiptSha256 !== "string"
-    || !/^[a-f\d]{64}$/u.test(value.receiptSha256) || plan.runs[0]?.campaignId !== value.campaignId) {
+  const schema = z.object({ campaignId: z.literal(pass.campaignId), campaignRoot: z.literal(artifactRoot),
+    device: z.number().int().nonnegative(), hostedPlanSha256: z.literal(pass.planSha256),
+    inode: z.number().int().nonnegative(), kind: z.literal("campaign-lease-receipt"),
+    leaseSha256: z.string().regex(/^[a-f\d]{64}$/u), receiptSha256: z.string().regex(/^[a-f\d]{64}$/u),
+    schemaVersion: z.literal(1) }).strict();
+  const parsed = schema.safeParse(await readStablePrivateJson(join(artifactRoot, "control/campaign-lease-receipt.json")));
+  if (!parsed.success || plan.runs[0]?.campaignId !== parsed.data.campaignId) {
     throw new Error("Campaign lease receipt does not match the retained pass and plan");
   }
+  const value = parsed.data;
   const { receiptSha256, ...content } = value;
   if (digestCanonical(content) !== receiptSha256) {
     throw new Error("Campaign lease receipt digest is invalid");
@@ -133,21 +134,37 @@ async function verifyCraigTeardownReceipt(
   lease: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const value = await readStablePrivateJson(join(artifactRoot, "control/craig-stack-teardown.json"));
-  if (!isRecord(value) || value.kind !== "craig-stack-teardown" || value.schemaVersion !== 1
-    || value.projectName !== pass.craigStack.projectName
-    || value.stackReceiptSha256 !== pass.craigStack.receiptSha256
-    || value.campaignLeaseReceiptSha256 !== lease.receiptSha256
-    || value.campaignLeaseSha256 !== lease.leaseSha256
-    || value.hostedPlanSha256 !== pass.planSha256
-    || value.passReceiptSha256 !== pass.receiptSha256 || typeof value.receiptSha256 !== "string"
-    || typeof value.completedAt !== "string") {
+  const digest = z.string().regex(/^[a-f\d]{64}$/u);
+  const stack = craigCampaignStackReceiptV2Schema.parse(
+    await readStablePrivateJson(join(artifactRoot, "control/craig-stack-receipt.json")));
+  const schema = z.object({ absenceProof: z.object({
+    absentContainerIds: z.tuple([z.literal(stack.containerId), z.literal(stack.databaseContainerId)]),
+    absentNetworkId: z.literal(stack.networkPolicy.networkId),
+    absentNetworkName: z.literal(stack.networkPolicy.name), absentVolumeName: z.literal(stack.databaseVolume),
+    campaignId: z.literal(stack.campaignId), kind: z.literal("craig-stack-absence-proof"),
+    planSha256: z.literal(stack.planSha256), projectName: z.literal(stack.projectName),
+    release: hostedCampaignReleaseReferenceV1Schema, schemaVersion: z.literal(1) }).strict(),
+    campaignLeaseReceiptSha256: digest, campaignLeaseSha256: digest, completedAt: z.iso.datetime(),
+    hostedPlanSha256: digest, kind: z.literal("craig-stack-teardown"), passReceiptSha256: digest,
+    projectName: z.literal(pass.craigStack.projectName), receiptSha256: digest, schemaVersion: z.literal(1),
+    stackReceiptSha256: digest }).strict();
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) { throw new Error("Craig teardown receipt schema is not closed", { cause: parsed.error }); }
+  const teardown = parsed.data;
+  if (teardown.kind !== "craig-stack-teardown" || teardown.schemaVersion !== 1
+    || JSON.stringify(teardown.absenceProof.release) !== JSON.stringify(stack.release)
+    || teardown.stackReceiptSha256 !== pass.craigStack.receiptSha256
+    || teardown.campaignLeaseReceiptSha256 !== lease.receiptSha256
+    || teardown.campaignLeaseSha256 !== lease.leaseSha256
+    || teardown.hostedPlanSha256 !== pass.planSha256
+    || teardown.passReceiptSha256 !== pass.receiptSha256) {
     throw new Error("Craig teardown receipt does not match the retained pass and stack receipts");
   }
-  const { receiptSha256, ...content } = value;
+  const { receiptSha256, ...content } = teardown;
   if (digestCanonical(content) !== receiptSha256) {
     throw new Error("Craig teardown receipt digest is invalid");
   }
-  return value;
+  return teardown;
 }
 
 export async function verifyCampaignLeaseCleanupReceipt(
@@ -185,10 +202,6 @@ export async function verifyCampaignLeaseCleanupReceipt(
   if (digestCanonical(content) !== receiptSha256) {
     throw new Error("Campaign lease cleanup receipt digest is invalid");
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function verifyRetainedCraigStackReceipt(
