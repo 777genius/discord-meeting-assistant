@@ -50,7 +50,7 @@ export interface CreateActiveLiveMeetingInput {
   readonly sessionAdmission: LiveSessionAdmission;
   readonly speakerIdleFinalizeMs: number;
   readonly startedAtMs: number;
-  readonly suppressInitialParticipantGreetings: boolean;
+  readonly recoverInFlightGreetings: boolean;
   readonly timer: LiveRuntimeTimer;
 }
 
@@ -88,7 +88,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
         isMeetingFinishing: () => state.finishing,
         logger: input.dependencies.logger,
         meetingId,
-        recoverInFlight: input.suppressInitialParticipantGreetings,
+        recoverInFlight: input.recoverInFlightGreetings,
         timer: input.timer,
       });
   const farewell = input.dependencies.conversation?.farewells === undefined
@@ -135,10 +135,9 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     transcriptionFenceClosed: false,
   };
   farewell?.participantsPresent(input.event.participantIds);
-  if (input.suppressInitialParticipantGreetings) {
-    greetings?.participantsRestored(input.event.participantIds, input.event.occurredAt);
-  } else {
-    greetings?.participantsPresent(input.event.participantIds, input.event.occurredAt);
-  }
+  // A meeting-start roster has no honest per-participant join occurrence. It
+  // establishes presence only; incremental join obligations own greeting and
+  // commanded-receipt recovery with their original producer timestamp.
+  greetings?.observeParticipants(input.event.participantIds);
   return state;
 }

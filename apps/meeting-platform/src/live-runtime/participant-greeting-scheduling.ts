@@ -126,8 +126,12 @@ export async function reserveGreetingPlaybackAdmission(
     return undefined;
   }
   if (result.value.status !== "reserved") {
-    input.markGreeted();
-    input.clearTerminal();
+    // completed is terminal evidence. in_flight is only an unknown owner/commit
+    // result and must keep the durable derived obligation pending.
+    if (result.value.status === "completed") {
+      input.markGreeted();
+      input.clearTerminal();
+    }
     return undefined;
   }
   return {

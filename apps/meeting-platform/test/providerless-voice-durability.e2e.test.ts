@@ -170,9 +170,17 @@ describe("providerless production-composition voice durability", () => {
       const event = startEvent(
         meetingId,
         new Date(startedAtMs).toISOString(),
-        [participantOne],
+        [],
       );
       await killed.runtime.acceptLifecycle(event);
+      const joined = participantEvent(
+        meetingId,
+        killed.clock,
+        "participant.joined",
+        participantOne,
+      );
+      const interruptedAdmission = killed.runtime.acceptLifecycle(joined);
+      void interruptedAdmission.catch(() => {});
       await reached.wait;
       await killed.killForRestart();
 
@@ -185,6 +193,7 @@ describe("providerless production-composition voice durability", () => {
         recordingRoot,
       });
       await restarted.runtime.acceptLifecycle(event);
+      await restarted.runtime.acceptLifecycle(joined);
       await restarted.coordinator.whenIdle(meetingId);
 
       if (checkpoint === "db-start-before-settlement") {

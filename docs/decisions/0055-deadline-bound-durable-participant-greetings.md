@@ -1,19 +1,11 @@
 ---
-<<<<<<<< HEAD:docs/decisions/0055-deadline-bound-durable-participant-greetings.md
 id: ADR-0055
-========
-id: ADR-0054
->>>>>>>> 0dffc65 (docs(adr): renumber greeting decision to 0054):docs/decisions/0054-deadline-bound-durable-participant-greetings.md
 status: accepted
 supersedes: []
 superseded_by: []
 ---
 
-<<<<<<<< HEAD:docs/decisions/0055-deadline-bound-durable-participant-greetings.md
 # ADR-0055: Deadline-bound durable participant greetings
-========
-# ADR-0054: Deadline-bound durable participant greetings
->>>>>>>> 0dffc65 (docs(adr): renumber greeting decision to 0054):docs/decisions/0054-deadline-bound-durable-participant-greetings.md
 
 ## Status
 

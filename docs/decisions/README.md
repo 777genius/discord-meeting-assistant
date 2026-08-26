@@ -55,6 +55,7 @@
 - [ADR-0051: Provider-attested greeting and ready-only recording publication](0051-greeting-playback-and-recording-readiness.md)
 - [ADR-0054: Official-SDK finalized-live memory projection](0054-official-sdk-live-memory-projection.md)
 - [ADR-0055: Deadline-bound durable participant greetings](0055-deadline-bound-durable-participant-greetings.md)
+- [ADR-0056: Terminal-evidence greeting reconciliation](0056-terminal-evidence-greeting-reconciliation.md)
 
 ## Superseded
 

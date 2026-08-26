@@ -146,7 +146,7 @@ describe("PostgreSQL conversation one-shot receipts", () => {
     expect(JSON.stringify(rows.rows)).not.toContain(input.meetingId);
     expect(JSON.stringify(rows.rows)).not.toContain(input.subjectId);
   });
-  it("retries the same command before attested audio and fences it after start", async (context) => {
+  it("reclaims an ambiguously committed command and fences it after start", async (context) => {
     const database = databaseOrSkip(context);
     const input = {
       kind: "greeting" as const,
@@ -162,10 +162,14 @@ describe("PostgreSQL conversation one-shot receipts", () => {
     if (providerCommandId === undefined) {
       throw new Error("greeting command id was not assigned");
     }
-    await first.beginGreetingAttempt({
-      ...input, leaseToken: reservation.leaseToken, locale: "en",
-      prompt: "Hi, retry participant!", providerCommandId,
-    });
+    const commitThenLoseResult = async (): Promise<void> => {
+      await first.beginGreetingAttempt({
+        ...input, leaseToken: reservation.leaseToken, locale: "en",
+        prompt: "Hi, retry participant!", providerCommandId,
+      });
+      throw new Error("synthetic transport failure after PostgreSQL commit");
+    };
+    await expect(commitThenLoseResult()).rejects.toThrow("after PostgreSQL commit");
     const restarted = new PostgresConversationOneShotReceiptStore(database);
     await expect(restarted.reserve({ ...input, leaseSeconds: 120 }))
       .resolves.toEqual({ status: "in_flight" });
@@ -571,6 +575,24 @@ describe("PostgreSQL conversation one-shot receipts", () => {
     await expect(store.listPending()).resolves.toContainEqual(obligation);
     await store.markDelivered(obligation.eventId);
     await expect(store.listPending()).resolves.not.toContainEqual(obligation);
+  });
+
+  it("stores a millisecond-canonical obligation from a microsecond lifecycle event",
+    async (context) => {
+    const database = databaseOrSkip(context);
+    const store = new PostgresDerivedGreetingObligationStore(database);
+    const occurredAt = "2026-08-26T00:00:00.123Z";
+    const obligation = {
+      eventId: "derived-greeting-microsecond-event-1",
+      notAfterMilliseconds: Date.parse(occurredAt) + 5_000,
+      occurredAt,
+      participantId: "participant-microsecond-1",
+      recordingId: "derived-greeting-microsecond-meeting-1",
+    } as const;
+
+    await expect(store.accept(obligation)).resolves.toBeUndefined();
+    await expect(store.accept(obligation)).resolves.toBeUndefined();
+    await expect(store.listPending()).resolves.toContainEqual(obligation);
   });
 
   it("expires a commanded obligation atomically without making replay audible", async (context) => {

@@ -304,7 +304,7 @@ function createDependencyReadiness(
   };
 }
 
-function createRunningPlatformRuntime(
+export function createRunningPlatformRuntime(
   resources: Parameters<typeof closeMeetingPlatformResources>[0] & {
     readonly outboxDispatcher: Pick<
       PostCallOutboxDispatcher,
@@ -321,7 +321,11 @@ function createRunningPlatformRuntime(
   }, outboxReconcileIntervalMilliseconds);
   outboxReconcileTimer.unref();
   const greetingObligationReconcileTimer = setInterval(() => {
-    void resources.greetingObligationDispatcher.dispatchPendingGreetings();
+    void resources.greetingObligationDispatcher.dispatchPendingGreetings().catch((error) => {
+      resources.logger.warn("Derived greeting obligation reconciliation failed", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+    });
   }, greetingObligationReconcileIntervalMilliseconds);
   greetingObligationReconcileTimer.unref();
   let closing: Promise<void> | undefined;

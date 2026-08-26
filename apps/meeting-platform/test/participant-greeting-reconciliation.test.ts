@@ -73,6 +73,46 @@ it("persists audible prepared-fallback start through a transient receipt outage"
   expect(receipts.state("greeting", "recording-1", russianParticipantId)).toBe("played");
 });
 
+it("reclaims an ambiguously committed command on same-process obligation replay", async () => {
+  const receipts = new MemoryOneShotReceipts();
+  const begin = receipts.beginGreetingAttempt.bind(receipts);
+  let ambiguous = true;
+  receipts.beginGreetingAttempt = async (input) => {
+    await begin(input);
+    if (ambiguous) {
+      ambiguous = false;
+      throw new Error("synthetic commit result was lost");
+    }
+  };
+  const context = fixture(true, "ru", logger, () => 321, undefined, {
+    oneShotReceipts: receipts,
+  });
+
+  context.bridge.participantJoined(russianParticipantId, occurredAt);
+  await expect(context.bridge.settleAcceptance(russianParticipantId)).resolves.toBe(false);
+  expect(context.coordinator.calls).toEqual([]);
+  expect(receipts.state("greeting", "recording-1", russianParticipantId)).toBe("commanded");
+
+  context.bridge.participantJoined(russianParticipantId, occurredAt);
+  await expect(context.bridge.settleAcceptance(russianParticipantId)).resolves.toBe(true);
+  expect(context.coordinator.calls).toHaveLength(1);
+  expect(context.coordinator.calls[0]?.playbackAttemptId)
+    .toBe(`participant-greeting:${russianParticipantId}`);
+  expect(receipts.state("greeting", "recording-1", russianParticipantId)).toBe("played");
+});
+
+it("records initial-roster presence without inventing a join deadline", async () => {
+  const context = fixture(true, "ru", logger, () => 321);
+
+  context.bridge.observeParticipants([russianParticipantId]);
+  await context.bridge.settle();
+  expect(context.coordinator.calls).toEqual([]);
+
+  context.bridge.participantJoined(russianParticipantId, occurredAt);
+  await context.bridge.settle();
+  expect(context.coordinator.calls).toHaveLength(1);
+});
+
 it("reconciles a thirteenth join racing the active drain before its playback", async () => {
   const receipts = new MemoryOneShotReceipts();
   const context = fixture(true, "ru", logger, () => 321, undefined, {
@@ -136,11 +176,10 @@ it("atomically expires a commanded greeting outside provider dedup retention", a
 });
 
 it.each([
-  { expectedCalls: 1, label: "last millisecond inside", restartAt: 120_320 },
-  { expectedCalls: 0, label: "exact boundary", restartAt: 120_321 },
-  { expectedCalls: 0, label: "one millisecond over", restartAt: 120_322 },
-])("reissues only at the $label of the durable recovery window", async ({
-  expectedCalls,
+  { label: "last millisecond inside", restartAt: 120_320 },
+  { label: "exact boundary", restartAt: 120_321 },
+  { label: "one millisecond over", restartAt: 120_322 },
+])("emits zero audio for a commanded receipt after the join deadline at the $label", async ({
   restartAt,
 }) => {
   let now = 321;
@@ -165,13 +204,9 @@ it.each([
   restarted.bridge.participantsRestored([russianParticipantId], occurredAt);
   await restarted.bridge.settle();
 
-  expect(restarted.coordinator.calls).toHaveLength(expectedCalls);
-  if (expectedCalls === 1) {
-    expect(restarted.coordinator.calls[0]?.playbackAttemptId).toBe(providerCommandId);
-  } else {
-    expect(receipts.state("greeting", "recording-1", russianParticipantId))
-      .toBe("suppressed_ambiguous");
-  }
+  expect(restarted.coordinator.calls).toEqual([]);
+  expect(receipts.state("greeting", "recording-1", russianParticipantId))
+    .toMatch(/^suppressed_/u);
 });
 
 it("does not invoke the provider when recovery admission crosses the boundary", async () => {
@@ -202,7 +237,7 @@ it("does not invoke the provider when recovery admission crosses the boundary", 
 
   expect(restarted.coordinator.calls).toEqual([]);
   expect(receipts.state("greeting", "recording-1", russianParticipantId))
-    .toBe("suppressed_ambiguous");
+    .toBe("suppressed_stale");
 });
 
 it("retries provider-start persistence internally without reissuing audio", async () => {
@@ -281,8 +316,10 @@ it("keeps a confirmation plus settlement outage at-most-once across restart", as
   restarted.bridge.participantsRestored([russianParticipantId], occurredAt);
   await restarted.bridge.settle();
 
-  expect(restarted.coordinator.calls[0]?.playbackAttemptId).toBe(firstCommandId);
-  expect(receipts.state("greeting", "recording-1", russianParticipantId)).toBe("played");
+  expect(firstCommandId).toBe(`participant-greeting:${russianParticipantId}`);
+  expect(restarted.coordinator.calls).toEqual([]);
+  expect(receipts.state("greeting", "recording-1", russianParticipantId))
+    .toBe("suppressed_stale");
 });
 
 it("fences a restart race and duplicate provider callback with one command identity", async () => {

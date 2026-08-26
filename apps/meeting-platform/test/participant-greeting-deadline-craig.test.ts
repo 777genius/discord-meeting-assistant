@@ -601,19 +601,24 @@ describe("ParticipantGreetingBridge playback deadline fencing", () => {
       let now = 321;
       const context = deadlineFixture(() => true, receipts, logger, () => now);
       context.bridge.participantJoined(participantId, occurredAt);
-      const settlement = context.bridge.settle();
+      let settled = false;
+      const settlement = (async () => {
+        await context.bridge.settle();
+        settled = true;
+      })();
       await vi.waitFor(() => {
         expect(receiptState).toBe("reserved");
       });
 
       now = 5_321;
       await vi.advanceTimersByTimeAsync(5_000);
-      await settlement;
 
       expect(receiptState).toBe("reserved");
+      expect(settled).toBe(false);
       expect(context.coordinator.calls).toEqual([]);
       completeReceipt?.();
-      await Promise.resolve();
+      await settlement;
+      expect(settled).toBe(true);
       expect(receiptState).toBe("commanded");
     } finally {
       vi.useRealTimers();

@@ -38,7 +38,6 @@ interface ParticipantGreetingBridgeDependencies {
   readonly recoverInFlight?: boolean;
   readonly timer: LiveRuntimeTimer;
 }
-/** Keeps small-call admission bounded without coupling the runtime to today's seven names. */
 const maximumSupportedCohortSize = 12;
 /** Meeting-local, bounded queue for one proactive greeting per participant. */
 export class ParticipantGreetingBridge {
@@ -98,7 +97,10 @@ export class ParticipantGreetingBridge {
     }
     this.tryAdvance();
   }
-  /** Restores presence; the durable receipt decides whether playback is due. */
+  public observeParticipants(participantIds: readonly string[]): void {
+    if (this.closed) { return; }
+    participantIds.forEach((participantId) => this.presentParticipantIds.add(participantId));
+  }
   public participantsRestored(participantIds: readonly string[], occurredAt: string): void {
     for (const participantId of participantIds) {
       this.recoveryParticipantIds.add(participantId);
@@ -199,14 +201,12 @@ export class ParticipantGreetingBridge {
     }
     await this.deadlines.settle();
   }
-  /** True only after the heap obligation has crossed into durable or terminal receipt state. */
   public async settleAcceptance(participantId: string): Promise<boolean> {
     if (this.greeting(participantId) === undefined) {
       return true;
     }
     await this.settle();
-    return this.greetedParticipantIds.has(participantId) ||
-      this.receipts.isFencedOrActive(participantId);
+    return this.greetedParticipantIds.has(participantId);
   }
   private async drain(): Promise<void> {
     const greetings = this.dependencies.configuration.greetings;
@@ -389,16 +389,16 @@ export class ParticipantGreetingBridge {
           () => this.nowMilliseconds(),
         );
     if (attemptResult.status === "expired") {
-      for (const id of admittedParticipantIds) {
-        this.greetedParticipantIds.add(id);
-      }
-      void attemptResult.operation.then(
-        () => Promise.all(admittedParticipantIds.map((id) =>
-          this.receipts.settle(id, "suppressed", "ambiguous")
-        )).then(() => null),
-        () => Promise.all(admittedParticipantIds.map((id) => this.receipts.fenceOnce(id)))
-          .then(() => null),
-      ).catch(() => {});
+      const terminalization = (async () => {
+        try {
+          await attemptResult.operation;
+          await Promise.all(admittedParticipantIds.map((id) =>
+            this.receipts.settle(id, "suppressed", "ambiguous")));
+        } catch {
+          await Promise.all(admittedParticipantIds.map((id) => this.receipts.fenceOnce(id)));
+        }
+      })();
+      this.trackTerminalEvidence(admittedParticipantIds, terminalization);
       return false;
     }
     if (recoveredCommand && admission.providerRecoveryDeadlineMilliseconds !== undefined &&
@@ -573,15 +573,29 @@ export class ParticipantGreetingBridge {
   private expire(participantId: string): void {
     this.pendingGreetings.delete(participantId);
     this.scheduling.forget(participantId);
-    this.greetedParticipantIds.add(participantId);
     this.dependencies.logger.warn("Participant greeting reached terminal deadline", {
       meetingId: this.dependencies.meetingId,
       participantId,
       reason: greetingDeadlineReason,
     });
     if (!this.receipts.isFencedOrActive(participantId)) {
-      this.deadlines.track(this.receipts.fenceOnce(participantId));
+      this.trackTerminalEvidence([participantId], this.receipts.fenceOnce(participantId));
     }
+  }
+  private trackTerminalEvidence(participantIds: readonly string[], operation: Promise<void>): void {
+    const task = async (): Promise<void> => {
+      try {
+        await operation;
+        participantIds.filter((id) => this.receipts.hasTerminalEvidence(id))
+          .forEach((participantId) => {
+            this.greetedParticipantIds.add(participantId);
+            this.clearTerminalState(participantId);
+          });
+      } catch (error) {
+        this.dependencies.logger.warn("Participant greeting terminal reconciliation failed", { errorName: error instanceof Error ? error.name : "UnknownError", meetingId: this.dependencies.meetingId });
+      }
+    };
+    this.deadlines.track(task());
   }
   private clearTerminalState(participantId: string): void {
     this.capacityExemptParticipantIds.delete(participantId);

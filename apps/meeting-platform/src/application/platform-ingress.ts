@@ -298,7 +298,11 @@ export class PlatformRecordingIngress {
             producerRevision: event.producerRevision,
           } }),
       notAfterMilliseconds: occurredAtMilliseconds + 5_000,
-      occurredAt: event.occurredAt,
+      // The public lifecycle contract may retain precision finer than the
+      // runtime clock. The derived ledger uses one canonical millisecond
+      // anchor for both columns so valid contract precision cannot create a
+      // contradictory obligation.
+      occurredAt: new Date(occurredAtMilliseconds).toISOString(),
       participantId: event.actor.actorId,
       recordingId: event.recordingId,
     };

@@ -663,7 +663,8 @@ describe("Platform derived ingress failure isolation", () => {
 
   it("retains and replays a greeting obligation after derived failure following acceptance",
     async () => {
-    const occurredAt = "2026-08-02T00:00:00.000Z";
+    const occurredAt = "2026-08-02T00:00:00.123456Z";
+    const canonicalOccurredAt = "2026-08-02T00:00:00.123Z";
     const pending = new Map<string, Parameters<
       NonNullable<ConstructorParameters<typeof PlatformRecordingIngress>[0][
         "greetingObligations"
@@ -732,6 +733,10 @@ describe("Platform derived ingress failure isolation", () => {
 
     await expect(ingress.ingestLifecycle(joined)).resolves.toBeUndefined();
     expect(order.slice(0, 2)).toEqual(["durable", "derived"]);
+    expect(pending.get(joined.eventId)).toMatchObject({
+      notAfterMilliseconds: Date.parse(canonicalOccurredAt) + 5_000,
+      occurredAt: canonicalOccurredAt,
+    });
     expect(pending.has(joined.eventId)).toBe(true);
 
     await expect(ingress.dispatchPendingGreetings()).resolves.toEqual({

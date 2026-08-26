@@ -20,6 +20,8 @@ export class ParticipantGreetingReceipts {
   private readonly activeProviderCommandIds = new Map<string, string>();
   private readonly completedParticipantIds = new Set<string>();
   private readonly fencingTasks = new Map<string, Promise<void>>();
+  /** Unknown command commits are reclaimed only with the same stable command. */
+  private readonly recoveryRequiredParticipantIds = new Set<string>();
   private readonly reservationInProgressParticipantIds = new Set<string>();
   private readonly reservedParticipantIds = new Set<string>();
 
@@ -45,13 +47,18 @@ export class ParticipantGreetingReceipts {
     reclaimActive = false,
   ): Promise<LiveConversationOneShotReceiptReservation> {
     this.reservationInProgressParticipantIds.add(participantId);
-    const operation = this.reserveUntracked(participantId, reclaimActive).then((receipt) => {
+    const recover = reclaimActive || this.recoveryRequiredParticipantIds.has(participantId);
+    const operation = this.reserveUntracked(participantId, recover).then((receipt) => {
       if (receipt.status === "reserved") {
+        this.recoveryRequiredParticipantIds.delete(participantId);
         this.activeLeaseTokens.set(participantId, receipt.leaseToken);
         this.activeProviderCommandIds.set(
           participantId,
           receipt.providerCommandId ?? `participant-greeting:${participantId}`,
         );
+      } else if (receipt.status === "completed") {
+        this.completedParticipantIds.add(participantId);
+        this.recoveryRequiredParticipantIds.delete(participantId);
       }
       return receipt;
     });
@@ -64,6 +71,10 @@ export class ParticipantGreetingReceipts {
   public providerCommandId(participantId: string): string {
     return this.activeProviderCommandIds.get(participantId) ??
       `participant-greeting:${participantId}`;
+  }
+
+  public hasTerminalEvidence(participantId: string): boolean {
+    return this.completedParticipantIds.has(participantId);
   }
 
   public async beginAttempt(
@@ -92,6 +103,7 @@ export class ParticipantGreetingReceipts {
       });
       this.activeProviderCommandIds.set(participantId, providerCommandId);
     } catch (error) {
+      this.recoveryRequiredParticipantIds.add(participantId);
       this.activeLeaseTokens.delete(participantId);
       this.activeProviderCommandIds.delete(participantId);
       this.reservedParticipantIds.delete(participantId);
@@ -127,14 +139,24 @@ export class ParticipantGreetingReceipts {
       }
       return { leaseToken, subjectId };
     });
-    await port.beginGreetingCohortAttempt({
-      kind: "greeting",
-      locale: command.locale,
-      meetingId: this.dependencies.meetingId,
-      prompt: command.prompt,
-      providerCommandId,
-      receipts,
-    });
+    try {
+      await port.beginGreetingCohortAttempt({
+        kind: "greeting",
+        locale: command.locale,
+        meetingId: this.dependencies.meetingId,
+        prompt: command.prompt,
+        providerCommandId,
+        receipts,
+      });
+    } catch (error) {
+      for (const participantId of participantIds) {
+        this.recoveryRequiredParticipantIds.add(participantId);
+        this.activeLeaseTokens.delete(participantId);
+        this.activeProviderCommandIds.delete(participantId);
+        this.reservedParticipantIds.delete(participantId);
+      }
+      throw error;
+    }
     for (const participantId of participantIds) {
       this.activeProviderCommandIds.set(participantId, providerCommandId);
     }
@@ -238,6 +260,7 @@ export class ParticipantGreetingReceipts {
     }) ?? Promise.resolve();
     await settlement;
     this.completedParticipantIds.add(participantId);
+    this.recoveryRequiredParticipantIds.delete(participantId);
     this.activeLeaseTokens.delete(participantId);
     this.activeProviderCommandIds.delete(participantId);
     this.reservedParticipantIds.delete(participantId);
