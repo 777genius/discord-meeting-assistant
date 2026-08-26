@@ -285,7 +285,12 @@
     {
       "id": "ADR-0060",
       "path": "docs/decisions/0060-authenticated-quality-campaign-runner-boundaries.md",
-      "immutableDigest": "sha256:24aab848fc5b0d5f28220a9085733009a63b51eb01662af57e7c62f9a2946d9c"
+      "immutableDigest": "sha256:000d005068739e9e819cd0c88b0766d7b5277269f4b38f0dea079323d2994bbd"
+    },
+    {
+      "id": "ADR-0061",
+      "path": "docs/decisions/0061-atomic-quality-evidence-and-holdout-repetition.md",
+      "immutableDigest": "sha256:69b2ffd4a8bfac179a5d43c4e45c7e726c8da74fa8f70d99c36cc031e50e6821"
     }
   ]
 }

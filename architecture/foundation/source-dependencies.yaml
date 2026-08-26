@@ -265,7 +265,6 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-evidence.ts
-      - packages/infinity-context-adapter/src/quality-campaign/production-evidence-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-ports.ts
@@ -303,11 +302,15 @@ boundaries:
       runtimeReferences: []
   - id: adapters.infinity-quality-campaign
     roots:
+      - packages/infinity-context-adapter/src/quality-campaign/production-authentication.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-evidence-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
     entrypoints:
+      - packages/infinity-context-adapter/src/quality-campaign/production-authentication.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-evidence-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
     allow:
@@ -315,6 +318,7 @@ boundaries:
         - application.infinity-quality-campaign
       packages: []
       builtins:
+        - node:crypto
         - node:fs/promises
         - node:path
       runtimeReferences: []
