@@ -408,28 +408,6 @@ describe("focused locator Retrieval V2 privacy and serving authority continuatio
     },
   );
 
-  it.each([
-    "🔥\uFE0F",
-    "🔥\u0000",
-    "🔥\u{E0061}",
-    "🔥\u{1F3FB}",
-  ])("fails before store I/O for an unsafe literal attachment: %s", async (variant) => {
-    const { store } = fixture();
-    const listPlans = vi.spyOn(store, "listCurrentRoomPlans");
-    const request = await new PrepareFocusedLocatorRetrievalV2Request({
-      ids: new TestIds(), identitySkeletons, providerBinding,
-      speakerAliases: [{ actorKeys: ["opaque-fire"], aliases: ["🔥"] }], store,
-    }).prepare({
-      currentMeetingId: "current-meeting",
-      question: `What did ${variant} decide?`,
-      roomId: "room-1",
-      scopeId: "scope-1",
-    });
-
-    expect(request).toBeNull();
-    expect(listPlans).not.toHaveBeenCalled();
-  });
-
   it.each(["word🔥", "🔥word", "🔥🔥"])(
     "does not treat a symbol alias as a substring inside %s",
     async (variant) => {

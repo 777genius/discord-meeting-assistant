@@ -25,7 +25,7 @@ import {
   canonicalFinalReplyTurnHash,
 } from "@discord-meeting/postgres-adapter";
 import { ChannelType, PermissionFlagsBits, type Client } from "discord.js";
-import { Pool } from "pg";
+import { Client as PgClient, Pool } from "pg";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -402,6 +402,10 @@ async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
     admission: input.runtime.createRetrievalV2Admission(input.providerBinding),
     retrieval: input.runtime.createFocusedLocatorRetrievalV2(input.authorization),
   });
+  const connect = vi.spyOn(input.pool, "connect");
+  const directQuery = vi.spyOn(input.pool, "query");
+  const clientQuery = vi.spyOn(PgClient.prototype, "query");
+  const authorization = vi.spyOn(input.authorization, "authorize");
   const allParsedBefore = input.infinity.endpoint.requests.length;
   const allRawBefore = input.infinity.endpoint.exactHttpRequests.length;
   const parsedBefore = input.infinity.endpoint.requests.filter(
@@ -410,9 +414,25 @@ async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
   const rawBefore = input.infinity.endpoint.exactHttpRequests.filter(
     ({ path }) => path === "/v1/context/retrieve",
   ).length;
-  const store = vi.spyOn(input.pool, "query");
-  const storeBefore = store.mock.calls.length;
   try {
+    const safeRequest = await input.runtime
+      .createRetrievalV2Admission(input.providerBinding)
+      .prepare({
+        currentMeetingId: input.currentMeetingId,
+        question: "What did Vlad decide?",
+        roomId: input.roomId,
+        scopeId: input.scopeId,
+        signal: input.signal,
+      });
+    expect(safeRequest).not.toBeNull();
+    expect(connect).toHaveBeenCalled();
+    expect(directQuery).not.toHaveBeenCalled();
+    expect(clientQuery).toHaveBeenCalled();
+    expect(authorization).not.toHaveBeenCalled();
+
+    const connectBeforeUnsafe = connect.mock.calls.length;
+    const directQueriesBeforeUnsafe = directQuery.mock.calls.length;
+    const clientQueriesBeforeUnsafe = clientQuery.mock.calls.length;
     for (const question of [
       "What did Vlad and Ѵӏаԁ decide?",
       "Что решила Вова?",
@@ -426,6 +446,7 @@ async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
       "What did 🔥\uFE0F decide?",
       "What did 🔥\u0000 decide?",
       "What did 🔥\u{E0061} decide?",
+      "What did 🔥\u{1F3FB} decide?",
       "What did Alice \u2060 Smith decide?",
       "What did Alice\u000ASmith decide?",
     ]) {
@@ -439,9 +460,15 @@ async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
         signal: input.signal,
       })).resolves.toEqual({ status: "unavailable" });
     }
-    expect(store.mock.calls).toHaveLength(storeBefore);
+    expect(connect).toHaveBeenCalledTimes(connectBeforeUnsafe);
+    expect(directQuery).toHaveBeenCalledTimes(directQueriesBeforeUnsafe);
+    expect(clientQuery).toHaveBeenCalledTimes(clientQueriesBeforeUnsafe);
+    expect(authorization).not.toHaveBeenCalled();
   } finally {
-    store.mockRestore();
+    authorization.mockRestore();
+    clientQuery.mockRestore();
+    directQuery.mockRestore();
+    connect.mockRestore();
   }
   expect(input.infinity.endpoint.requests.filter(
     ({ path }) => path === "/v1/context/retrieve",
