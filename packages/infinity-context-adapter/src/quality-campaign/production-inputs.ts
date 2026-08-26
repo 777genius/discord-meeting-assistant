@@ -3,7 +3,8 @@ import { isAbsolute, resolve } from "node:path";
 
 import { type AdmittedMainCampaign, type AdmissionAuthority,
   type CampaignQuestion } from "./admission.js";
-import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256 } from "./canonical.js";
+import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256, safeId } from
+  "./canonical.js";
 import { verifyExternalSignedValue, verifySpendReservation } from "./execution.js";
 import type { HoldoutAuthorization } from "./holdout.js";
 import { QUALITY_AUTHORITY_ROLES, QualityCampaignAuthorityPolicy } from "./release.js";
@@ -43,7 +44,7 @@ export interface CanonicalCustodyEvidence {
   readonly mainKeyNamespace: string;
   readonly protectedEvidence: readonly ProtectedCampaignEvidence[];
   readonly releaseRootSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_authoritative_custody.v1";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_authoritative_custody.v2";
   readonly tuningEvidenceDigests: readonly string[];
 }
 
@@ -103,10 +104,11 @@ Promise<CanonicalCustodyEvidence> {
   const raw = exactRecord(signed.payload, ["loadedLocatorDigests", "loadedQuestionDigests",
     "mainInputRootSha256", "mainKeyNamespace", "protectedEvidence", "releaseRootSha256",
     "schemaVersion", "tuningEvidenceDigests"], "authoritative custody inventory payload");
-  if (raw.schemaVersion !== "meeting_knowledge.semantic_quality_authoritative_custody.v1") {
+  if (raw.schemaVersion !== "meeting_knowledge.semantic_quality_authoritative_custody.v2") {
     throw new Error("canonical custody inventory does not reconstruct from admitted main inputs");
   }
-  const record = raw as unknown as CanonicalCustodyEvidence;
+  const record = { ...raw, protectedEvidence: decodeProtectedEvidence(raw.protectedEvidence) } as
+    unknown as CanonicalCustodyEvidence;
   if (
     record.mainInputRootSha256 !== input.mainInputRootSha256 ||
     record.releaseRootSha256 !== input.releaseRootSha256 ||
@@ -116,15 +118,35 @@ Promise<CanonicalCustodyEvidence> {
     record.loadedLocatorDigests.length === 0 || record.tuningEvidenceDigests.length === 0) {
     throw new Error("canonical custody inventory does not reconstruct from admitted main inputs");
   }
-  const requiredProtectedKinds = ["original_craig_recording", "final_transcript",
-    "meeting_database", "frozen_snapshot", "frozen_signed_root"];
-  if (!Array.isArray(record.protectedEvidence) || requiredProtectedKinds.some((kind) =>
-    !record.protectedEvidence.some((value) => value.kind === kind))) {
-    throw new Error("canonical custody inventory omits authoritative evidence");
-  }
   for (const value of [...record.loadedLocatorDigests, ...record.loadedQuestionDigests,
     ...record.tuningEvidenceDigests]) {digest(value, "custody evidence digest");}
   return record;
+}
+
+function decodeProtectedEvidence(value: unknown): readonly ProtectedCampaignEvidence[] {
+  const requiredKinds = ["original_craig_recording", "final_transcript", "meeting_database",
+    "frozen_snapshot", "frozen_signed_root"] as const;
+  if (!Array.isArray(value)) {
+    throw new Error("canonical custody inventory omits authoritative evidence");
+  }
+  const evidence = value.map((entry) => {
+    const item = exactRecord(entry, ["artifactId", "artifactSha256", "kind"],
+      "canonical protected evidence");
+    if (!requiredKinds.includes(String(item.kind) as never)) {
+      throw new Error("canonical custody inventory contains unknown protected evidence");
+    }
+    return Object.freeze({ artifactId: safeId(item.artifactId, "protected evidence ID"),
+      artifactSha256: digest(item.artifactSha256, "protected evidence digest"),
+      kind: String(item.kind) as ProtectedCampaignEvidence["kind"] });
+  });
+  if (evidence.length !== requiredKinds.length ||
+    new Set(evidence.map(({ artifactId }) => artifactId)).size !== evidence.length ||
+    new Set(evidence.map(({ artifactSha256 }) => artifactSha256)).size !== evidence.length ||
+    new Set(evidence.map(({ kind }) => kind)).size !== evidence.length ||
+    requiredKinds.some((kind) => !evidence.some((item) => item.kind === kind))) {
+    throw new Error("canonical custody inventory omits authoritative evidence");
+  }
+  return Object.freeze(evidence);
 }
 
 export async function loadCleanupTargets(path: string):

@@ -219,13 +219,14 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     maxTokens: 10_000_000, model: "gpt-5.6-sol", provider: "local-fake-http",
     reasoning: "xhigh", releaseRootSha256, repetition, serviceTier: "default" }))));
   const protectedEvidence = ["original_craig_recording", "final_transcript", "meeting_database",
-    "frozen_snapshot", "frozen_signed_root"].map((kind) => ({ artifactSha256: d(kind), kind }));
+    "frozen_snapshot", "frozen_signed_root"].map((kind) => ({ artifactId: `custody-${kind}`,
+      artifactSha256: d(kind), kind }));
   const custodyPath = join(root, "custody.json"); await writeFile(custodyPath, canonicalJson(
     custody.signed({ loadedLocatorDigests: [d("main-locator")], loadedQuestionDigests:
       questions.map(({ questionDigestSha256 }) => questionDigestSha256), mainInputRootSha256:
       mainRootSha256,
       mainKeyNamespace: "main:packed", protectedEvidence, releaseRootSha256, schemaVersion:
-      "meeting_knowledge.semantic_quality_authoritative_custody.v1", tuningEvidenceDigests:
+      "meeting_knowledge.semantic_quality_authoritative_custody.v2", tuningEvidenceDigests:
       [d("tuning")] })));
   const tokenPath = join(root, "token"); await writeFile(tokenPath, "local-token");
   const evidenceKeyPath = join(root, "evidence.key"); const holdoutEvidenceKeyPath = join(root,

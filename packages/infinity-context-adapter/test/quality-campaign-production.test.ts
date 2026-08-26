@@ -10,7 +10,7 @@ import {
   admitFinalCampaign, admitIsolatedHoldout, admitMainCampaign, adjudicateOutcome,
   artifactAttemptIdentity, assertObservedRelease, attemptIdentity, bindExactExecutionEvidence,
   canonicalJson, createHoldoutReport, DurableAttemptJournal, executeReservedExchange,
-  FROZEN_ANSWER_EXECUTION, publicKeyFingerprintSha256, reconstructMetrics,
+  executeDerivedCleanup, FROZEN_ANSWER_EXECUTION, publicKeyFingerprintSha256, reconstructMetrics,
   QUALITY_AUTHORITY_ROLES, QualityCampaignAuthorityPolicy, sha256,
   verifyReleaseRoot,
   verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt, verifySpendReservation,
@@ -20,7 +20,7 @@ import {
   type AttemptIdentity, type CampaignQuestion, type CanonicalAdjudicationDecision,
   type EncryptedArtifactKind,
   type PinnedReleaseDocument, type QualificationOutcome, type QualityCampaignRelease,
-  type RepetitionQualificationEvidence, type RetainedArtifact,
+  type ProtectedCampaignEvidence, type RepetitionQualificationEvidence, type RetainedArtifact,
   type ExactCampaignEvidence, type ScheduledExactOutcome,
   type VerifiedSpendReservation,
 } from "../src/index.js";
@@ -530,29 +530,29 @@ function finalFixture() {
   });
   const targetInventoryReceipt = targetInventoryAuthority.signed({
     campaignRootSha256: CAMPAIGN_ROOT,
-    protectedOriginals: ["authoritative_transcript", "final_transcript", "meeting_database",
-      "original_craig_recording", "summary"].map((kind, index) =>
-      ({ artifactId: `protected-${index}`, kind })),
+    protectedOriginals: ["final_transcript", "meeting_database", "original_craig_recording"]
+      .map((kind, index) => ({ artifactId: `protected-${index}`,
+        artifactSha256: sha256({ kind }), kind })),
     releaseRootSha256: release.releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v1",
+    schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v2",
     targets: [{ artifactId: "derived-1", kind: "derived_index" },
       { artifactId: "prompt-1", kind: "temporary_prompt" }] });
   const manifest = { campaignRootSha256: CAMPAIGN_ROOT,
     inventoryReceiptSha256: sha256(targetInventoryReceipt),
     protectedOriginals: targetInventoryReceipt.payload.protectedOriginals,
     releaseRootSha256: release.releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_cleanup_manifest.v4",
+    schemaVersion: "meeting_knowledge.semantic_quality_cleanup_manifest.v5",
     targets: targetInventoryReceipt.payload.targets };
   const cleanupAuthority = authorities.signers.cleanup;
   const absentArtifactIds = manifest.targets.map(({ artifactId }) => artifactId).toSorted();
-  const presentProtectedArtifactIds = manifest.protectedOriginals.map(({ artifactId }) =>
-    artifactId).toSorted();
+  const presentProtectedOriginals = manifest.protectedOriginals.toSorted((left, right) =>
+    left.kind.localeCompare(right.kind));
   const cleanupReceipt = cleanupAuthority.signed({ absentArtifactIds,
     absentArtifactIdsSha256: sha256(absentArtifactIds), campaignRootSha256: CAMPAIGN_ROOT,
-    cleanupManifestSha256: sha256(manifest), presentProtectedArtifactIds,
-    presentProtectedArtifactIdsSha256: sha256(presentProtectedArtifactIds),
+    cleanupManifestSha256: sha256(manifest), presentProtectedOriginals,
+    presentProtectedOriginalsSha256: sha256(presentProtectedOriginals),
     releaseRootSha256: release.releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v4" });
+    schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v5" });
   const input = { artifactCustody: custody(authorities.policy, stored), artifacts,
     authorizedLocatorInventory,
     campaignByteCeiling: artifacts.reduce((total, artifact) => total + artifact.storedBytes, 0),
@@ -1311,10 +1311,35 @@ describe("production quality campaign final evidence", () => {
     await expect(admitFinalCampaign(FINAL.authorities.policy,
       { ...FINAL.input, targetInventoryReceipt: forged }))
       .rejects.toThrow(/signer|signature/u);
+    const inventoryPayload = FINAL.input.targetInventoryReceipt.payload;
+    const rejectedInventories = [
+      { ...inventoryPayload, protectedOriginals: [{ artifactId: "summary-only",
+        artifactSha256: d("a"), kind: "summary" }] },
+      { ...inventoryPayload, protectedOriginals: inventoryPayload.protectedOriginals.slice(1) },
+      { ...inventoryPayload, protectedOriginals: inventoryPayload.protectedOriginals.map(
+        (original, index) => index === 1 ? { ...original,
+          artifactId: inventoryPayload.protectedOriginals[0]!.artifactId } : original) },
+      { ...inventoryPayload, protectedOriginals: inventoryPayload.protectedOriginals.map(
+        (original, index) => index === 1 ? { ...original,
+          artifactSha256: inventoryPayload.protectedOriginals[0]!.artifactSha256 } : original) },
+      { ...inventoryPayload, protectedOriginals: inventoryPayload.protectedOriginals.map(
+        (original, index) => index === 1 ? { ...original,
+          kind: inventoryPayload.protectedOriginals[0]!.kind } : original) },
+      { ...inventoryPayload, protectedOriginals: inventoryPayload.protectedOriginals.map(
+        (original, index) => index === 1 ? { ...original, kind: "future_original" } : original) },
+    ];
+    for (const hostilePayload of rejectedInventories) {
+      const hostile = FINAL.targetInventoryAuthority.signed(hostilePayload);
+      expect(() => verifyCampaignCreatedTargetInventory(FINAL.authorities.policy, {
+        authorityKeyId: FINAL.targetInventoryAuthority.keyId, campaignRootSha256: CAMPAIGN_ROOT,
+        receipt: hostile, releaseRootSha256: FINAL.release.releaseRootSha256,
+        targetInventoryAuthorityKeySha256:
+          FINAL.release.release.targetInventoryAuthorityKeySha256 })).toThrow(/protected|kind/u);
+    }
     const payload = FINAL.input.cleanupReceipt.payload;
     const missingProtected = FINAL.cleanupAuthority.signed({ ...payload,
-      presentProtectedArtifactIds: payload.presentProtectedArtifactIds.slice(1),
-      presentProtectedArtifactIdsSha256: sha256(payload.presentProtectedArtifactIds.slice(1)) });
+      presentProtectedOriginals: payload.presentProtectedOriginals.slice(1),
+      presentProtectedOriginalsSha256: sha256(payload.presentProtectedOriginals.slice(1)) });
     await expect(admitFinalCampaign(FINAL.authorities.policy,
       { ...FINAL.input, cleanupReceipt: missingProtected }))
       .rejects.toThrow(/authoritative/u);
@@ -1323,11 +1348,39 @@ describe("production quality campaign final evidence", () => {
     await expect(admitFinalCampaign(FINAL.authorities.policy,
       { ...FINAL.input, cleanupReceipt: unrelated }))
       .rejects.toThrow(/authoritative/u);
+    const substitutedPresence = payload.presentProtectedOriginals.map((original, index) =>
+      index === 0 ? { ...original, artifactSha256: d("f") } : original);
+    const substitutedDigest = FINAL.cleanupAuthority.signed({ ...payload,
+      presentProtectedOriginals: substitutedPresence,
+      presentProtectedOriginalsSha256: sha256(substitutedPresence) });
+    expect(() => verifyCleanupAbsenceReceipt(FINAL.authorities.policy, { authorityKeyId:
+      FINAL.cleanupAuthority.keyId, cleanupManifest: {
+        campaignRootSha256: CAMPAIGN_ROOT,
+        inventoryReceiptSha256: sha256(FINAL.input.targetInventoryReceipt),
+        protectedOriginals: inventoryPayload.protectedOriginals,
+        releaseRootSha256: FINAL.release.releaseRootSha256,
+        schemaVersion: "meeting_knowledge.semantic_quality_cleanup_manifest.v5",
+        targets: inventoryPayload.targets } as never,
+      receipt: substitutedDigest })).toThrow(/authoritative/u);
+
+    const replayInventory = FINAL.targetInventoryAuthority.signed({ ...inventoryPayload,
+      protectedOriginals: inventoryPayload.protectedOriginals.map((original, index) => index === 0 ?
+        { ...original, artifactId: "replayed-original" } : original) });
+    const replayManifest = verifyCampaignCreatedTargetInventory(FINAL.authorities.policy, {
+      authorityKeyId: FINAL.targetInventoryAuthority.keyId, campaignRootSha256: CAMPAIGN_ROOT,
+      receipt: replayInventory, releaseRootSha256: FINAL.release.releaseRootSha256,
+      targetInventoryAuthorityKeySha256:
+        FINAL.release.release.targetInventoryAuthorityKeySha256 }).manifest;
+    expect(() => verifyCleanupAbsenceReceipt(FINAL.authorities.policy, { authorityKeyId:
+      FINAL.cleanupAuthority.keyId, cleanupManifest: replayManifest,
+    receipt: FINAL.input.cleanupReceipt })).toThrow(/authoritative/u);
 
     const sharedArtifactId = "overlap-artifact";
     const overlappingInventory = FINAL.targetInventoryAuthority.signed({
       ...FINAL.input.targetInventoryReceipt.payload,
-      protectedOriginals: [{ artifactId: sharedArtifactId, kind: "original_craig_recording" }],
+      protectedOriginals: FINAL.input.targetInventoryReceipt.payload.protectedOriginals.map(
+        (original) => original.kind === "original_craig_recording" ? { ...original,
+          artifactId: sharedArtifactId } : original),
       targets: [{ artifactId: sharedArtifactId, kind: "derived_index" }] });
     expect(() => verifyCampaignCreatedTargetInventory(FINAL.authorities.policy, {
       authorityKeyId: FINAL.targetInventoryAuthority.keyId, campaignRootSha256: CAMPAIGN_ROOT,
@@ -1339,19 +1392,67 @@ describe("production quality campaign final evidence", () => {
       inventoryReceiptSha256: sha256(overlappingInventory),
       protectedOriginals: overlappingInventory.payload.protectedOriginals,
       releaseRootSha256: FINAL.release.releaseRootSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_cleanup_manifest.v4" as const,
+      schemaVersion: "meeting_knowledge.semantic_quality_cleanup_manifest.v5" as const,
       targets: overlappingInventory.payload.targets };
     const overlapIds = [sharedArtifactId];
+    const overlapOriginals = overlappingManifest.protectedOriginals.toSorted((left, right) =>
+      left.kind.localeCompare(right.kind));
     const overlappingPresence = FINAL.cleanupAuthority.signed({ absentArtifactIds: overlapIds,
       absentArtifactIdsSha256: sha256(overlapIds), campaignRootSha256: CAMPAIGN_ROOT,
-      cleanupManifestSha256: sha256(overlappingManifest), presentProtectedArtifactIds: overlapIds,
-      presentProtectedArtifactIdsSha256: sha256(overlapIds),
+      cleanupManifestSha256: sha256(overlappingManifest),
+      presentProtectedOriginals: overlapOriginals,
+      presentProtectedOriginalsSha256: sha256(overlapOriginals),
       releaseRootSha256: FINAL.release.releaseRootSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v4" });
+      schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v5" });
     expect(() => verifyCleanupAbsenceReceipt(FINAL.authorities.policy, { authorityKeyId:
       FINAL.cleanupAuthority.keyId, cleanupManifest: overlappingManifest as never,
     receipt: overlappingPresence })).toThrow(/overlap/u);
   }, 90_000);
+
+  it("binds protected originals to canonical custody before derived cleanup", async () => {
+    const protectedOriginals = FINAL.input.targetInventoryReceipt.payload.protectedOriginals;
+    const protectedEvidence = [...protectedOriginals,
+      { artifactId: "frozen-snapshot", artifactSha256: d("a"), kind: "frozen_snapshot" },
+      { artifactId: "frozen-root", artifactSha256: d("b"), kind: "frozen_signed_root" },
+    ] as readonly ProtectedCampaignEvidence[];
+    const deleteDerived = vi.fn(async ({ targets }: { readonly targets: readonly {
+      readonly artifactId: string }[] }) => targets.map(({ artifactId }) =>
+      ({ artifactId, outcome: "deleted" as const })));
+    const observe = vi.fn(async ({ campaignRootSha256, cleanupManifestSha256 }:
+      { readonly campaignRootSha256: string; readonly cleanupManifestSha256: string }) => {
+      const presentProtectedOriginals = protectedOriginals.toSorted((left, right) =>
+        left.kind.localeCompare(right.kind));
+      return FINAL.cleanupAuthority.signed({ absentArtifactIds: ["derived-1", "prompt-1"],
+        absentArtifactIdsSha256: sha256(["derived-1", "prompt-1"]), campaignRootSha256,
+        cleanupManifestSha256, presentProtectedOriginals,
+        presentProtectedOriginalsSha256: sha256(presentProtectedOriginals),
+        releaseRootSha256: FINAL.release.releaseRootSha256,
+        schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v5" });
+    });
+    const common = { absenceAuthority: FINAL.cleanupAuthority, campaignRootSha256: CAMPAIGN_ROOT,
+      context: { deadlineEpochMs: 2_000, signal: ACTIVE_SIGNAL }, deletion: {
+        authorityId: FINAL.targetInventoryAuthority.keyId, deleteDerived }, observation: {
+        authorityId: FINAL.cleanupAuthority.keyId, observe }, policy: FINAL.authorities.policy,
+      protectedEvidence, releaseRootSha256: FINAL.release.releaseRootSha256,
+      targetInventoryAuthority: FINAL.targetInventoryAuthority,
+      targetInventoryAuthorityKeySha256:
+        FINAL.release.release.targetInventoryAuthorityKeySha256 } as const;
+    const result = await executeDerivedCleanup({ ...common,
+      targetInventoryReceipt: FINAL.input.targetInventoryReceipt });
+    expect(result.targetCount).toBe(2);
+    expect(deleteDerived).toHaveBeenCalledOnce();
+    expect(deleteDerived.mock.calls[0]![0].targets.map(({ artifactId }) => artifactId))
+      .toEqual(["derived-1", "prompt-1"]);
+
+    deleteDerived.mockClear();
+    const substituted = FINAL.targetInventoryAuthority.signed({
+      ...FINAL.input.targetInventoryReceipt.payload,
+      protectedOriginals: protectedOriginals.map((original, index) => index === 0 ? {
+        ...original, artifactSha256: d("e") } : original) });
+    await expect(executeDerivedCleanup({ ...common, targetInventoryReceipt: substituted }))
+      .rejects.toThrow(/canonical custody/u);
+    expect(deleteDerived).not.toHaveBeenCalled();
+  });
 
   it("derives the signed 30-question holdout without affecting main qualification", () => {
     const questions = sealedQuestions(30, "independent_review", "h");

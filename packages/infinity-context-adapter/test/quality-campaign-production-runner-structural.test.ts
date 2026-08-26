@@ -129,6 +129,19 @@ describe("installed production quality-campaign CLI", () => {
     expect(await sameRoot.cli("holdout-execute", "same-root.json")).toBe(1);
 
   }, 180_000);
+
+  it("rejects a signed protected-original substitution before composition deletes derived data",
+    async () => {
+      const fixture = await createFixture();
+      expect(await fixture.cli("execute", "execute-before-substitution.json")).toBe(20);
+      expect(await fixture.cli("adjudicate", "adjudicate-before-substitution.json")).toBe(20);
+      expect(await fixture.cli("retention", "retention-before-substitution.json")).toBe(20);
+      await fixture.writeCleanupProtectedOriginals(fixture.protectedOriginals.map(
+        (original, index) => index === 0 ? { ...original,
+          artifactSha256: digest("hostile-substitution") } : original));
+      expect(await fixture.cli("cleanup-absence", "substituted-cleanup.json")).toBe(1);
+      expect(fixture.deletedIds).toHaveLength(0);
+    }, 180_000);
 });
 
 async function createFixture() {
@@ -248,16 +261,18 @@ async function createFixture() {
   await writeSpendReservations(spendReservationsPath, spend, admitted.rootBindingSha256,
     releaseRootSha256);
   const protectedEvidence = ["original_craig_recording", "final_transcript", "meeting_database",
-    "frozen_snapshot", "frozen_signed_root"].map((kind) => ({ artifactSha256: digest(kind), kind }));
+    "frozen_snapshot", "frozen_signed_root"].map((kind) => ({ artifactId: `custody-${kind}`,
+      artifactSha256: digest(kind), kind }));
   const targets = [{ artifactId: "derived-index", kind: "derived_index" },
     { artifactId: "prompt", kind: "temporary_prompt" },
     { artifactId: "projection", kind: "temporary_projection" }] as const;
   const cleanupPlanPath = join(root, "cleanup-plan.json");
-  const protectedOriginals = ["authoritative_transcript", "final_transcript", "meeting_database",
-    "original_craig_recording", "summary"].map((kind) => ({ artifactId: `protected-${kind}`, kind }));
+  const protectedOriginals = protectedEvidence.filter(({ kind }) =>
+    !kind.startsWith("frozen_")).map(({ artifactId, artifactSha256, kind }) =>
+    ({ artifactId, artifactSha256, kind }));
   await writeFile(cleanupPlanPath, canonicalJson(deletion.signed({ campaignRootSha256:
     admitted.rootBindingSha256, protectedOriginals, releaseRootSha256,
-  schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v1", targets })));
+  schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v2", targets })));
 
   const custodyInventoryPath = join(root, "authoritative-custody.json");
   const mainLocators = [digest("main-locator")];
@@ -266,7 +281,7 @@ async function createFixture() {
     mainLocators, loadedQuestionDigests: allQuestions.map(({ questionDigestSha256 }) =>
       questionDigestSha256), mainInputRootSha256: admitted.rootBindingSha256,
   mainKeyNamespace: "main:structural", protectedEvidence, releaseRootSha256,
-  schemaVersion: "meeting_knowledge.semantic_quality_authoritative_custody.v1",
+  schemaVersion: "meeting_knowledge.semantic_quality_authoritative_custody.v2",
   tuningEvidenceDigests: mainTuningEvidence })));
 
   const holdoutQuestions = questions(30, "independent_review", "h");
@@ -329,7 +344,7 @@ async function createFixture() {
   const holdoutCleanupPlanPath = join(root, "holdout-cleanup-plan.json");
   await writeFile(holdoutCleanupPlanPath, canonicalJson(deletion.signed({ campaignRootSha256:
     holdoutAuthorization.holdoutRootSha256, protectedOriginals, releaseRootSha256,
-  schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v1",
+  schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v2",
   targets: holdoutTargets })));
 
   const configPath = join(root, "operator.json");
@@ -366,12 +381,17 @@ async function createFixture() {
       mainLocators, loadedQuestionDigests: allQuestions.map(({ questionDigestSha256 }) =>
         questionDigestSha256), mainInputRootSha256: admitted.rootBindingSha256,
     mainKeyNamespace: "main:structural", protectedEvidence: evidence, releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_authoritative_custody.v1",
+    schemaVersion: "meeting_knowledge.semantic_quality_authoritative_custody.v2",
     tuningEvidenceDigests: mainTuningEvidence })));
   };
   const writeHoldoutRoot = async (replacementHoldoutRootSha256: string) => {
     await writeFile(holdoutAuthorizationPath, canonicalJson(holdoutAuthority.signed({
       ...holdoutAuthorization, holdoutRootSha256: replacementHoldoutRootSha256 })));
+  };
+  const writeCleanupProtectedOriginals = async (replacement: readonly unknown[]) => {
+    await writeFile(cleanupPlanPath, canonicalJson(deletion.signed({ campaignRootSha256:
+      admitted.rootBindingSha256, protectedOriginals: replacement, releaseRootSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v2", targets })));
   };
   return { cli, clock, deletedIds: runtime.deletedIds,
     get ambiguousNext() {return runtime.ambiguousNext;},
@@ -379,8 +399,9 @@ async function createFixture() {
     holdoutCalls: runtime.holdoutCalls, mainCalls: runtime.mainCalls,
     mainRootSha256: admitted.rootBindingSha256,
     get maximumProviderConcurrency() {return runtime.maximumProviderConcurrency;},
-    observedIds: runtime.observedIds, release, reviewCalls: runtime.reviewCalls, root, startedAt,
-    releaseEvidence: runtime.releaseEvidence, writeCustody, writeHoldoutRoot };
+    observedIds: runtime.observedIds, protectedOriginals, release, reviewCalls: runtime.reviewCalls,
+    root, startedAt, releaseEvidence: runtime.releaseEvidence, writeCleanupProtectedOriginals,
+    writeCustody, writeHoldoutRoot };
 }
 
 async function writeSpendReservations(path: string, spend: ReturnType<typeof signer>,
@@ -749,12 +770,12 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       observedIds.push(...targetArtifactIds);
       return input.absence.signed({ absentArtifactIds: [...targetArtifactIds].toSorted(),
         absentArtifactIdsSha256: sha256([...targetArtifactIds].toSorted()),
-        campaignRootSha256, cleanupManifestSha256, presentProtectedArtifactIds:
-          input.protectedOriginals.map(({ artifactId }) => artifactId).toSorted(),
-        presentProtectedArtifactIdsSha256: sha256(input.protectedOriginals
-          .map(({ artifactId }) => artifactId).toSorted()), releaseRootSha256:
+        campaignRootSha256, cleanupManifestSha256, presentProtectedOriginals:
+          input.protectedOriginals.toSorted((left, right) => left.kind.localeCompare(right.kind)),
+        presentProtectedOriginalsSha256: sha256(input.protectedOriginals
+          .toSorted((left, right) => left.kind.localeCompare(right.kind))), releaseRootSha256:
           input.releaseRootSha256,
-        schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v4" });
+        schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v5" });
     } }, artifactCustody: { loadKey: async ({ keyId }) => keyId === "retention-key" ? {
       authorityKeyId: input.artifactCustody.keyId,
       authorityPublicKeyFingerprintSha256: input.release.artifactKeyCustodySha256,
