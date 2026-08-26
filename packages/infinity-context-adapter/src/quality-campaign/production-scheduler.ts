@@ -105,8 +105,9 @@ async function executeQuestion(input: {
       campaignRootSha256: input.binding.campaignRootSha256,
       questionDigestSha256: input.job.question.questionDigestSha256,
       questionId: input.job.question.questionId, repetition: input.job.repetition });
+    const callDeadlineEpochMs = Math.min(input.deadlineEpochMs, nowEpochMs + PER_CALL_DEADLINE_MS);
     const request = Buffer.from(canonicalJson({ attemptId: identity.attemptId,
-      callDeadlineEpochMs: Math.min(input.deadlineEpochMs, nowEpochMs + PER_CALL_DEADLINE_MS),
+      callDeadlineEpochMs,
       callKind, campaignDeadlineEpochMs: input.deadlineEpochMs,
       campaignRootSha256: input.binding.campaignRootSha256,
       questionDigestSha256: input.job.question.questionDigestSha256,
@@ -114,9 +115,18 @@ async function executeQuestion(input: {
       releaseRootSha256: input.binding.releaseRootSha256, repetition: input.job.repetition,
       schemaVersion: "meeting_knowledge.semantic_quality_provider_request.v1",
       spendReservationSha256: input.binding.spendReservationSha256 }));
-    const state = await executeReservedExchange({ campaignRootSha256:
-      input.binding.campaignRootSha256, identity, journal: input.journal,
-      port: input.ports[callKind], request });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {controller.abort(new Error("production call deadline exceeded"));},
+      Math.max(0, callDeadlineEpochMs - nowEpochMs));
+    let state;
+    try {
+      state = await executeReservedExchange({ campaignRootSha256:
+        input.binding.campaignRootSha256, deadlineEpochMs: callDeadlineEpochMs, identity,
+      journal: input.journal, port: input.ports[callKind], request, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted || (error as Error).name === "AbortError") {return null;}
+      throw error;
+    } finally {clearTimeout(timeout);}
     if (state === "outcome_unknown") {return null;}
     if (state !== "terminal_success") {throw new Error(`${callKind} failed terminally`);}
     if (callKind === "answer") {answerAttemptId = identity.attemptId;}

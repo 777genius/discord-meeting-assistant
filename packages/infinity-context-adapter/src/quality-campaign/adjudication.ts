@@ -34,6 +34,7 @@ export type DecisionReceipt = SignedValue<DecisionReceiptPayload>;
 
 export interface AdjudicationRequest {
   readonly attemptId: string;
+  readonly deadlineEpochMs: number;
   readonly encryptedEvidenceSha256: string;
   readonly firstDecisionDigestSha256: string | null;
   readonly firstDecisionReceipt: DecisionReceipt | null;
@@ -42,6 +43,7 @@ export interface AdjudicationRequest {
   readonly resolverBindingSha256: string | null;
   readonly secondDecisionDigestSha256: string | null;
   readonly secondDecisionReceipt: DecisionReceipt | null;
+  readonly signal: AbortSignal;
 }
 
 export interface AdjudicationAuthorityPort {
@@ -53,7 +55,8 @@ export interface AdjudicationAuthorityPort {
 
 export interface RawOutcomeVaultPort {
   /** Implementations decrypt inside the private runner; plaintext must never cross logs/status. */
-  reconstruct(input: { readonly attempt: AttemptIdentity; readonly envelopeSha256: string }):
+  reconstruct(input: { readonly attempt: AttemptIdentity; readonly deadlineEpochMs: number;
+    readonly envelopeSha256: string; readonly signal: AbortSignal }):
   Promise<{ readonly encryptedEvidenceSha256: string; readonly outcomeDigestSha256: string }>;
 }
 
@@ -77,20 +80,25 @@ export interface ExpectedAdjudicationAttempt {
 
 /** Calls two authorities always and the independent resolver only on canonical disagreement. */
 export async function adjudicateOutcome(input: { readonly attempt: AttemptIdentity;
+  readonly deadlineEpochMs: number;
   readonly expectedAttempt: ExpectedAdjudicationAttempt;
   readonly first: AdjudicationAuthorityPort; readonly rawOutcomeEnvelopeSha256: string;
   readonly resolver: AdjudicationAuthorityPort; readonly second: AdjudicationAuthorityPort;
-  readonly vault: RawOutcomeVaultPort }): Promise<FinalAdjudicationEnvelope> {
+  readonly signal: AbortSignal; readonly vault: RawOutcomeVaultPort }):
+Promise<FinalAdjudicationEnvelope> {
   assertAdjudicationAttempt(input.attempt, input.expectedAttempt);
   assertIndependentAuthorities([input.first, input.second, input.resolver]);
   const raw = await input.vault.reconstruct({ attempt: input.attempt,
-    envelopeSha256: digest(input.rawOutcomeEnvelopeSha256, "raw outcome envelope") });
+    deadlineEpochMs: input.deadlineEpochMs,
+    envelopeSha256: digest(input.rawOutcomeEnvelopeSha256, "raw outcome envelope"),
+    signal: input.signal });
   const request = { attemptId: input.attempt.attemptId,
+    deadlineEpochMs: input.deadlineEpochMs,
     encryptedEvidenceSha256: digest(raw.encryptedEvidenceSha256, "encrypted evidence"),
     firstDecisionDigestSha256: null, firstDecisionReceipt: null,
     outcomeDigestSha256: digest(raw.outcomeDigestSha256, "raw outcome"),
     questionId: input.attempt.questionId, resolverBindingSha256: null,
-    secondDecisionDigestSha256: null, secondDecisionReceipt: null };
+    secondDecisionDigestSha256: null, secondDecisionReceipt: null, signal: input.signal };
   const [firstRaw, secondRaw] = await Promise.all([
     input.first.adjudicate(request), input.second.adjudicate(request),
   ]);

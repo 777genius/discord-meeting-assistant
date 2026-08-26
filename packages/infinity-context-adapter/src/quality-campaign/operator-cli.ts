@@ -8,6 +8,7 @@ export const QUALITY_CAMPAIGN_COMMANDS = Object.freeze([
   "verify-bind", "preflight", "execute", "resume", "status", "adjudicate",
   "adjudicate-resume", "retention", "cleanup-absence", "final-admission",
   "holdout-execute", "holdout-adjudicate", "holdout-cleanup", "holdout-status",
+  "holdout-resume",
 ] as const);
 export type QualityCampaignCommand = typeof QUALITY_CAMPAIGN_COMMANDS[number];
 

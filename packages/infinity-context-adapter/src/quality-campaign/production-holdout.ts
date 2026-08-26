@@ -22,9 +22,8 @@ export async function executeIsolatedProductionHoldout(input: {
     spendReservationSha256: input.authorization.authorizationSha256 }, clock: input.clock,
   concurrency: input.concurrency, deadlineEpochMs: input.deadlineEpochMs,
   journalRoot: input.journalRoot, ports: input.ports, questions: admitted.questions });
-  if (scheduled.outcomeUnknown || scheduled.completedOutcomes !== 30) {
-    throw new Error("holdout execution is incomplete or outcome-unknown");
-  }
+  if (scheduled.outcomeUnknown) {return Object.freeze({ outcomeUnknown: true });}
+  if (scheduled.completedOutcomes !== 30) {throw new Error("holdout execution is incomplete");}
   return Object.freeze({ affectsMainQualification: false,
     holdoutQuestionSetSha256: admitted.holdoutQuestionSetSha256,
     holdoutRootSha256: input.authorization.holdoutRootSha256,

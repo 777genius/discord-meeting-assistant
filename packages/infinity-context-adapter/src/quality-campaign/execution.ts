@@ -230,7 +230,8 @@ export class DurableAttemptJournal {
 
 export interface ProviderExchangePort {
   exchange(input: { readonly attempt: AttemptIdentity; readonly request: Uint8Array;
-    readonly requestDigestSha256: string }): Promise<{
+    readonly deadlineEpochMs: number; readonly requestDigestSha256: string;
+    readonly signal: AbortSignal }): Promise<{
     readonly effect: "certain_failure" | "certain_success" | "unknown";
     readonly resultDigestSha256?: string; readonly signedResult?: unknown;
   }>;
@@ -244,10 +245,12 @@ export interface ProviderEffectUsage {
 
 /** Exactly one call after a durable reservation. Ambiguous retrieval and answer effects are equal. */
 export async function executeReservedExchange(input: { readonly campaignRootSha256: string;
+  readonly deadlineEpochMs: number;
   readonly effectUsage: ProviderEffectUsage; readonly identity: AttemptIdentity;
   readonly journal: DurableAttemptJournal; readonly nowEpochMs: number;
   readonly port: ProviderExchangePort; readonly provider: string;
   readonly release: PinnedReleaseDocument; readonly request: Uint8Array;
+  readonly signal: AbortSignal;
   readonly spendAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly spendReservation: unknown }):
 Promise<JournalState> {
@@ -259,11 +262,13 @@ Promise<JournalState> {
     await input.journal.recoveredState({ identity: input.identity,
     requestDigestSha256 });
   if (recovered !== "never_reserved") {return recovered;}
-  verifyEffectAuthorization(input);
   const reservation = await input.journal.reserve({ identity: input.identity,
     requestDigestSha256 });
-  const result = await input.port.exchange({ attempt: input.identity, request: input.request,
-    requestDigestSha256 });
+  let result: Awaited<ReturnType<ProviderExchangePort["exchange"]>>;
+  try {result = await input.port.exchange({ attempt: input.identity,
+    deadlineEpochMs: input.deadlineEpochMs, request: input.request,
+    requestDigestSha256, signal: input.signal });}
+  catch {return "outcome_unknown";}
   if (result.effect === "unknown") {return "outcome_unknown";}
   if (result.signedResult === undefined || result.resultDigestSha256 === undefined) {
     await input.journal.blockEvidence(reservation).catch(() => null);

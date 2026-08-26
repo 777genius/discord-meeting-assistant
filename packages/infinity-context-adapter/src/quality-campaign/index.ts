@@ -12,6 +12,7 @@ export * from "./production-checkpoints.js";
 export * from "./production-cleanup.js";
 export * from "./production-cli.js";
 export * from "./production-composition.js";
+export * from "./production-evidence.js";
 export * from "./production-holdout.js";
 export * from "./production-http-ports.js";
 export * from "./production-ports.js";

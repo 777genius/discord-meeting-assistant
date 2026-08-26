@@ -1,6 +1,13 @@
 import type { AdjudicationAuthorityPort, RawOutcomeVaultPort } from "./adjudication.js";
 import type { ProviderExchangePort } from "./execution.js";
 import type { QualityCampaignRelease } from "./release.js";
+import type { ExactCampaignEvidence, ExactAdjudicationEvidence,
+  ExactOutcomeEvidence } from "./production-evidence.js";
+
+export interface CampaignCallContext {
+  readonly deadlineEpochMs: number;
+  readonly signal: AbortSignal;
+}
 
 export interface CampaignClockPort {
   nowEpochMs(): number;
@@ -18,7 +25,7 @@ export interface CampaignReviewPorts {
   readonly resolver: AdjudicationAuthorityPort;
   readonly second: AdjudicationAuthorityPort;
   readonly vault: RawOutcomeVaultPort;
-  rawOutcomeEnvelopeSha256(attemptId: string): Promise<string>;
+  rawOutcomeEnvelopeSha256(attemptId: string, context: CampaignCallContext): Promise<string>;
 }
 
 export interface DerivedCampaignArtifact {
@@ -27,35 +34,40 @@ export interface DerivedCampaignArtifact {
 }
 
 export interface CampaignDeletionPort {
+  readonly authorityId: string;
   deleteDerived(input: { readonly campaignRootSha256: string;
+    readonly context: CampaignCallContext;
     readonly targets: readonly DerivedCampaignArtifact[] }): Promise<readonly {
       readonly artifactId: string; readonly outcome: "absent" | "deleted" | "unknown" }[]>;
 }
 
 export interface CanonicalAbsencePort {
+  readonly authorityId: string;
   observe(input: { readonly campaignRootSha256: string;
+    readonly cleanupManifestSha256: string;
+    readonly context: CampaignCallContext;
     readonly targetArtifactIds: readonly string[] }): Promise<unknown>;
 }
 
-export interface CampaignQualificationPorts {
-  metrics(input: { readonly campaignRootSha256: string; readonly repetition: 1 | 2 | 3 }):
-  Promise<{ readonly metricsSha256: string; readonly outcomeCount: number;
-    readonly thresholdsPassed: boolean }>;
-  retention(input: { readonly campaignRootSha256: string }): Promise<{
-    readonly inventorySha256: string; readonly outcomeCount: number }>;
+export interface CampaignExactEvidencePort {
+  main(input: { readonly attemptIds: readonly string[]; readonly campaignRootSha256: string;
+    readonly context: CampaignCallContext }): Promise<ExactCampaignEvidence>;
+  holdout(input: { readonly attemptIds: readonly string[]; readonly campaignRootSha256: string;
+    readonly context: CampaignCallContext }): Promise<{ readonly adjudications:
+      readonly ExactAdjudicationEvidence[]; readonly outcomes: readonly ExactOutcomeEvidence[] }>;
 }
 
 export interface ObservedProductionReleasePort {
-  observe(): Promise<QualityCampaignRelease>;
+  observe(context: CampaignCallContext): Promise<QualityCampaignRelease>;
 }
 
 export interface QualityCampaignProductionPorts {
   readonly absence: CanonicalAbsencePort;
   readonly clock: CampaignClockPort;
   readonly deletion: CampaignDeletionPort;
+  readonly evidence: CampaignExactEvidencePort;
   readonly holdoutProvider: CampaignProviderPorts;
   readonly mainProvider: CampaignProviderPorts;
-  readonly qualification: CampaignQualificationPorts;
   readonly release: ObservedProductionReleasePort;
   readonly review: CampaignReviewPorts;
 }

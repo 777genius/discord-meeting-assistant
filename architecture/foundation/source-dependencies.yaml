@@ -249,11 +249,70 @@ boundaries:
         - node:crypto
         - node:fs/promises
       runtimeReferences: []
+  - id: application.infinity-quality-campaign
+    roots:
+      - packages/infinity-context-adapter/src/quality-campaign
+    entrypoints:
+      - packages/infinity-context-adapter/src/quality-campaign/adjudication.ts
+      - packages/infinity-context-adapter/src/quality-campaign/admission.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical.ts
+      - packages/infinity-context-adapter/src/quality-campaign/execution.ts
+      - packages/infinity-context-adapter/src/quality-campaign/holdout.ts
+      - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-evidence.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-ports.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
+      - packages/infinity-context-adapter/src/quality-campaign/release.ts
+      - packages/infinity-context-adapter/src/quality-campaign/retention.ts
+    allow:
+      boundaries: []
+      packages: []
+      builtins:
+        - node:crypto
+        - node:fs/promises
+        - node:path
+      runtimeReferences: []
+  - id: composition.infinity-quality-campaign
+    roots:
+      - packages/infinity-context-adapter/src/quality-campaign/index.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-cli.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-composition.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
+    entrypoints:
+      - packages/infinity-context-adapter/src/quality-campaign/index.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-cli.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-composition.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
+    allow:
+      boundaries:
+        - adapters.infinity-quality-campaign
+        - application.infinity-quality-campaign
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: adapters.infinity-quality-campaign
+    roots:
+      - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
+    entrypoints:
+      - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
+    allow:
+      boundaries:
+        - application.infinity-quality-campaign
+      packages: []
+      builtins:
+        - node:fs/promises
+        - node:path
+      runtimeReferences: []
   - id: adapters.infinity-context
     roots:
       - packages/infinity-context-adapter/src
-    entrypoints:
-      - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
+    entrypoints: []
     allow:
       boundaries:
         - core.meeting.knowledge
