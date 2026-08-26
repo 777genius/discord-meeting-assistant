@@ -37,6 +37,8 @@ function questions(count: number, source: CampaignQuestion["source"], prefix: st
 describe("installed production quality-campaign CLI", () => {
   it("runs 3x240 with bounded restart, review, cleanup and isolated 30 holdout", async () => {
     const fixture = await createFixture();
+    expect(await fixture.cli("preflight", "preflight-status.json")).toBe(20);
+    expect(fixture.mainCalls).toHaveLength(0);
     fixture.clock.crashAfter = 30;
     expect(await fixture.cli("execute", "crash-status.json")).toBe(1);
     const callsBeforeRestart = fixture.mainCalls.length;

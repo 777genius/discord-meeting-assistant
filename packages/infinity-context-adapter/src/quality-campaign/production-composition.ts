@@ -16,7 +16,8 @@ import type { DerivedCampaignArtifact, QualityCampaignProductionPorts } from
 import { executeMainCampaignSchedule } from "./production-scheduler.js";
 
 export type ProductionCampaignCommand = "adjudicate" | "cleanup-absence" | "execute" |
-  "final-admission" | "holdout-execute" | "retention" | "status";
+  "final-admission" | "holdout-execute" | "preflight" | "retention" | "status" |
+  "verify-bind";
 
 interface ProductionOperatorConfiguration {
   readonly absenceAuthorityPath: string;
@@ -64,6 +65,13 @@ export async function runQualityCampaignProductionComposition(input: {
   const checkpoints = new ProductionCheckpointStore(config.checkpointRoot);
   const deadline = await checkpoints.deadline({ campaignRootSha256: admitted.rootBindingSha256,
     nowEpochMs: input.ports.clock.nowEpochMs() });
+
+  if (input.command === "preflight" || input.command === "verify-bind") {
+    return { blockerCode: "none", receipt: safeReceipt("preflight",
+      admitted.rootBindingSha256, { campaignDeadlineEpochMs: deadline.campaignDeadlineEpochMs,
+        providerCalls: 0, questionCount: admitted.questions.length,
+        releaseRootSha256: verifiedRelease.releaseRootSha256 }), status: "paused" };
+  }
 
   if (input.command === "execute") {
     const spendAuthority = await loadAuthority(config.spendAuthorityPath);
