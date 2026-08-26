@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  admitMainCampaign,
   admitFinalCampaign,
   admitIsolatedHoldout,
   adjudicateOutcome,
@@ -41,7 +42,63 @@ function signer(keyId: string) {
   };
 }
 
+function sealedQuestions(count: number, source: CampaignQuestion["source"], prefix: string) {
+  return Array.from({ length: count }, (_, index) => ({ locale: "en" as const,
+    questionDigestSha256: sha256({ index, prefix }), questionId: `${prefix}-${index}`,
+    rubricDigestSha256: sha256({ index, rubric: prefix }), source }));
+}
+
 describe("production quality campaign", () => {
+  it("admits an exact 200+40 sealed corpus and rejects checksum substitution", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "quality-admission-"));
+    const custody = signer("custody"); const reviewer1 = signer("reviewer-1");
+    const reviewer2 = signer("reviewer-2"); const releaseRootSha256 = d("9");
+    const automatic = sealedQuestions(200, "automatic", "a");
+    const reviewed = sealedQuestions(40, "independent_review", "r");
+    const all = [...automatic, ...reviewed];
+    const sourceDigestSha256 = d("1"); const corpusDigestSha256 = d("2");
+    const reviewerDigestSha256 = d("3");
+    const acceptance = custody.signed({ corpusDigestSha256, purpose: "custody_only",
+      reviewerDigestSha256, schemaVersion: "meeting_knowledge.semantic_quality_acceptance.v1",
+      sourceDigestSha256 });
+    const authorization = custody.signed({ acceptanceReceiptSha256: sha256(acceptance),
+      authorizedProviderExecution: true, corpusDigestSha256,
+      expiresAtEpochMs: Date.now() + 60_000, releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_execution_authorization.v1" });
+    const reviewPayload = { corpusDigestSha256, questionSetSha256: sha256(all),
+      reviewerDigestSha256, rubricSetSha256: sha256(all.map(({ questionId,
+        rubricDigestSha256 }) => ({ questionId, rubricDigestSha256 }))),
+      schemaVersion: "meeting_knowledge.semantic_quality_question_review.v1" };
+    const authorityPayload = { entriesSha256: d("4"), releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1",
+      snapshotSha256: d("5") };
+    const files: Record<string, unknown> = { "acceptance.json": acceptance,
+      "authorization.json": authorization, "automatic.json": automatic,
+      "forbidden.json": custody.signed(authorityPayload), "mapping.json":
+      custody.signed(authorityPayload), "review-1.json": reviewer1.signed(reviewPayload),
+      "review-2.json": reviewer2.signed(reviewPayload), "reviewed.json": reviewed };
+    for (const [path, value] of Object.entries(files)) {
+      await writeFile(join(directory, path), canonicalJson(value));
+    }
+    const checksumInventory = await Promise.all(Object.keys(files).map(async (path) => ({ path,
+      sha256: sha256(await readFile(join(directory, path))) })));
+    const manifest = { acceptanceReceiptPath: "acceptance.json", checksumInventory,
+      corpusDigestSha256, executionAuthorizationPath: "authorization.json",
+      forbiddenLocatorManifestPath: "forbidden.json", independentReviewQuestionsPath:
+      "reviewed.json", questionReviewReceiptPaths: ["review-1.json", "review-2.json"],
+      reviewerDigestSha256, schemaVersion: "meeting_knowledge.semantic_quality_input_manifest.v4",
+      sealedAutomaticQuestionsPath: "automatic.json", sourceDigestSha256,
+      turnToBlockManifestPath: "mapping.json" };
+    const manifestPath = join(directory, "InputManifest.v4.json");
+    await writeFile(manifestPath, canonicalJson(manifest));
+    const admitted = await admitMainCampaign({ authority: custody, manifestPath,
+      releaseRootSha256, reviewerAuthorities: [reviewer1, reviewer2] });
+    expect(admitted.questions).toHaveLength(240);
+    await writeFile(join(directory, "automatic.json"), "[]");
+    await expect(admitMainCampaign({ authority: custody, manifestPath, releaseRootSha256,
+      reviewerAuthorities: [reviewer1, reviewer2] })).rejects.toThrow(/checksum/u);
+  });
+
   it("rejects model, reasoning, tier, SDK, image, and signature substitutions", () => {
     const authority = signer("release");
     const release: QualityCampaignRelease = { answerImageSha256: d("1"),

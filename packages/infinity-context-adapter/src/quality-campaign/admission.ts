@@ -65,6 +65,7 @@ export async function admitMainCampaign(input: {
   readonly authority: AdmissionAuthority;
   readonly manifestPath: string;
   readonly releaseRootSha256: string;
+  readonly reviewerAuthorities: readonly [AdmissionAuthority, AdmissionAuthority];
 }): Promise<AdmittedMainCampaign> {
   digest(input.releaseRootSha256, "release root");
   const manifestPath = absolute(input.manifestPath, "input manifest");
@@ -109,8 +110,8 @@ export async function admitMainCampaign(input: {
     throw new Error("sealed question membership is duplicated");
   }
   const questionSetSha256 = sha256(questions);
-  const reviewReceipts = await Promise.all(manifest.questionReviewReceiptPaths.map(async (path) =>
-    await readSigned(base, path, input.authority)));
+  const reviewReceipts = await Promise.all(manifest.questionReviewReceiptPaths.map(async (path,
+    index) => await readSigned(base, path, input.reviewerAuthorities[index]!)));
   if (reviewReceipts.length !== 2 || new Set(reviewReceipts.map(({ signerKeyId }) =>
     signerKeyId)).size !== 2 || reviewReceipts.some(({ payload }) => {
       const record = exactRecord(payload, ["corpusDigestSha256", "questionSetSha256",
