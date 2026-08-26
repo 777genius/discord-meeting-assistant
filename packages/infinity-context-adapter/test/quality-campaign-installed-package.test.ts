@@ -213,9 +213,9 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   await writeFile(spendReservationsPath, canonicalJson(([1, 2, 3] as const).map((repetition) =>
     authorities.spend!.signed({ allowedCallKinds: ["answer", "capability", "retrieval",
       "adjudicator_1", "adjudicator_2", "resolver"], campaignRootSha256: mainRootSha256,
-    expiresAtEpochMs: 4_000_000_000_000, maxCalls: 720, maxEncryptedBytes: 100_000_000,
-    maxCallsByKind: { adjudicator_1: 1, adjudicator_2: 1, answer: 240, capability: 240,
-      resolver: 1, retrieval: 240 }, maximumEffectDurationMs: 120_000,
+    expiresAtEpochMs: 4_000_000_000_000, maxCalls: 1_440, maxEncryptedBytes: 100_000_000,
+    maxCallsByKind: { adjudicator_1: 240, adjudicator_2: 240, answer: 240, capability: 240,
+      resolver: 240, retrieval: 240 }, maximumEffectDurationMs: 120_000,
     maxTokens: 10_000_000, model: "gpt-5.6-sol", provider: "local-fake-http",
     reasoning: "xhigh", releaseRootSha256, repetition, serviceTier: "default" }))));
   const protectedEvidence = ["original_craig_recording", "final_transcript", "meeting_database",

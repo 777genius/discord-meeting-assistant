@@ -308,10 +308,11 @@ async function createFixture() {
   await writeFile(questionReceiptPath, canonicalJson(questionReceipt));
   await writeFile(holdoutSpendPath, canonicalJson(([1, 2, 3] as const).map((repetition) =>
     spend.signed({ allowedCallKinds:
-    ["answer", "capability", "retrieval"], campaignRootSha256: holdoutRootSha256,
-  expiresAtEpochMs: 4_000_000_000_000, maxCalls: 270, maxEncryptedBytes: 100_000_000,
-  maxCallsByKind: { adjudicator_1: 0, adjudicator_2: 0, answer: 90, capability: 90,
-    resolver: 0, retrieval: 90 }, maximumEffectDurationMs: 120_000,
+    ["answer", "capability", "retrieval", "adjudicator_1", "adjudicator_2", "resolver"],
+  campaignRootSha256: holdoutRootSha256,
+  expiresAtEpochMs: 4_000_000_000_000, maxCalls: 180, maxEncryptedBytes: 100_000_000,
+  maxCallsByKind: { adjudicator_1: 30, adjudicator_2: 30, answer: 30, capability: 30,
+    resolver: 30, retrieval: 30 }, maximumEffectDurationMs: 120_000,
   maxTokens: 1_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
   releaseRootSha256, repetition }))));
   const holdoutInputPath = join(root, "holdout-input.json");
@@ -392,9 +393,9 @@ function spendDocument(spend: ReturnType<typeof signer>, campaignRootSha256: str
   releaseRootSha256: string, repetition: 1 | 2 | 3) {
   return spend.signed({
     allowedCallKinds: ["answer", "capability", "retrieval", "adjudicator_1", "adjudicator_2",
-      "resolver"], campaignRootSha256, expiresAtEpochMs: 4_000_000_000_000, maxCalls: 720,
-    maxEncryptedBytes: 100_000_000, maxCallsByKind: { adjudicator_1: 1, adjudicator_2: 1,
-      answer: 240, capability: 240, resolver: 1, retrieval: 240 }, maximumEffectDurationMs: 120_000,
+      "resolver"], campaignRootSha256, expiresAtEpochMs: 4_000_000_000_000, maxCalls: 1_440,
+    maxEncryptedBytes: 100_000_000, maxCallsByKind: { adjudicator_1: 240, adjudicator_2: 240,
+      answer: 240, capability: 240, resolver: 240, retrieval: 240 }, maximumEffectDurationMs: 120_000,
     maxTokens: 10_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
     releaseRootSha256, repetition });
 }

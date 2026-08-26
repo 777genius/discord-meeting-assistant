@@ -1,6 +1,8 @@
+/* oxlint-disable max-lines -- one closed production dispatcher retains phase and proof ordering */
 import { admitMainCampaign, type AdmissionAuthority, type CampaignQuestion } from "./admission.js";
 import { adjudicateOutcome } from "./adjudication.js";
 import { sha256 } from "./canonical.js";
+import { DurableAttemptJournal } from "./attempt-journal.js";
 import { attemptIdentity } from "./execution.js";
 import { admitFinalCampaign } from "./final-admission.js";
 import { createHoldoutReport } from "./holdout.js";
@@ -14,6 +16,7 @@ import { reconstructExactHoldoutEvidence, reconstructExactMainEvidence,
 import { loadHoldoutExecutionEvidence, loadMainExecutionEvidence } from
   "./production-execution-evidence.js";
 import { executeIsolatedProductionHoldout } from "./production-holdout.js";
+import { verifyPinnedReleaseDocument } from "./release.js";
 import { loadCanonicalCustody, loadProductionAuthority, loadProductionAuthorityPolicy,
   loadProductionConfiguration, loadProductionHoldout, readProductionJson,
   type CanonicalCustodyEvidence,
@@ -173,6 +176,7 @@ Promise<ProductionCompositionResult> {
       release: pinnedRelease, repetitionAuthorityKeyId: repetitionAuthority.keyId,
       repetitionEvidence: evidence.repetitionEvidence,
       rootBindingSha256: evidence.finalRootBindingSha256,
+      spendLedger: new DurableAttemptJournal(config.journalRoot, policy),
       spendReservationsByRepetition: spendDocuments as [unknown, unknown, unknown],
       spendReservationSha256ByRepetition, targetInventoryAuthorityKeyId: deletionAuthority.keyId,
       targetInventoryReceipt: cleanup.targetInventoryReceipt });
@@ -259,9 +263,16 @@ Promise<ProductionCompositionResult | null> {
       spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition });
     assertAdjudicationCheckpoint(adjudicatedReceiptSha256, holdoutRootSha256,
       evidence.adjudications);
-    const metrics = reconstructExactHoldoutEvidence({ campaignRootSha256: holdoutRootSha256,
-      ...evidence, providerResultAuthority: input.ports.holdoutProvider.resultAuthority,
-      questions: holdout.questions, releaseRootSha256: input.release.releaseRootSha256,
+    const metrics = await reconstructExactHoldoutEvidence({ campaignRootSha256: holdoutRootSha256,
+      ...evidence, artifactKeyCustodySha256:
+        verifyPinnedReleaseDocument(input.policy, input.release).release.artifactKeyCustodySha256,
+      authorityPolicy: input.policy, custody: input.ports.artifactCustody,
+      effectVerificationEpochMs: input.ports.clock.nowEpochMs(),
+      providerResultAuthority: input.ports.holdoutProvider.resultAuthority,
+      questions: holdout.questions, releaseDocumentSha256: sha256(input.release.document),
+      releaseRootSha256: input.release.releaseRootSha256,
+      spendLedger: new DurableAttemptJournal(input.config.holdoutJournalRoot, input.policy,
+        "holdout_provider_result"), spendReservations: holdout.verifiedSpends,
       spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition });
     const targetInventoryAuthority = await loadProductionAuthority(
       input.config.deletionAuthorityPath);
@@ -276,7 +287,8 @@ Promise<ProductionCompositionResult | null> {
           "holdout target inventory") }));
     const report = createHoldoutReport({ cleanupReceiptSha256: cleanup.absenceReceiptSha256,
       holdoutRootSha256, outcomeCount: evidence.outcomes.length,
-      reportMetricsSha256: metrics.metricsSha256 });
+      reportMetricsSha256: sha256({ cumulativeSpendProofSha256:
+        metrics.cumulativeSpendProofSha256, metricsSha256: metrics.metricsSha256 }) });
     const receipt = createOperatorSafeReceipt(holdoutRootSha256, {
       affectsMainQualification: false, cleanupReceiptSha256: cleanup.absenceReceiptSha256,
       separateReportSha256: report.separateReportSha256 });

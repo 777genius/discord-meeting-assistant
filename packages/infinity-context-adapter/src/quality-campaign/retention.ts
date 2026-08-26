@@ -7,6 +7,7 @@ import { verifyDurableReservedExchangeEvidence,
 import { artifactAttemptIdentity, type ArtifactAad, type ArtifactReceipt,
 } from "./artifacts.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import type { DurableSpendClaim, ExpectedSpendClaim } from "./cumulative-spend.js";
 import { assertAttemptIdentity, type AttemptIdentity, type VerifiedSpendReservation,
   verifyExternalSignedValue } from "./execution.js";
 import { QualityCampaignAuthorityPolicy } from "./release.js";
@@ -79,12 +80,16 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
   readonly campaignByteCeiling: number; readonly custody: ArtifactCustodyPort;
   readonly effectVerificationEpochMs: number;
   readonly expectedOutcomes: readonly ExpectedOutcomeInventory[];
+  readonly perRepetitionCardinality: 30 | 240;
+  readonly providerResultAuthorityRole?: "holdout_provider_result" | "provider_result";
   readonly releaseDocumentSha256: string;
   readonly spendReservations: readonly VerifiedSpendReservation[] }): Promise<{
-    readonly artifactCount: number; readonly inventorySha256: string;
+    readonly artifactCount: number; readonly expectedSpendClaims: readonly ExpectedSpendClaim[];
+    readonly inventorySha256: string; readonly reviewSpendClaims: readonly DurableSpendClaim[];
     readonly totalStoredBytes: number }> {
   digest(input.artifactKeyCustodySha256, "artifact key custody");
-  const expected = buildExpectedMembership(input.expectedOutcomes);
+  const perRepetitionCardinality = input.perRepetitionCardinality;
+  const expected = buildExpectedMembership(input.expectedOutcomes, perRepetitionCardinality);
   if (input.artifacts.length !== expected.size) {
     throw new Error("retained inventory has missing or orphan artifacts");
   }
@@ -93,7 +98,9 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
   const context = { artifactKeyCustodySha256: input.artifactKeyCustodySha256,
     authenticated: new Map<string, AuthenticatedArtifact>(), custody: input.custody,
     effectVerificationEpochMs: input.effectVerificationEpochMs, expected, releaseDocumentSha256:
-    digest(input.releaseDocumentSha256, "retained release document"), seen,
+    digest(input.releaseDocumentSha256, "retained release document"), reviewSpendClaims: [], seen,
+    expectedSpendClaims: [],
+    providerResultAuthorityRole: input.providerResultAuthorityRole ?? "provider_result",
     spendReservations: input.spendReservations };
   let totalStoredBytes = 0;
   for (const artifact of input.artifacts) {
@@ -113,8 +120,10 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
     throw new Error("retained inventory exceeds campaign byte ceiling");
   }
   return Object.freeze({ artifactCount: seen.memberships.size,
+    expectedSpendClaims: Object.freeze(context.expectedSpendClaims),
     inventorySha256: sha256([...input.artifacts].toSorted((a, b) =>
-      `${a.attemptId}:${a.kind}`.localeCompare(`${b.attemptId}:${b.kind}`))), totalStoredBytes });
+      `${a.attemptId}:${a.kind}`.localeCompare(`${b.attemptId}:${b.kind}`))),
+    reviewSpendClaims: Object.freeze(context.reviewSpendClaims), totalStoredBytes });
 }
 
 interface ExpectedArtifactMembership {
@@ -138,16 +147,21 @@ interface RetentionContext {
   readonly artifactKeyCustodySha256: string; readonly custody: ArtifactCustodyPort;
   readonly effectVerificationEpochMs: number;
   readonly expected: ReadonlyMap<string, ExpectedArtifactMembership>; readonly seen: RetentionSeen;
+  readonly expectedSpendClaims: ExpectedSpendClaim[];
   readonly releaseDocumentSha256: string;
+  readonly providerResultAuthorityRole: "holdout_provider_result" | "provider_result";
+  readonly reviewSpendClaims: DurableSpendClaim[];
   readonly spendReservations: readonly VerifiedSpendReservation[];
 }
 interface AuthenticatedArtifact { readonly artifact: RetainedArtifact; readonly value: unknown }
 
-function buildExpectedMembership(outcomes: readonly ExpectedOutcomeInventory[]):
+function buildExpectedMembership(outcomes: readonly ExpectedOutcomeInventory[],
+  perRepetitionCardinality: number):
 Map<string, ExpectedArtifactMembership> {
-  if (outcomes.length !== MAIN_CARDINALITY.total ||
-    new Set(outcomes.map(({ identity }) => identity.attemptId)).size !== MAIN_CARDINALITY.total) {
-    throw new Error("expected outcome inventory is not exactly 3 x 240");
+  const total = perRepetitionCardinality * MAIN_CARDINALITY.repetitions;
+  if (outcomes.length !== total ||
+    new Set(outcomes.map(({ identity }) => identity.attemptId)).size !== total) {
+    throw new Error("expected outcome inventory does not match its exact repetition cardinality");
   }
   const repetitionQuestions = new Map<number, Set<string>>();
   const expected = new Map<string, ExpectedArtifactMembership>();
@@ -182,7 +196,7 @@ Map<string, ExpectedArtifactMembership> {
   const questionSets = [1, 2, 3].map((repetition) =>
     canonicalJson([...(repetitionQuestions.get(repetition) ?? [])].toSorted()));
   if ([1, 2, 3].some((repetition) => repetitionQuestions.get(repetition)?.size !==
-    MAIN_CARDINALITY.perRepetition) || new Set(questionSets).size !== 1) {
+    perRepetitionCardinality) || new Set(questionSets).size !== 1) {
     throw new Error("expected outcome inventory does not contain three exact repetitions");
   }
   return expected;
@@ -560,7 +574,10 @@ function verifyArtifactChain(policy: QualityCampaignAuthorityPolicy, artifact: R
       chain.resultDigestSha256 === null) {
     throw new Error("provider terminal deadline is outside signed spend authority");
   }
-  const authority = policy.authority("provider_result");
+  const durableRequired = ["adjudicator_1_result", "adjudicator_2_result", "resolver_result"]
+    .includes(artifact.kind);
+  const authority = policy.authority(durableRequired ? "provider_result" :
+    context.providerResultAuthorityRole);
   const receipt = verifyExternalSignedValue<Record<string, unknown>>(chain.signedProviderTerminal,
     authority.keyId, authority.publicKeyPem, "retained provider terminal");
   const payload = exactRecord(receipt.payload, ["attemptId", "callKind", "callOrdinal",
@@ -577,17 +594,22 @@ function verifyArtifactChain(policy: QualityCampaignAuthorityPolicy, artifact: R
       spendReservationSha256: payload.spendReservationSha256 }) !== canonicalJson(identity)) {
     throw new Error("provider terminal does not bind the exact retained artifact effect");
   }
-  const durableRequired = ["adjudicator_1_result", "adjudicator_2_result", "resolver_result"]
-    .includes(artifact.kind);
   if (durableRequired) {
-    verifyDurableReservedExchangeEvidence(policy, chain.signedDurableExchange, {
+    const durable = verifyDurableReservedExchangeEvidence(policy, chain.signedDurableExchange, {
       attempt: identity, cancellationBoundary: "not_cancelled",
       deadlineEpochMs: Number(chain.deadlineEpochMs), releaseDocumentSha256:
         context.releaseDocumentSha256, requestDigestSha256: String(chain.requestDigestSha256),
       resultDigestSha256: String(chain.resultDigestSha256),
       signedProviderTerminal: chain.signedProviderTerminal });
+    context.expectedSpendClaims.push(Object.freeze({ identity,
+      requestDigestSha256: String(chain.requestDigestSha256) }));
+    context.reviewSpendClaims.push(durable.budgetClaim as DurableSpendClaim);
   } else if (chain.signedDurableExchange !== null) {
     throw new Error("non-adjudication artifact contains orphan durable exchange evidence");
+  }
+  if (["capability_response", "retrieval_response", "answer_response"].includes(artifact.kind)) {
+    context.expectedSpendClaims.push(Object.freeze({ identity,
+      requestDigestSha256: String(chain.requestDigestSha256) }));
   }
 }
 

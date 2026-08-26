@@ -2,6 +2,7 @@
 import { MAIN_CARDINALITY, type CampaignQuestion,
   validateCampaignQuestion } from "./admission.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import { admitCumulativeSpend, type CumulativeSpendLedgerPort } from "./cumulative-spend.js";
 import { verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt } from "./cleanup-evidence.js";
 import { assertAttemptIdentity, type AttemptIdentity, verifyExternalSignedValue,
   verifySpendReservation } from "./execution.js";
@@ -74,6 +75,7 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
   readonly questionReviewReceipts: readonly [unknown, unknown];
   readonly release: PinnedReleaseDocument; readonly repetitionAuthorityKeyId: string;
   readonly repetitionEvidence: readonly unknown[]; readonly rootBindingSha256: string;
+  readonly spendLedger: CumulativeSpendLedgerPort;
   readonly spendReservationSha256ByRepetition: readonly [string, string, string];
   readonly spendReservationsByRepetition: readonly [unknown, unknown, unknown];
   readonly targetInventoryAuthorityKeyId: string;
@@ -134,8 +136,14 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
     artifactKeyCustodySha256: release.release.artifactKeyCustodySha256,
     campaignByteCeiling: input.campaignByteCeiling, custody: input.artifactCustody,
     effectVerificationEpochMs: input.effectVerificationEpochMs, expectedOutcomes,
+    perRepetitionCardinality: MAIN_CARDINALITY.perRepetition,
     releaseDocumentSha256: sha256(input.release.document),
     spendReservations: verifiedSpendReservations });
+  const schedulerSpendClaims = (await Promise.all(verifiedSpendReservations.map(
+    async (reservation) => await input.spendLedger.loadAdmittedClaims(reservation)))).flat();
+  const cumulativeSpend = admitCumulativeSpend({ claims:
+    [...schedulerSpendClaims, ...inventory.reviewSpendClaims],
+  expected: inventory.expectedSpendClaims, reservations: verifiedSpendReservations });
   policy.assertReference("cleanup", input.cleanupAuthorityKeyId);
   const targetInventory = verifyCampaignCreatedTargetInventory(policy, { authorityKeyId:
     input.targetInventoryAuthorityKeyId, campaignRootSha256: input.campaignRootSha256,
@@ -149,6 +157,7 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
     sha256(cleanupReceipt), inventorySha256: inventory.inventorySha256,
     outcomeCount: expectedOutcomes.length, releaseRootSha256: release.releaseRootSha256,
     repetitionEvidenceSetSha256: sha256(evidenceReceipts), rootBindingSha256,
+    cumulativeSpendProofSha256: sha256(cumulativeSpend),
     schemaVersion: "meeting_knowledge.semantic_quality_final_admission.v3",
     targetInventoryReceiptSha256: sha256(targetInventory.receipt) };
   return Object.freeze({ finalAdmissionSha256: sha256(finalBinding),

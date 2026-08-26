@@ -1,6 +1,7 @@
 import type { CampaignQuestion } from "./admission.js";
 import type { FinalAdjudicationEnvelope } from "./adjudication.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import { admitCumulativeSpend, type CumulativeSpendLedgerPort } from "./cumulative-spend.js";
 import type { AttemptIdentity, VerifiedSpendReservation } from "./execution.js";
 import type { QualityCampaignAuthorityPolicy } from "./release.js";
 import { assertTerminalChain } from "./production-evidence-terminals.js";
@@ -152,6 +153,7 @@ export async function reconstructExactMainEvidence(input: {
     artifactKeyCustodySha256: input.artifactKeyCustodySha256,
     campaignByteCeiling: input.evidence.campaignByteCeiling,
     custody: input.custody, effectVerificationEpochMs: input.effectVerificationEpochMs,
+    perRepetitionCardinality: 240,
     releaseDocumentSha256: input.releaseDocumentSha256,
     spendReservations: input.spendReservations, expectedOutcomes: expected.map(({ attempt }) => {
       const outcome = input.evidence.outcomes.find(({ identity }) =>
@@ -180,13 +182,23 @@ export async function reconstructExactMainEvidence(input: {
       3: sha256(metrics[2]) }) });
 }
 
-export function reconstructExactHoldoutEvidence(input: {
+export async function reconstructExactHoldoutEvidence(input: {
+  readonly artifacts: readonly RetainedArtifact[];
+  readonly artifactKeyCustodySha256: string; readonly authorityPolicy: QualityCampaignAuthorityPolicy;
+  readonly campaignByteCeiling: number; readonly custody: ArtifactCustodyPort;
   readonly campaignRootSha256: string; readonly adjudications: readonly ExactAdjudicationEvidence[];
+  readonly effectVerificationEpochMs: number;
   readonly outcomes: readonly ExactOutcomeEvidence[];
   readonly providerResultAuthority: { readonly keyId: string; readonly publicKeyPem: string };
-  readonly questions: readonly CampaignQuestion[]; readonly releaseRootSha256: string;
+  readonly questions: readonly CampaignQuestion[]; readonly releaseDocumentSha256: string;
+  readonly releaseRootSha256: string; readonly spendLedger: CumulativeSpendLedgerPort;
+  readonly spendReservations: readonly VerifiedSpendReservation[];
   readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
-}): { readonly metrics: readonly LocallyComputedMetrics[]; readonly metricsSha256: string } {
+}): Promise<{ readonly cumulativeSpendProofSha256: string;
+  readonly metrics: readonly LocallyComputedMetrics[]; readonly metricsSha256: string }> {
+  if (input.questions.length !== 30) {
+    throw new Error("exact holdout evidence requires 3 x 30 questions");
+  }
   const expected = ([1, 2, 3] as const).flatMap((repetition) => input.questions.map((question) => {
     const outcome = input.outcomes.find((candidate) => candidate.questionId === question.questionId &&
       candidate.repetition === repetition);
@@ -201,11 +213,45 @@ export function reconstructExactHoldoutEvidence(input: {
       releaseRootSha256: input.releaseRootSha256, root: input.campaignRootSha256,
       spendReservationSha256: input.spendReservationSha256ByRepetition[outcome.repetition] });
   }
+  const adjudicationByAttempt = new Map(input.adjudications.map((value) =>
+    [value.attemptId, value] as const));
+  const retained = await verifyExactRetentionInventory(input.authorityPolicy, {
+    artifacts: input.artifacts, artifactKeyCustodySha256: input.artifactKeyCustodySha256,
+    campaignByteCeiling: input.campaignByteCeiling, custody: input.custody,
+    effectVerificationEpochMs: input.effectVerificationEpochMs,
+    expectedOutcomes: expected.map(({ attempt }) => {
+      const outcome = input.outcomes.find(({ identity }) => identity.attemptId ===
+        attempt.attemptId)!;
+      const adjudication = adjudicationByAttempt.get(attempt.attemptId)!;
+      return { artifactBindingSha256ByKind: outcome.artifactBindingSha256ByKind,
+        abstention: { expected: outcome.expectedAnswer === "abstain",
+          observed: outcome.answerAbstained }, citationChecks: adjudication.decision.claims.map(
+          ({ claimId, citationEntailed }) => ({ claimId, entailed: citationEntailed })),
+        claimChecks: adjudication.decision.claims.map(({ claimFactual, claimId,
+          claimSupported }) => ({ claimId, factual: claimFactual, supported: claimSupported })),
+        evidenceTurnIds: outcome.evidenceTurnIds,
+        finalAdjudicationSha256: outcome.finalAdjudicationSha256, identity: attempt,
+        rankedLocatorIds: outcome.rankedLocatorDigests,
+        relevantLocatorIds: outcome.relevantLocatorDigests,
+        resolverRequired: adjudication.resolverReceipt !== null,
+        retrievalLatencyUs: outcome.retrievalLatencyUs,
+        scopeViolationLocatorIds: outcome.scopeViolationLocatorIds,
+        speakerTimeChecks: outcome.speakerTimeChecks };
+    }), perRepetitionCardinality: 30,
+    providerResultAuthorityRole: "holdout_provider_result",
+    releaseDocumentSha256: input.releaseDocumentSha256,
+    spendReservations: input.spendReservations });
+  const schedulerClaims = (await Promise.all(input.spendReservations.map(async (reservation) =>
+    await input.spendLedger.loadAdmittedClaims(reservation)))).flat();
+  const cumulativeSpend = admitCumulativeSpend({ claims:
+    [...schedulerClaims, ...retained.reviewSpendClaims], expected: retained.expectedSpendClaims,
+  reservations: input.spendReservations });
   const metrics = ([1, 2, 3] as const).map((repetition) => computeMetrics({ adjudications:
     input.adjudications.filter((value) => value.repetition === repetition), outcomes:
     input.outcomes.filter((value) => value.repetition === repetition), repetition }));
   for (const value of metrics) {assertThresholds(value);}
-  return Object.freeze({ metrics, metricsSha256: sha256(metrics) });
+  return Object.freeze({ cumulativeSpendProofSha256: sha256(cumulativeSpend), metrics,
+    metricsSha256: sha256(metrics) });
 }
 
 function assertExactMembership(campaignRootSha256: string, expected: readonly {

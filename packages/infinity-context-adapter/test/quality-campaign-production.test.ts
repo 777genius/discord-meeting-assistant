@@ -22,6 +22,7 @@ import {
   type PinnedReleaseDocument, type QualificationOutcome, type QualityCampaignRelease,
   type RepetitionQualificationEvidence, type RetainedArtifact,
   type ExactCampaignEvidence, type ScheduledExactOutcome,
+  type VerifiedSpendReservation,
 } from "../src/index.js";
 
 const d = (character: string) => character.repeat(64);
@@ -386,6 +387,7 @@ function finalFixture() {
     schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v3",
     spendReservationSetSha256: sha256(spendDigests) });
   const stored = new Map<string, StoredEnvelope>(); const artifacts: RetainedArtifact[] = [];
+  const schedulerClaims: unknown[] = [];
   const outcomesByRepetition = ([1, 2, 3] as const).map((repetition) =>
     questions.map((question, index): QualificationOutcome => {
       const identity = answerIdentity({ question, releaseRootSha256: release.releaseRootSha256,
@@ -457,6 +459,13 @@ function finalFixture() {
             signedResult: chain.signedProviderTerminal,
             terminalDigestSha256: sha256(chain.signedProviderTerminal) });
           predecessorResultDigestSha256 = chain.resultDigestSha256!;
+          schedulerClaims.push({ admissionId: `scheduler-${artifactIdentity.attemptId}`,
+            attemptId: artifactIdentity.attemptId, callKind: artifactIdentity.callKind,
+            campaignRootSha256: artifactIdentity.campaignRootSha256,
+            repetition: artifactIdentity.repetition, requestedEncryptedBytes: 4_096,
+            requestedTokens: 64, requestDigestSha256,
+            schemaVersion: "meeting_knowledge.semantic_quality_budget_claim.v1",
+            spendReservationSha256: artifactIdentity.spendReservationSha256 });
         }
         const base = { attempt: artifactIdentity, chain,
           schemaVersion: `meeting_knowledge.semantic_quality_${kind}.v1` };
@@ -554,7 +563,10 @@ function finalFixture() {
     questionReviewReceipts,
     release: release.pinned,
     repetitionAuthorityKeyId: repetitionAuthority.keyId, repetitionEvidence: evidence,
-    rootBindingSha256, spendReservationSha256ByRepetition: spendDigests,
+    rootBindingSha256, spendLedger: { loadAdmittedClaims: async (reservation:
+      VerifiedSpendReservation) => schedulerClaims.filter((claim) =>
+      (claim as { spendReservationSha256: string }).spendReservationSha256 ===
+        reservation.spendReservationSha256) }, spendReservationSha256ByRepetition: spendDigests,
     spendReservationsByRepetition: spends as [unknown, unknown, unknown],
     targetInventoryAuthorityKeyId: targetInventoryAuthority.keyId, targetInventoryReceipt } as const;
   return { authorities, cleanupAuthority, evidence, goldRelevanceAuthority, input,
