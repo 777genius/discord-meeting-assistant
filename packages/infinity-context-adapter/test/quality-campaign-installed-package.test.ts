@@ -9,6 +9,8 @@ import { promisify } from "node:util";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { artifactAttemptIdentity, attemptIdentity } from "../src/quality-campaign/index.js";
+
 const execute = promisify(execFile); const servers: ReturnType<typeof createServer>[] = [];
 let installed!: Awaited<ReturnType<typeof packAndInstall>>;
 
@@ -41,6 +43,25 @@ describe("packed production quality-campaign entrypoint", () => {
     expect(fixture.releaseRequests()).toBe(1);
     expect(await readFile(statusPath, "utf8")).toMatch(/"status":"paused"/u);
   }, 60_000);
+
+  it("ships the exact fail-closed HTTP review-evidence adapter contract", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quality-packed-review-"));
+    const fixture = await createPackedPreflightFixture(root, installed.consumerRoot);
+    const answer = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+      campaignRootSha256: digest("packed-campaign"), questionDigestSha256: digest("packed-question"),
+      questionId: "packed-question", releaseRootSha256: digest("packed-release"), repetition: 1,
+      spendReservationSha256: digest("packed-spend") });
+    const full = packedReviewEvidence(answer); fixture.setReviewEvidence(full);
+    const script = `const{createHttpQualityCampaignProductionPorts}=await import("@discord-meeting/infinity-context-adapter/quality-campaign");const p=await createHttpQualityCampaignProductionPorts(${JSON.stringify(fixture.connectionsPath)});const r=await p.review.receipts(${JSON.stringify(answer.attemptId)},{deadlineEpochMs:Date.now()+5000,signal:new AbortController().signal});if(Object.keys(r).length!==8||r.firstEffectEvidence.attempt.callKind!=="adjudicator_1"||r.resolverEffectEvidence.attempt.callKind!=="resolver")process.exit(2)`;
+    await expect(execute(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: installed.consumerRoot, timeout: 10_000 })).resolves.toMatchObject({ stderr: "" });
+
+    fixture.setReviewEvidence({ firstReceipt: full.firstReceipt,
+      rawOutcomeEnvelopeSha256: full.rawOutcomeEnvelopeSha256,
+      resolverReceipt: full.resolverReceipt, secondReceipt: full.secondReceipt });
+    await expect(execute(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: installed.consumerRoot, timeout: 10_000 })).rejects.toMatchObject({ code: 1 });
+  }, 60_000);
 });
 
 async function packAndInstall() {
@@ -62,10 +83,13 @@ async function packAndInstall() {
 }
 
 async function createPackedPreflightFixture(root: string, consumerRoot: string) {
-  let observedReleaseRequests = 0; let release: unknown;
+  let observedReleaseRequests = 0; let release: unknown; let reviewEvidence: unknown = {};
   const server = createServer((request, response) => {if (request.url === "/release") {
     observedReleaseRequests += 1; response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify(release)); return;} response.writeHead(500).end();});
+    response.end(JSON.stringify(release)); return;} if (request.url === "/review") {
+    request.resume(); request.on("end", () => {response.writeHead(200,
+      { "content-type": "application/json" }); response.end(JSON.stringify(reviewEvidence));});
+    return;} response.writeHead(500).end();});
   servers.push(server); await new Promise<void>((resolve) => {server.listen(0, "127.0.0.1",
     () => {resolve();});}); const address = server.address();
   if (address === null || typeof address === "string") {throw new Error("fake HTTP bind failed");}
@@ -196,7 +220,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     holdoutProviderResultAuthority: publicHttp(authorities["holdout-result"]!, root),
     holdoutRetrievalEndpoint: endpoint,
     providerResultAuthority: publicHttp(authorities["main-result"]!, root),
-    rawOutcomeEndpoint: endpoint, releaseObservationEndpoint: `${base}/release`, retrievalEndpoint:
+    rawOutcomeEndpoint: `${base}/review`, releaseObservationEndpoint: `${base}/release`, retrievalEndpoint:
     endpoint, schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v3" }));
   const unused = join(root, "unused.json"); const configPath = join(root, "operator.json");
   await writeFile(configPath, canonicalJson({ absenceAuthorityPath: authorityPaths.absence,
@@ -216,7 +240,28 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const phasePath = join(root, "phase.json"); await writeFile(phasePath, canonicalJson({ payload:
     { configurationPath: configPath, connectionsPath }, schemaVersion:
     "meeting_knowledge.semantic_quality_production_phase.v1" }));
-  return { phasePath, releaseRequests: () => observedReleaseRequests };
+  return { connectionsPath, phasePath, releaseRequests: () => observedReleaseRequests,
+    setReviewEvidence(value: unknown) {reviewEvidence = value;} };
+}
+
+function packedReviewEvidence(answer: ReturnType<typeof attemptIdentity>) {
+  const effect = (kind: "adjudicator_1_result" | "adjudicator_2_result" | "resolver_result") => ({
+    attempt: artifactAttemptIdentity(answer, kind), cancellationBoundary: "not_cancelled" as const,
+    deadlineEpochMs: Date.now() + 60_000, requestDigestSha256: digest(`${kind}:request`),
+    resultDigestSha256: digest(`${kind}:result`), signedDurableExchange:
+      unsignedPackedTransportValue(`${kind}:durable`), signedProviderTerminal:
+      unsignedPackedTransportValue(`${kind}:terminal`) });
+  return { firstEffectEvidence: effect("adjudicator_1_result"), firstReceipt:
+    unsignedPackedTransportValue("first"),
+    predecessorPlaintextSha256: digest("packed-predecessor"),
+    rawOutcomeEnvelopeSha256: digest("packed-raw-outcome"),
+    resolverEffectEvidence: effect("resolver_result"), resolverReceipt:
+      unsignedPackedTransportValue("resolver"), secondEffectEvidence:
+      effect("adjudicator_2_result"), secondReceipt: unsignedPackedTransportValue("second") };
+}
+
+function unsignedPackedTransportValue(label: string) {
+  return { payload: { label }, signatureBase64: "AA==", signerKeyId: "main-result" };
 }
 
 function localSigner(keyId: string) {const pair = generateKeyPairSync("ed25519"); const publicKeyPem =

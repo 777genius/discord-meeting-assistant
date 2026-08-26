@@ -2,11 +2,12 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { digest, exactRecord, safeId } from "./canonical.js";
-import type { ProviderExchangePort } from "./execution.js";
+import { assertAttemptIdentity, attemptIdentity, type AttemptIdentity,
+  type ProviderExchangePort } from "./execution.js";
 import { createLocalEvidenceCustody } from "./production-evidence-custody.js";
 import type { QualityCampaignRelease } from "./release.js";
 import type { CampaignCallContext, CampaignProviderPorts,
-  QualityCampaignProductionPorts } from "./production-ports.js";
+  CampaignReviewEvidence, QualityCampaignProductionPorts } from "./production-ports.js";
 
 interface HttpConnectionConfiguration {
   readonly absenceAuthority: HttpAuthority;
@@ -110,10 +111,10 @@ Promise<QualityCampaignProductionPorts> {
       config.releaseObservationEndpoint, token, {}, callContext) as QualityCampaignRelease },
     review: {
       receipts: async (attemptId: string, callContext: CampaignCallContext) => {
+        safeId(attemptId, "review answer attempt ID");
         const value = await requestJson(config.rawOutcomeEndpoint, token, { attemptId },
           callContext);
-        return exactRecord(value, ["firstReceipt", "rawOutcomeEnvelopeSha256",
-          "resolverReceipt", "secondReceipt"], "authenticated adjudication evidence") as never;
+        return decodeReviewEvidence(value, attemptId);
       },
       vault: { reconstruct: async (input: VaultInput) => await requestJson(
         config.rawOutcomeEndpoint, token, input, { deadlineEpochMs: Date.now() + 120_000,
@@ -205,4 +206,74 @@ function decodeRawEvidence(value: unknown) {
   }
   return Object.freeze({ envelopeBytes: Buffer.from(record.envelopeBase64, "base64"),
     signedReceipt: record.signedReceipt });
+}
+
+const REVIEW_EVIDENCE_KEYS = ["firstEffectEvidence", "firstReceipt",
+  "predecessorPlaintextSha256", "rawOutcomeEnvelopeSha256", "resolverEffectEvidence",
+  "resolverReceipt", "secondEffectEvidence", "secondReceipt"] as const;
+const EFFECT_EVIDENCE_KEYS = ["attempt", "cancellationBoundary", "deadlineEpochMs",
+  "requestDigestSha256", "resultDigestSha256", "signedDurableExchange",
+  "signedProviderTerminal"] as const;
+
+function decodeReviewEvidence(value: unknown, answerAttemptId: string): CampaignReviewEvidence {
+  const record = exactRecord(value, REVIEW_EVIDENCE_KEYS,
+    "authenticated adjudication evidence");
+  const firstEffectEvidence = decodeEffectEvidence(record.firstEffectEvidence,
+    answerAttemptId, "adjudicator_1");
+  const secondEffectEvidence = decodeEffectEvidence(record.secondEffectEvidence,
+    answerAttemptId, "adjudicator_2");
+  const resolverReceipt = nullableSignedValue(record.resolverReceipt, "resolver receipt");
+  const resolverEffectEvidence = record.resolverEffectEvidence === null ? null :
+    decodeEffectEvidence(record.resolverEffectEvidence, answerAttemptId, "resolver");
+  if ((resolverReceipt === null) !== (resolverEffectEvidence === null)) {
+    throw new Error("resolver receipt and effect evidence must be present together");
+  }
+  return Object.freeze({ firstEffectEvidence,
+    firstReceipt: signedValue(record.firstReceipt, "first reviewer receipt"),
+    predecessorPlaintextSha256: digest(record.predecessorPlaintextSha256,
+      "review predecessor plaintext"), rawOutcomeEnvelopeSha256:
+      digest(record.rawOutcomeEnvelopeSha256, "review raw outcome envelope"),
+    resolverEffectEvidence, resolverReceipt, secondEffectEvidence,
+    secondReceipt: signedValue(record.secondReceipt, "second reviewer receipt") });
+}
+
+function decodeEffectEvidence(value: unknown, answerAttemptId: string,
+  callKind: "adjudicator_1" | "adjudicator_2" | "resolver") {
+  const record = exactRecord(value, EFFECT_EVIDENCE_KEYS, `${callKind} effect evidence`);
+  const attemptRecord = exactRecord(record.attempt, ["attemptId", "callKind", "callOrdinal",
+    "campaignRootSha256", "questionDigestSha256", "questionId", "releaseRootSha256",
+    "repetition", "spendReservationSha256"], `${callKind} effect attempt`);
+  const attempt = attemptRecord as unknown as AttemptIdentity;
+  assertAttemptIdentity(attempt);
+  const answerAttempt = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+    campaignRootSha256: attempt.campaignRootSha256,
+    questionDigestSha256: attempt.questionDigestSha256, questionId: attempt.questionId,
+    releaseRootSha256: attempt.releaseRootSha256, repetition: attempt.repetition,
+    spendReservationSha256: attempt.spendReservationSha256 });
+  if (attempt.callKind !== callKind || attempt.callOrdinal !== 0 ||
+    answerAttempt.attemptId !== answerAttemptId || record.cancellationBoundary !== "not_cancelled" ||
+    !Number.isSafeInteger(record.deadlineEpochMs) || Number(record.deadlineEpochMs) < 1) {
+    throw new Error(`${callKind} effect evidence is not bound to the requested answer attempt`);
+  }
+  return Object.freeze({ attempt, cancellationBoundary: "not_cancelled" as const,
+    deadlineEpochMs: Number(record.deadlineEpochMs), requestDigestSha256:
+      digest(record.requestDigestSha256, `${callKind} request`), resultDigestSha256:
+      digest(record.resultDigestSha256, `${callKind} result`), signedDurableExchange:
+      signedValue(record.signedDurableExchange, `${callKind} durable exchange`),
+    signedProviderTerminal: signedValue(record.signedProviderTerminal,
+      `${callKind} provider terminal`) });
+}
+
+function nullableSignedValue(value: unknown, label: string): unknown | null {
+  return value === null ? null : signedValue(value, label);
+}
+
+/** Shape validation is transport-only; adjudicateOutcome performs cryptographic verification. */
+function signedValue(value: unknown, label: string): unknown {
+  const record = exactRecord(value, ["payload", "signatureBase64", "signerKeyId"], label);
+  safeId(record.signerKeyId, `${label} signer key ID`);
+  if (typeof record.signatureBase64 !== "string" || record.signatureBase64.length === 0) {
+    throw new Error(`${label} signature is invalid`);
+  }
+  return Object.freeze(record);
 }
