@@ -16,6 +16,18 @@ import {
   type HistoricalSyncOperationV1,
   type HistoricalSyncStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { createHmac } from "node:crypto";
+
+import type { HistoricalRetrievalActorKeyMapper } from
+  "../src/historical-retrieval-projection.js";
+
+export const testHistoricalActorKeys: HistoricalRetrievalActorKeyMapper =
+  Object.freeze({
+    activeActorKey: (actorId: string) => `test-actor.v1.${createHmac(
+      "sha256",
+      "infinity-context-disposable-test-actor-key",
+    ).update(actorId, "utf8").digest("base64url")}`,
+  });
 
 type RowState = "applied" | "dead_letter" | "deleted" | "deleting" | "in_flight" | "pending" | "retry_wait";
 

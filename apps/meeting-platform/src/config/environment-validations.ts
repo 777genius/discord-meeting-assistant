@@ -22,6 +22,7 @@ interface MeetingKnowledgeEnvironment {
   readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH?: string | undefined;
   readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE?: string | undefined;
   readonly MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: boolean;
+  readonly MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE?: string | undefined;
   readonly MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE?: string | undefined;
   readonly MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON?: object | undefined;
 }
@@ -53,6 +54,16 @@ export function validateMeetingKnowledgeEnvironment(
   environment: MeetingKnowledgeEnvironment,
   context: RefinementCtx,
 ): void {
+  if (
+    environment.MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON !== undefined &&
+    environment.MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE === undefined
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Retrieval V2 requires Discord actor-key mapping authority",
+      path: ["MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE"],
+    });
+  }
   const crashValues = [environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT,
     environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID];
   if (crashValues.filter((value) => value !== undefined).length === 1) {

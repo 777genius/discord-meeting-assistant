@@ -10,6 +10,7 @@ interface PlatformSecrets {
   readonly infinityContextToken?: string;
   readonly infinityContextTopologyKey?: string;
   readonly meetingKnowledgePrincipalKey?: string;
+  readonly meetingKnowledgeActorKeyring?: string;
   readonly postgresUrl: string;
   readonly recordingPlaybackSigningSecret?: string;
   readonly redisUrl: string;

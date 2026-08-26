@@ -10,6 +10,8 @@ export const platformTestEnvironment = {
   DISCORD_TOKEN_FILE: "/run/secrets/discord",
   MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE:
     "/run/secrets/meeting-knowledge-principal-key",
+  MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE:
+    "/run/secrets/meeting-knowledge-actor-keyring",
   NODE_ENV: "test",
   PORT: "4310",
   POSTGRES_URL_FILE: "/run/secrets/postgres",

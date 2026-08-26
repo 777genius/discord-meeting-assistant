@@ -5,8 +5,11 @@ import { GroundedMeetingAnswer } from "./grounded-meeting-answer.js";
 import type { HistoricalAuthorizationObservationV1, HistoricalAuthorizationPort } from "./ports/historical-grounding.js";
 import type { CanonicalEvidenceTurnHashPort } from "./ports/final-reply.js";
 import type { LiveFinalizedMemoryQueryPort } from "./ports/live-finalized-memory.js";
+import type { FocusedHistoricalEvidenceV2Port } from
+  "./ports/focused-locator-retrieval-v2.js";
 import { deduplicateEvidenceTurns, executeActiveExhaustiveCoverage,
-  normalizedLocale, notAnswered, recheckGroundedPlaybackAuthority, sameAuthorization,
+  crossSourceTurns, normalizedLocale, notAnswered,
+  recheckGroundedPlaybackAuthority, sameAuthorization,
   sameLiveContext, type GroundedPlaybackAuthorityRequest,
   type GroundedPlaybackAuthorityResultV1 } from "./grounded-question-internals.js";
 export interface GroundedMeetingQuestionIdentityPort { digest(namespace: string, parts: readonly string[]): string }
@@ -58,6 +61,7 @@ export class AnswerGroundedMeetingQuestion {
       readonly answers: GroundedMeetingAnswer;
       readonly authorization?: HistoricalAuthorizationPort;
       readonly exhaustive?: Pick<ExhaustiveCoverage, "buildPlan">;
+      readonly historical?: FocusedHistoricalEvidenceV2Port;
       readonly ids: GroundedMeetingQuestionIdentityPort;
       readonly live: LiveFinalizedMemoryQueryPort;
       readonly turnHashes: CanonicalEvidenceTurnHashPort;
@@ -228,7 +232,22 @@ export class AnswerGroundedMeetingQuestion {
       signal,
       scopeId: context.scopeId,
     });
-    const liveResult = await livePromise;
+    const historicalPromise = input.authorizationPrincipalRef === undefined ||
+      this.dependencies.historical === undefined
+      ? Promise.resolve({ status: "unavailable" as const })
+      : this.dependencies.historical.retrieve({
+          authorizationPrincipalRef: input.authorizationPrincipalRef,
+          currentMeetingId: input.meetingId,
+          maximumCandidates: this.#policy.maximumCandidates,
+          question: input.question,
+          roomId: input.roomId,
+          scopeId: context.scopeId,
+          signal,
+        });
+    const [liveResult, historicalResult] = await Promise.all([
+      livePromise,
+      historicalPromise,
+    ]);
     signal.throwIfAborted();
     const liveTurns: RehydratedEvidenceTurn[] = [];
     const generationParts = [context.knowledgeEpoch];
@@ -247,14 +266,22 @@ export class AnswerGroundedMeetingQuestion {
         generationParts.push(rehydrated.context.knowledgeEpoch);
       }
     }
+    const historicalTurns = historicalResult.status === "current"
+      ? historicalResult.turns
+      : [];
+    if (historicalResult.status === "current") {
+      generationParts.push(historicalResult.authorityGeneration);
+    }
     const fallbackSource = {
       meetingId: input.meetingId,
       transcriptId: `live-memory-v1:${input.meetingId}`,
       transcriptVersion: context.sourceGeneration,
     };
-    const selected = [
-      ...deduplicateEvidenceTurns(liveTurns, fallbackSource).values(),
-    ].slice(0, this.#policy.maximumCandidates);
+    const selected = crossSourceTurns(
+      [...deduplicateEvidenceTurns(liveTurns, fallbackSource).values()],
+      [...deduplicateEvidenceTurns(historicalTurns, fallbackSource).values()],
+      this.#policy.maximumCandidates,
+    );
     if (selected.length === 0) {
       return null;
     }

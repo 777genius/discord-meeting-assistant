@@ -4,6 +4,7 @@ import {
   type GroundedAnswerGenerator,
   type LiveFinalizedMemoryQueryPort,
   type HistoricalAuthorizationPort,
+  type FocusedHistoricalEvidenceV2Port,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { describe, expect, it, vi } from "vitest";
 
@@ -123,6 +124,80 @@ describe("published grounded meeting question", () => {
     expect(searchHotTail.mock.calls.every(([input]) => input.signal === signal)).toBe(true);
     expect(rehydrateHotTail.mock.calls.every(([input]) => input.signal === signal)).toBe(true);
   });
+
+  it("deterministically interleaves authoritative live and V2-only historical evidence",
+    async () => {
+      const observedPlans: string[][] = [];
+      const historical: FocusedHistoricalEvidenceV2Port = {
+        retrieve: vi.fn(async (input) => {
+          expect(input.signal.aborted).toBe(false);
+          return {
+            authorityGeneration: "historical-generation-1",
+            status: "current" as const,
+            turns: [{
+              endMs: 4_000,
+              source: {
+                historicalSource: {
+                  candidateLocator: "opaque-locator",
+                  indexGeneration: "index-generation-1",
+                  releaseId: "release-1",
+                },
+                meetingId: "historical-meeting-1",
+                sourceEndCodePoint: 31,
+                sourceStartCodePoint: 0,
+                transcriptId: "historical-transcript-1",
+                transcriptVersion: 1,
+              },
+              speakerId: "opaque-actor",
+              startMs: 3_000,
+              text: "The prior meeting approved Atlas.",
+              turnHash: "d".repeat(64),
+              turnId: "historical-turn-1",
+            }],
+          };
+        }),
+      };
+      const generated: GroundedAnswerGenerator = {
+        ...generator(),
+        generate: async (generationRequest) => {
+          observedPlans.push(generationRequest.plan.evidence.map(({ text }) => text));
+          return {
+            answer: {
+              claims: [{ evidenceIds: ["evidence-000001"],
+                text: "The launch is Friday." }],
+              locale: "en" as const,
+              status: "answered" as const,
+            },
+            status: "completed" as const,
+          };
+        },
+      };
+      const answer = new AnswerGroundedMeetingQuestion({
+        answers: new GroundedMeetingAnswer(generated, limits),
+        authorization: { authorize: async () => ({
+          authorizationDigest: "authorization-1",
+          authorizationEpoch: "epoch-1",
+          authorized: true,
+          policyVersion: "policy-1",
+        }) },
+        historical,
+        ids: { digest: () => "c".repeat(64) },
+        live: live(),
+        turnHashes: { hash: () => "b".repeat(64) },
+      });
+
+      await expect(answer.execute({
+        ...request,
+        authorizationPrincipalRef: "opaque-principal",
+      }, { signal: new AbortController().signal })).resolves.toMatchObject({
+        status: "answered",
+      });
+      expect(observedPlans).toEqual([[
+        "The launch is Friday.",
+        "The prior meeting approved Atlas.",
+      ]]);
+      expect(historical.retrieve).toHaveBeenCalledTimes(3);
+    });
 
   it("rebuilds the canonical watermark for the final playback authority fence", async () => {
     const query = live();

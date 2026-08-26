@@ -14,6 +14,8 @@ import {
   ingestHistoricalDocument,
   processMutationAccepted,
 } from "./infinity-context-sdk-contract.js";
+import type { HistoricalRetrievalActorKeyMapper } from
+  "./historical-retrieval-projection.js";
 
 const maximumTopologyListEntries = 100;
 const maximumParallelDocuments = 4;
@@ -24,6 +26,7 @@ type IndexWorkerOutcome =
   | { readonly error: Error; readonly sequence: number; readonly status: "failed" };
 
 export async function indexHistoricalMeeting(input: {
+  readonly actorKeys: HistoricalRetrievalActorKeyMapper;
   readonly client: InfinityContextClient;
   readonly operationTimeoutMs: number;
   readonly options: HistoricalMemoryOperationOptionsV1;
@@ -35,6 +38,7 @@ export async function indexHistoricalMeeting(input: {
     input.options.signal,
   );
   const indexer = new HistoricalMeetingIndexer(
+    input.actorKeys,
     input.client,
     input.requestTimeoutMs,
     operation,
@@ -57,6 +61,7 @@ export async function indexHistoricalMeeting(input: {
 
 class HistoricalMeetingIndexer {
   public constructor(
+    private readonly actorKeys: HistoricalRetrievalActorKeyMapper,
     private readonly client: InfinityContextClient,
     private readonly requestTimeoutMs: number,
     private readonly operation: InfinityOperationDeadline,
@@ -158,7 +163,9 @@ class HistoricalMeetingIndexer {
     document: HistoricalIndexPlanV1["documents"][number],
   ): Promise<DocumentRecord> {
     return this.operation.request(this.requestTimeoutMs, (signal) =>
-      ingestHistoricalDocument(this.client, request.topology, document, signal)
+      ingestHistoricalDocument(
+        this.client, request.topology, document, this.actorKeys, signal,
+      )
     );
   }
 

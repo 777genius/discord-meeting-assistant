@@ -275,6 +275,7 @@ export {
 } from "./application/select-focused-evidence.js";
 export {
   DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY,
+  FocusedHistoricalEvidenceV2,
   HistoricalFocusedLocatorRetrievalV2,
   PersistedFocusedMemoryRetrievalV2,
   PrepareFocusedLocatorRetrievalV2Request,
@@ -287,6 +288,8 @@ export type {
   FocusedEvidenceSelectorPort,
 } from "./application/ports/focused-evidence-selector.js";
 export type {
+  FocusedHistoricalEvidenceV2Port,
+  FocusedHistoricalEvidenceV2Result,
   FocusedLocatorRetrievalV2Candidate,
   FocusedLocatorRetrievalV2Port,
   FocusedLocatorRetrievalV2Result,

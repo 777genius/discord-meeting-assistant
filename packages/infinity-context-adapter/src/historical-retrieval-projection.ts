@@ -10,13 +10,20 @@ import {
 
 const HISTORICAL_RETRIEVAL_CATEGORY = "meeting_evidence";
 
+export interface HistoricalRetrievalActorKeyMapper {
+  activeActorKey(actorId: string): string;
+}
+
 export function historicalRetrievalProjection(
   topology: HistoricalTopologyV1,
   document: HistoricalIndexDocumentV1,
+  actorKeys: HistoricalRetrievalActorKeyMapper,
 ): DocumentRetrievalProjectionV1Input {
   return Object.freeze({
     actorKeys: Object.freeze([
-      ...new Set(document.manifest.turnSources.map(({ speakerId }) => speakerId)),
+      ...new Set(document.manifest.turnSources.map(({ speakerId }) =>
+        actorKeys.activeActorKey(speakerId)
+      )),
     ].toSorted(compareUtf8)),
     category: HISTORICAL_RETRIEVAL_CATEGORY,
     kind: "record_block",
@@ -37,9 +44,12 @@ export function historicalRetrievalProjection(
 export function validHistoricalRetrievalProjection(
   topology: HistoricalTopologyV1,
   document: HistoricalIndexDocumentV1,
+  actorKeys: HistoricalRetrievalActorKeyMapper,
 ): boolean {
   try {
-    documentRetrievalProjectionV1Payload(historicalRetrievalProjection(topology, document));
+    documentRetrievalProjectionV1Payload(
+      historicalRetrievalProjection(topology, document, actorKeys),
+    );
     return true;
   } catch {
     return false;

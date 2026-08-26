@@ -12,6 +12,7 @@ export interface LoadedPlatformSecrets {
   readonly infinityContextToken?: string;
   readonly infinityContextTopologyKey?: string;
   readonly meetingKnowledgePrincipalKey?: string;
+  readonly meetingKnowledgeActorKeyring?: string;
   readonly postgresUrl: string;
   readonly redisUrl: string;
   readonly s3AccessKeyId: string;
@@ -64,6 +65,9 @@ function platformSecrets(loaded: LoadedPlatformSecrets): PlatformConfig["secrets
     ...(loaded.meetingKnowledgePrincipalKey === undefined
       ? {}
       : { meetingKnowledgePrincipalKey: loaded.meetingKnowledgePrincipalKey }),
+    ...(loaded.meetingKnowledgeActorKeyring === undefined
+      ? {}
+      : { meetingKnowledgeActorKeyring: loaded.meetingKnowledgeActorKeyring }),
     postgresUrl: loaded.postgresUrl,
     ...(loaded.recordingPlayback.signingSecret === undefined
       ? {}

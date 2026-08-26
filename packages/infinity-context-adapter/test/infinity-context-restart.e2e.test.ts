@@ -17,6 +17,7 @@ import {
   MemoryHistoricalAuthority,
   MemoryHistoricalStore,
   finalMeeting,
+  testHistoricalActorKeys,
 } from "./historical-e2e-test-kit.js";
 
 const policy = Object.freeze({
@@ -31,6 +32,7 @@ const exactTokenizer = new PinnedMultilingualMiniLmTokenizer();
 
 function adapter(endpoint: DisposableInfinityEndpoint) {
   return new InfinityContextHistoricalMemoryAdapter({
+    actorKeys: testHistoricalActorKeys,
     baseUrl: "http://disposable.infinity.invalid",
     embeddingTokenProfile: () => historicalEmbeddingTokenProfile(exactTokenizer),
     operationTimeoutMs: 30_000,

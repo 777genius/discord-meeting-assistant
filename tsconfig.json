@@ -5,7 +5,6 @@
     "types": ["node"]
   },
   "exclude": [
-    "apps/meeting-platform/test/meeting-knowledge-production-composition.e2e.test.ts",
     "packages/infinity-context-adapter/test/historical-planner-query-isolation.e2e.test.ts",
     "packages/infinity-context-adapter/test/infinity-context-historical-memory.e2e.test.ts",
     "packages/infinity-context-adapter/test/infinity-context-positional.e2e.test.ts",

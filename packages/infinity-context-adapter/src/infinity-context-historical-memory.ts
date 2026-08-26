@@ -29,6 +29,8 @@ import {
   validDeleteRequest,
   validIndexPlan,
 } from "./infinity-context-sdk-contract.js";
+import type { HistoricalRetrievalActorKeyMapper } from
+  "./historical-retrieval-projection.js";
 
 /* The reviewed Node SDK declaration names this DOM alias in HttpTransport. */
 declare global {
@@ -36,6 +38,7 @@ declare global {
 }
 
 export interface InfinityContextHistoricalMemoryConfigV1 {
+  readonly actorKeys?: HistoricalRetrievalActorKeyMapper;
   readonly baseUrl: string;
   /** Separately bounds one resumable index/search/delete attempt. */
   readonly operationTimeoutMs?: number;
@@ -54,6 +57,7 @@ type InfinityContextHistoricalMemoryConfigInputV1 = Omit<
 > & { readonly schemaVersion: number };
 
 export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryPort {
+  readonly #actorKeys: HistoricalRetrievalActorKeyMapper | undefined;
   readonly #client: InfinityContextClient;
   readonly #indexClient: InfinityContextClientV2;
   readonly #operationTimeoutMs: number;
@@ -76,6 +80,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
       throw new RangeError("Infinity historical memory configuration is invalid");
     }
     this.#requestTimeoutMs = config.requestTimeoutMs;
+    this.#actorKeys = config.actorKeys;
     this.#operationTimeoutMs = config.operationTimeoutMs ??
       DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS;
     this.#embeddingTokenProfile = config.embeddingTokenProfile;
@@ -122,9 +127,11 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
     options: HistoricalMemoryOperationOptionsV1 = {},
   ): Promise<HistoricalIndexResultV1> {
     const embeddingTokenProfile = this.#embeddingTokenProfile?.();
+    const actorKeys = this.#actorKeys;
     if (
       embeddingTokenProfile === undefined ||
-      !validIndexPlan(request, embeddingTokenProfile)
+      actorKeys === undefined ||
+      !validIndexPlan(request, embeddingTokenProfile, actorKeys)
     ) {
       return {
         code: "memory.index_plan_outside_qualified_bounds",
@@ -133,6 +140,7 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
       };
     }
     return indexHistoricalMeeting({
+      actorKeys,
       client: this.#indexClient,
       operationTimeoutMs: this.#operationTimeoutMs,
       options,

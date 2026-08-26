@@ -83,6 +83,11 @@ export {
   type DiscordQuestionPrincipal,
 } from "./discord-question-principal.js";
 export {
+  DiscordInfinityActorKeys,
+  decodeDiscordInfinityActorKeyring,
+  type DiscordInfinityActorKeyringV1,
+} from "./discord-infinity-actor-keys.js";
+export {
   DiscordLocalFinalReplyHandler,
   type DiscordLocalFinalReplyHandlerOptions,
   type DiscordQuestionScopePort,

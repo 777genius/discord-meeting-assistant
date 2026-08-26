@@ -52,6 +52,14 @@ describe("platform configuration", () => {
     }, async (path) => `fixture:${path}`);
     expect(configured.meetingKnowledge?.retrievalV2ProviderBinding).toEqual(binding);
     await expect(loadPlatformConfig({
+      ...environment,
+      MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE: undefined,
+      MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
+      MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON: JSON.stringify(binding),
+    }, async (path) => `fixture:${path}`)).rejects.toThrow(
+      "Discord actor-key mapping authority",
+    );
+    await expect(loadPlatformConfig({
       ...environment, MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: "true",
       MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON: JSON.stringify({
         ...binding, requiredProviderLanes: ["qdrant_dense", "postgres_keyword"],
@@ -75,6 +83,9 @@ describe("platform configuration", () => {
     );
     expect(compose).toContain(
       "INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: /run/secrets/infinity-context-topology-key",
+    );
+    expect(compose).toContain(
+      "MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE: /run/secrets/meeting-knowledge-actor-keyring.json",
     );
     expect(compose).toContain(
       "INFINITY_CONTEXT_REQUEST_TIMEOUT_MS: ${INFINITY_CONTEXT_REQUEST_TIMEOUT_MS:-10000}",
@@ -209,7 +220,7 @@ describe("platform configuration", () => {
       return `value-for:${path}`;
     });
 
-    expect(paths).toHaveLength(7);
+    expect(paths).toHaveLength(8);
     expect(config.secrets.discordToken).toBe("value-for:/run/secrets/discord");
     expect(config.discordFinalPublicationMode).toBe("separate-message");
     expect(config.discordPublicationMode).toBe("message");

@@ -205,6 +205,68 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
     expect(JSON.stringify(result)).not.toMatch(/text|snippet|content/u);
   });
 
+  it("preserves a valid provider unavailable reason as retryable", async () => {
+    const endpoint = new RetrievalV2Endpoint();
+    endpoint.response.status = "unavailable";
+    endpoint.response.candidates = [];
+    endpoint.response.provider_outcomes = ["postgres_keyword", "qdrant_dense"]
+      .map((provider_id) => ({
+        provider_id,
+        reason_code: "provider_unavailable",
+        status: "unavailable",
+      }));
+    Object.assign(endpoint.response.applied_bounds as Record<string, unknown>, {
+      returned_neighbors: 0,
+      returned_seeds: 0,
+    });
+
+    await expect(adapter(endpoint).retrieve(request())).resolves.toEqual({
+      code: "provider_unavailable",
+      retryable: true,
+      status: "unavailable",
+    });
+  });
+
+  it("preserves a valid provider unqualified reason as nonretryable", async () => {
+    const endpoint = new RetrievalV2Endpoint();
+    const changedCapability = structuredClone(capability);
+    changedCapability.required_provider_lanes = ["postgres_keyword"];
+    const dense = (changedCapability.provider_lanes as Array<Record<string, unknown>>)[1];
+    if (dense === undefined) {
+      throw new Error("missing optional provider lane");
+    }
+    dense.required = false;
+    changedCapability.capability_fingerprint = retrievalV2CapabilityFingerprint(
+      changedCapability,
+    );
+    endpoint.capabilities = { context: { retrieval: changedCapability } };
+    endpoint.response.status = "unqualified";
+    endpoint.response.capability_fingerprint = changedCapability.capability_fingerprint;
+    endpoint.response.candidates = [];
+    endpoint.response.provider_outcomes = [{
+      provider_id: "postgres_keyword", reason_code: null, status: "available",
+    }, {
+      provider_id: "qdrant_dense", reason_code: "provider_unqualified",
+      status: "unqualified",
+    }];
+    endpoint.response.degradation_reason_codes = ["optional_provider_unqualified"];
+    Object.assign(endpoint.response.applied_bounds as Record<string, unknown>, {
+      returned_neighbors: 0,
+      returned_seeds: 0,
+    });
+    const changedRequest = request({ binding: {
+      ...request().binding,
+      capabilityFingerprint: changedCapability.capability_fingerprint as string,
+      requiredProviderLanes: ["postgres_keyword"],
+    } });
+
+    await expect(adapter(endpoint).retrieve(changedRequest)).resolves.toEqual({
+      code: "provider_unqualified",
+      retryable: false,
+      status: "unqualified",
+    });
+  });
+
   it.each([
     ["text", "remote transcript text"],
     ["content", "remote transcript text"],

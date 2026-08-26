@@ -20,7 +20,10 @@ const supportedMethods = new Set<HttpMethod>([
   "PUT",
 ]);
 
-export { DisposableInfinityEndpoint } from "./disposable-infinity-endpoint.js";
+export {
+  DISPOSABLE_RETRIEVAL_V2_BINDING,
+  DisposableInfinityEndpoint,
+} from "./disposable-infinity-endpoint.js";
 
 export interface DisposableInfinityHttpService {
   readonly baseUrl: string;

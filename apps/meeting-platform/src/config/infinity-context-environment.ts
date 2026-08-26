@@ -5,6 +5,7 @@ interface InfinityContextEnvironmentParts {
   readonly INFINITY_CONTEXT_TOKEN_FILE?: unknown;
   readonly INFINITY_CONTEXT_TOPOLOGY_KEY_FILE?: unknown;
   readonly INFINITY_CONTEXT_URL?: unknown;
+  readonly MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE?: unknown;
 }
 
 interface RefinementContext {
@@ -25,10 +26,11 @@ export function validateInfinityContextEnvironment(
     environment.INFINITY_CONTEXT_TOPOLOGY_KEY_FILE,
     environment.INFINITY_CONTEXT_URL,
   ].filter((value) => value !== undefined).length;
-  if (configuredParts !== 0 && configuredParts !== 4) {
+  if (configuredParts !== 0 && (configuredParts !== 4 ||
+    environment.MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE === undefined)) {
     context.addIssue({
       code: "custom",
-      message: "Infinity activation, endpoint, token file and topology-key file must be configured together",
+      message: "Infinity activation, endpoint, token, topology key and Discord actor-key authority must be configured together",
       path: ["INFINITY_CONTEXT_ACTIVATION"],
     });
   }

@@ -54,7 +54,7 @@ const processIntervalMilliseconds = 500;
 const reconciliationIntervalMilliseconds = 30_000;
 const maximumMaintenanceJobsPerPass = 100;
 const shutdownDrainTimeoutMilliseconds = 5_000;
-export const meetingKnowledgeProviderLeasePolicy = Object.freeze({
+const meetingKnowledgeProviderLeasePolicy = Object.freeze({
   focusedEvidenceSelectorTimeoutMilliseconds: 60_000,
   groundedAnswerTimeoutMilliseconds: 180_000,
   maximumGroundedAnswerExecutions: 2, safetyMilliseconds: 120_000,
@@ -108,7 +108,7 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
   }),
 });
 
-export const localFinalReplyPolicyRelease = Object.freeze({
+const localFinalReplyPolicyRelease = Object.freeze({
   authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion, policyEpoch: 3,
   policyVersion: localFinalReplyPolicy.policyVersion,
 });

@@ -6,6 +6,28 @@ import type {
   JsonValue,
   SourceRef,
 } from "@infinity-context/sdk";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const retrievalCapability = JSON.parse(readFileSync(require.resolve(
+  "@infinity-context/sdk-v2/fixtures/context_retrieval_v2/capability.json",
+), "utf8")) as Record<string, unknown>;
+const retrievalSuccess = JSON.parse(readFileSync(require.resolve(
+  "@infinity-context/sdk-v2/fixtures/context_retrieval_v2/success.json",
+), "utf8")) as Record<string, unknown>;
+
+export const DISPOSABLE_RETRIEVAL_V2_BINDING = Object.freeze({
+  capabilityFingerprint: retrievalCapability.capability_fingerprint as string,
+  contractVersion: "context-retrieval.v2" as const,
+  indexProfileDigest: retrievalCapability.index_profile_digest as string,
+  profileId: retrievalCapability.profile_id as string,
+  rankingPolicy: "weighted_rrf_canonical_preferences.v1" as const,
+  requiredProviderLanes: Object.freeze(
+    retrievalCapability.required_provider_lanes as string[],
+  ),
+  serviceRevision: retrievalCapability.service_revision as string,
+});
 
 interface StoredDocument {
   readonly id: string;
@@ -15,6 +37,7 @@ interface StoredDocument {
   readonly sourceExternalId: string;
   readonly sourceRefs: readonly SourceRef[];
   readonly sourceType: string;
+  readonly retrievalProjection: Readonly<Record<string, unknown>>;
   readonly spaceSlug: string;
   readonly text: string;
   readonly threadExternalRef: string;
@@ -253,6 +276,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
           healthy: qualified,
           status: qualified ? "ok" : "unavailable",
         }],
+        context: { retrieval: retrievalCapability as unknown as JsonValue },
         // The official service exposes PostgreSQL keyword/BM25 retrieval as a
         // built-in search stage, not as a separately named adapter.
         enabled_adapters: qualified ? ["qdrant"] : [],
@@ -294,6 +318,9 @@ export class DisposableInfinityEndpoint implements HttpTransport {
     }
     if (request.method === "POST" && path === "/v1/search") {
       return this.#search(request, body);
+    }
+    if (request.method === "POST" && path === "/v1/context/retrieve") {
+      return this.#retrieveContext(body);
     }
     if (request.method === "DELETE" && path === "/v1/thread-memory") {
       return this.#deleteThread(body);
@@ -444,6 +471,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
             })
           : [],
         sourceType: string(input.source_type),
+        retrievalProjection: asRecord(input.retrieval_projection),
         spaceSlug: string(input.space_slug),
         status: "active",
         text: string(input.text),
@@ -631,6 +659,107 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       next_cursor: null,
       top_evidence: [],
     });
+  }
+
+  #retrieveContext(body: JsonValue | null): HttpResponse {
+    const input = asRecord(body);
+    const scope = asRecord(input.scope);
+    const filters = asRecord(input.filters);
+    const bounds = asRecord(input.bounds);
+    const query = asRecord(Array.isArray(input.queries) ? input.queries[0] : undefined);
+    const queryId = string(query.query_id);
+    const queryTokens = new Set(string(query.query).toLowerCase()
+      .match(/[\p{L}\p{N}-]{3,}/gu) ?? []);
+    const actorKeys = new Set(strings(filters.actor_keys));
+    const generations = new Map(
+      (Array.isArray(filters.source_generations) ? filters.source_generations : [])
+        .map((value) => asRecord(value))
+        .map((value) => [string(value.source_key), string(value.projection_generation)]),
+    );
+    const resultLimit = typeof bounds.result_limit === "number"
+      ? bounds.result_limit
+      : 1;
+    const documents = [...this.#documents.values()]
+      .filter(({ memoryScopeExternalRef, processed, status }) =>
+        memoryScopeExternalRef === string(scope.memory_scope_id) &&
+        processed && status === "active"
+      )
+      .filter(({ retrievalProjection: projection }) =>
+        generations.get(string(projection.source_key)) ===
+          string(projection.projection_generation) &&
+        (actorKeys.size === 0 || strings(projection.actor_keys).some((key) =>
+          actorKeys.has(key)
+        ))
+      )
+      .map((document) => ({
+        document,
+        matches: [...queryTokens].filter((token) =>
+          document.text.toLowerCase().includes(token)
+        ).length,
+      }))
+      .filter(({ matches }) => matches > 0)
+      .toSorted((left, right) => right.matches - left.matches ||
+        string(left.document.retrievalProjection.locator).localeCompare(
+          string(right.document.retrievalProjection.locator),
+        ))
+      .slice(0, resultLimit);
+    const fixtureCandidate = (retrievalSuccess.candidates as
+      Array<Record<string, unknown>>)[0];
+    if (fixtureCandidate === undefined) {
+      throw new Error("Retrieval V2 success fixture has no candidate");
+    }
+    const candidates = documents.map(({ document }) => {
+      const locator = string(document.retrievalProjection.locator);
+      return {
+        ...structuredClone(fixtureCandidate),
+        actor_matched_weight_micros: 0,
+        actor_requested_weight_micros: 0,
+        canonical_identity: locator,
+        chunk_key: locator,
+        contributions: (fixtureCandidate.contributions as
+          Array<Record<string, unknown>>).map((contribution) => ({
+            ...structuredClone(contribution),
+            query_id: queryId,
+          })),
+        document_key: document.sourceExternalId,
+        locator,
+        matched_query_ids: [queryId],
+        neighbors: [],
+        preference_boost_micros: 0,
+        preference_score_micros: 0,
+        rerank_score_picos: fixtureCandidate.base_score_picos,
+        source_key: document.retrievalProjection.source_key,
+        source_matched_weight_micros: 0,
+        source_requested_weight_micros: 0,
+        time_matched_weight_micros: 0,
+        time_requested_weight_micros: 0,
+      };
+    }).toSorted((left, right) => string(left.canonical_identity).localeCompare(
+      string(right.canonical_identity),
+    ));
+    return json(200, {
+      applied_bounds: {
+        candidate_limit: bounds.candidate_limit,
+        deadline_ms: bounds.deadline_ms,
+        neighbor_radius: bounds.neighbor_radius,
+        response_byte_limit: bounds.response_byte_limit,
+        result_limit: bounds.result_limit,
+        returned_neighbors: 0,
+        returned_seeds: candidates.length,
+      },
+      candidates,
+      capability_fingerprint: input.capability_fingerprint,
+      contract_version: "context-retrieval.v2",
+      coverage: "top_k_only",
+      degradation_reason_codes: [],
+      profile_id: input.profile_id,
+      provider_outcomes: [
+        { provider_id: "postgres_keyword", reason_code: null, status: "available" },
+        { provider_id: "qdrant_dense", reason_code: null, status: "available" },
+      ],
+      ranking_policy: "weighted_rrf_canonical_preferences.v1",
+      status: candidates.length > 0 ? "available" : "unavailable",
+    } as unknown as JsonValue);
   }
 
   #deleteThread(body: JsonValue | null): HttpResponse | Promise<HttpResponse> {

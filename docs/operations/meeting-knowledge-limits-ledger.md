@@ -32,7 +32,9 @@ These limits implement ADR-0034's bounded-only answer-model grounding.
 | Drift reservation | 32,768 units | Launcher/model/tokenizer drift headroom |
 | Focused answer request bytes | 1,572,864 | Bounds transport and measurement for focused evidence only; transcript size cannot widen it and no truncation is allowed |
 | Focused candidates | 24 references | Retrieval returns identities without text; every selected turn is locally rehydrated |
+| Focused cross-source order | live rank 1, historical rank 1, live rank 2, historical rank 2, continuing to the 24-turn cap | Deterministic Meeting Knowledge composition; no comparison of local and provider score scales |
 | Canonical neighbors | 0 for focused historical V2 and local exact lexical fallback | Neighbor selection is not performed downstream; Infinity candidate order is locator-only and canonical blocks are rehydrated exactly |
+| Discord actor-key profile | `discord-meeting:infinity-actor-key:v1`, output prefix `dactor1` | Versioned secret keyring in Discord custody; active key salts index generations and retained keys support bounded rotation filters |
 | Answer message | 2,000 characters | One Discord message, all-or-nothing |
 | Provider deadline | 180 seconds | One stateless answer call; two durable job attempts maximum |
 | Job expiry | 900 seconds | Bounds raw question and authorization-principal retention |

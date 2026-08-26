@@ -17,6 +17,13 @@ const tokenizer = new PinnedMultilingualMiniLmTokenizer();
 
 function adapter(endpoint: DisposableInfinityEndpoint) {
   return new InfinityContextHistoricalMemoryAdapter({
+    actorKeys: {
+      activeActorKey: (actorId) => ({
+        "123456789012345671": "dactor1.r1.actor-z",
+        "123456789012345672": "dactor1.r1.actor-a-umlaut",
+        "123456789012345673": "dactor1.r1.actor-Z",
+      })[actorId] ?? (() => { throw new Error("unknown Discord actor"); })(),
+    },
     baseUrl: "http://disposable.infinity.invalid",
     embeddingTokenProfile: () => historicalEmbeddingTokenProfile(tokenizer),
     requestTimeoutMs: 1_000,
@@ -34,7 +41,12 @@ function fixture() {
   );
   const original = plan.documents[0]!;
   const source = original.manifest.turnSources[0]!;
-  const speakers = ["z", "ä", "Z", "ä"];
+  const speakers = [
+    "123456789012345671",
+    "123456789012345672",
+    "123456789012345673",
+    "123456789012345672",
+  ];
   const document = Object.freeze({
     ...original,
     manifest: Object.freeze({
@@ -65,7 +77,11 @@ describe("Infinity Context historical Retrieval V2 projection ingest", () => {
       classification: "internal",
       memory_scope_external_ref: plan.topology.roomScopeExternalRef,
       retrieval_projection: {
-        actor_keys: ["Z", "z", "ä"],
+        actor_keys: [
+          "dactor1.r1.actor-Z",
+          "dactor1.r1.actor-a-umlaut",
+          "dactor1.r1.actor-z",
+        ],
         category: "meeting_evidence",
         kind: "record_block",
         locator: plan.documents[0]!.manifest.candidateLocator,

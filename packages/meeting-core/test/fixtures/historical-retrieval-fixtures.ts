@@ -22,13 +22,6 @@ export class TestIds implements HistoricalOpaqueIdPort {
   }
 }
 
-export const blockPolicy = Object.freeze({
-  maxBlockUtf8Bytes: 512,
-  maxBlocksPerMeeting: 100,
-  maxTurnsPerBlock: 64,
-  version: "meeting-knowledge.block-policy.v1",
-} as const);
-
 export function makeMeeting(input: {
   readonly authoritativeDurationMs?: number;
   readonly meetingId: string;
@@ -79,16 +72,6 @@ export function makeMeeting(input: {
     throw new Error("fixture admission failed");
   }
   return meeting;
-}
-
-export function twoBlockTurns(primary: string, primaryId: string) {
-  return [
-    { endMs: 1_000, startMs: 0,
-      text: `${primary} ${"x".repeat(260)}`, turnId: primaryId },
-    { endMs: 2_000, startMs: 1_000,
-      text: `unrelated budget detail ${"y".repeat(260)}`,
-      turnId: `${primaryId}-noise` },
-  ];
 }
 
 export class AppliedStore implements HistoricalSyncStore {

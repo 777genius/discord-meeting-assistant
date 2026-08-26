@@ -1,28 +1,29 @@
-import { admitsHistoricalRetrieval, DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
-  type TwoHourHistoricalRetrievalProfileV1 } from "../domain/historical-evidence.js";
 import { compareRetrievalV2Utf8, retrievalV2ConsumerEvidenceByteLimit,
   type RetrievalBindingSnapshot } from
   "../domain/retrieval-admission.js";
-import type { FocusedMemoryReference } from "../domain/grounding-plan.js";
-import { buildHistoricalRoomTopology, HistoricalIndexPlanError,
-  rehydrateHistoricalBlock } from "./historical-index-plan.js";
+import type { FocusedMemoryReference } from
+  "../domain/grounding-plan.js";
+import { buildHistoricalRoomTopology } from "./historical-index-plan.js";
 import { resolveRequestedSpeakerIds, type SpeakerAliasMapV1 } from
   "./speaker-alias-resolution.js";
 import { boundedRetrievalQuery, relativeTimeFilter } from
   "./focused-locator-retrieval-v2-query.js";
-import type { FocusedLocatorRetrievalV2Port,
-  FocusedLocatorRetrievalV2Candidate,
+import type { FocusedHistoricalEvidenceV2Port,
   FocusedLocatorRetrievalV2ProviderBinding,
   FocusedLocatorRetrievalV2RequestSnapshot } from
   "./ports/focused-locator-retrieval-v2.js";
-import type { HistoricalAuthorizationPort } from "./ports/historical-grounding.js";
-import type { HistoricalOpaqueIdPort, LocallyRehydratedEvidenceBlockV1 } from
+import type { HistoricalOpaqueIdPort } from
   "./ports/historical-memory.js";
-import type { HistoricalEvidenceAuthority, HistoricalSyncStore } from
+import type { HistoricalSyncStore } from
   "./ports/historical-state.js";
-import type { CanonicalEvidenceTurnHashPort, FocusedMemoryRetrievalPort,
+import type { FocusedMemoryRetrievalPort,
   FocusedMemoryRetrievalResult } from
   "./ports/final-reply.js";
+import { HistoricalFocusedLocatorRetrievalV2 } from
+  "./focused-locator-historical-rehydration-v2.js";
+
+export { HistoricalFocusedLocatorRetrievalV2 } from
+  "./focused-locator-historical-rehydration-v2.js";
 export interface FocusedLocatorRetrievalV2Policy {
   readonly candidateLimit: number;
   readonly deadlineMs: number;
@@ -145,160 +146,38 @@ export class PrepareFocusedLocatorRetrievalV2Request {
   }
 }
 
-interface HistoricalLocatorRetrievalV2Input {
-  readonly authorizationPrincipalRef: string;
-  readonly currentMeetingId: string;
-  readonly request: FocusedLocatorRetrievalV2RequestSnapshot;
-  readonly roomId: string;
-  readonly scopeId: string;
-  readonly signal?: AbortSignal;
-}
-
-export class HistoricalFocusedLocatorRetrievalV2 {
+export class FocusedHistoricalEvidenceV2 implements FocusedHistoricalEvidenceV2Port {
   public constructor(private readonly dependencies: {
-    readonly authority: HistoricalEvidenceAuthority;
-    readonly authorization: HistoricalAuthorizationPort;
-    readonly ids: HistoricalOpaqueIdPort;
-    readonly retrieval: FocusedLocatorRetrievalV2Port;
-    readonly store: HistoricalSyncStore;
-    readonly turnHashes: CanonicalEvidenceTurnHashPort;
-  }, private readonly profile: TwoHourHistoricalRetrievalProfileV1 =
-    DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE) {}
+    readonly admission: PrepareFocusedLocatorRetrievalV2Request;
+    readonly retrieval: HistoricalFocusedLocatorRetrievalV2;
+  }) {}
 
-  public async retrieve(input: HistoricalLocatorRetrievalV2Input):
-  Promise<FocusedMemoryRetrievalResult> {
-    const topology = buildHistoricalRoomTopology(input.scopeId, input.roomId,
-      this.dependencies.ids);
-    if (input.request.scope.memoryScopeId !== topology.roomScopeExternalRef ||
-      input.request.scope.spaceId !== topology.spaceSlug) {
-      return unavailable();
-    }
-    const authorizationRequest = {
-      authorizationPrincipalRef: input.authorizationPrincipalRef,
+  public async retrieve(
+    input: Parameters<FocusedHistoricalEvidenceV2Port["retrieve"]>[0],
+  ) {
+    input.signal.throwIfAborted();
+    const request = await this.dependencies.admission.prepare({
+      currentMeetingId: input.currentMeetingId,
+      question: input.question,
       roomId: input.roomId,
-      ...(input.signal === undefined ? {} : { signal: input.signal }),
       scopeId: input.scopeId,
-    };
-    const before = await this.dependencies.authorization.authorize(authorizationRequest);
-    if (!before.authorized) {
-      return unavailable();
-    }
-    const remote = await this.dependencies.retrieval.retrieve(
-      input.request,
-      input.signal === undefined ? {} : { signal: input.signal },
-    );
-    if (remote.status !== "available" || remote.candidates.length < 1) {
-      return unavailable();
-    }
-    if (!remote.candidates.every(isExactLocatorCandidate)) {
-      return unavailable();
-    }
-    const locators = remote.candidates.map(({ locator }) => locator);
-    if (new Set(locators).size !== locators.length) {
-      return unavailable();
-    }
-    const references = await this.rehydrateLocators(input, locators);
-    if (references === null) {
-      return unavailable();
-    }
-    const after = await this.dependencies.authorization.authorize(authorizationRequest);
-    if (!sameAuthorization(before, after) || references.length < 1) {
-      return unavailable();
-    }
-    return Object.freeze({
-      authorityGeneration: "historical-locator-retrieval-v2",
-      candidates: references,
-      schemaVersion: 1,
-      status: "current",
+      signal: input.signal,
     });
-  }
-
-  private async rehydrateLocators(
-    input: HistoricalLocatorRetrievalV2Input,
-    locators: readonly string[],
-  ): Promise<readonly FocusedMemoryReference[] | null> {
-    const records = await this.dependencies.store.findCurrentCandidates(
-      input.scopeId,
-      input.roomId,
-      locators,
-      input.signal === undefined ? {} : { signal: input.signal },
-    );
-    if (records.length !== locators.length) {
-      return null;
+    if (request === null) {
+      return Object.freeze({ status: "unavailable" as const });
     }
-    const recordsByLocator = new Map(records.map((record) => [
-      record.plan.documents[record.ordinal]?.manifest.candidateLocator,
-      record,
-    ]));
-    if (recordsByLocator.size !== locators.length) {
-      return null;
-    }
-    const allowedSources = new Map(input.request.filters.sourceGenerations.map(
-      (source) => [source.sourceKey, source.projectionGeneration],
-    ));
-    const references: FocusedMemoryReference[] = [];
-    let evidenceBytes = 0;
-    for (const locator of locators) {
-      input.signal?.throwIfAborted();
-      const record = recordsByLocator.get(locator);
-      if (record === undefined ||
-        record.binding.meetingId === input.currentMeetingId ||
-        allowedSources.get(record.plan.topology.releaseRef) !==
-          record.plan.topology.indexGeneration ||
-        !await this.dependencies.store.isCurrentGeneration(
-          record.binding,
-          record.plan.topology.indexGeneration,
-          input.signal === undefined ? {} : { signal: input.signal },
-        )) {
-        return null;
-      }
-      const meeting = await this.dependencies.authority.loadAcceptedFinalMeeting(
-        record.binding,
-        input.signal === undefined ? {} : { signal: input.signal },
-      );
-      if (meeting === null || !admitsHistoricalRetrieval(meeting, this.profile)) {
-        return null;
-      }
-      let block: LocallyRehydratedEvidenceBlockV1;
-      try {
-        block = rehydrateHistoricalBlock(meeting, record.plan, record.ordinal,
-          this.dependencies.ids);
-      } catch (error) {
-        if (error instanceof HistoricalIndexPlanError) {
-          return null;
-        }
-        throw error;
-      }
-      evidenceBytes += new TextEncoder().encode(
-        block.turns.map(({ text }) => text).join("\n"),
-      ).byteLength;
-      if (evidenceBytes > input.request.budgets.evidenceByteLimit) {
-        return null;
-      }
-      references.push(...block.turns.map((turn) => Object.freeze({
-        historicalSource: Object.freeze({
-          candidateLocator: block.candidateLocator,
-          indexGeneration: block.indexGeneration,
-          releaseId: block.binding.releaseId,
-        }),
-        meetingId: block.binding.meetingId,
-        sourceEndCodePoint: turn.sourceEndCodePoint,
-        sourceStartCodePoint: turn.sourceStartCodePoint,
-        transcriptId: block.binding.transcriptId,
-        transcriptVersion: block.binding.transcriptVersion,
-        turnHash: this.dependencies.turnHashes.hash(turn),
-        turnId: turn.turnId,
-      })));
-    }
-    return Object.freeze(references);
-  }
-
-  public async reauthorizeRoom(input: {
-    readonly authorizationPrincipalRef: string;
-    readonly roomId: string;
-    readonly scopeId: string;
-  }): Promise<boolean> {
-    return (await this.dependencies.authorization.authorize(input)).authorized;
+    const result = await this.dependencies.retrieval.retrieveEvidence({
+      authorizationPrincipalRef: input.authorizationPrincipalRef,
+      currentMeetingId: input.currentMeetingId,
+      request,
+      roomId: input.roomId,
+      scopeId: input.scopeId,
+      signal: input.signal,
+    });
+    return result.status !== "current" ? result : Object.freeze({
+      ...result,
+      turns: Object.freeze(result.turns.slice(0, input.maximumCandidates)),
+    });
   }
 }
 
@@ -374,19 +253,6 @@ readonly FocusedMemoryReference[] {
 
 function unavailable(): FocusedMemoryRetrievalResult {
   return Object.freeze({ schemaVersion: 1, status: "unavailable" });
-}
-
-function isExactLocatorCandidate(value: FocusedLocatorRetrievalV2Candidate): boolean {
-  const keys = Object.keys(value).toSorted();
-  return keys.length === 1 && keys[0] === "locator";
-}
-
-function sameAuthorization(left: Awaited<ReturnType<HistoricalAuthorizationPort["authorize"]>>,
-  right: Awaited<ReturnType<HistoricalAuthorizationPort["authorize"]>>): boolean {
-  return left.authorized && right.authorized &&
-    left.authorizationDigest === right.authorizationDigest &&
-    left.authorizationEpoch === right.authorizationEpoch &&
-    left.policyVersion === right.policyVersion;
 }
 
 export function isPersistedRetrievalV2Binding(

@@ -28,6 +28,28 @@ question. The Infinity adapter returns provider-ordered opaque locators and
 does not expose or consume remote score, rank, text, fusion, reranking, or
 neighbor data.
 
+Focused addressed voice obtains historical candidates only through that same
+V2 locator port. Meeting Knowledge concurrently resolves the authoritative
+generation-current live hot tail, locally rehydrates both sources, and applies
+the fixed live-rank-then-historical-rank interleave up to the existing focused
+candidate cap. The combined canonical hash and both generation identities are
+recreated before generation, publication and playback. Exhaustive voice keeps
+its every-block route and never treats the V2 top-k response as completeness.
+
+Discord custody derives `dactor1.<key-id>.<HMAC>` actor keys under the fixed
+`discord-meeting:infinity-actor-key:v1` purpose. A versioned secret keyring has
+one active key and may retain prior keys during rotation. New projections use
+the active key; alias filters expand through the same keyring. The active key
+profile salts only historical index generations, forcing an orderly rebuild
+without changing stable room topology. Missing or malformed mapping authority
+fails before indexing or retrieval. Snowflakes, names, and aliases cannot
+occupy an upstream `actor_keys` field.
+
+Valid provider `available`, `unavailable`, and `unqualified` responses retain
+their status. The exact provider reason code crosses the consumer port;
+`unavailable` is retryable and `unqualified` is nonretryable. Malformed wire or
+capability evidence remains the separately classified adapter failure.
+
 Meeting Core rehydrates locator evidence from authoritative local sources and
 rechecks authorization, retention, generation, and source identity. Local
 fallback is bounded exact-token matching with deterministic quotas and order;
@@ -50,4 +72,7 @@ window, and fully drained old-profile deletion.
 - no active legacy generic retrieval engine is constructible;
 - remote text and ranking metadata cannot become meeting evidence;
 - old job schemas remain safely readable and fail closed;
+- focused voice retains bounded live-plus-historical behavior without a second
+  downstream retrieval engine;
+- Discord identity rotation is explicit and rebuild-fenced;
 - the migration ledger records exact retained and deleted symbols.

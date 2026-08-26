@@ -17,6 +17,7 @@ import {
 
 import {
   historicalRetrievalProjection,
+  type HistoricalRetrievalActorKeyMapper,
   validHistoricalRetrievalProjection,
 } from "./historical-retrieval-projection.js";
 
@@ -99,13 +100,14 @@ export async function ingestHistoricalDocument(
   client: InfinityContextClientV2,
   topology: HistoricalTopologyV1,
   document: HistoricalIndexDocumentV1,
+  actorKeys: HistoricalRetrievalActorKeyMapper,
   signal: AbortSignal,
 ): Promise<DocumentRecordV2> {
   return (await client.documents.ingestDocument({
     classification: "internal",
     idempotencyKey: document.mutationId,
     memoryScopeExternalRef: topology.roomScopeExternalRef,
-    retrievalProjection: historicalRetrievalProjection(topology, document),
+    retrievalProjection: historicalRetrievalProjection(topology, document, actorKeys),
     signal,
     sourceExternalId: document.manifest.documentExternalId,
     sourceRefs: [{
@@ -157,7 +159,11 @@ function isBoundedInteger(value: number, minimum: number, maximum: number): bool
 export function validIndexPlan(
   request: HistoricalIndexPlanInputV1,
   expectedTokenProfile: string,
+  actorKeys: HistoricalRetrievalActorKeyMapper | undefined,
 ): boolean {
+  if (actorKeys === undefined) {
+    return false;
+  }
   const candidateLocatorSet = new Set(
     request.documents.map(({ manifest }) => manifest.candidateLocator),
   );
@@ -203,7 +209,7 @@ export function validIndexPlan(
     return false;
   }
   for (const document of request.documents) {
-    if (!validHistoricalRetrievalProjection(request.topology, document)) {
+    if (!validHistoricalRetrievalProjection(request.topology, document, actorKeys)) {
       return false;
     }
   }

@@ -1,12 +1,12 @@
 import {
   INFINITY_CONTEXT_SDK_PROVENANCE,
 } from "@discord-meeting/infinity-context-adapter";
-import type {
-  DisposableInfinityHttpService,
+import {
+  DISPOSABLE_RETRIEVAL_V2_BINDING,
+  type DisposableInfinityHttpService,
 } from "@discord-meeting/infinity-context-adapter/test-support";
 import type {
   HistoricalAuthorizationPort,
-  RehydratedEvidenceTurn,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   EvidenceBackedSummary,
@@ -37,12 +37,15 @@ import {
   type PlatformHistoricalMemoryRuntime,
 } from "../src/composition/historical-memory.js";
 
-export const botApplicationIdentity = "111111111111111111";
+const botApplicationIdentity = "111111111111111111";
 export const resultsContainerId = "222222222222222222";
 export const scopeId = "333333333333333333";
 export const roomId = "444444444444444444";
 export const historicalMeetingId = "synthetic-two-hour-history";
 export const currentMeetingId = "synthetic-current-meeting";
+export const historicalActorA = "555555555555555551";
+export const historicalActorB = "555555555555555552";
+export const currentActor = "555555555555555553";
 
 export const retainedProductionEmbeddingProfileAttestation = Object.freeze({
   embeddingProfile:
@@ -64,7 +67,7 @@ export const testProductionQualificationPolicy = Object.freeze({
   serviceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
 });
 
-export const positionalNeedles = Object.freeze([
+const positionalNeedles = Object.freeze([
   { marker: "ORCHID-ALPHA", position: 0 },
   { marker: "CEDAR-BRAVO", position: 72 },
   { marker: "MAPLE-CHARLIE", position: 180 },
@@ -233,6 +236,7 @@ export function platformConfig(
     },
     liveIngressOwnerMode: "singleton",
     meetingKnowledge: {
+      retrievalV2ProviderBinding: DISPOSABLE_RETRIEVAL_V2_BINDING,
       twoHourHistoricalQualification: {
         evidenceSha256: "e".repeat(64),
         releaseRevision: sourceRevision,
@@ -242,7 +246,13 @@ export function platformConfig(
     },
     nodeEnvironment: environment,
     participantGreetingDefaultLocale: "en",
-    participantGreetingProfiles: {},
+    participantGreetingProfiles: {
+      [historicalActorA]: {
+        displayName: "Vlad",
+        greetingLocale: "en",
+        spokenName: "Vladimir",
+      },
+    },
     port: 4_310,
     recordingSpoolRoot: "/tmp/synthetic-meeting-knowledge-spool",
     s3: {
@@ -257,6 +267,11 @@ export function platformConfig(
       discordToken: "synthetic-discord-token",
       infinityContextToken: "synthetic-infinity-token",
       infinityContextTopologyKey: "t".repeat(32),
+      meetingKnowledgeActorKeyring: JSON.stringify({
+        activeKeyId: "synthetic-r1",
+        keys: { "synthetic-r1": "ab".repeat(32) },
+        schemaVersion: 1,
+      }),
       postgresUrl: "postgresql://synthetic.invalid/test",
       redisUrl: "redis://synthetic.invalid/0",
       s3AccessKeyId: "synthetic-access",
@@ -300,8 +315,8 @@ export function allowOnlySyntheticRoom(): HistoricalAuthorizationPort {
 export function historicalTwoHourMeeting(): Meeting {
   return recordedMeeting({
     actors: [
-      { actorId: "human-history-a", kind: "human" },
-      { actorId: "human-history-b", kind: "human" },
+      { actorId: historicalActorA, kind: "human" },
+      { actorId: historicalActorB, kind: "human" },
       { actorId: "botik-automation", kind: "automation" },
     ],
     meetingId: historicalMeetingId,
@@ -311,7 +326,7 @@ export function historicalTwoHourMeeting(): Meeting {
 
 export function currentMeeting(): Meeting {
   return recordedMeeting({
-    actors: [{ actorId: "human-current", kind: "human" }],
+    actors: [{ actorId: currentActor, kind: "human" }],
     meetingId: currentMeetingId,
     turns: currentMeetingTurns(),
   });
@@ -413,7 +428,7 @@ function historicalTwoHourTurns() {
     const startMs = position * 10_000;
     return {
       endMs: startMs + 10_000,
-      speakerId: position % 2 === 0 ? "human-history-a" : "human-history-b",
+      speakerId: position % 2 === 0 ? historicalActorA : historicalActorB,
       startMs,
       text: positionalText(position, needle?.marker),
       turnId: `history-turn-${position.toString().padStart(4, "0")}`,
@@ -453,44 +468,13 @@ function positionalText(position: number, marker: string | undefined): string {
 function currentMeetingTurns() {
   return Array.from({ length: 16 }, (_, position) => ({
     endMs: (position + 1) * 10_000,
-    speakerId: "human-current",
+    speakerId: currentActor,
     startMs: position * 10_000,
     text: position === 8
       ? "CURRENT-ANCHOR confirms Project Atlas is active and connects to PINE-GOLF."
       : `Current accepted planning detail ${position}.`,
     turnId: `current-turn-${position.toString().padStart(2, "0")}`,
   }));
-}
-
-export function correctedHistoricalSnapshot(
-  snapshot: MeetingSnapshot,
-): MeetingSnapshot {
-  if (snapshot.transcript === null) {
-    throw new Error("synthetic historical snapshot has no transcript");
-  }
-  return Meeting.restore({
-    ...snapshot,
-    revision: snapshot.revision + 1,
-    transcript: {
-      ...snapshot.transcript,
-      turns: snapshot.transcript.turns.map((turn) =>
-        turn.turnId === "history-turn-0719"
-          ? { ...turn, text: "Correction PINE-GOLF-V2: Tuesday is the accepted final date." }
-          : turn
-      ),
-      version: 2,
-    },
-  }).toSnapshot();
-}
-
-export function humanActorsFor(
-  turns: readonly RehydratedEvidenceTurn[],
-  anchorActors: readonly string[],
-): readonly string[] {
-  return Object.freeze([...new Set([
-    ...anchorActors,
-    ...turns.map(({ speakerId }) => speakerId),
-  ])].toSorted());
 }
 
 export async function historicalRows(pool: Pool): Promise<readonly {
@@ -501,11 +485,4 @@ export async function historicalRows(pool: Pool): Promise<readonly {
     `SELECT meeting_id, state FROM meeting_core.historical_memory_sync ORDER BY meeting_id, desired_generation`,
   );
   return result.rows;
-}
-
-export async function checkpointAttempts(pool: Pool): Promise<readonly number[]> {
-  const result = await pool.query<{ readonly attempt_count: number }>(
-    `SELECT attempt_count::integer AS attempt_count FROM meeting_core.historical_coverage_checkpoints ORDER BY checkpoint_id`,
-  );
-  return result.rows.map(({ attempt_count }) => attempt_count);
 }

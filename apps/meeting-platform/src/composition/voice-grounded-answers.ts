@@ -5,6 +5,7 @@ import {
 } from "@discord-meeting/discord-adapter";
 import {
   AnswerGroundedMeetingQuestion,
+  FocusedHistoricalEvidenceV2,
   type GroundedMeetingAnswer,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { canonicalFinalReplyTurnHash } from "@discord-meeting/postgres-adapter";
@@ -78,6 +79,19 @@ export function createVoiceGroundedAnswers(
     ...(input.historicalMemory === undefined ? {} : {
       exhaustive: input.historicalMemory.createExhaustiveCoverage(authorization),
     }),
+    ...(input.historicalMemory === undefined ||
+      input.config.meetingKnowledge.retrievalV2ProviderBinding === undefined
+      ? {}
+      : {
+          historical: new FocusedHistoricalEvidenceV2({
+            admission: input.historicalMemory.createRetrievalV2Admission(
+              input.config.meetingKnowledge.retrievalV2ProviderBinding,
+            ),
+            retrieval: input.historicalMemory.createFocusedLocatorRetrievalV2(
+              authorization,
+            ),
+          }),
+        }),
     ids: {
       digest: (namespace, parts) =>
         principals.observationDigest(namespace, ...parts),

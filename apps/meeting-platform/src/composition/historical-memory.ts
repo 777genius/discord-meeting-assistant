@@ -1,11 +1,10 @@
 import {
-  CooperativeHistoricalIndexPlanner, HmacHistoricalOpaqueIds,
+  CooperativeHistoricalIndexPlanner,
   InfinityContextHistoricalMemoryAdapter, INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE, PinnedMultilingualMiniLmTokenizer,
   Sha256HistoricalReceiptDigest, assertInfinityContextActivation,
   assertInfinityContextPlanningCompatibility,
   assertInfinityContextTransportCapabilities,
-  infinityContextHistoricalIndexProfileId,
   type InfinityContextProductionQualificationPolicyV1,
 } from "@discord-meeting/infinity-context-adapter";
 import {
@@ -18,6 +17,7 @@ import {
   type PrepareFocusedLocatorRetrievalV2Request,
   type FocusedLocatorRetrievalV2ProviderBinding,
   type HistoricalEmbeddingTokenizerPort, type HistoricalSyncStore,
+  type HistoricalOpaqueIdPort,
   type HistoricalWindowPlanningProfileV1, type TwoHourHistoricalRetrievalProfileV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresExhaustiveCoverageStore, PostgresHistoricalEvidenceAuthority,
@@ -30,6 +30,12 @@ import { SubscriptionRuntimeCoverageExtractorAdapter, subscriptionRuntimeCliEngi
 import type { Pool } from "pg";
 
 import type { PlatformConfig } from "../config.js";
+import {
+  configuredHistoricalIndexProfileId,
+  createDiscordInfinityActorCustody,
+  requireHistoricalRuntimeSecrets,
+} from
+  "./discord-infinity-actor-custody.js";
 import { createInfinityRetrievalV2Composition } from
   "./infinity-retrieval-v2.js";
 import { semanticSearchQualified } from
@@ -189,7 +195,7 @@ interface HistoricalRetrievalFactoryInput {
   readonly input: PlatformHistoricalMemoryInput;
   readonly profile: TwoHourHistoricalRetrievalProfileV1;
   readonly tokenizer: () => HistoricalEmbeddingTokenizerPort | undefined;
-  readonly topologyKey: string;
+  readonly ids: HistoricalOpaqueIdPort;
 }
 
 function createPlatformExhaustiveCoverage(
@@ -207,7 +213,7 @@ function createPlatformExhaustiveCoverage(
     authorization: factory.authorization,
     checkpoints: factory.checkpoints,
     extractor: extraction,
-    ids: new HmacHistoricalOpaqueIds(factory.topologyKey),
+    ids: factory.ids,
     reducer: new DeterministicCoverageReducer(64, 256),
     sync: new PostgresHistoricalMemoryStore(factory.input.pool),
     tokenizer: factory.tokenizer,
@@ -238,26 +244,6 @@ async function executeHistoricalPass(input: {
   await input.checkpoints.scrubExpired(100, signal === undefined ? {} : { signal });
 }
 
-function requireHistoricalRuntimeSecrets(config: PlatformConfig): {
-  readonly token: string;
-  readonly topologyKey: string;
-} {
-  const token = config.secrets.infinityContextToken;
-  const topologyKey = config.secrets.infinityContextTopologyKey;
-  if (token === undefined || topologyKey === undefined) {
-    throw new Error("Infinity runtime secrets are missing after configuration validation");
-  }
-  return { token, topologyKey };
-}
-
-function configuredHistoricalIndexProfileId(
-  activation: NonNullable<PlatformConfig["infinityContext"]>["activation"],
-): string {
-  const digest = activation.embeddingProfileAttestation
-    ?.embeddingProfileDigestSha256 ?? "sha256:" + "0".repeat(64);
-  return infinityContextHistoricalIndexProfileId(digest);
-}
-
 export function createPlatformHistoricalMemory(
   input: PlatformHistoricalMemoryInput,
 ): PlatformHistoricalMemoryRuntime | undefined {
@@ -269,14 +255,21 @@ export function createPlatformHistoricalMemory(
     throw new Error("Infinity activation environment does not match Meeting Platform");
   }
   const { token, topologyKey } = requireHistoricalRuntimeSecrets(input.config);
+  const { actorKeys, historicalIds, speakerAliases } =
+    createDiscordInfinityActorCustody(input.config, topologyKey);
   const productionQualification = input.productionQualification ??
     INFINITY_CONTEXT_PRODUCTION_QUALIFICATION;
   let qualifiedTokenProfile: string | undefined;
   let qualifiedTokenizer: HistoricalEmbeddingTokenizerPort | undefined;
   const { retrievalV2, twoHourProfile } = createInfinityRetrievalV2Composition(
-    input.config, input.pool, token, topologyKey,
+    input.config,
+    input.pool,
+    token,
+    historicalIds,
+    speakerAliases,
   );
   const memory = new InfinityContextHistoricalMemoryAdapter({
+    actorKeys,
     baseUrl: config.baseUrl,
     operationTimeoutMs: config.operationTimeoutMs,
     requestTimeoutMs: config.requestTimeoutMs,
@@ -291,8 +284,11 @@ export function createPlatformHistoricalMemory(
   const checkpoints = new PostgresExhaustiveCoverageStore(input.pool);
   const worker = new HistoricalSyncWorker({
     authority: new PostgresHistoricalEvidenceAuthority(input.pool),
-    ids: new HmacHistoricalOpaqueIds(topologyKey),
-    indexProfileId: configuredHistoricalIndexProfileId(config.activation),
+    ids: historicalIds,
+    indexProfileId: configuredHistoricalIndexProfileId(
+      config.activation,
+      actorKeys.activeProfileId(),
+    ),
     memory,
     store,
     planner,
@@ -330,7 +326,10 @@ export function createPlatformHistoricalMemory(
     qualifiedTokenProfile = qualifyPlanningProfile(
       planningProfile, qualifiedTokenizer,
     );
-    const indexProfileId = configuredHistoricalIndexProfileId(config.activation);
+    const indexProfileId = configuredHistoricalIndexProfileId(
+      config.activation,
+      actorKeys.activeProfileId(),
+    );
     const rebuilds = await profileMaintenance.enqueueAppliedProfileRebuilds(
       indexProfileId, 4_096, signal === undefined ? {} : { signal },
     );
@@ -388,7 +387,7 @@ export function createPlatformHistoricalMemory(
         input,
         profile: twoHourProfile,
         tokenizer: () => qualifiedTokenizer,
-        topologyKey,
+        ids: historicalIds,
       });
     },
     createFocusedLocatorRetrievalV2: (authorization) =>

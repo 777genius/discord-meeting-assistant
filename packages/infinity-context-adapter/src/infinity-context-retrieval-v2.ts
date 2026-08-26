@@ -15,6 +15,7 @@ import {
   retrievalV2RequestPayload,
   type HttpTransport,
   type RetrieveContextV2Input,
+  type RetrieveContextV2Response,
 } from "@infinity-context/sdk-v2";
 
 import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
@@ -55,6 +56,12 @@ function unavailable(code: string, retryable: boolean): FocusedLocatorRetrievalV
 
 function unqualified(code: string): FocusedLocatorRetrievalV2Result {
   return Object.freeze({ code, retryable: false, status: "unqualified" });
+}
+
+function providerReason(response: RetrieveContextV2Response): string {
+  return response.provider_outcomes.find(({ status, reason_code: reasonCode }) =>
+    status === response.status && reasonCode !== null
+  )?.reason_code ?? `provider_${response.status}`;
 }
 
 function exactKeys(value: object, keys: readonly string[]): boolean {
@@ -252,8 +259,11 @@ implements FocusedLocatorRetrievalV2Port {
         responseSha256: createHash("sha256").update(responseBytes).digest("hex"),
         routeLatencyUs,
       });
-      if (response.status !== "available") {
-        return unqualified("memory.context_retrieval_unavailable");
+      if (response.status === "unavailable") {
+        return unavailable(providerReason(response), true);
+      }
+      if (response.status === "unqualified") {
+        return unqualified(providerReason(response));
       }
       return Object.freeze({
         candidates: locatorCandidates(response.candidates),

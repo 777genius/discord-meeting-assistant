@@ -4,7 +4,8 @@ import { HistoricalFocusedLocatorRetrievalV2,
   PrepareFocusedLocatorRetrievalV2Request,
   DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   type FocusedLocatorRetrievalV2ProviderBinding,
-  type HistoricalAuthorizationPort, type SpeakerAliasMapV1,
+  type HistoricalAuthorizationPort, type HistoricalOpaqueIdPort,
+  type SpeakerAliasMapV1,
   type TwoHourHistoricalRetrievalProfileV1 } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
@@ -12,11 +13,8 @@ import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
 import type { Pool } from "pg";
 
 import type { PlatformConfig } from "../config.js";
-import { participantSpeakerAliases } from
-  "../config/participant-greeting-profiles.js";
-
 export class InfinityRetrievalV2Composition {
-  readonly #ids: HmacHistoricalOpaqueIds;
+  readonly #ids: HistoricalOpaqueIdPort;
   readonly #retrieval: InfinityContextRetrievalV2Adapter;
 
   public constructor(private readonly input: {
@@ -24,12 +22,12 @@ export class InfinityRetrievalV2Composition {
     readonly operationTimeoutMs: number;
     readonly pool: Pool;
     readonly requestTimeoutMs: number;
+    readonly ids: HistoricalOpaqueIdPort;
     readonly speakerAliases: SpeakerAliasMapV1;
     readonly token: string;
-    readonly topologyKey: string;
     readonly twoHourProfile: TwoHourHistoricalRetrievalProfileV1;
   }) {
-    this.#ids = new HmacHistoricalOpaqueIds(input.topologyKey);
+    this.#ids = input.ids;
     this.#retrieval = new InfinityContextRetrievalV2Adapter({
       baseUrl: input.baseUrl,
       operationTimeoutMs: Math.min(input.operationTimeoutMs, 4_000),
@@ -63,7 +61,8 @@ export function createInfinityRetrievalV2Composition(
   config: PlatformConfig,
   pool: Pool,
   token: string,
-  topologyKey: string,
+  ids: HistoricalOpaqueIdPort,
+  speakerAliases: SpeakerAliasMapV1,
 ) {
   const infinity = config.infinityContext;
   if (infinity === undefined) {
@@ -77,13 +76,28 @@ export function createInfinityRetrievalV2Composition(
     retrievalV2: new InfinityRetrievalV2Composition({
       baseUrl: infinity.baseUrl,
       operationTimeoutMs: infinity.operationTimeoutMs,
+      ids,
       pool,
       requestTimeoutMs: infinity.requestTimeoutMs,
-      speakerAliases: participantSpeakerAliases(config.participantGreetingProfiles),
+      speakerAliases,
       token,
-      topologyKey,
       twoHourProfile,
     }),
     twoHourProfile,
+  });
+}
+
+export function createActorKeyBoundHistoricalIds(
+  topologyKey: string,
+  actorKeyProfileId: string,
+): HistoricalOpaqueIdPort {
+  const ids = new HmacHistoricalOpaqueIds(topologyKey);
+  return Object.freeze({
+    keyedId: (namespace: string, parts: readonly string[]) => ids.keyedId(
+      namespace,
+      namespace === "historical-index-generation"
+        ? [...parts, actorKeyProfileId]
+        : parts,
+    ),
   });
 }

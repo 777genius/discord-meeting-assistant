@@ -196,6 +196,7 @@ const environmentSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
+    MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE: absolutePath.optional(),
     MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: z
       .enum(["true", "false"])
       .default("false")

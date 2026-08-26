@@ -11,7 +11,10 @@ import {
   InfinityContextHistoricalMemoryAdapter,
 } from "../src/index.js";
 import { DisposableInfinityEndpoint } from "./disposable-infinity-endpoint.js";
-import { finalMeeting } from "./historical-e2e-test-kit.js";
+import {
+  finalMeeting,
+  testHistoricalActorKeys,
+} from "./historical-e2e-test-kit.js";
 
 const blockPolicy = {
   maxBlockUtf8Bytes: 512,
@@ -54,6 +57,7 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
       }))),
     };
     const adapter = new InfinityContextHistoricalMemoryAdapter({
+      actorKeys: testHistoricalActorKeys,
       baseUrl: "http://disposable.infinity.invalid",
       embeddingTokenProfile: () => expectedTokenProfile,
       operationTimeoutMs: 30_000,
@@ -90,6 +94,7 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     const endpoint = new DisposableInfinityEndpoint();
     endpoint.hangNextRequestUntilDeadline("/v1/spaces");
     const adapter = new InfinityContextHistoricalMemoryAdapter({
+      actorKeys: testHistoricalActorKeys,
       baseUrl: "http://disposable.infinity.invalid",
       embeddingTokenProfile: () => expectedTokenProfile,
       operationTimeoutMs: 1_000,
@@ -117,6 +122,7 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     const perCallEndpoint = new DisposableInfinityEndpoint();
     perCallEndpoint.hangNextRequestUntilDeadline("/v1/spaces");
     const perCall = new InfinityContextHistoricalMemoryAdapter({
+      actorKeys: testHistoricalActorKeys,
       baseUrl: "http://disposable.infinity.invalid",
       embeddingTokenProfile: () => expectedTokenProfile,
       operationTimeoutMs: 500,
@@ -133,6 +139,7 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     const overallEndpoint = new DisposableInfinityEndpoint();
     overallEndpoint.delayEveryRequest(360);
     const overall = new InfinityContextHistoricalMemoryAdapter({
+      actorKeys: testHistoricalActorKeys,
       baseUrl: "http://disposable.infinity.invalid",
       embeddingTokenProfile: () => expectedTokenProfile,
       operationTimeoutMs: 1_100,
