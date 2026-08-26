@@ -67,7 +67,7 @@ export async function startMeetingPlatform(
       liveFinalizedMemory,
       meetingKnowledge,
       recordingPlayback,
-    } = await createPlatformKnowledgeComposition({ cleanup, config, core, logger });
+    } = await createPlatformKnowledgeComposition({ cleanup, config, core, logger, metrics });
     const processMeeting = createProcessingRuntime({
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
       liveMeetings: core.liveMeetings,
@@ -194,8 +194,9 @@ async function createPlatformKnowledgeComposition(input: {
   readonly config: PlatformConfig;
   readonly core: ReturnType<typeof createPlatformCoreResources>;
   readonly logger: Parameters<typeof createPlatformHistoricalMemory>[0]["logger"];
+  readonly metrics: PrometheusMetrics;
 }) {
-  const { cleanup, config, core, logger } = input;
+  const { cleanup, config, core, logger, metrics } = input;
   const historicalMemory = createPlatformHistoricalMemory({
     config,
     logger,
@@ -208,6 +209,7 @@ async function createPlatformKnowledgeComposition(input: {
   const liveFinalizedMemory = createPlatformLiveFinalizedMemory({
     config,
     logger,
+    metrics,
     pool: core.pool,
   });
   if (liveFinalizedMemory !== undefined) {

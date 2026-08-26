@@ -53,6 +53,7 @@ const migrationDefinitions = [
   { fileName: "0034_recording_publication_reconciliation.sql" },
   { fileName: "0035_retain_answer_reconciliation_payload.sql" },
   { fileName: "0036_validate_answer_reconciliation_payload.sql" },
+  { fileName: "0037_live_memory_ambiguous_outcomes.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

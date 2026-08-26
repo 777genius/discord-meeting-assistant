@@ -53,6 +53,7 @@
 - [ADR-0049: Locator-only upstream retrieval with downstream evidence authority](0049-locator-only-upstream-retrieval.md)
 - [ADR-0050: Persisted Retrieval V2 serving binding and official SDK custody](0050-persisted-retrieval-v2-serving-binding.md)
 - [ADR-0051: Provider-attested greeting and ready-only recording publication](0051-greeting-playback-and-recording-readiness.md)
+- [ADR-0054: Official-SDK finalized-live memory projection](0054-official-sdk-live-memory-projection.md)
 
 ## Superseded
 

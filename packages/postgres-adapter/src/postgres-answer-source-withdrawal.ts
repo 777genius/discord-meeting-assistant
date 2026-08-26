@@ -1,5 +1,8 @@
 import type { PoolClient } from "pg";
 
+import { retireLiveFinalizedMemoryGeneration } from
+  "./postgres-live-memory-retirement.js";
+
 /** Serializes source acceptance and withdrawal even before either has a row. */
 export async function lockMeetingKnowledgeSource(
   client: PoolClient,
@@ -29,6 +32,7 @@ export async function requestAnswerSourceWithdrawal(
   meetingId: string,
 ): Promise<void> {
   await lockMeetingKnowledgeSource(client, meetingId);
+  await retireLiveFinalizedMemoryGeneration(client, meetingId, "withdrawn");
   await client.query(
     `INSERT INTO meeting_knowledge.withdrawn_meeting_sources (meeting_id)
      VALUES ($1)

@@ -1,9 +1,13 @@
 import {
+  InfinityContextLiveFinalizedMemoryAdapter,
+} from "@discord-meeting/infinity-context-adapter";
+import {
   LiveFinalizedMemoryWorker,
   type LiveFinalizedMemoryLifecyclePort,
   type LiveFinalizedMemoryQueryPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import type { Logger } from "@discord-meeting/observability-adapter";
+import type { Logger, LiveMemoryProjectionMetrics } from
+  "@discord-meeting/observability-adapter";
 import {
   PostgresLiveFinalizedMemoryLifecycle,
   PostgresLiveFinalizedMemoryQuery,
@@ -13,6 +17,10 @@ import {
 import type { Pool } from "pg";
 
 import type { PlatformConfig } from "../config.js";
+import {
+  createDiscordInfinityActorCustody,
+  requireHistoricalRuntimeSecrets,
+} from "./discord-infinity-actor-custody.js";
 
 const reconciliationIntervalMs = 1_000;
 const maximumOperationsPerPass = 128;
@@ -29,6 +37,7 @@ export interface PlatformLiveFinalizedMemoryRuntime
 export function createPlatformLiveFinalizedMemory(input: {
   readonly config: PlatformConfig;
   readonly logger: Logger;
+  readonly metrics: LiveMemoryProjectionMetrics;
   readonly pool: Pool;
 }): PlatformLiveFinalizedMemoryRuntime | undefined {
   if (
@@ -39,9 +48,34 @@ export function createPlatformLiveFinalizedMemory(input: {
   }
   const lifecycle = new PostgresLiveFinalizedMemoryLifecycle(input.pool);
   const query = new PostgresLiveFinalizedMemoryQuery(input.pool);
+  const infinity = input.config.infinityContext;
+  const custody = infinity === undefined
+    ? undefined
+    : createDiscordInfinityActorCustody(
+        input.config,
+        requireHistoricalRuntimeSecrets(input.config).topologyKey,
+      );
+  const projection = infinity?.activation.indexingEnabled === true && custody !== undefined
+    ? new InfinityContextLiveFinalizedMemoryAdapter({
+        actorKeys: custody.actorKeys,
+        baseUrl: infinity.baseUrl,
+        ids: custody.historicalIds,
+        operationTimeoutMs: infinity.operationTimeoutMs,
+        requestTimeoutMs: infinity.requestTimeoutMs,
+        schemaVersion: 1,
+        token: requireHistoricalRuntimeSecrets(input.config).token,
+      })
+    : undefined;
   const worker = new LiveFinalizedMemoryWorker(
-    new PostgresLiveFinalizedMemoryStore(input.pool),
+    new PostgresLiveFinalizedMemoryStore(input.pool, custody?.historicalIds),
     { hash: canonicalFinalReplyTurnHash },
+    projection,
+    undefined,
+    {
+      observe: ({ ingestToAppliedMs, outcome }) => {
+        input.metrics.observeLiveMemoryProjection(outcome, ingestToAppliedMs / 1_000);
+      },
+    },
   );
   let active: Promise<void> | undefined;
   let closed = false;

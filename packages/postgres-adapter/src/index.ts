@@ -1,4 +1,7 @@
 export {
+  liveMemoryLagStatus,
+} from "./postgres-live-finalized-memory-query.js";
+export {
   CorruptMeetingSnapshotError,
   MeetingPersistenceConflictError,
   PostCallDeadLetterConflictError,

@@ -80,7 +80,8 @@ deployments:
   durable derived-index intent, same-room local reauthorization, focused
   candidate retrieval, and every-block exhaustive coverage. Its active-memory
   slice owns a durable finalized-human-turn outbox, generation-fenced bounded
-  hot tail, and canonical local rehydration for addressed voice. Infinity
+  hot tail, optional official-SDK transient turn projection with exact
+  reconciliation and retirement, and canonical local rehydration for addressed voice. Infinity
   Context suggests opaque locators only; local accepted transcripts and the
   append-only finalized live-turn table remain the only text evidence.
 

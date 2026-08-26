@@ -821,5 +821,6 @@ describe("PostgreSQL live finalized memory", () => {
     })).resolves.toBeNull();
     await lifecycle.finishMeeting(meetingId);
     await expect(lifecycle.registerMeeting(identity)).resolves.toBe("ineligible");
+
   });
 });

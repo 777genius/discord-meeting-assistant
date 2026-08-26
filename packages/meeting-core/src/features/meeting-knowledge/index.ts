@@ -121,8 +121,12 @@ export {
 export type {
   LiveFinalizedMemoryLeaseV1,
   LiveFinalizedMemoryLifecyclePort,
+  LiveFinalizedMemoryProjectionPort,
+  LiveFinalizedMemoryProjectionResultV1,
+  LiveFinalizedMemoryProjectionV1,
   LiveFinalizedMemoryQueryPort,
   LiveFinalizedMemorySyncStore,
+  LiveFinalizedMemoryTelemetryPort,
   LiveMemoryCandidateReferenceV1,
   LiveMemoryCandidateResultV1,
   LiveMemoryContextV1,

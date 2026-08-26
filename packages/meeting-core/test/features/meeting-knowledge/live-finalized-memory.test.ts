@@ -18,10 +18,13 @@ const turn: CanonicalEvidenceTurn = {
 
 const lease: LiveFinalizedMemoryLeaseV1 = {
   attempt: 1,
+  enqueuedAtMs: 1_000,
   fence: 1,
   identityGeneration: 1,
   meetingId: "meeting-1",
   mutationId: "mutation-1",
+  operation: "upsert",
+  requiresReconciliation: false,
   sourceGeneration: 1,
   turnHash: "canonical-hash",
   turnId: turn.turnId,
@@ -64,12 +67,26 @@ class MemoryStore implements LiveFinalizedMemorySyncStore {
     return Promise.resolve(turn);
   }
 
-  public apply(): Promise<void> {
+  public loadProjection() {
+    return Promise.resolve({
+      documentId: "opaque-document-1",
+      generation: 1,
+      meetingId: lease.meetingId,
+      mutationId: lease.mutationId,
+      ordinal: lease.sourceGeneration,
+      roomId: "room-1",
+      scopeId: "scope-1",
+      turn,
+      turnHash: lease.turnHash,
+    });
+  }
+
+  public apply(): Promise<{ readonly appliedAtMs: number }> {
     if (this.failApply) {
       throw new Error("synthetic apply failure");
     }
     this.applied += 1;
-    return Promise.resolve();
+    return Promise.resolve({ appliedAtMs: 2_500 });
   }
 
   public recordDeadLetter(_lease: LiveFinalizedMemoryLeaseV1, code: string): Promise<void> {
@@ -79,6 +96,19 @@ class MemoryStore implements LiveFinalizedMemorySyncStore {
 
   public recordRetry(_lease: LiveFinalizedMemoryLeaseV1, input: { readonly code: string }): Promise<void> {
     this.retries.push(input.code);
+    return Promise.resolve();
+  }
+
+
+  public recordOutcomeUnknown(
+    _lease: LiveFinalizedMemoryLeaseV1,
+    input: { readonly code: string },
+  ): Promise<void> {
+    this.retries.push(input.code);
+    return Promise.resolve();
+  }
+
+  public settleRemoval(): Promise<void> {
     return Promise.resolve();
   }
 }
@@ -147,5 +177,73 @@ describe("trusted live finalized memory", () => {
     await expect(worker.executeOnce()).resolves.toMatchObject({ status: "dead_letter" });
     expect(store.applied).toBe(0);
     expect(store.deadLetters).toEqual(["canonical_turn_mismatch"]);
+  });
+
+  it("reconciles an ambiguous commit before retrying its stable document", async () => {
+    const store = new MemoryStore();
+    store.next = { ...lease, attempt: 2, requiresReconciliation: true };
+    const calls: string[] = [];
+    const worker = new LiveFinalizedMemoryWorker(store, { hash: () => "canonical-hash" }, {
+      reconcile: (projection) => {
+        calls.push(`reconcile:${projection.documentId}`);
+        return Promise.resolve({ status: "applied" });
+      },
+      reconcileRemoval: () => Promise.resolve({ status: "applied" }),
+      remove: () => Promise.resolve({ status: "applied" }),
+      upsert: (projection) => {
+        calls.push(`upsert:${projection.documentId}`);
+        return Promise.resolve({ status: "applied" });
+      },
+    });
+
+    await expect(worker.executeOnce()).resolves.toMatchObject({ status: "applied" });
+    expect(calls).toEqual(["reconcile:opaque-document-1"]);
+  });
+
+  it("retries only after reconciliation proves an ambiguous mutation absent", async () => {
+    const store = new MemoryStore();
+    store.next = { ...lease, attempt: 2, requiresReconciliation: true };
+    const calls: string[] = [];
+    const worker = new LiveFinalizedMemoryWorker(store, { hash: () => "canonical-hash" }, {
+      reconcile: () => {
+        calls.push("reconcile");
+        return Promise.resolve({ status: "not_found" });
+      },
+      reconcileRemoval: () => Promise.resolve({ status: "applied" }),
+      remove: () => Promise.resolve({ status: "applied" }),
+      upsert: () => {
+        calls.push("upsert");
+        return Promise.resolve({ status: "applied" });
+      },
+    });
+
+    await expect(worker.executeOnce()).resolves.toMatchObject({ status: "applied" });
+    expect(calls).toEqual(["reconcile", "upsert"]);
+  });
+
+  it("reconciles generation retirement before repeating a delete", async () => {
+    const store = new MemoryStore();
+    store.next = {
+      ...lease,
+      attempt: 2,
+      operation: "delete",
+      requiresReconciliation: true,
+    };
+    const calls: string[] = [];
+    const worker = new LiveFinalizedMemoryWorker(store, { hash: () => "canonical-hash" }, {
+      reconcile: () => Promise.resolve({ status: "applied" }),
+      reconcileRemoval: () => {
+        calls.push("reconcile-removal");
+        return Promise.resolve({ status: "applied" });
+      },
+      remove: () => {
+        calls.push("remove");
+        return Promise.resolve({ status: "applied" });
+      },
+      upsert: () => Promise.resolve({ status: "applied" }),
+    });
+
+    await expect(worker.executeOnce()).resolves.toMatchObject({ status: "applied" });
+    expect(calls).toEqual(["reconcile-removal"]);
   });
 });

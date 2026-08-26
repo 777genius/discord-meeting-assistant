@@ -1,5 +1,9 @@
 export { HmacHistoricalOpaqueIds } from "./hmac-historical-ids.js";
 export {
+  InfinityContextLiveFinalizedMemoryAdapter,
+  type InfinityContextLiveFinalizedMemoryConfigV1,
+} from "./infinity-context-live-finalized-memory.js";
+export {
   InfinityContextHistoricalMemoryAdapter,
   type InfinityContextHistoricalMemoryConfigV1,
 } from "./infinity-context-historical-memory.js";

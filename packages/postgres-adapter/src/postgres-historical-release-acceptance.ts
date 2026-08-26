@@ -11,6 +11,8 @@ import {
   historicalSyncRowProjection,
   type HistoricalSyncRow,
 } from "./postgres-historical-memory-row.js";
+import { retireLiveFinalizedMemoryGeneration } from
+  "./postgres-live-memory-retirement.js";
 
 interface HistoricalMeetingMutationRow {
   readonly desired_generation: number;
@@ -90,5 +92,9 @@ export async function acceptHistoricalReleaseInTransaction(
       binding.evidencePolicyVersion, binding.scopeId, binding.roomId,
     ],
   );
+  // The accepted final generation and revocation of the transient live
+  // generation share this transaction. A query can observe one or the other,
+  // never both as current authority.
+  await retireLiveFinalizedMemoryGeneration(client, binding.meetingId, "ended");
   return "accepted";
 }

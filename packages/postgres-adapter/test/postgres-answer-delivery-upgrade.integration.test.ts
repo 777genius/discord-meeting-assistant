@@ -217,7 +217,7 @@ describe("schema 17 answer-delivery upgrade", () => {
       }
 
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36],
+        appliedVersions: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37],
         version: requiredPostgresSchemaVersion,
       });
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
@@ -537,7 +537,7 @@ describe("pre-0035 answer reconciliation quarantine upgrade", () => {
         );
       }
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36],
+        appliedVersions: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37],
         version: requiredPostgresSchemaVersion,
       });
       await expect(isolated.pool.query(

@@ -251,6 +251,11 @@
       "id": "ADR-0051",
       "path": "docs/decisions/0051-greeting-playback-and-recording-readiness.md",
       "immutableDigest": "sha256:3ce44eccffb3c99bef5c9bdfe3c64a9b3aa444c635c659ba4c6883285a6009aa"
+    },
+    {
+      "id": "ADR-0054",
+      "path": "docs/decisions/0054-official-sdk-live-memory-projection.md",
+      "immutableDigest": "sha256:ded5c7dd3363857ceecb27808ab154ff634e5700b304fc00bf77e4e11ccc889f"
     }
   ]
 }
