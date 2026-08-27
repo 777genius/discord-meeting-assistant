@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { QUALIFICATION_PROVIDER_INPUT_CONTRACT,
   assertQualificationProviderAccounting, measureQualificationModelInput,
-  qualificationProviderAccountingFixture, sha256, type QualityCampaignRelease } from
+  sha256, type QualityCampaignRelease } from
   "@discord-meeting/infinity-context-adapter/quality-campaign";
+import { qualificationProviderAccountingFixture } from
+  "./quality-campaign-provider-accounting-fixture.js";
 
 const d = (value: string) => sha256({ value });
 const RELEASE = Object.freeze({ answerImageSha256: d("answer-image"),

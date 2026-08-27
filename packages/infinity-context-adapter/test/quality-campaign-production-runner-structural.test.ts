@@ -19,7 +19,6 @@ import {
   holdoutReleaseExecutionBindingSha256,
   QUALIFICATION_PROVIDER_INPUT_CONTRACT,
   qualificationExecutionBinding,
-  qualificationProviderAccountingFixture,
   reconstructMetrics,
   runQualityCampaignProductionCli,
   sha256,
@@ -34,6 +33,8 @@ import {
   type QualityCampaignRelease,
   type RetainedArtifact,
 } from "@discord-meeting/infinity-context-adapter/quality-campaign";
+import { qualificationProviderAccountingFixture } from
+  "./quality-campaign-provider-accounting-fixture.js";
 
 const digest = (value: string) => sha256({ value });
 

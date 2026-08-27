@@ -9,8 +9,10 @@ import { promisify } from "node:util";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { artifactAttemptIdentity, attemptIdentity, qualificationProviderAccountingFixture,
+import { artifactAttemptIdentity, attemptIdentity,
   type QualityCampaignRelease } from "../src/quality-campaign/index.js";
+import { qualificationProviderAccountingFixture } from
+  "./quality-campaign-provider-accounting-fixture.js";
 
 const execute = promisify(execFile); const servers: ReturnType<typeof createServer>[] = [];
 let installed!: Awaited<ReturnType<typeof packAndInstall>>;

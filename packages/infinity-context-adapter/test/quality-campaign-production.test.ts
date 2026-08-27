@@ -12,8 +12,7 @@ import {
   canonicalJson, createHoldoutReport, DurableAttemptJournal, executeReservedExchange,
   executeDerivedCleanup, FROZEN_ANSWER_EXECUTION, publicKeyFingerprintSha256, reconstructMetrics,
   holdoutReleaseExecutionBindingSha256,
-  qualificationProviderAccountingFixture, QUALITY_AUTHORITY_ROLES,
-  QualityCampaignAuthorityPolicy, sha256,
+  QUALITY_AUTHORITY_ROLES, QualityCampaignAuthorityPolicy, sha256,
   verifyReleaseRoot,
   verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt, verifySpendReservation,
   verifyExactOutcomeAuthorities, verifyRetainedFinalAdjudication,
@@ -26,6 +25,8 @@ import {
   type ScheduledExactOutcome,
   type VerifiedSpendReservation,
 } from "../src/index.js";
+import { qualificationProviderAccountingFixture } from
+  "./quality-campaign-provider-accounting-fixture.js";
 
 const d = (character: string) => character.repeat(64);
 const CAMPAIGN_ROOT = d("1");

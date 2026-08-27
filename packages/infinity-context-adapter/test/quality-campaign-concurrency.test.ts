@@ -8,8 +8,10 @@ import { expect, it } from "vitest";
 
 import { attemptIdentity, canonicalJson, DurableAttemptJournal, executeReservedExchange,
   FROZEN_ANSWER_EXECUTION, publicKeyFingerprintSha256, QUALITY_AUTHORITY_ROLES,
-  QualityCampaignAuthorityPolicy, qualificationProviderAccountingFixture, sha256,
+  QualityCampaignAuthorityPolicy, sha256,
   verifySpendReservation } from "../src/index.js";
+import { qualificationProviderAccountingFixture } from
+  "./quality-campaign-provider-accounting-fixture.js";
 
 const digest = (value: string) => value.repeat(64);
 const campaignRootSha256 = digest("1"), provider = "pinned-provider";
