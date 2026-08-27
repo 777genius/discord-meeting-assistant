@@ -7,10 +7,11 @@ import { attemptIdentity } from "./execution.js";
 import { admitFinalCampaign } from "./final-admission.js";
 import { createHoldoutReport } from "./holdout.js";
 import { createOperatorSafeReceipt, type OperatorSafeReceipt } from "./operator-cli.js";
-import { loadPinnedProductionRelease, loadVerifiedProductionSpend } from
-  "./production-bootstrap.js";
+import { loadPinnedProductionRelease, loadVerifiedProductionSpend,
+  withProductionCallContext } from "./production-bootstrap.js";
 import { ProductionCheckpointStore } from "./production-checkpoints.js";
-import { executeDerivedCleanup } from "./production-cleanup.js";
+import { assertDistinctCleanupAuthorities, decodePersistedCleanup,
+  executeDerivedCleanup } from "./production-cleanup.js";
 import { reconstructExactHoldoutEvidence, reconstructExactMainEvidence,
   type ExactAdjudicationEvidence } from "./production-evidence.js";
 import { loadHoldoutExecutionEvidence, loadMainExecutionEvidence } from
@@ -21,9 +22,8 @@ import { loadCanonicalCustody, loadProductionAuthority, loadProductionAuthorityP
   loadProductionConfiguration, loadProductionHoldout, readProductionJson,
   type CanonicalCustodyEvidence,
   type ProductionOperatorConfiguration } from "./production-inputs.js";
-import type { CampaignCallContext, QualityCampaignProductionPorts } from "./production-ports.js";
+import type { QualityCampaignProductionPorts } from "./production-ports.js";
 import { executeProductionMain } from "./production-main-execution.js";
-const AUTHORITY_CALL_DEADLINE_MS = 120_000;
 
 export type ProductionCampaignCommand = "adjudicate" | "cleanup-absence" | "execute" |
   "adjudicate-resume" | "final-admission" | "holdout-adjudicate" | "holdout-cleanup" | "holdout-execute" |
@@ -35,7 +35,6 @@ export interface ProductionCompositionResult {
   readonly receipt: OperatorSafeReceipt;
   readonly status: "completed" | "outcome_unknown" | "paused";
 }
-
 interface ProductionCompositionInput {
   readonly command: ProductionCampaignCommand; readonly configurationPath: string;
   readonly ports: QualityCampaignProductionPorts;
@@ -129,7 +128,7 @@ Promise<ProductionCompositionResult> {
       phase: "retained", receipt });
     return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
   }
-  if (input.command === "cleanup-absence") {
+  if (input.command === "cleanup-absence" || input.command === "final-admission") {
     const retainedReceiptSha256 = await checkpoints.requirePhase(admitted.rootBindingSha256, "retained");
     const evidence = await loadMainExecutionEvidence({ ports: input.ports, campaignRootSha256:
       admitted.rootBindingSha256, questions: admitted.questions,
@@ -149,17 +148,27 @@ Promise<ProductionCompositionResult> {
     spendReservationSha256ByRepetition: spendDigests });
     if (sha256(retentionReceipt(admitted.rootBindingSha256, reconstructed)) !==
       retainedReceiptSha256) {throw new Error("exact retained evidence changed before cleanup");}
-    const cleanup = await withCallContext(deadline.campaignDeadlineEpochMs, async (context) =>
-      await executeDerivedCleanup({ absenceAuthority,
-        campaignRootSha256: admitted.rootBindingSha256, context, policy,
-        deletion: input.ports.deletion, observation: input.ports.absence,
-        protectedEvidence: custody.protectedEvidence,
-        releaseRootSha256: verifiedRelease.releaseRootSha256,
-        targetInventoryAuthority: deletionAuthority,
-        targetInventoryAuthorityKeySha256:
-          verifiedRelease.release.targetInventoryAuthorityKeySha256,
-        targetInventoryReceipt: await readProductionJson(config.cleanupPlanPath,
-          "campaign target inventory") }));
+    const cleanup = input.command === "cleanup-absence" ?
+      await withProductionCallContext(deadline.campaignDeadlineEpochMs, async (context) =>
+        await executeDerivedCleanup({ absenceAuthority,
+          campaignRootSha256: admitted.rootBindingSha256, context, policy,
+          deletion: input.ports.deletion, observation: input.ports.absence,
+          protectedEvidence: custody.protectedEvidence,
+          releaseRootSha256: verifiedRelease.releaseRootSha256,
+          targetInventoryAuthority: deletionAuthority,
+          targetInventoryAuthorityKeySha256:
+            verifiedRelease.release.targetInventoryAuthorityKeySha256,
+          targetInventoryReceipt: await readProductionJson(config.cleanupPlanPath,
+            "campaign target inventory") })) : decodePersistedCleanup(
+        await checkpoints.requireEvidencePhase(admitted.rootBindingSha256, "cleaned"));
+    if (input.command === "cleanup-absence") {
+      const receipt = createOperatorSafeReceipt(admitted.rootBindingSha256, {
+        cleanupReceiptSha256: cleanup.absenceReceiptSha256,
+        targetCount: cleanup.targetCount });
+      await checkpoints.completeEvidencePhase({ campaignRootSha256: admitted.rootBindingSha256,
+        evidence: cleanup, phase: "cleaned", receipt });
+      return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
+    }
     const repetitionAuthority = await loadProductionAuthority(config.repetitionAuthorityPath);
     const spendReservationSha256ByRepetition = [spendDigests[1], spendDigests[2], spendDigests[3]] as const;
     const final = await admitFinalCampaign(policy, { artifactCustody: input.ports.artifactCustody,
@@ -195,7 +204,7 @@ Promise<ProductionCompositionResult> {
       verifiedRelease.release.targetInventoryAuthorityKeySha256,
     verifiedRelease: verifiedRelease.release });
   if (holdoutResult !== null) {return holdoutResult;}
-  if (input.command === "status" || input.command === "final-admission") {
+  if (input.command === "status") {
     const qualifiedCheckpointSha256 = await checkpoints.requirePhase(
       admitted.rootBindingSha256, "qualified");
     return { blockerCode: "none", receipt: createOperatorSafeReceipt(
@@ -294,7 +303,7 @@ Promise<ProductionCompositionResult | null> {
       holdout.authorization.derivedArtifactInventorySha256) {
       throw new Error("holdout derived artifact inventory was substituted or replayed");
     }
-    const cleanup = await withCallContext(input.deadlineEpochMs, async (context) =>
+    const cleanup = await withProductionCallContext(input.deadlineEpochMs, async (context) =>
       await executeDerivedCleanup({ absenceAuthority: input.absenceAuthority,
         campaignRootSha256: holdoutRootSha256, context, deletion: input.ports.deletion,
         policy: input.policy,
@@ -340,7 +349,7 @@ async function adjudicateAttempts(input: { readonly attempts: ReturnType<typeof 
   readonly spendReservations: readonly unknown[] }):
 Promise<readonly ExactAdjudicationEvidence[]> {
   return await boundedMap(input.attempts, input.concurrency, async (attempt) =>
-    await withCallContext(input.deadlineEpochMs, async (context) => {
+    await withProductionCallContext(input.deadlineEpochMs, async (context) => {
       const receipts = await input.ports.review.receipts(attempt.attemptId, context);
       const result = await adjudicateOutcome(input.policy, { attempt,
         effectVerificationEpochMs: input.effectVerificationEpochMs,
@@ -395,22 +404,4 @@ async function boundedMap<T, R>(values: readonly T[], concurrency: number,
       output[index] = await task(value);}
   }));
   return output;
-}
-
-async function withCallContext<T>(sharedDeadlineEpochMs: number,
-  task: (context: CampaignCallContext) => Promise<T>): Promise<T> {
-  const deadlineEpochMs = Math.min(sharedDeadlineEpochMs, Date.now() + AUTHORITY_CALL_DEADLINE_MS);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {controller.abort(new Error("production authority deadline exceeded"));},
-    Math.max(0, deadlineEpochMs - Date.now()));
-  try {return await task({ deadlineEpochMs, signal: controller.signal });}
-  finally {clearTimeout(timeout);}
-}
-
-function assertDistinctCleanupAuthorities(absence: AdmissionAuthority,
-  deletion: AdmissionAuthority, ports: QualityCampaignProductionPorts): void {
-  if (absence.keyId === deletion.keyId || absence.publicKeyPem === deletion.publicKeyPem ||
-    ports.absence.authorityId !== absence.keyId || ports.deletion.authorityId !== deletion.keyId) {
-    throw new Error("deletion and absence authorities and keys must be independent");
-  }
 }

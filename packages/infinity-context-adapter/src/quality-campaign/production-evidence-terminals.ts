@@ -1,4 +1,4 @@
-import type { CampaignQuestion } from "./admission.js";
+import type { CampaignQuestion } from "./campaign-admission-policy.js";
 import { digest, exactRecord, sha256 } from "./canonical.js";
 import { attemptIdentity, verifyExternalSignedValue } from
   "./execution.js";

@@ -94,9 +94,11 @@ describe("installed production quality-campaign CLI", () => {
     expect(fixture.reviewCalls.second).toBe(720);
     expect(fixture.reviewCalls.resolver).toBe(3);
     expect(await fixture.cli("retention", "retention-status.json")).toBe(20);
-    expect(await fixture.cli("cleanup-absence", "cleanup-status.json")).toBe(0);
+    expect(await fixture.cli("cleanup-absence", "cleanup-status.json")).toBe(20);
     expect(fixture.deletedIds.toSorted()).toEqual(["derived-index", "projection", "prompt"]);
     expect(fixture.observedIds.toSorted()).toEqual(fixture.deletedIds.toSorted());
+    expect(await fixture.cli("final-admission", "final-admission-status.json")).toBe(0);
+    expect(fixture.deletedIds).toHaveLength(3);
 
     expect(fixture.holdoutCalls).toHaveLength(0);
     expect(await fixture.cli("holdout-execute", "holdout-execute-status.json")).toBe(20);
@@ -108,13 +110,14 @@ describe("installed production quality-campaign CLI", () => {
     expect(await fixture.cli("holdout-status", "holdout-status.json")).toBe(0);
 
     for (const statusName of ["execute-status.json", "adjudicate-status.json",
-      "retention-status.json", "cleanup-status.json", "holdout-execute-status.json",
+      "retention-status.json", "cleanup-status.json", "final-admission-status.json",
+      "holdout-execute-status.json",
       "holdout-adjudicate-status.json", "holdout-cleanup-status.json", "holdout-status.json"]) {
       const status = await readFile(join(fixture.root, statusName), "utf8");
       expect(status).not.toMatch(/question|rubric|transcript|credential|secret|answer text/iu);
     }
     fixture.releaseEvidence();
-  }, 180_000);
+  }, 600_000);
 
   it("durably blocks an ambiguous outcome without repeating it or leaking status", async () => {
     const fixture = await createFixture();

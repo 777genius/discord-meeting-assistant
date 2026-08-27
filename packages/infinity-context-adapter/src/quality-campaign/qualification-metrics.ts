@@ -1,4 +1,4 @@
-import type { CampaignQuestion } from "./admission.js";
+import type { CampaignQuestion } from "./campaign-admission-policy.js";
 import type { ExpectedOutcomeInventory } from "./retention.js";
 import { QUALIFICATION_THRESHOLDS } from "./qualification-contract.js";
 

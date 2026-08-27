@@ -1,6 +1,6 @@
 /* oxlint-disable max-lines -- closed final-admission decoders stay co-located with the only API */
 import { MAIN_CARDINALITY, type CampaignQuestion,
-  validateCampaignQuestion } from "./admission.js";
+  validateCampaignQuestion } from "./campaign-admission-policy.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { admitCumulativeSpend, type CumulativeSpendLedgerPort } from "./cumulative-spend.js";
 import { verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt } from "./cleanup-evidence.js";

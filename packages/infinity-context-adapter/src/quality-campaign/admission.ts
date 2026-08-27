@@ -2,25 +2,14 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 
-import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import { canonicalJson, digest, exactRecord, sha256 } from "./canonical.js";
+import { type CampaignQuestion, MAIN_CARDINALITY,
+  validateCampaignQuestion } from "./campaign-admission-policy.js";
 import { QualityCampaignAuthorityPolicy } from "./release.js";
 
-export const MAIN_CARDINALITY = Object.freeze({
-  automatic: 200,
-  independentReview: 40,
-  perRepetition: 240,
-  repetitions: 3,
-  total: 720,
-});
-export const HOLDOUT_CARDINALITY = 30;
-
-export interface CampaignQuestion {
-  readonly locale: "en" | "mixed" | "ru";
-  readonly questionDigestSha256: string;
-  readonly questionId: string;
-  readonly rubricDigestSha256: string;
-  readonly source: "automatic" | "independent_review";
-}
+export { HOLDOUT_CARDINALITY, MAIN_CARDINALITY, validateCampaignQuestion } from
+  "./campaign-admission-policy.js";
+export type { CampaignQuestion } from "./campaign-admission-policy.js";
 
 interface SignedDocument<T> {
   readonly payload: T;
@@ -180,26 +169,6 @@ async function readQuestions(base: string, path: string, source: CampaignQuestio
   if (!Array.isArray(value) || value.length !== count) {throw new Error("sealed corpus cardinality is invalid");}
   return Object.freeze(value.map((item) => validateCampaignQuestion(item, source)));
 }
-
-export function validateCampaignQuestion(value: unknown,
-  source?: CampaignQuestion["source"]): CampaignQuestion {
-  const record = exactRecord(value, ["locale", "questionDigestSha256", "questionId",
-    "rubricDigestSha256", "source"], "sealed question");
-  if (!ALLOWED_QUESTION_SOURCES.includes(record.source as CampaignQuestion["source"]) ||
-    source !== undefined && record.source !== source ||
-    !ALLOWED_QUESTION_LOCALES.includes(record.locale as CampaignQuestion["locale"])) {
-    throw new Error("sealed question provenance is invalid");
-  }
-  return Object.freeze({ locale: record.locale as CampaignQuestion["locale"],
-    questionDigestSha256: digest(record.questionDigestSha256, "question digest"),
-    questionId: safeId(record.questionId, "question ID"),
-    rubricDigestSha256: digest(record.rubricDigestSha256, "rubric digest"),
-    source: record.source as CampaignQuestion["source"] });
-}
-
-const ALLOWED_QUESTION_LOCALES: readonly CampaignQuestion["locale"][] = ["en", "mixed", "ru"];
-const ALLOWED_QUESTION_SOURCES: readonly CampaignQuestion["source"][] =
-  ["automatic", "independent_review"];
 
 async function readSigned(base: string, path: string, authority: AdmissionAuthority):
 Promise<SignedDocument<unknown>> {

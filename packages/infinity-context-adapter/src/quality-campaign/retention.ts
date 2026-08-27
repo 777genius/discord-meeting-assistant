@@ -1,11 +1,11 @@
 /* oxlint-disable max-lines -- AES opening and closed artifact-chain validation form one boundary */
 import { createDecipheriv } from "node:crypto";
 
-import { MAIN_CARDINALITY } from "./admission.js";
+import { MAIN_CARDINALITY } from "./campaign-admission-policy.js";
 import { verifyDurableReservedExchangeEvidence,
   verifyRetainedFinalAdjudication } from "./adjudication.js";
 import { artifactAttemptIdentity, type ArtifactAad, type ArtifactReceipt,
-} from "./artifacts.js";
+} from "./artifact-policy.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import type { DurableSpendClaim, ExpectedSpendClaim } from "./cumulative-spend.js";
 import { assertAttemptIdentity, type AttemptIdentity, type VerifiedSpendReservation,

@@ -1,4 +1,4 @@
-import type { CampaignQuestion } from "./admission.js";
+import type { CampaignQuestion } from "./campaign-admission-policy.js";
 import type { PinnedReleaseDocument, QualityCampaignAuthorityPolicy } from "./release.js";
 import type { VerifiedSpendReservation } from "./execution.js";
 import type { CampaignClockPort, CampaignProviderPorts } from "./production-ports.js";

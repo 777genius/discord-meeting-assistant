@@ -254,23 +254,17 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign
     entrypoints:
       - packages/infinity-context-adapter/src/quality-campaign/adjudication.ts
-      - packages/infinity-context-adapter/src/quality-campaign/admission.ts
-      - packages/infinity-context-adapter/src/quality-campaign/artifacts.ts
-      - packages/infinity-context-adapter/src/quality-campaign/attempt-budget-ledger.ts
-      - packages/infinity-context-adapter/src/quality-campaign/attempt-journal.ts
+      - packages/infinity-context-adapter/src/quality-campaign/artifact-policy.ts
+      - packages/infinity-context-adapter/src/quality-campaign/campaign-admission-policy.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical.ts
       - packages/infinity-context-adapter/src/quality-campaign/cleanup-evidence.ts
       - packages/infinity-context-adapter/src/quality-campaign/cumulative-spend.ts
       - packages/infinity-context-adapter/src/quality-campaign/execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/final-admission.ts
       - packages/infinity-context-adapter/src/quality-campaign/holdout.ts
-      - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
-      - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-evidence.ts
-      - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
-      - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-evidence-terminals.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-ports.ts
-      - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
       - packages/infinity-context-adapter/src/quality-campaign/qualification-contract.ts
       - packages/infinity-context-adapter/src/quality-campaign/qualification-metrics.ts
       - packages/infinity-context-adapter/src/quality-campaign/release.ts
@@ -280,8 +274,6 @@ boundaries:
       packages: []
       builtins:
         - node:crypto
-        - node:fs/promises
-        - node:path
       runtimeReferences: []
   - id: composition.infinity-quality-campaign
     roots:
@@ -307,17 +299,35 @@ boundaries:
       runtimeReferences: []
   - id: adapters.infinity-quality-campaign
     roots:
+      - packages/infinity-context-adapter/src/quality-campaign/admission.ts
+      - packages/infinity-context-adapter/src/quality-campaign/artifacts.ts
+      - packages/infinity-context-adapter/src/quality-campaign/attempt-budget-ledger.ts
+      - packages/infinity-context-adapter/src/quality-campaign/attempt-journal.ts
+      - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-authentication.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-evidence-custody.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
     entrypoints:
+      - packages/infinity-context-adapter/src/quality-campaign/admission.ts
+      - packages/infinity-context-adapter/src/quality-campaign/artifacts.ts
+      - packages/infinity-context-adapter/src/quality-campaign/attempt-budget-ledger.ts
+      - packages/infinity-context-adapter/src/quality-campaign/attempt-journal.ts
+      - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-authentication.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-evidence-custody.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
     allow:
       boundaries:
         - application.infinity-quality-campaign

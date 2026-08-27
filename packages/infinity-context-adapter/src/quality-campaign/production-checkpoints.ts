@@ -51,6 +51,18 @@ export class ProductionCheckpointStore {
     return sha256(value);
   }
 
+  public async completeEvidencePhase(input: { readonly campaignRootSha256: string;
+    readonly evidence: unknown; readonly phase: string;
+    readonly receipt: Readonly<Record<string, unknown>> }): Promise<string> {
+    const value = Object.freeze({ campaignRootSha256: input.campaignRootSha256,
+      evidence: input.evidence, evidenceSha256: sha256(input.evidence), phase: input.phase,
+      receiptSha256: sha256(input.receipt), schemaVersion:
+      "meeting_knowledge.semantic_quality_evidence_phase_checkpoint.v1" });
+    await createOnly(join(this.root, "phases", `${input.phase}-evidence.json`),
+      canonicalJson(value));
+    return sha256(value);
+  }
+
   public async requirePhase(campaignRootSha256: string, phase: string): Promise<string> {
     const value = await optional(join(this.root, "phases", `${phase}.json`));
     if (value === null) {throw new Error(`required ${phase} phase is incomplete`);}
@@ -62,6 +74,20 @@ export class ProductionCheckpointStore {
       throw new Error("phase checkpoint is invalid or belongs to another campaign");
     }
     return record.receiptSha256;
+  }
+
+  public async requireEvidencePhase(campaignRootSha256: string, phase: string): Promise<unknown> {
+    const value = await optional(join(this.root, "phases", `${phase}-evidence.json`));
+    if (value === null) {throw new Error(`required ${phase} evidence phase is incomplete`);}
+    const record = exactRecord(value, ["campaignRootSha256", "evidence", "evidenceSha256",
+      "phase", "receiptSha256", "schemaVersion"], "evidence phase checkpoint");
+    if (record.campaignRootSha256 !== campaignRootSha256 || record.phase !== phase ||
+      record.schemaVersion !== "meeting_knowledge.semantic_quality_evidence_phase_checkpoint.v1" ||
+      record.evidenceSha256 !== sha256(record.evidence) ||
+      typeof record.receiptSha256 !== "string") {
+      throw new Error("evidence phase checkpoint is invalid or belongs to another campaign");
+    }
+    return record.evidence;
   }
 }
 

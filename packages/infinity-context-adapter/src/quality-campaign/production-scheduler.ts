@@ -1,4 +1,4 @@
-import { MAIN_CARDINALITY, type CampaignQuestion } from "./admission.js";
+import { MAIN_CARDINALITY, type CampaignQuestion } from "./campaign-admission-policy.js";
 import { canonicalJson, digest, exactRecord, sha256 } from "./canonical.js";
 import { DurableAttemptJournal } from "./attempt-journal.js";
 import { attemptIdentity, executeReservedExchange } from "./execution.js";

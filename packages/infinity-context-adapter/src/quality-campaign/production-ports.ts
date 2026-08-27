@@ -3,6 +3,7 @@ import type { ProviderExchangePort } from "./execution.js";
 import type { QualityCampaignRelease } from "./release.js";
 import type { ArtifactCustodyPort } from "./retention.js";
 import type { ExactCampaignEvidence } from "./production-evidence.js";
+import type { PROTECTED_SOURCE_KINDS } from "./cleanup-evidence.js";
 
 export interface CampaignCallContext {
   readonly deadlineEpochMs: number;
@@ -39,6 +40,13 @@ export interface CampaignReviewPorts {
 export interface DerivedCampaignArtifact {
   readonly artifactId: string;
   readonly kind: "derived_index" | "temporary_projection" | "temporary_prompt";
+}
+
+export interface ProtectedCampaignEvidence {
+  readonly artifactId: string;
+  readonly artifactSha256: string;
+  readonly kind: typeof PROTECTED_SOURCE_KINDS[number] | "frozen_snapshot" |
+    "frozen_signed_root";
 }
 
 export interface CampaignDeletionPort {

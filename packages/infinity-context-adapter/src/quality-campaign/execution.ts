@@ -1,6 +1,5 @@
 import { createPublicKey, verify } from "node:crypto";
 
-import type { DurableAttemptJournal } from "./attempt-journal.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { FROZEN_ANSWER_EXECUTION, type PinnedReleaseDocument,
   QualityCampaignAuthorityPolicy, verifyPinnedReleaseDocument } from "./release.js";
@@ -89,6 +88,29 @@ export interface AttemptIdentity {
   readonly spendReservationSha256: string;
 }
 
+export interface AttemptReservation extends AttemptIdentity {
+  readonly requestDigestSha256: string; readonly state: "provider_reserved";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3";
+}
+
+/** Consumer-owned durable-attempt seam; filesystem publication belongs to an outbound adapter. */
+export interface AttemptJournalPort {
+  readonly authorityPolicy: QualityCampaignAuthorityPolicy;
+  admit(input: { readonly identity: AttemptIdentity; readonly requestDigestSha256: string;
+    readonly requestedEncryptedBytes: number; readonly requestedTokens: number;
+    readonly spend: VerifiedSpendReservation }): Promise<{ readonly admitted: boolean;
+      readonly reservation?: AttemptReservation; readonly state: JournalState }>;
+  blockEvidence(reservation: AttemptReservation): Promise<void>;
+  recoveredState(input: { readonly identity: AttemptIdentity;
+    readonly release: PinnedReleaseDocument;
+    readonly requestDigestSha256: string }): Promise<JournalState>;
+  terminal(input: { readonly identity: AttemptIdentity; readonly reservation: AttemptReservation;
+    readonly release: PinnedReleaseDocument; readonly requestBytes: Uint8Array;
+    readonly resultEnvelopeBytes: Uint8Array; readonly signedResult: unknown;
+    readonly state: TerminalState;
+    readonly expectedResultDigestSha256: string }): Promise<{ readonly state: TerminalState }>;
+}
+
 export function attemptIdentity(input: Omit<AttemptIdentity, "attemptId">): AttemptIdentity {
   digest(input.campaignRootSha256, "campaign root"); digest(input.questionDigestSha256,
     "question digest"); digest(input.releaseRootSha256, "release root");
@@ -127,7 +149,7 @@ export interface ProviderEffectReservation {
 export async function executeReservedExchange(input: { readonly campaignRootSha256: string;
   readonly deadlineEpochMs: number;
   readonly effectReservation: ProviderEffectReservation; readonly identity: AttemptIdentity;
-  readonly journal: DurableAttemptJournal; readonly nowEpochMs: number;
+  readonly journal: AttemptJournalPort; readonly nowEpochMs: number;
   readonly port: ProviderExchangePort; readonly provider: string;
   readonly release: PinnedReleaseDocument; readonly request: Uint8Array;
   readonly signal: AbortSignal;
@@ -199,7 +221,7 @@ function verifyEffectAuthorization(input: { readonly campaignRootSha256: string;
   readonly deadlineEpochMs: number;
   readonly effectReservation: ProviderEffectReservation; readonly identity: AttemptIdentity;
   readonly nowEpochMs: number; readonly provider: string;
-  readonly journal: DurableAttemptJournal; readonly release: PinnedReleaseDocument;
+  readonly journal: AttemptJournalPort; readonly release: PinnedReleaseDocument;
   readonly signal: AbortSignal;
   readonly spendReservation: unknown }): { readonly releaseRootSha256: string;
     readonly spendReservationSha256: string; readonly spend: VerifiedSpendReservation;

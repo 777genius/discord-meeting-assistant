@@ -1,6 +1,6 @@
 /* oxlint-disable max-lines -- signed decisions and durable exchange verification form one boundary */
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
-import { artifactAttemptIdentity } from "./artifacts.js";
+import { artifactAttemptIdentity } from "./artifact-policy.js";
 import { assertAttemptIdentity, type AttemptIdentity, type SignedValue,
   verifyExternalSignedValue, verifySpendReservation } from "./execution.js";
 import { type PinnedReleaseDocument, type QualityAuthorityRole,

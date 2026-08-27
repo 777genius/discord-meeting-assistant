@@ -1,6 +1,6 @@
 import { canonicalJson, digest, exactRecord, sha256 } from "./canonical.js";
 import { HOLDOUT_CARDINALITY, type CampaignQuestion,
-  validateCampaignQuestion } from "./admission.js";
+  validateCampaignQuestion } from "./campaign-admission-policy.js";
 import { verifyExternalSignedValue } from "./execution.js";
 import { type QualityCampaignRelease, QualityCampaignAuthorityPolicy } from "./release.js";
 import { MAX_PROVIDER_INPUT_BYTES } from "./retention.js";

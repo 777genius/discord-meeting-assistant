@@ -7,17 +7,15 @@ import { claimDurableAttemptBudget, loadAdmittedAttemptBudgetClaims } from
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import type { CumulativeSpendLedgerPort, DurableSpendClaim } from "./cumulative-spend.js";
 import { assertAttemptIdentity, CALL_KINDS, type AttemptIdentity, type CallKind,
-  type JournalState, type SignedValue, type TerminalState,
+  type AttemptJournalPort, type AttemptReservation, type JournalState, type SignedValue,
+  type TerminalState,
   type VerifiedSpendReservation, verifyExternalSignedValue } from "./execution.js";
 import { assertQualificationProviderAccounting,
   type QualificationProviderAccounting } from "./qualification-contract.js";
 import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
   type QualityAuthorityRole, verifyPinnedReleaseDocument } from "./release.js";
 
-interface ReservationRecord extends AttemptIdentity {
-  readonly requestDigestSha256: string; readonly state: "provider_reserved";
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3";
-}
+type ReservationRecord = AttemptReservation;
 
 export interface ProviderTerminalPayload extends Omit<ReservationRecord, "schemaVersion" | "state"> {
   readonly providerAccounting: QualificationProviderAccounting;
@@ -52,7 +50,7 @@ interface BlockedRecord {
   readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_blocked.v1";
 }
 
-export class DurableAttemptJournal implements CumulativeSpendLedgerPort {
+export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpendLedgerPort {
   private readonly root: string;
   public constructor(root: string, public readonly authorityPolicy: QualityCampaignAuthorityPolicy,
     private readonly resultAuthorityRole: Extract<QualityAuthorityRole,

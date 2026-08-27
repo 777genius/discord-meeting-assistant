@@ -338,7 +338,8 @@ external effect, and 1 is invalid or failed. Private text is never a status fiel
 | `adjudicated` | `real-adjudicate` | Two signed exact-outcome reviews exist for every answer, with an independent resolver for disagreement |
 | `awaiting_retention` | `real-adjudicate` | The exact retained-artifact inventory binding is published; exit 20 |
 | `retained_awaiting_cleanup` | `real-retention` | A signed retention receipt was consumed and a separately authorized derived-index cleanup request is published; exit 20 |
-| `cleaned_qualified` | `real-cleanup` | Signed cleanup/canonical-absence evidence was consumed and every threshold passed locally |
+| `cleaned_awaiting_admission` | `real-cleanup` | Signed cleanup/canonical-absence evidence is durably retained; exit 20 is a pause, not qualification |
+| `cleaned_qualified` | `real-final-admission` | Durable cleanup evidence and every independently signed admission input were consumed and every threshold passed locally |
 | `terminal_unqualified` | `real-cleanup` | Evidence was retained and derived cleanup proved, but a local gate failed; exit 1 |
 
 Every transition binds the exact root and previous transition digest. Files are

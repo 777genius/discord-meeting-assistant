@@ -1,16 +1,13 @@
 import { PROTECTED_SOURCE_KINDS, type ProtectedOriginal,
   verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt } from "./cleanup-evidence.js";
-import { canonicalJson, digest, safeId, sha256 } from "./canonical.js";
+import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import type { CampaignDeletionPort, CanonicalAbsencePort,
-  CampaignCallContext } from "./production-ports.js";
+  CampaignCallContext, ProtectedCampaignEvidence, QualityCampaignProductionPorts } from
+  "./production-ports.js";
 import type { QualityCampaignAuthorityPolicy } from "./release.js";
 
-export interface ProtectedCampaignEvidence {
-  readonly artifactId: string;
-  readonly artifactSha256: string;
-  readonly kind: typeof PROTECTED_SOURCE_KINDS[number] | "frozen_snapshot" |
-    "frozen_signed_root";
-}
+
+export type { ProtectedCampaignEvidence } from "./production-ports.js";
 
 export interface StrictCleanupReceipt {
   readonly absenceReceiptSha256: string;
@@ -21,6 +18,29 @@ export interface StrictCleanupReceipt {
   readonly targetCount: number;
   readonly cleanupReceipt: unknown;
   readonly targetInventoryReceipt: unknown;
+}
+
+export function decodePersistedCleanup(value: unknown): StrictCleanupReceipt {
+  const cleanup = exactRecord(value, ["absenceReceiptSha256", "absentArtifactIdsSha256",
+    "campaignRootSha256", "cleanupManifestSha256", "cleanupReceipt",
+    "protectedEvidenceSha256", "targetCount", "targetInventoryReceipt"],
+  "persisted cleanup evidence");
+  if ([cleanup.absenceReceiptSha256, cleanup.absentArtifactIdsSha256,
+    cleanup.campaignRootSha256, cleanup.cleanupManifestSha256,
+    cleanup.protectedEvidenceSha256].some((item) => typeof item !== "string") ||
+    !Number.isSafeInteger(cleanup.targetCount) || Number(cleanup.targetCount) < 1) {
+    throw new Error("persisted cleanup evidence is invalid");
+  }
+  return Object.freeze(cleanup as unknown as StrictCleanupReceipt);
+}
+
+export function assertDistinctCleanupAuthorities(absence: { readonly keyId: string;
+  readonly publicKeyPem: string }, deletion: { readonly keyId: string;
+  readonly publicKeyPem: string }, ports: QualityCampaignProductionPorts): void {
+  if (absence.keyId === deletion.keyId || absence.publicKeyPem === deletion.publicKeyPem ||
+    ports.absence.authorityId !== absence.keyId || ports.deletion.authorityId !== deletion.keyId) {
+    throw new Error("deletion and absence authorities and keys must be independent");
+  }
 }
 
 export async function executeDerivedCleanup(input: {

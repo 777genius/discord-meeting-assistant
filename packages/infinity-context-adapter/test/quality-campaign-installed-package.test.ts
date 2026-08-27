@@ -9,7 +9,8 @@ import { promisify } from "node:util";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { artifactAttemptIdentity, attemptIdentity } from "../src/quality-campaign/index.js";
+import { artifactAttemptIdentity, attemptIdentity, qualificationProviderAccountingFixture,
+  type QualityCampaignRelease } from "../src/quality-campaign/index.js";
 
 const execute = promisify(execFile); const servers: ReturnType<typeof createServer>[] = [];
 let installed!: Awaited<ReturnType<typeof packAndInstall>>;
@@ -67,6 +68,19 @@ describe("packed production quality-campaign entrypoint", () => {
     await expect(execute(process.execPath, ["--input-type=module", "--eval", script], {
       cwd: installed.consumerRoot, timeout: 10_000 })).rejects.toMatchObject({ code: 1 });
   }, 60_000);
+
+  it("routes installed adjudication and final admission commands and fails closed on missing phases",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "quality-packed-phases-"));
+      const fixture = await createPackedPreflightFixture(root, installed.consumerRoot);
+      for (const command of ["adjudicate", "final-admission"] as const) {
+        await expect(execute(installed.bin, [command, fixture.phasePath,
+          join(root, `${command}-status.json`)], { timeout: 30_000 }))
+          .rejects.toMatchObject({ code: 1, stderr: "" });
+      }
+      expect(fixture.releaseRequests()).toBe(2);
+    }, 60_000);
+
 });
 
 async function packAndInstall() {
@@ -108,6 +122,9 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
           schemaVersion: "meeting_knowledge.semantic_quality_packed_result.v1" }));
         const resultDigestSha256 = sha256(resultEnvelope);
         const signedResult = providerSigner!.signed({ ...body.attempt,
+          providerAccounting: qualificationProviderAccountingFixture(
+            release as QualityCampaignRelease, String(body.attempt.callKind) as
+              "answer" | "capability" | "retrieval"),
           requestDigestSha256: body.requestDigestSha256, resultDigestSha256,
           schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
           state: "terminal_success" });
@@ -115,7 +132,8 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
           resultEnvelopeBase64: resultEnvelope.toString("base64"), signedResult }));
       }); return;
     }
-    response.writeHead(500).end();});
+    response.writeHead(500).end();
+  });
   servers.push(server); await new Promise<void>((resolve) => {server.listen(0, "127.0.0.1",
     () => {resolve();});}); const address = server.address();
   if (address === null || typeof address === "string") {throw new Error("fake HTTP bind failed");}

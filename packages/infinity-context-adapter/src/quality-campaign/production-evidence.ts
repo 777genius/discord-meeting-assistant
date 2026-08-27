@@ -1,5 +1,5 @@
 /* oxlint-disable max-lines -- one closed evidence contract keeps main and holdout reconstruction identical */
-import type { CampaignQuestion } from "./admission.js";
+import type { CampaignQuestion } from "./campaign-admission-policy.js";
 import type { FinalAdjudicationEnvelope } from "./adjudication.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { admitCumulativeSpend, type CumulativeSpendLedgerPort } from "./cumulative-spend.js";

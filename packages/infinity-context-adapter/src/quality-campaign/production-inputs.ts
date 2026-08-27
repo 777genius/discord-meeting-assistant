@@ -9,8 +9,7 @@ import { verifyExternalSignedValue, verifySpendReservation } from "./execution.j
 import type { HoldoutAuthorization } from "./holdout.js";
 import { type QualityCampaignRelease, QUALITY_AUTHORITY_ROLES,
   QualityCampaignAuthorityPolicy } from "./release.js";
-import type { ProtectedCampaignEvidence } from "./production-cleanup.js";
-import type { DerivedCampaignArtifact, QualityCampaignProductionPorts } from
+import type { ProtectedCampaignEvidence, QualityCampaignProductionPorts } from
   "./production-ports.js";
 
 export interface ProductionOperatorConfiguration {
@@ -149,16 +148,6 @@ function decodeProtectedEvidence(value: unknown): readonly ProtectedCampaignEvid
   }
   return Object.freeze(evidence);
 }
-
-export async function loadCleanupTargets(path: string):
-Promise<readonly DerivedCampaignArtifact[]> {
-  const record = exactRecord(await readProductionJson(path, "cleanup plan"),
-    ["schemaVersion", "targets"], "cleanup plan");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_cleanup_plan.v2" ||
-    !Array.isArray(record.targets)) {throw new Error("cleanup plan is invalid");}
-  return record.targets as DerivedCampaignArtifact[];
-}
-
 export async function loadProductionHoldout(input: { readonly admitted: AdmittedMainCampaign;
   readonly authority: AdmissionAuthority; readonly custody: CanonicalCustodyEvidence;
   readonly nowEpochMs: number; readonly path: string;
@@ -272,7 +261,7 @@ Promise<readonly unknown[]> {
   if (!Array.isArray(value)) {throw new Error(`${label} is invalid`);}
   return value as readonly unknown[];
 }
-export async function readProductionText(path: string, label: string): Promise<string> {
+async function readProductionText(path: string, label: string): Promise<string> {
   try {return await readFile(absolute(path, label), "utf8");}
   catch {throw new Error(`${label} is unavailable`);}
 }
