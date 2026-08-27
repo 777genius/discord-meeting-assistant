@@ -18,6 +18,7 @@ COPY --chown=10001:10001 . .
 # before image construction; BuildKit intentionally has no Docker socket.
 RUN node vendor/infinity-context/prepare-official-sdk.mjs \
   && pnpm install --frozen-lockfile --filter @discord-meeting/meeting-platform... \
+  && pnpm --filter @discord-meeting/infinity-context-adapter build \
   && pnpm --filter @discord-meeting/meeting-platform check:image \
   && node vendor/infinity-context/prepare-official-sdk.mjs --cleanup-source \
   && test ! -e vendor/infinity-context/.upstream \
