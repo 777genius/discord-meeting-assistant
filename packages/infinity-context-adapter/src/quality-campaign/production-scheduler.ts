@@ -6,7 +6,7 @@ import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
   type QualityCampaignRelease,
   verifyPinnedReleaseDocument } from "./release.js";
 import type { CampaignClockPort, CampaignProviderPorts } from "./production-ports.js";
-import type { ExactTerminalEvidence } from "./production-evidence.js";
+import type { ExactTerminalEvidence, ScheduledExactOutcome } from "./production-evidence.js";
 import { QUALIFICATION_PROVIDER_INPUT_CONTRACT, qualificationExecutionBinding } from
   "./qualification-contract.js";
 
@@ -29,12 +29,6 @@ export interface ScheduledCampaignResult {
   readonly maximumObservedConcurrency: number;
   readonly outcomeUnknown: boolean;
   readonly terminalAttemptIds: readonly string[];
-}
-
-export interface ScheduledExactOutcome {
-  readonly answerAttemptId: string;
-  readonly answerIdentity: ReturnType<typeof attemptIdentity>;
-  readonly terminalChain: readonly ExactTerminalEvidence[];
 }
 
 export async function executeMainCampaignSchedule(input: {

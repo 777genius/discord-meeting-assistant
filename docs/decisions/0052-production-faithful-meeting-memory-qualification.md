@@ -123,12 +123,9 @@ unknown-outcome handling and exact original/repair input accounting.
   admissible evidence.
 - Cleanup targets come only from an independently signed campaign-created
   inventory whose authority key is pinned by the verified release. The absence
-  receipt enumerates all and only those derived IDs and separately enumerates the
-  exact protected Craig recording, final transcript, and meeting-database IDs,
-  kinds, and SHA-256 digests still present. Those three records must be unique,
-  complete, disjoint from deletion targets, and digest-identical to canonical
-  signed custody; no caller-authored replacement manifest participates in final
-  admission.
+  receipt enumerates all and only those derived IDs and separately enumerates
+  every protected original still present; no caller-authored replacement
+  manifest participates in final admission.
 - A conflict resolver receives both complete independently signed decisions.
   The core reverifies them and requires the resolver result to bind their exact
   signed receipts, raw outcome, question, attempt, and encrypted evidence.

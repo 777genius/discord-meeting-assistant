@@ -8,7 +8,6 @@ import { type AttemptIdentity, type VerifiedSpendReservation,
 import type { PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
   QualityCampaignRelease } from "./release.js";
 import { assertTerminalChain } from "./production-evidence-terminals.js";
-import type { ScheduledExactOutcome } from "./production-scheduler.js";
 import { QUALIFICATION_PROVIDER_INPUT_CONTRACT, QUALIFICATION_THRESHOLDS } from
   "./qualification-contract.js";
 import { verifyExactRetentionInventory, type ArtifactCustodyPort,
@@ -47,6 +46,13 @@ export interface ExactTerminalEvidence {
   readonly resultEnvelopeDigestSha256: string;
   readonly signedResult: unknown;
   readonly terminalDigestSha256: string;
+}
+
+/** Application-owned shape reconstructed by a scheduler adapter from retained exact bytes. */
+export interface ScheduledExactOutcome {
+  readonly answerAttemptId: string;
+  readonly answerIdentity: AttemptIdentity;
+  readonly terminalChain: readonly ExactTerminalEvidence[];
 }
 
 export interface ExactAdjudicationEvidence extends FinalAdjudicationEnvelope {
