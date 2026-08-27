@@ -193,11 +193,12 @@ it("accepts identical terminal publishers and rejects a different create-only wr
     schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4", state });
 
   const identical = await reserve(await mkdtemp(join(tmpdir(), "quality-identical-terminal-")));
-  const identicalResult = digest("6"); const identicalReceipt = signedTerminal(identicalResult,
+  const identicalResult = sha256(Buffer.from("6")); const identicalReceipt = signedTerminal(identicalResult,
     "terminal_success");
   const identicalWriters = Array.from({ length: 8 }, () => identical.journal.terminal({
     expectedResultDigestSha256: identicalResult, identity: attempt,
-    reservation: identical.reservation, signedResult: identicalReceipt,
+    requestBytes: Buffer.from(attempt.questionId), reservation: identical.reservation,
+    resultEnvelopeBytes: Buffer.from("6"), signedResult: identicalReceipt,
     state: "terminal_success" as const }));
   expect((await Promise.all(identicalWriters)).map(({ state }) => state))
     .toEqual(Array.from({ length: 8 }, () => "terminal_success"));
@@ -211,10 +212,12 @@ it("accepts identical terminal publishers and rejects a different create-only wr
     readyCount += 1; if (readyCount === 2) {reportReady();} await start;
     return await conflicting.journal.terminal({ expectedResultDigestSha256: resultDigestSha256,
       identity: attempt, reservation: conflicting.reservation,
+      requestBytes: Buffer.from(attempt.questionId), resultEnvelopeBytes:
+        Buffer.from(resultDigestSha256 === sha256(Buffer.from("7")) ? "7" : "8"),
       signedResult: signedTerminal(resultDigestSha256, state), state });
   };
-  const writers = [write(digest("7"), "terminal_success"),
-    write(digest("8"), "terminal_failure")];
+  const writers = [write(sha256(Buffer.from("7")), "terminal_success"),
+    write(sha256(Buffer.from("8")), "terminal_failure")];
   await ready; releaseStart();
   const results = await Promise.allSettled(writers);
   expect(results.filter(({ status }) => status === "fulfilled")).toHaveLength(1);

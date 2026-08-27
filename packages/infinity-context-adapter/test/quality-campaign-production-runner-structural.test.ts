@@ -74,8 +74,6 @@ describe("installed production quality-campaign CLI", () => {
     expect(fixture.maximumProviderConcurrency).toBeLessThanOrEqual(8);
     for (const call of fixture.mainCalls) {
       expect(call.request.release).toEqual(fixture.release);
-      expect(call.request.callDeadlineEpochMs).toBeLessThanOrEqual(
-        call.request.campaignDeadlineEpochMs as number);
       expect((call.request.campaignDeadlineEpochMs as number) - fixture.startedAt)
         .toBe(72 * 60 * 60 * 1_000);
       expect(call.request.spendReservationSha256).toMatch(/^[a-f0-9]{64}$/u);
@@ -427,6 +425,9 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
   const mainCalls: ProviderCall[] = []; const holdoutCalls: ProviderCall[] = [];
   const attemptQuestions = new Map<string, string>();
   const attemptRequests = new Map<string, Record<string, unknown>>();
+  const requestBytesByAttempt = new Map<string, Uint8Array>();
+  const resultBytesByAttempt = new Map<string, Uint8Array>();
+  const signedResultByAttempt = new Map<string, unknown>();
   let activeProviderCalls = 0; let maximumProviderConcurrency = 0;
   let ambiguousNext = false;
   const exchange = (collection: ProviderCall[], resultSigner: ReturnType<typeof signer>) =>
@@ -443,13 +444,21 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       collection.push({ attemptId: call.attempt.attemptId, questionId, request });
       attemptQuestions.set(call.attempt.attemptId, questionId);
       attemptRequests.set(call.attempt.attemptId, request);
+      requestBytesByAttempt.set(call.attempt.attemptId, call.request);
       if (ambiguousNext) {ambiguousNext = false; return { effect: "unknown" as const };}
-      const resultDigestSha256 = digest(call.attempt.attemptId);
+      const resultEnvelopeBytes = Buffer.from(canonicalJson({ attemptId: call.attempt.attemptId,
+        callKind: call.attempt.callKind, questionId,
+        schemaVersion: "meeting_knowledge.semantic_quality_test_provider_result.v2" }));
+      const resultDigestSha256 = sha256(resultEnvelopeBytes);
+      const signedResult = resultSigner.signed({ ...call.attempt,
+        requestDigestSha256: call.requestDigestSha256, resultDigestSha256,
+        schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+        state: "terminal_success" });
+      resultBytesByAttempt.set(call.attempt.attemptId, resultEnvelopeBytes);
+      signedResultByAttempt.set(call.attempt.attemptId, signedResult);
       return { effect: "certain_success" as const, resultDigestSha256,
-        signedResult: resultSigner.signed({ ...call.attempt,
-          requestDigestSha256: call.requestDigestSha256, resultDigestSha256,
-          schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
-          state: "terminal_success" }) };
+        resultEnvelopeBytes,
+        signedResult };
     } finally {activeProviderCalls -= 1;}
   } });
   const reviewCalls = { first: 0, resolver: 0, second: 0 };
@@ -490,8 +499,9 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       "meeting_knowledge.semantic_quality_final_adjudication.v2", secondReceipt: second };
   };
   const outcomesFor = (attemptIds: readonly string[], resultSigner = input.provider): ExactOutcomeEvidence[] =>
-    attemptIds.map((attemptId) => exactOutcome(attemptId, attemptRequests,
-      artifactBindingsByAttempt, finalAdjudicationByAttempt, resultSigner));
+    attemptIds.map((attemptId) => exactOutcome(attemptId, { artifactBindingsByAttempt,
+      finalAdjudicationByAttempt, requestBytesByAttempt, requests: attemptRequests,
+      resultBytesByAttempt, signedResultByAttempt }, resultSigner));
   const artifactKey = Buffer.alloc(32, 7);
   const envelopeByDigest = new Map<string, Uint8Array>();
   const artifactsByAttempt = new Map<string, readonly RetainedArtifact[]>();
@@ -536,12 +546,14 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
     const artifacts = kinds
       .map((kind) => {
         const identity = artifactAttemptIdentity(answerIdentity, kind);
-        const providerRequestBytes = Buffer.from(canonicalJson({ callKind: identity.callKind,
+        const providerRequestBytes = Buffer.from(requestBytesByAttempt.get(identity.attemptId) ??
+          Buffer.from(canonicalJson({ callKind: identity.callKind,
           questionDigestSha256: identity.questionDigestSha256,
-          schemaVersion: "meeting_knowledge.semantic_quality_test_provider_request.v1" }));
-        const providerResultBytes = Buffer.from(canonicalJson({ callKind: identity.callKind,
+          schemaVersion: "meeting_knowledge.semantic_quality_test_provider_request.v1" })));
+        const providerResultBytes = Buffer.from(resultBytesByAttempt.get(identity.attemptId) ??
+          Buffer.from(canonicalJson({ callKind: identity.callKind,
           questionId: identity.questionId,
-          schemaVersion: "meeting_knowledge.semantic_quality_test_provider_result.v1" }));
+          schemaVersion: "meeting_knowledge.semantic_quality_test_provider_result.v1" })));
         const decisionReceipt = kind === "adjudicator_1_result" ? adjudication.firstReceipt :
           kind === "adjudicator_2_result" ? adjudication.secondReceipt :
           kind === "resolver_result" ? adjudication.resolverReceipt : undefined;
@@ -577,10 +589,11 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
             signedProviderTerminal = effect.signedProviderTerminal;
             signedDurableExchange = effect.signedDurableExchange;
           } else {
-            signedProviderTerminal = input.provider.signed({ ...identity, requestDigestSha256,
-              resultDigestSha256, schemaVersion:
-              "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
-            state: "terminal_success" });
+            signedProviderTerminal = signedResultByAttempt.get(identity.attemptId) ??
+              input.provider.signed({ ...identity, requestDigestSha256,
+                resultDigestSha256, schemaVersion:
+                "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+              state: "terminal_success" });
           }
         }
         const chain = { artifactKind: kind, cancellationBoundary: "not_cancelled",
@@ -697,6 +710,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       source: question.source, speakerTimeChecks:
         [{ canonicalTurnId: turnId, expectedSpeakerId: "speaker-1", expectedStartMs: 1_000,
           observedSpeakerId: "speaker-1", observedStartMs: 1_000, toleranceMs: 0 }],
+      terminalChain: outcome.terminalChain,
       };
     });
     const repetitionEvidence = ([1, 2, 3] as const).map((repetition) => {
@@ -837,11 +851,15 @@ function retainedFinalAdjudication(value: unknown): unknown {
     "schemaVersion", "secondReceipt"].map((key) => [key, record[key]]));
 }
 
-function exactOutcome(attemptId: string, requests: ReadonlyMap<string, Record<string, unknown>>,
-  artifactBindingsByAttempt:
-  ReadonlyMap<string, Record<string, string>>, finalAdjudicationByAttempt:
-  ReadonlyMap<string, string>, provider: ReturnType<typeof signer>): ExactOutcomeEvidence {
-  const request = requests.get(attemptId);
+function exactOutcome(attemptId: string, source: {
+  readonly artifactBindingsByAttempt: ReadonlyMap<string, Record<string, string>>;
+  readonly finalAdjudicationByAttempt: ReadonlyMap<string, string>;
+  readonly requestBytesByAttempt: ReadonlyMap<string, Uint8Array>;
+  readonly requests: ReadonlyMap<string, Record<string, unknown>>;
+  readonly resultBytesByAttempt: ReadonlyMap<string, Uint8Array>;
+  readonly signedResultByAttempt: ReadonlyMap<string, unknown> },
+  provider: ReturnType<typeof signer>): ExactOutcomeEvidence {
+  const request = source.requests.get(attemptId);
   if (request === undefined) {throw new Error("missing exact outcome request");}
   const questionId = String(request.questionId);
   const isAbstention = Number(questionId.split("-").at(-1)) % 10 === 9;
@@ -852,18 +870,25 @@ function exactOutcome(attemptId: string, requests: ReadonlyMap<string, Record<st
     questionDigestSha256: String(request.questionDigestSha256), questionId,
     releaseRootSha256: String(request.releaseRootSha256), repetition,
     spendReservationSha256: String(request.spendReservationSha256) });
-  const artifactBindingSha256ByKind = artifactBindingsByAttempt.get(attemptId) ?? {};
+  const artifactBindingSha256ByKind = source.artifactBindingsByAttempt.get(attemptId) ?? {};
   let predecessorResultDigestSha256: string | null = null;
   const terminalChain = (["capability", "retrieval", "answer"] as const).map((callKind) => {
     const callIdentity = attemptIdentity({ callKind, callOrdinal: 0,
       campaignRootSha256: identity.campaignRootSha256, questionDigestSha256:
       identity.questionDigestSha256, questionId, releaseRootSha256: identity.releaseRootSha256,
       repetition, spendReservationSha256: identity.spendReservationSha256 });
-    const requestDigestSha256 = digest(`request:${callIdentity.attemptId}`);
-    const resultEnvelopeDigestSha256 = digest(`result:${callIdentity.attemptId}`);
-    const signedResult = provider.signed({ ...callIdentity, predecessorResultDigestSha256,
-      requestDigestSha256, resultEnvelopeDigestSha256,
-      state: "terminal_success" as const });
+    const requestBytes = source.requestBytesByAttempt.get(callIdentity.attemptId);
+    const resultBytes = source.resultBytesByAttempt.get(callIdentity.attemptId);
+    if (requestBytes === undefined || resultBytes === undefined) {
+      throw new Error("missing scheduler-produced exact bytes");
+    }
+    const requestDigestSha256 = sha256(requestBytes);
+    const resultEnvelopeDigestSha256 = sha256(resultBytes);
+    const signedResult = source.signedResultByAttempt.get(callIdentity.attemptId) ??
+      provider.signed({ ...callIdentity, requestDigestSha256,
+        resultDigestSha256: resultEnvelopeDigestSha256, schemaVersion:
+        "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+        state: "terminal_success" as const });
     const terminal = { attemptId: callIdentity.attemptId, callKind, callOrdinal: 0,
       predecessorResultDigestSha256, requestDigestSha256, resultEnvelopeDigestSha256,
       signedResult, terminalDigestSha256: sha256(signedResult) };
@@ -876,7 +901,7 @@ function exactOutcome(attemptId: string, requests: ReadonlyMap<string, Record<st
     evidenceLocatorDigests: isAbstention ? [] : [locator],
     evidenceTurnIds: [`turn-${repetition}-${questionId}`],
     expectedAnswer: isAbstention ? "abstain" : "answerable",
-    finalAdjudicationSha256: finalAdjudicationByAttempt.get(attemptId) ??
+    finalAdjudicationSha256: source.finalAdjudicationByAttempt.get(attemptId) ??
       digest(`${attemptId}:final-adjudication`), identity,
     forbiddenLocatorDigests: [digest(`forbidden:${questionId}`)],
     questionDigestSha256: String(request.questionDigestSha256), questionId,

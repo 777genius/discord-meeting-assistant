@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   admitFinalCampaign, admitIsolatedHoldout, admitMainCampaign, adjudicateOutcome,
-  artifactAttemptIdentity, assertObservedRelease, attemptIdentity,
+  artifactAttemptIdentity, assertObservedRelease, attemptIdentity, bindExactExecutionEvidence,
   canonicalJson, createHoldoutReport, DurableAttemptJournal, executeReservedExchange,
   FROZEN_ANSWER_EXECUTION, publicKeyFingerprintSha256, reconstructMetrics,
   QUALITY_AUTHORITY_ROLES, QualityCampaignAuthorityPolicy, sha256,
@@ -21,6 +21,7 @@ import {
   type EncryptedArtifactKind,
   type PinnedReleaseDocument, type QualificationOutcome, type QualityCampaignRelease,
   type RepetitionQualificationEvidence, type RetainedArtifact,
+  type ExactCampaignEvidence, type ScheduledExactOutcome,
 } from "../src/index.js";
 
 const d = (character: string) => character.repeat(64);
@@ -28,6 +29,56 @@ const CAMPAIGN_ROOT = d("1");
 const ARTIFACT_KEY = Buffer.alloc(32, 7);
 const PROVIDER = "pinned-provider";
 const ACTIVE_SIGNAL = new AbortController().signal;
+
+describe("scheduler-owned exact evidence chain", () => {
+  it("rejects missing, reordered, substituted, replayed, and digest-mismatched evidence streams", () => {
+    const exactAnswerIdentity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+      campaignRootSha256: d("1"), questionDigestSha256: d("2"), questionId: "q-chain",
+      releaseRootSha256: d("3"), repetition: 1, spendReservationSha256: d("4") });
+    let predecessor: string | null = null;
+    const terminalChain = (["capability", "retrieval", "answer"] as const).map((callKind,
+      index) => {
+      const identity = attemptIdentity({ callKind, callOrdinal: 0,
+        campaignRootSha256: exactAnswerIdentity.campaignRootSha256,
+        questionDigestSha256: exactAnswerIdentity.questionDigestSha256,
+        questionId: exactAnswerIdentity.questionId, releaseRootSha256:
+        exactAnswerIdentity.releaseRootSha256, repetition: exactAnswerIdentity.repetition,
+        spendReservationSha256: exactAnswerIdentity.spendReservationSha256 });
+      const resultEnvelopeDigestSha256 = sha256(Buffer.from(`result-${index}`));
+      const value = { attemptId: identity.attemptId, callKind, callOrdinal: 0,
+        predecessorResultDigestSha256: predecessor,
+        requestDigestSha256: sha256(Buffer.from(`request-${index}`)),
+        resultEnvelopeDigestSha256, signedResult: { index },
+        terminalDigestSha256: sha256({ index }) };
+      predecessor = resultEnvelopeDigestSha256; return value;
+    });
+    const execution = { answerAttemptId: exactAnswerIdentity.attemptId,
+      answerIdentity: exactAnswerIdentity,
+      terminalChain } satisfies ScheduledExactOutcome;
+    const evidence = { outcomes: [{ attemptId: exactAnswerIdentity.attemptId,
+      identity: exactAnswerIdentity,
+      terminalChain }] } as unknown as ExactCampaignEvidence;
+    expect(bindExactExecutionEvidence(evidence, [execution]).outcomes[0]!.terminalChain)
+      .toEqual(terminalChain);
+    const withChain = (chain: unknown, identity = exactAnswerIdentity) => ({ ...evidence,
+      outcomes: [{ attemptId: identity.attemptId, identity, terminalChain: chain }] }) as
+      unknown as ExactCampaignEvidence;
+    expect(() => bindExactExecutionEvidence(withChain(terminalChain.slice(0, 2)), [execution]))
+      .toThrow(/scheduler-produced/u);
+    expect(() => bindExactExecutionEvidence(withChain(terminalChain.toReversed()), [execution]))
+      .toThrow(/scheduler-produced/u);
+    expect(() => bindExactExecutionEvidence(withChain(terminalChain.map((value, index) => index === 1 ?
+      { ...value, requestDigestSha256: d("f") } : value)), [execution]))
+      .toThrow(/scheduler-produced/u);
+    expect(() => bindExactExecutionEvidence(withChain(terminalChain.map((value, index) => index === 2 ?
+      { ...value, resultEnvelopeDigestSha256: d("e") } : value)), [execution]))
+      .toThrow(/scheduler-produced/u);
+    const replayIdentity = { ...exactAnswerIdentity, repetition: 2 as const };
+    expect(() => bindExactExecutionEvidence(withChain(terminalChain, replayIdentity), [execution]))
+      .toThrow(/membership differ|scheduler-produced/u);
+    expect(() => bindExactExecutionEvidence(evidence, [])).toThrow(/membership differ/u);
+  });
+});
 
 function signer(keyId: string) {
   const keys = generateKeyPairSync("ed25519");
@@ -349,6 +400,8 @@ function finalFixture() {
       let finalPlaintext = Buffer.from(canonicalJson(finalValue));
       let finalAdjudicationSha256 = sha256(finalPlaintext);
       const artifactBindingSha256ByKind: Record<string, string> = {};
+      const terminalChain: QualificationOutcome["terminalChain"][number][] = [];
+      let predecessorResultDigestSha256: string | null = null;
       const kinds: readonly EncryptedArtifactKind[] = resolverRequired ?
         [...KINDS.slice(0, -1), "resolver_result", "final_adjudication"] : KINDS;
       let predecessorPlaintextSha256: string | null = null;
@@ -396,6 +449,15 @@ function finalFixture() {
           predecessorPlaintextSha256, ...(requestDigestSha256 === undefined ? {} :
             { requestDigestSha256 }), ...(providerResultDigestSha256 === undefined ? {} :
             { resultDigestSha256: providerResultDigestSha256 }), terminal });
+        if (["capability_response", "retrieval_response", "answer_response"].includes(kind)) {
+          const callKind = kind.replace("_response", "") as "answer" | "capability" | "retrieval";
+          terminalChain.push({ attemptId: artifactIdentity.attemptId, callKind, callOrdinal: 0,
+            predecessorResultDigestSha256, requestDigestSha256: chain.requestDigestSha256!,
+            resultEnvelopeDigestSha256: chain.resultDigestSha256!,
+            signedResult: chain.signedProviderTerminal,
+            terminalDigestSha256: sha256(chain.signedProviderTerminal) });
+          predecessorResultDigestSha256 = chain.resultDigestSha256!;
+        }
         const base = { attempt: artifactIdentity, chain,
           schemaVersion: `meeting_knowledge.semantic_quality_${kind}.v1` };
         if (kind === "final_adjudication") {
@@ -444,7 +506,7 @@ function finalFixture() {
         retrievalLatencyUs: 200_000,
         rootBindingSha256, source: question.source,
         scopeViolationLocatorIds: [],
-        speakerTimeChecks };
+        speakerTimeChecks, terminalChain };
     }));
   const repetitionAuthority = authorities.signers.repetition;
   const evidence = outcomesByRepetition.map((outcomes, index) => {
@@ -589,9 +651,13 @@ describe("production quality campaign authority", () => {
     const providerAuthority = FINAL.authorities.signers.provider_result;
     const question = FINAL.questions[0]!;
     const attempt = FINAL.outcomesByRepetition[0]![0]!.identity; const request = Buffer.from("bounded");
+    const resultEnvelope = Buffer.from("provider-result");
+    const resultEnvelopeSha256 = sha256(resultEnvelope);
     const port = { exchange: vi.fn(async () => ({ effect: "certain_success" as const,
-      resultDigestSha256: d("6"), signedResult: providerAuthority.signed(terminalPayload({
-        identity: attempt, request, resultDigestSha256: d("6"), state: "terminal_success" })) })) };
+      resultDigestSha256: resultEnvelopeSha256, resultEnvelopeBytes: resultEnvelope,
+      signedResult: providerAuthority.signed(terminalPayload({
+        identity: attempt, request, resultDigestSha256: resultEnvelopeSha256,
+        state: "terminal_success" })) })) };
     const journal = new DurableAttemptJournal(await mkdtemp(join(tmpdir(), "quality-journal-")),
       FINAL.authorities.policy);
     const exact = { campaignRootSha256: CAMPAIGN_ROOT, deadlineEpochMs: 1_500,
@@ -712,11 +778,14 @@ describe("production quality campaign authority", () => {
     expect(await executeReservedExchange(makeInput(identities[0]!, restarted)))
       .toBe("outcome_unknown");
     expect(providerCalls).toBe(1);
-    const request = Buffer.from(identities[0]!.questionId); const resultDigestSha256 = d("6");
+    const request = Buffer.from(identities[0]!.questionId);
+    const reconciledResult = Buffer.from("reconciled-result");
+    const resultDigestSha256 = sha256(reconciledResult);
     const terminal = FINAL.authorities.signers.provider_result.signed(terminalPayload({ identity:
       identities[0]!, request, resultDigestSha256, state: "terminal_success" }));
     expect(await restarted.reconcileTerminal({ expectedResultDigestSha256: resultDigestSha256,
       identity: identities[0]!, requestDigestSha256: sha256(request), signedResult: terminal,
+      requestBytes: request, resultEnvelopeBytes: reconciledResult,
       state: "terminal_success" })).toBe("terminal_success");
     expect(await executeReservedExchange(makeInput(identities[0]!, restarted)))
       .toBe("terminal_success");

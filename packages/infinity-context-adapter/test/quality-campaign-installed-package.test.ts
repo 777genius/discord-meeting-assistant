@@ -42,7 +42,12 @@ describe("packed production quality-campaign entrypoint", () => {
       timeout: 30_000 })).rejects.toMatchObject({ code: 20, stderr: "" });
     expect(fixture.releaseRequests()).toBe(1);
     expect(await readFile(statusPath, "utf8")).toMatch(/"status":"paused"/u);
-  }, 60_000);
+    const executeStatusPath = join(root, "execute-status.json");
+    await expect(execute(installed.bin, ["execute", fixture.phasePath, executeStatusPath], {
+      timeout: 60_000 })).rejects.toMatchObject({ code: 21, stderr: "" });
+    expect(fixture.providerRequests()).toBeGreaterThanOrEqual(2);
+    expect(await readFile(executeStatusPath, "utf8")).toMatch(/"status":"outcome_unknown"/u);
+  }, 120_000);
 
   it("ships the exact fail-closed HTTP review-evidence adapter contract", async () => {
     const root = await mkdtemp(join(tmpdir(), "quality-packed-review-"));
@@ -83,13 +88,34 @@ async function packAndInstall() {
 }
 
 async function createPackedPreflightFixture(root: string, consumerRoot: string) {
-  let observedReleaseRequests = 0; let release: unknown; let reviewEvidence: unknown = {};
+  let observedProviderRequests = 0; let observedReleaseRequests = 0;
+  let release: unknown; let reviewEvidence: unknown = {};
+  let providerSigner: ReturnType<typeof localSigner> | undefined;
   const server = createServer((request, response) => {if (request.url === "/release") {
     observedReleaseRequests += 1; response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(release)); return;} if (request.url === "/review") {
     request.resume(); request.on("end", () => {response.writeHead(200,
       { "content-type": "application/json" }); response.end(JSON.stringify(reviewEvidence));});
-    return;} response.writeHead(500).end();});
+    return;}
+    if (request.url === "/provider") {
+      const chunks: Buffer[] = []; request.on("data", (chunk) => {chunks.push(Buffer.from(chunk));});
+      request.on("end", () => {
+        observedProviderRequests += 1; response.writeHead(200, { "content-type": "application/json" });
+        if (observedProviderRequests > 1) {response.end(JSON.stringify({ effect: "unknown" })); return;}
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { readonly attempt:
+          Record<string, unknown>; readonly requestDigestSha256: string };
+        const resultEnvelope = Buffer.from(canonicalJson({ attemptId: body.attempt.attemptId,
+          schemaVersion: "meeting_knowledge.semantic_quality_packed_result.v1" }));
+        const resultDigestSha256 = sha256(resultEnvelope);
+        const signedResult = providerSigner!.signed({ ...body.attempt,
+          requestDigestSha256: body.requestDigestSha256, resultDigestSha256,
+          schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+          state: "terminal_success" });
+        response.end(JSON.stringify({ effect: "certain_success", resultDigestSha256,
+          resultEnvelopeBase64: resultEnvelope.toString("base64"), signedResult }));
+      }); return;
+    }
+    response.writeHead(500).end();});
   servers.push(server); await new Promise<void>((resolve) => {server.listen(0, "127.0.0.1",
     () => {resolve();});}); const address = server.address();
   if (address === null || typeof address === "string") {throw new Error("fake HTTP bind failed");}
@@ -98,6 +124,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     "execution", "holdout", "holdout-evidence", "holdout-result", "holdout-spend-call", "judge1",
     "judge2", "main-result", "release", "resolver", "reviewer1", "reviewer2", "spend", "spend-call"]
     .map((name) => [name, localSigner(name)]));
+  providerSigner = authorities["main-result"]!;
   const authorityPaths: Record<string, string> = {};
   for (const [name, value] of Object.entries(authorities)) {const publicKeyPath = join(root,
     `${name}.pem`); await writeFile(publicKeyPath, value.publicKeyPem); const path = join(root,
@@ -204,13 +231,14 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const evidenceKeyPath = join(root, "evidence.key"); const holdoutEvidenceKeyPath = join(root,
     "holdout-evidence.key"); await writeFile(evidenceKeyPath, Buffer.alloc(32, 1).toString("base64"));
   await writeFile(holdoutEvidenceKeyPath, Buffer.alloc(32, 2).toString("base64"));
-  const endpoint = `${base}/unused`; const connectionsPath = join(root, "connections.json");
+  const endpoint = `${base}/unused`; const providerEndpoint = `${base}/provider`;
+  const connectionsPath = join(root, "connections.json");
   await writeFile(connectionsPath, canonicalJson({ absenceAuthority: publicHttp(authorities.absence!, root),
     absenceEndpoint: `${base}/absence`, adjudicators: ["judge1", "judge2", "resolver"].map((name) => ({
-      ...publicHttp(authorities[name]!, root), endpoint })), answerEndpoint: endpoint,
+      ...publicHttp(authorities[name]!, root), endpoint })), answerEndpoint: providerEndpoint,
     artifactCustody: { envelopeRoot: root, keyCustodySha256:
       fingerprint(authorities.custody!.publicKeyPem), keyId: "retention-key",
-      keyPath: evidenceKeyPath }, capabilityEndpoint: endpoint,
+      keyPath: evidenceKeyPath }, capabilityEndpoint: providerEndpoint,
     credentialPath: tokenPath, deletionAuthority: publicHttp(authorities.deletion!, root),
     deletionEndpoint: `${base}/deletion`, evidenceAuthority: publicHttp(authorities.evidence!, root),
     evidenceEndpoint: endpoint, evidenceKeyId: "main-key", evidenceKeyPath,
@@ -221,7 +249,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     holdoutRetrievalEndpoint: endpoint,
     providerResultAuthority: publicHttp(authorities["main-result"]!, root),
     rawOutcomeEndpoint: `${base}/review`, releaseObservationEndpoint: `${base}/release`, retrievalEndpoint:
-    endpoint, schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v3" }));
+    providerEndpoint, schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v3" }));
   const unused = join(root, "unused.json"); const configPath = join(root, "operator.json");
   await writeFile(configPath, canonicalJson({ absenceAuthorityPath: authorityPaths.absence,
     adjudicationAuthorityPaths: [authorityPaths.judge1, authorityPaths.judge2,
@@ -241,6 +269,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     { configurationPath: configPath, connectionsPath }, schemaVersion:
     "meeting_knowledge.semantic_quality_production_phase.v1" }));
   return { connectionsPath, phasePath, releaseRequests: () => observedReleaseRequests,
+    providerRequests: () => observedProviderRequests,
     setReviewEvidence(value: unknown) {reviewEvidence = value;} };
 }
 
