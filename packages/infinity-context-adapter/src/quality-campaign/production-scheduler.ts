@@ -1,10 +1,11 @@
 import { MAIN_CARDINALITY, type CampaignQuestion } from "./admission.js";
-import { canonicalJson, sha256 } from "./canonical.js";
+import { canonicalJson, digest, exactRecord, sha256 } from "./canonical.js";
 import { DurableAttemptJournal } from "./attempt-journal.js";
 import { attemptIdentity, executeReservedExchange } from "./execution.js";
 import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
   verifyPinnedReleaseDocument } from "./release.js";
 import type { CampaignClockPort, CampaignProviderPorts } from "./production-ports.js";
+import type { ExactTerminalEvidence } from "./production-evidence.js";
 
 const PER_CALL_DEADLINE_MS = 120_000;
 const CALLS = Object.freeze(["capability", "retrieval", "answer"] as const);
@@ -21,9 +22,16 @@ export interface FrozenExecutionBinding {
 
 export interface ScheduledCampaignResult {
   readonly completedOutcomes: number;
+  readonly executionChainSha256: string;
   readonly maximumObservedConcurrency: number;
   readonly outcomeUnknown: boolean;
   readonly terminalAttemptIds: readonly string[];
+}
+
+export interface ScheduledExactOutcome {
+  readonly answerAttemptId: string;
+  readonly answerIdentity: ReturnType<typeof attemptIdentity>;
+  readonly terminalChain: readonly ExactTerminalEvidence[];
 }
 
 export async function executeMainCampaignSchedule(input: {
@@ -87,6 +95,7 @@ async function executeSchedule(input: {
   let cursor = 0; let active = 0; let maximumObservedConcurrency = 0;
   let outcomeUnknown = false;
   const terminalAttemptIds: string[] = [];
+  const exactOutcomes: ScheduledExactOutcome[] = [];
   const worker = async () => {
     while (!outcomeUnknown) {
       const index = cursor++;
@@ -98,7 +107,8 @@ async function executeSchedule(input: {
           clock: input.clock, deadlineEpochMs: input.deadlineEpochMs, job, journal,
           ports: input.ports });
         if (terminal === null) {outcomeUnknown = true; return;}
-        terminalAttemptIds.push(terminal);
+        terminalAttemptIds.push(terminal.answerAttemptId);
+        exactOutcomes.push(terminal);
       } finally {active -= 1;}
     }
   };
@@ -107,8 +117,82 @@ async function executeSchedule(input: {
     value.status === "rejected");
   if (failure !== undefined) {throw failure.reason;}
   return Object.freeze({ completedOutcomes: terminalAttemptIds.length,
+    executionChainSha256: sha256(exactOutcomes.toSorted((a, b) =>
+      a.answerAttemptId.localeCompare(b.answerAttemptId))),
     maximumObservedConcurrency, outcomeUnknown,
     terminalAttemptIds: Object.freeze(terminalAttemptIds.toSorted()) });
+}
+
+export async function loadScheduledExactOutcomes(input: {
+  readonly campaignRootSha256: string; readonly journalRoot: string;
+  readonly policy: QualityCampaignAuthorityPolicy; readonly questions: readonly CampaignQuestion[];
+  readonly releaseRootSha256: string;
+  readonly resultAuthorityRole?: "holdout_provider_result" | "provider_result";
+  readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
+}): Promise<readonly ScheduledExactOutcome[]> {
+  const journal = new DurableAttemptJournal(input.journalRoot, input.policy,
+    input.resultAuthorityRole);
+  return Object.freeze(await Promise.all(([1, 2, 3] as const).flatMap((repetition) =>
+    input.questions.map(async (question) => {
+      let predecessor: { readonly bytes: Uint8Array; readonly digestSha256: string } | null = null;
+      const terminalChain: ExactTerminalEvidence[] = [];
+      for (const callKind of CALLS) {
+        const identity = attemptIdentity({ callKind, callOrdinal: 0,
+          campaignRootSha256: input.campaignRootSha256,
+          questionDigestSha256: question.questionDigestSha256, questionId: question.questionId,
+          releaseRootSha256: input.releaseRootSha256, repetition,
+          spendReservationSha256: input.spendReservationSha256ByRepetition[repetition] });
+        const completed = await journal.completedExchange(identity);
+        assertExactRequest(completed.requestBytes, { callKind, identity, predecessor });
+        terminalChain.push(Object.freeze({ attemptId: identity.attemptId, callKind,
+          callOrdinal: 0, predecessorResultDigestSha256: predecessor?.digestSha256 ?? null,
+          requestDigestSha256: completed.requestDigestSha256,
+          resultEnvelopeDigestSha256: completed.resultEnvelopeDigestSha256,
+          signedResult: completed.signedResult,
+          terminalDigestSha256: completed.terminalDigestSha256 }));
+        predecessor = { bytes: completed.resultEnvelopeBytes,
+          digestSha256: completed.resultEnvelopeDigestSha256 };
+      }
+      const answerIdentity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+        campaignRootSha256: input.campaignRootSha256,
+        questionDigestSha256: question.questionDigestSha256, questionId: question.questionId,
+        releaseRootSha256: input.releaseRootSha256, repetition,
+        spendReservationSha256: input.spendReservationSha256ByRepetition[repetition] });
+      return Object.freeze({ answerAttemptId: terminalChain[2]!.attemptId, answerIdentity,
+        terminalChain: Object.freeze(terminalChain) });
+    }))));
+}
+
+function assertExactRequest(bytes: Uint8Array, input: { readonly callKind: typeof CALLS[number];
+  readonly identity: ReturnType<typeof attemptIdentity>;
+  readonly predecessor: { readonly bytes: Uint8Array; readonly digestSha256: string } | null }): void {
+  let parsed: unknown;
+  try {parsed = JSON.parse(Buffer.from(bytes).toString("utf8"));}
+  catch {throw new Error("scheduled provider request bytes are not canonical JSON");}
+  const request = exactRecord(parsed, ["attemptId", "callKind",
+    "campaignDeadlineEpochMs", "campaignRootSha256", "predecessorResultEnvelopeBase64",
+    "predecessorResultEnvelopeDigestSha256", "questionDigestSha256", "questionId", "release",
+    "releaseRootSha256", "repetition", "schemaVersion", "spendReservationSha256"],
+  "scheduled provider request");
+  const predecessorBase64 = input.predecessor === null ? null :
+    Buffer.from(input.predecessor.bytes).toString("base64");
+  if (canonicalJson(parsed) !== Buffer.from(bytes).toString("utf8") ||
+    request.schemaVersion !== "meeting_knowledge.semantic_quality_provider_request.v1" ||
+    request.attemptId !== input.identity.attemptId || request.callKind !== input.callKind ||
+    request.campaignRootSha256 !== input.identity.campaignRootSha256 ||
+    request.questionDigestSha256 !== input.identity.questionDigestSha256 ||
+    request.questionId !== input.identity.questionId ||
+    request.releaseRootSha256 !== input.identity.releaseRootSha256 ||
+    request.repetition !== input.identity.repetition ||
+    request.spendReservationSha256 !== input.identity.spendReservationSha256 ||
+    request.predecessorResultEnvelopeBase64 !== predecessorBase64 ||
+    request.predecessorResultEnvelopeDigestSha256 !==
+      (input.predecessor?.digestSha256 ?? null)) {
+    throw new Error("scheduled request is missing, reordered, replayed, or substituted");
+  }
+  if (input.predecessor !== null) {
+    digest(request.predecessorResultEnvelopeDigestSha256, "scheduled predecessor digest");
+  }
 }
 
 async function executeQuestion(input: {
@@ -117,8 +201,9 @@ async function executeQuestion(input: {
     readonly questionIndex: number; readonly repetition: 1 | 2 | 3 };
   readonly journal: DurableAttemptJournal;
   readonly ports: CampaignProviderPorts;
-}): Promise<string | null> {
-  let answerAttemptId = "";
+}): Promise<ScheduledExactOutcome | null> {
+  const terminalChain: ExactTerminalEvidence[] = [];
+  let predecessor: { readonly bytes: Uint8Array; readonly digestSha256: string } | null = null;
   for (const callKind of CALLS) {
     const nowEpochMs = input.clock.nowEpochMs();
     if (!Number.isSafeInteger(nowEpochMs) || nowEpochMs >= input.deadlineEpochMs) {
@@ -132,9 +217,11 @@ async function executeQuestion(input: {
       spendReservationSha256: input.binding.spendReservationSha256 });
     const callDeadlineEpochMs = Math.min(input.deadlineEpochMs, nowEpochMs + PER_CALL_DEADLINE_MS);
     const request = Buffer.from(canonicalJson({ attemptId: identity.attemptId,
-      callDeadlineEpochMs,
       callKind, campaignDeadlineEpochMs: input.deadlineEpochMs,
       campaignRootSha256: input.binding.campaignRootSha256,
+      predecessorResultEnvelopeBase64: predecessor === null ? null :
+        Buffer.from(predecessor.bytes).toString("base64"),
+      predecessorResultEnvelopeDigestSha256: predecessor?.digestSha256 ?? null,
       questionDigestSha256: input.job.question.questionDigestSha256,
       questionId: input.job.question.questionId,
       release: verifyPinnedReleaseDocument(input.binding.policy, input.binding.release).release,
@@ -158,9 +245,25 @@ async function executeQuestion(input: {
     } finally {clearTimeout(timeout);}
     if (state === "outcome_unknown") {return null;}
     if (state !== "terminal_success") {throw new Error(`${callKind} failed terminally`);}
-    if (callKind === "answer") {answerAttemptId = identity.attemptId;}
+    const completed = await input.journal.completedExchange(identity);
+    const terminal = Object.freeze({ attemptId: identity.attemptId, callKind, callOrdinal: 0,
+      predecessorResultDigestSha256: predecessor?.digestSha256 ?? null,
+      requestDigestSha256: completed.requestDigestSha256,
+      resultEnvelopeDigestSha256: completed.resultEnvelopeDigestSha256,
+      signedResult: completed.signedResult,
+      terminalDigestSha256: completed.terminalDigestSha256 });
+    terminalChain.push(terminal);
+    predecessor = { bytes: completed.resultEnvelopeBytes,
+      digestSha256: completed.resultEnvelopeDigestSha256 };
   }
-  return answerAttemptId;
+  const answerIdentity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+    campaignRootSha256: input.binding.campaignRootSha256,
+    questionDigestSha256: input.job.question.questionDigestSha256,
+    questionId: input.job.question.questionId, releaseRootSha256: input.binding.releaseRootSha256,
+    repetition: input.job.repetition,
+    spendReservationSha256: input.binding.spendReservationSha256 });
+  return Object.freeze({ answerAttemptId: terminalChain[2]!.attemptId, answerIdentity,
+    terminalChain: Object.freeze(terminalChain) });
 }
 
 export function executionRequestBindingSha256(input: FrozenExecutionBinding): string {

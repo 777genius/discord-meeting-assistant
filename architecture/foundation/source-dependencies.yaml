@@ -256,6 +256,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/adjudication.ts
       - packages/infinity-context-adapter/src/quality-campaign/admission.ts
       - packages/infinity-context-adapter/src/quality-campaign/artifacts.ts
+      - packages/infinity-context-adapter/src/quality-campaign/attempt-budget-ledger.ts
       - packages/infinity-context-adapter/src/quality-campaign/attempt-journal.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical.ts
       - packages/infinity-context-adapter/src/quality-campaign/cleanup-evidence.ts
@@ -287,12 +288,14 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-composition.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-execution-evidence.ts
     entrypoints:
       - packages/infinity-context-adapter/src/quality-campaign/index.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-bootstrap.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-composition.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-execution-evidence.ts
     allow:
       boundaries:
         - adapters.infinity-quality-campaign

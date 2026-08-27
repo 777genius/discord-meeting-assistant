@@ -59,8 +59,10 @@ export interface CanonicalAbsencePort {
 
 export interface CampaignExactEvidencePort {
   main(input: { readonly attemptIds: readonly string[]; readonly campaignRootSha256: string;
+    readonly executionChainSha256: string;
     readonly context: CampaignCallContext }): Promise<RawAuthenticatedEvidence>;
   holdout(input: { readonly attemptIds: readonly string[]; readonly campaignRootSha256: string;
+    readonly executionChainSha256: string;
     readonly context: CampaignCallContext }): Promise<RawAuthenticatedEvidence>;
 }
 

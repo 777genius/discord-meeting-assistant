@@ -319,7 +319,8 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
     "campaignRootSha256", "citationChecks", "claimChecks", "evidenceTurnIds",
     "finalAdjudicationSha256", "identity", "locale", "rankedLocatorIds",
     "relevantLocatorIds", "repetition", "resolverRequired", "retrievalLatencyUs",
-    "rootBindingSha256", "scopeViolationLocatorIds", "source", "speakerTimeChecks"],
+    "rootBindingSha256", "scopeViolationLocatorIds", "source", "speakerTimeChecks",
+    "terminalChain"],
   "qualification outcome");
   const identity = record.identity as AttemptIdentity;
   assertAttemptIdentity(identity, expected);
@@ -342,6 +343,7 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
   const evidenceTurnIds = decodeIdList(record.evidenceTurnIds, "evidence turn", 256, false);
   const speakerTimeChecks = decodeSpeakerTimeChecks(record.speakerTimeChecks,
     new Set(evidenceTurnIds));
+  const terminalChain = decodeTerminalChain(record.terminalChain);
   const citationChecks = decodeCitationChecks(record.citationChecks, new Set(evidenceTurnIds));
   const claimChecks = decodeClaimChecks(record.claimChecks);
   const claimIds = new Set(claimChecks.map(({ claimId }) => claimId));
@@ -371,7 +373,29 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
   retrievalLatencyUs: Number(record.retrievalLatencyUs),
   repetition: expected.repetition, resolverRequired: record.resolverRequired,
   rootBindingSha256: expected.rootBindingSha256, scopeViolationLocatorIds,
-  source: question.source, speakerTimeChecks });
+  source: question.source, speakerTimeChecks, terminalChain });
+}
+
+function decodeTerminalChain(value: unknown): QualificationOutcome["terminalChain"] {
+  if (!Array.isArray(value) || value.length !== 3) {
+    throw new Error("qualification terminal chain is incomplete");
+  }
+  const expectedKinds = ["capability", "retrieval", "answer"] as const;
+  let predecessor: string | null = null;
+  return Object.freeze(value.map((item, index) => {
+    const record = exactRecord(item, ["attemptId", "callKind", "callOrdinal",
+      "predecessorResultDigestSha256", "requestDigestSha256", "resultEnvelopeDigestSha256",
+      "signedResult", "terminalDigestSha256"], "qualification terminal");
+    if (record.callKind !== expectedKinds[index] || record.callOrdinal !== 0 ||
+      record.predecessorResultDigestSha256 !== predecessor) {
+      throw new Error("qualification terminal chain is reordered or substituted");
+    }
+    safeId(record.attemptId, "qualification terminal attempt");
+    for (const field of [record.requestDigestSha256, record.resultEnvelopeDigestSha256,
+      record.terminalDigestSha256]) {digest(field, "qualification terminal digest");}
+    predecessor = record.resultEnvelopeDigestSha256 as string;
+    return record as unknown as QualificationOutcome["terminalChain"][number];
+  }));
 }
 
 function assertOutcomeQuestionBinding(record: Record<string, unknown>, identity: AttemptIdentity,

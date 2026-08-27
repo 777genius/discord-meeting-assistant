@@ -114,6 +114,7 @@ export interface ProviderExchangePort {
     readonly signal: AbortSignal;
     readonly requestDigestSha256: string }): Promise<{
     readonly effect: "certain_failure" | "certain_success" | "unknown";
+    readonly resultEnvelopeBytes?: Uint8Array;
     readonly resultDigestSha256?: string; readonly signedResult?: unknown;
   }>;
 }
@@ -156,9 +157,15 @@ Promise<JournalState> {
     await input.journal.blockEvidence(reservation).catch(() => null);
     return "blocked_evidence";
   }
+  if (result.resultEnvelopeBytes === undefined ||
+    sha256(result.resultEnvelopeBytes) !== result.resultDigestSha256) {
+    await input.journal.blockEvidence(reservation).catch(() => null);
+    return "blocked_evidence";
+  }
   try {
     return (await input.journal.terminal({ identity: input.identity, reservation,
-      expectedResultDigestSha256: result.resultDigestSha256, signedResult: result.signedResult,
+      expectedResultDigestSha256: result.resultDigestSha256, requestBytes: input.request,
+      resultEnvelopeBytes: result.resultEnvelopeBytes, signedResult: result.signedResult,
       state: result.effect === "certain_success" ? "terminal_success" : "terminal_failure" })).state;
   } catch {
     await input.journal.blockEvidence(reservation).catch(() => null);

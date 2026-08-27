@@ -47,6 +47,11 @@ export interface ExpectedOutcomeInventory {
   readonly retrievalLatencyUs: number;
   readonly scopeViolationLocatorIds: readonly string[];
   readonly speakerTimeChecks: readonly unknown[];
+  readonly terminalChain: readonly { readonly attemptId: string;
+    readonly callKind: "answer" | "capability" | "retrieval"; readonly callOrdinal: number;
+    readonly predecessorResultDigestSha256: string | null;
+    readonly requestDigestSha256: string; readonly resultEnvelopeDigestSha256: string;
+    readonly signedResult: unknown; readonly terminalDigestSha256: string }[];
 }
 
 export interface ArtifactCustodyPort {
@@ -414,6 +419,7 @@ function verifyCompleteArtifactChains(policy: QualityCampaignAuthorityPolicy,
     assertExactProviderExchange(values, "capability_request", "capability_response");
     assertExactProviderExchange(values, "retrieval_request", "retrieval_response");
     assertExactProviderExchange(values, "answer_request", "answer_response");
+    assertSchedulerProducedProviderExchanges(values, outcome.identity, outcome.terminalChain);
     const answerResponse = values.get("answer_response")!;
     const answerChain = answerResponse.chain as Record<string, unknown>;
     const rawChain = raw.chain as Record<string, unknown>;
@@ -470,6 +476,36 @@ function verifyCompleteArtifactChains(policy: QualityCampaignAuthorityPolicy,
         throw new Error("resolver terminal does not bind both conflicting decisions and result");
       }
     }
+  }
+}
+
+function assertSchedulerProducedProviderExchanges(values: ReadonlyMap<RetainedArtifactKind,
+  Record<string, unknown>>, answerIdentity: AttemptIdentity,
+  terminals: ExpectedOutcomeInventory["terminalChain"]): void {
+  if (terminals.length !== 3) {
+    throw new Error("scheduler terminal inventory is incomplete");
+  }
+  let predecessor: string | null = null;
+  for (const [callKind, requestKind, responseKind] of [
+    ["capability", "capability_request", "capability_response"],
+    ["retrieval", "retrieval_request", "retrieval_response"],
+    ["answer", "answer_request", "answer_response"],
+  ] as const) {
+    const terminal = terminals.find((value) => value.callKind === callKind);
+    const expectedIdentity = artifactAttemptIdentity(answerIdentity, requestKind);
+    const requestChain = values.get(requestKind)?.chain as Record<string, unknown> | undefined;
+    const responseChain = values.get(responseKind)?.chain as Record<string, unknown> | undefined;
+    if (terminal === undefined || requestChain === undefined || responseChain === undefined ||
+      terminal.attemptId !== expectedIdentity.attemptId || terminal.callOrdinal !== 0 ||
+      terminal.predecessorResultDigestSha256 !== predecessor ||
+      terminal.terminalDigestSha256 !== sha256(terminal.signedResult) ||
+      requestChain.requestDigestSha256 !== terminal.requestDigestSha256 ||
+      responseChain.requestDigestSha256 !== terminal.requestDigestSha256 ||
+      responseChain.resultDigestSha256 !== terminal.resultEnvelopeDigestSha256 ||
+      canonicalJson(responseChain.signedProviderTerminal) !== canonicalJson(terminal.signedResult)) {
+      throw new Error("retained request/result bytes are not the scheduler-produced exact exchange");
+    }
+    predecessor = terminal.resultEnvelopeDigestSha256;
   }
 }
 

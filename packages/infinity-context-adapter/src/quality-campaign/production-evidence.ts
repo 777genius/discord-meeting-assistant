@@ -4,6 +4,7 @@ import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.
 import type { AttemptIdentity, VerifiedSpendReservation } from "./execution.js";
 import type { QualityCampaignAuthorityPolicy } from "./release.js";
 import { assertTerminalChain } from "./production-evidence-terminals.js";
+import type { ScheduledExactOutcome } from "./production-scheduler.js";
 import { verifyExactRetentionInventory, type ArtifactCustodyPort,
   type RetainedArtifact, type RetainedArtifactKind } from "./retention.js";
 
@@ -76,6 +77,38 @@ export interface LocallyComputedMetrics {
   readonly unsupportedFactualClaims: number;
 }
 
+export function bindExactExecutionEvidence(evidence: ExactCampaignEvidence,
+  executions: readonly ScheduledExactOutcome[]): ExactCampaignEvidence {
+  const byAttempt = new Map(executions.map((value) => [value.answerAttemptId, value]));
+  if (byAttempt.size !== executions.length || evidence.outcomes.length !== executions.length) {
+    throw new Error("execution and final evidence membership differ");
+  }
+  const outcomes = evidence.outcomes.map((outcome) => {
+    const execution = byAttempt.get(outcome.attemptId);
+    if (execution === undefined || canonicalJson(outcome.terminalChain) !==
+      canonicalJson(execution.terminalChain) || outcome.identity.attemptId !==
+      execution.answerAttemptId || canonicalJson(outcome.identity) !==
+      canonicalJson(execution.answerIdentity)) {
+      throw new Error("final evidence is not the scheduler-produced exact terminal chain");
+    }
+    return Object.freeze({ ...outcome, identity: attemptIdentityFromChain(execution),
+      terminalChain: execution.terminalChain });
+  });
+  return Object.freeze({ ...evidence, outcomes: Object.freeze(outcomes) });
+}
+
+function attemptIdentityFromChain(execution: ScheduledExactOutcome): AttemptIdentity {
+  const answer = execution.terminalChain[2];
+  if (answer === undefined || answer.callKind !== "answer" ||
+    answer.attemptId !== execution.answerAttemptId) {
+    throw new Error("scheduler terminal chain has no exact answer identity");
+  }
+  if (execution.answerIdentity.attemptId !== answer.attemptId) {
+    throw new Error("scheduler answer identity differs from its terminal chain");
+  }
+  return execution.answerIdentity;
+}
+
 const RATIO_THRESHOLDS = Object.freeze({
   abstentionPrecision: [19, 20], abstentionRecall: [9, 10],
   citationEntailment: [1, 1], citationMembership: [1, 1],
@@ -137,7 +170,7 @@ export async function reconstructExactMainEvidence(input: {
       resolverRequired: adjudicationByAttempt.get(attempt.attemptId)?.resolverReceipt !==
         null, retrievalLatencyUs: outcome.retrievalLatencyUs,
         scopeViolationLocatorIds: outcome.scopeViolationLocatorIds,
-        speakerTimeChecks: outcome.speakerTimeChecks }; }) });
+        speakerTimeChecks: outcome.speakerTimeChecks, terminalChain: outcome.terminalChain }; }) });
   const metrics = ([1, 2, 3] as const).map((repetition) => computeMetrics({ adjudications:
     input.evidence.adjudications.filter((value) => value.repetition === repetition), outcomes:
     input.evidence.outcomes.filter((value) => value.repetition === repetition), repetition }));

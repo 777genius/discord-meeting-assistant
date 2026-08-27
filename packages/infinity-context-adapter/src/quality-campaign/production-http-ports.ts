@@ -123,11 +123,33 @@ Promise<QualityCampaignProductionPorts> {
 }
 
 function exchange(endpoint: string, token: string): ProviderExchangePort {
-  return { exchange: async (input) => await requestJson(endpoint, token, {
+  return { exchange: async (input) => decodeProviderExchange(await requestJson(endpoint, token, {
     attempt: input.attempt, deadlineEpochMs: input.deadlineEpochMs,
     requestDigestSha256: input.requestDigestSha256,
     requestBase64: Buffer.from(input.request).toString("base64") }, {
-      deadlineEpochMs: input.deadlineEpochMs, signal: input.signal }) as never };
+      deadlineEpochMs: input.deadlineEpochMs, signal: input.signal })) };
+}
+
+function decodeProviderExchange(value: unknown): Awaited<ReturnType<ProviderExchangePort["exchange"]>> {
+  const record = value as Record<string, unknown>;
+  if (record.effect === "unknown") {
+    exactRecord(value, ["effect"], "unknown provider exchange response");
+    return Object.freeze({ effect: "unknown" });
+  }
+  const exact = exactRecord(value, ["effect", "resultDigestSha256", "resultEnvelopeBase64",
+    "signedResult"], "provider exchange response");
+  if (!(["certain_failure", "certain_success"] as const).includes(exact.effect as never) ||
+    typeof exact.resultEnvelopeBase64 !== "string") {
+    throw new Error("provider exchange response is not a concrete terminal envelope");
+  }
+  digest(exact.resultDigestSha256, "provider result envelope digest");
+  const resultEnvelopeBytes = Buffer.from(exact.resultEnvelopeBase64, "base64");
+  if (resultEnvelopeBytes.byteLength === 0) {
+    throw new Error("provider result envelope is empty");
+  }
+  return Object.freeze({ effect: exact.effect as "certain_failure" | "certain_success",
+    resultDigestSha256: exact.resultDigestSha256 as string, resultEnvelopeBytes,
+    signedResult: exact.signedResult });
 }
 
 async function requestJson(endpoint: string, token: string, body: unknown,

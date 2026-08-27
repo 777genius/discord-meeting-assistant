@@ -2,28 +2,16 @@ import { randomUUID } from "node:crypto";
 import { link, mkdir, open, readFile, stat, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 
+import { claimDurableAttemptBudget } from "./attempt-budget-ledger.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { assertAttemptIdentity, CALL_KINDS, type AttemptIdentity, type CallKind,
-  type JournalState, type SignedValue, type SpendReservation, type TerminalState,
+  type JournalState, type SignedValue, type TerminalState,
   type VerifiedSpendReservation, verifyExternalSignedValue } from "./execution.js";
 import { QualityCampaignAuthorityPolicy, type QualityAuthorityRole } from "./release.js";
 
 interface ReservationRecord extends AttemptIdentity {
   readonly requestDigestSha256: string; readonly state: "provider_reserved";
   readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3";
-}
-
-interface BudgetClaim {
-  readonly admissionId: string;
-  readonly attemptId: string;
-  readonly callKind: CallKind;
-  readonly campaignRootSha256: string;
-  readonly requestedEncryptedBytes: number;
-  readonly requestedTokens: number;
-  readonly requestDigestSha256: string;
-  readonly repetition: 1 | 2 | 3;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_budget_claim.v1";
-  readonly spendReservationSha256: string;
 }
 
 export interface ProviderTerminalPayload extends Omit<ReservationRecord, "schemaVersion" | "state"> {
@@ -36,6 +24,20 @@ interface TerminalRecord {
   readonly reservationSha256: string; readonly signedResult: SignedValue<unknown>;
   readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v4";
   readonly state: Exclude<TerminalState, "outcome_unknown">;
+}
+
+interface ExchangeBytesRecord {
+  readonly attemptId: string; readonly requestBase64: string;
+  readonly requestDigestSha256: string; readonly resultEnvelopeBase64: string;
+  readonly resultEnvelopeDigestSha256: string;
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_exchange_bytes.v1";
+}
+
+export interface CompletedProviderExchange {
+  readonly identity: AttemptIdentity; readonly requestBytes: Uint8Array;
+  readonly requestDigestSha256: string; readonly resultEnvelopeBytes: Uint8Array;
+  readonly resultEnvelopeDigestSha256: string; readonly signedResult: SignedValue<unknown>;
+  readonly terminalDigestSha256: string;
 }
 
 interface BlockedRecord {
@@ -80,22 +82,13 @@ export class DurableAttemptJournal {
     if (requested.some((value) => !Number.isSafeInteger(value) || value < 0) ||
       input.requestedTokens < 1) {throw new Error("provider budget claim is invalid");}
     const admissionId = randomUUID();
-    const claim: BudgetClaim = { admissionId, attemptId: input.identity.attemptId,
-      callKind: input.identity.callKind, campaignRootSha256: input.identity.campaignRootSha256,
-      requestedEncryptedBytes: input.requestedEncryptedBytes,
-      requestedTokens: input.requestedTokens,
-      requestDigestSha256: digest(input.requestDigestSha256, "budget request digest"),
-      repetition: input.identity.repetition,
-      schemaVersion: "meeting_knowledge.semantic_quality_budget_claim.v1",
-      spendReservationSha256: input.identity.spendReservationSha256 };
     const ledgerPath = this.budgetPath(input.identity.spendReservationSha256);
-    await appendDurableLine(ledgerPath, canonicalJson(claim));
-    const claims = await readBudgetClaims(ledgerPath, input.identity.spendReservationSha256,
-      input.identity.campaignRootSha256);
-    const admitted = admittedBudgetClaims(claims, input.spend.payload);
-    if (!admitted.has(admissionId)) {
-      const acceptedClaim = claims.find((candidate) => candidate.attemptId ===
-        input.identity.attemptId && admitted.has(candidate.admissionId));
+    const budget = await claimDurableAttemptBudget({ admissionId, identity: input.identity,
+      ledgerPath, requestDigestSha256: input.requestDigestSha256,
+      requestedEncryptedBytes: input.requestedEncryptedBytes,
+      requestedTokens: input.requestedTokens, spend: input.spend.payload });
+    if (!budget.admitted) {
+      const acceptedClaim = budget.acceptedAttempt;
       if (acceptedClaim !== undefined) {
         if (acceptedClaim.requestDigestSha256 !== input.requestDigestSha256) {
           return { admitted: false, state: "blocked_evidence" };
@@ -112,6 +105,7 @@ export class DurableAttemptJournal {
 
   public async terminal(input: { readonly identity: AttemptIdentity;
     readonly reservation: ReservationRecord; readonly signedResult: unknown;
+    readonly requestBytes: Uint8Array; readonly resultEnvelopeBytes: Uint8Array;
     readonly state: TerminalState; readonly expectedResultDigestSha256: string }):
   Promise<TerminalRecord> {
     if (input.state === "outcome_unknown") {
@@ -133,10 +127,17 @@ export class DurableAttemptJournal {
       state: input.state };
     if (canonicalJson(result) !== canonicalJson(expected)) {
       throw new Error("terminal result does not bind the exact reserved exchange");}
+    const exchange = encodeExchangeBytes(input.identity.attemptId, input.requestBytes,
+      input.resultEnvelopeBytes);
+    if (exchange.requestDigestSha256 !== reservation.requestDigestSha256 ||
+      exchange.resultEnvelopeDigestSha256 !== result.resultDigestSha256) {
+      throw new Error("terminal bytes differ from the exact reserved exchange");
+    }
     const record = Object.freeze({ attemptId: input.identity.attemptId, binding: result,
       reservationSha256: sha256(reservation),
       schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v4" as const,
       signedResult, state: input.state });
+    await writeCreateOnly(this.path(input.identity.attemptId, "exchange"), canonicalJson(exchange));
     await writeCreateOnly(this.path(input.identity.attemptId, "terminal"), canonicalJson(record));
     return record;
   }
@@ -205,6 +206,7 @@ export class DurableAttemptJournal {
   }
   public async reconcileTerminal(input: { readonly identity: AttemptIdentity;
     readonly expectedResultDigestSha256: string; readonly requestDigestSha256: string;
+    readonly requestBytes: Uint8Array; readonly resultEnvelopeBytes: Uint8Array;
     readonly signedResult: unknown;
     readonly state: Exclude<TerminalState, "outcome_unknown"> }): Promise<JournalState> {
     const reservation = await this.requireReservation(input.identity.attemptId);
@@ -217,14 +219,73 @@ export class DurableAttemptJournal {
     }
     return (await this.terminal({ identity: input.identity, reservation,
       expectedResultDigestSha256: input.expectedResultDigestSha256,
+      requestBytes: input.requestBytes, resultEnvelopeBytes: input.resultEnvelopeBytes,
       signedResult: input.signedResult, state: input.state })).state;
   }
-  private path(attemptId: string, kind: "blocked" | "reserved" | "terminal"): string {
+  public async completedExchange(identity: AttemptIdentity): Promise<CompletedProviderExchange> {
+    assertAttemptIdentity(identity);
+    const [reservationValue, terminalValue, exchangeValue] = await Promise.all([
+      readOptional(this.path(identity.attemptId, "reserved")),
+      readOptional(this.path(identity.attemptId, "terminal")),
+      readOptional(this.path(identity.attemptId, "exchange")),
+    ]);
+    if (reservationValue === null || terminalValue === null || exchangeValue === null) {
+      throw new Error("exact completed exchange bytes are missing");
+    }
+    const reservation = decodeReservation(reservationValue);
+    const terminal = decodeTerminal(terminalValue);
+    const exchange = decodeExchangeBytes(exchangeValue);
+    const signedResult = verifyExternalSignedValue<ProviderTerminalPayload>(terminal.signedResult,
+      this.resultAuthority.keyId, this.resultAuthority.publicKeyPem, "provider result");
+    const requestBytes = Buffer.from(exchange.requestBase64, "base64");
+    const resultEnvelopeBytes = Buffer.from(exchange.resultEnvelopeBase64, "base64");
+    const expectedReservation = { ...identity, requestDigestSha256:
+      exchange.requestDigestSha256, schemaVersion:
+      "meeting_knowledge.semantic_quality_provider_reservation.v3", state: "provider_reserved" };
+    if (canonicalJson(reservation) !== canonicalJson(expectedReservation) ||
+      terminal.state !== "terminal_success" || exchange.attemptId !== identity.attemptId ||
+      terminal.attemptId !== identity.attemptId || terminal.reservationSha256 !== sha256(reservation) ||
+      exchange.requestDigestSha256 !== reservation.requestDigestSha256 ||
+      exchange.resultEnvelopeDigestSha256 !== terminal.binding.resultDigestSha256 ||
+      sha256(requestBytes) !== exchange.requestDigestSha256 || sha256(resultEnvelopeBytes) !==
+        exchange.resultEnvelopeDigestSha256 || canonicalJson(terminal.binding) !==
+        canonicalJson(signedResult.payload)) {
+      throw new Error("exact completed exchange is corrupt or substituted");
+    }
+    return Object.freeze({ identity, requestBytes, requestDigestSha256:
+      exchange.requestDigestSha256, resultEnvelopeBytes, resultEnvelopeDigestSha256:
+      exchange.resultEnvelopeDigestSha256, signedResult, terminalDigestSha256:
+      sha256(signedResult) });
+  }
+  private path(attemptId: string, kind: "blocked" | "exchange" | "reserved" | "terminal"): string {
     return join(this.root, attemptId, `${kind}.json`);
   }
   private budgetPath(spendReservationSha256: string): string {
     return join(this.root, "budgets", `${spendReservationSha256}.jsonl`);
   }
+}
+
+function encodeExchangeBytes(attemptId: string, requestBytes: Uint8Array,
+  resultEnvelopeBytes: Uint8Array): ExchangeBytesRecord {
+  return Object.freeze({ attemptId, requestBase64: Buffer.from(requestBytes).toString("base64"),
+    requestDigestSha256: sha256(requestBytes), resultEnvelopeBase64:
+      Buffer.from(resultEnvelopeBytes).toString("base64"), resultEnvelopeDigestSha256:
+      sha256(resultEnvelopeBytes), schemaVersion:
+      "meeting_knowledge.semantic_quality_exchange_bytes.v1" });
+}
+
+function decodeExchangeBytes(value: unknown): ExchangeBytesRecord {
+  const record = exactRecord(value, ["attemptId", "requestBase64", "requestDigestSha256",
+    "resultEnvelopeBase64", "resultEnvelopeDigestSha256", "schemaVersion"],
+  "exact exchange bytes");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_exchange_bytes.v1" ||
+    typeof record.requestBase64 !== "string" || typeof record.resultEnvelopeBase64 !== "string") {
+    throw new Error("exact exchange bytes are invalid");
+  }
+  safeId(record.attemptId, "exchange attempt");
+  digest(record.requestDigestSha256, "exchange request digest");
+  digest(record.resultEnvelopeDigestSha256, "exchange result digest");
+  return record as unknown as ExchangeBytesRecord;
 }
 async function writeCreateOnly(path: string, bytes: string | Uint8Array): Promise<void> {
   const directoryPath = dirname(path);
@@ -260,80 +321,6 @@ async function writeCreateOnly(path: string, bytes: string | Uint8Array): Promis
 async function syncDirectory(path: string): Promise<void> {
   const directory = await open(path, "r");
   try {await directory.sync();} finally {await directory.close();}
-}
-
-async function appendDurableLine(path: string, line: string): Promise<void> {
-  await ensureDirectory(dirname(path));
-  const bytes = Buffer.from(`${line}\n`);
-  if (bytes.byteLength > 4096) {throw new Error("budget claim exceeds atomic record bound");}
-  const handle = await open(path, "a", 0o600);
-  try {
-    const result = await handle.write(bytes, 0, bytes.byteLength);
-    if (result.bytesWritten !== bytes.byteLength) {throw new Error("budget claim append was partial");}
-    await handle.sync();
-  } finally {await handle.close();}
-  const directory = await open(dirname(path), "r");
-  try {await directory.sync();} finally {await directory.close();}
-}
-
-async function readBudgetClaims(path: string, spendReservationSha256: string,
-  campaignRootSha256: string): Promise<readonly BudgetClaim[]> {
-  const text = await readCompleteLedger(path);
-  return Object.freeze(text.slice(0, -1).split("\n").map((line) => {
-    let value: unknown;
-    try {value = JSON.parse(line) as unknown;} catch {throw new Error("budget claim is not JSON");}
-    const record = exactRecord(value, ["admissionId", "attemptId", "callKind",
-      "campaignRootSha256", "repetition", "requestedEncryptedBytes", "requestedTokens",
-      "requestDigestSha256", "schemaVersion", "spendReservationSha256"], "budget claim");
-    if (record.schemaVersion !== "meeting_knowledge.semantic_quality_budget_claim.v1" ||
-      record.campaignRootSha256 !== campaignRootSha256 ||
-      record.spendReservationSha256 !== spendReservationSha256 ||
-      !CALL_KINDS.includes(record.callKind as CallKind) ||
-      ![1, 2, 3].includes(Number(record.repetition)) ||
-      ![record.requestedEncryptedBytes, record.requestedTokens].every((number) =>
-        Number.isSafeInteger(number) && Number(number) >= 0) || Number(record.requestedTokens) < 1) {
-      throw new Error("budget claim binding is invalid");
-    }
-    safeId(record.admissionId, "budget admission ID"); safeId(record.attemptId,
-      "budget attempt ID"); digest(record.requestDigestSha256, "budget request digest");
-    return record as unknown as BudgetClaim;
-  }));
-}
-
-async function readCompleteLedger(path: string): Promise<string> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const text = (await readFile(path)).toString("utf8");
-    if (text.endsWith("\n")) {return text;}
-    // A single O_APPEND write is the ordering primitive. A concurrent reader may
-    // briefly observe that write before its final byte; yield without accepting
-    // or repairing the record. A persistently torn record remains fail-closed.
-    await new Promise<void>((resolve) => {setImmediate(resolve);});
-  }
-  throw new Error("budget ledger contains a partial claim");
-}
-
-function admittedBudgetClaims(claims: readonly BudgetClaim[], spend: SpendReservation):
-ReadonlySet<string> {
-  const admitted = new Set<string>(); const attempts = new Set<string>();
-  const callsByKind = Object.fromEntries(CALL_KINDS.map((kind) => [kind, 0])) as
-    Record<CallKind, number>;
-  let calls = 0, encryptedBytes = 0, tokens = 0;
-  for (const claim of claims) {
-    if (claim.repetition !== spend.repetition ||
-      !spend.allowedCallKinds.includes(claim.callKind)) {
-      throw new Error("budget claim is outside its signed reservation scope");
-    }
-    if (attempts.has(claim.attemptId)) {continue;}
-    attempts.add(claim.attemptId);
-    const fits = calls + 1 <= spend.maxCalls &&
-      callsByKind[claim.callKind] + 1 <= spend.maxCallsByKind[claim.callKind] &&
-      tokens + claim.requestedTokens <= spend.maxTokens &&
-      encryptedBytes + claim.requestedEncryptedBytes <= spend.maxEncryptedBytes;
-    if (!fits) {continue;}
-    admitted.add(claim.admissionId); calls += 1; callsByKind[claim.callKind] += 1;
-    tokens += claim.requestedTokens; encryptedBytes += claim.requestedEncryptedBytes;
-  }
-  return admitted;
 }
 
 async function ensureDirectory(path: string): Promise<void> {

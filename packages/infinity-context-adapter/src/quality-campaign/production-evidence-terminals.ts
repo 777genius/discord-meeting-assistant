@@ -7,9 +7,10 @@ import type { ExactOutcomeEvidence, ExactTerminalEvidence } from "./production-e
 interface EvidenceProviderTerminalPayload {
   readonly attemptId: string; readonly callKind: "answer" | "capability" | "retrieval";
   readonly callOrdinal: number; readonly campaignRootSha256: string;
-  readonly predecessorResultDigestSha256: string | null; readonly questionDigestSha256: string;
+  readonly questionDigestSha256: string;
   readonly questionId: string; readonly releaseRootSha256: string; readonly repetition: 1 | 2 | 3;
-  readonly requestDigestSha256: string; readonly resultEnvelopeDigestSha256: string;
+  readonly requestDigestSha256: string; readonly resultDigestSha256: string;
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4";
   readonly spendReservationSha256: string; readonly state: "terminal_success";
 }
 
@@ -21,12 +22,13 @@ function terminalPayloadMatches(payload: EvidenceProviderTerminalPayload, input:
   readonly terminal: ExactTerminalEvidence }): boolean {
   return payload.attemptId === input.identity.attemptId && payload.callKind === input.callKind &&
     payload.callOrdinal === input.callOrdinal && payload.campaignRootSha256 === input.root &&
-    payload.predecessorResultDigestSha256 === input.predecessor && payload.questionDigestSha256 ===
-    input.question.questionDigestSha256 && payload.questionId === input.question.questionId &&
+    payload.questionDigestSha256 === input.question.questionDigestSha256 &&
+    payload.questionId === input.question.questionId &&
     payload.releaseRootSha256 === input.releaseRootSha256 && payload.repetition ===
     input.outcome.repetition && payload.requestDigestSha256 === input.terminal.requestDigestSha256 &&
-    payload.resultEnvelopeDigestSha256 === input.terminal.resultEnvelopeDigestSha256 &&
+    payload.resultDigestSha256 === input.terminal.resultEnvelopeDigestSha256 &&
     payload.spendReservationSha256 === input.spendReservationSha256 &&
+    payload.schemaVersion === "meeting_knowledge.semantic_quality_provider_terminal_payload.v4" &&
     payload.state === "terminal_success";
 }
 
