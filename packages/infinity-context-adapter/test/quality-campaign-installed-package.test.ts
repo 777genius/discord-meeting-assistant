@@ -27,7 +27,7 @@ describe("packed production quality-campaign entrypoint", () => {
       "@discord-meeting", "infinity-context-adapter", "package.json"), "utf8")) as unknown;
     expect(JSON.stringify(manifest)).not.toMatch(/workspace:|catalog:/u);
     await expect(execute(process.execPath, ["--input-type=module", "--eval",
-      `const root=await import("@discord-meeting/infinity-context-adapter");const cli=await import("@discord-meeting/infinity-context-adapter/quality-campaign/cli");if(typeof root.attemptIdentity!=="function"||typeof cli.runQualityCampaignProductionCli!=="function")process.exit(2)`],
+      `const root=await import("@discord-meeting/infinity-context-adapter");const q=await import("@discord-meeting/infinity-context-adapter/quality-campaign");const cli=await import("@discord-meeting/infinity-context-adapter/quality-campaign/cli");if(typeof root.attemptIdentity!=="function"||typeof q.reconstructExactHoldoutEvidence!=="function"||typeof q.verifyExactOutcomeAuthorities!=="function"||q.MAX_PROVIDER_INPUT_BYTES!==16000||typeof cli.runQualityCampaignProductionCli!=="function")process.exit(2)`],
     { cwd: installed.consumerRoot, timeout: 10_000 })).resolves.toMatchObject({ stderr: "" });
     await expect(execute(process.execPath, ["--input-type=module", "--eval",
       `await import("@discord-meeting/infinity-context-adapter/test-support")`], {

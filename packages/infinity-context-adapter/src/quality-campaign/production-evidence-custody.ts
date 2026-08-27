@@ -103,7 +103,7 @@ function decrypt(envelope: ReturnType<typeof decodeEnvelope>, key: Uint8Array, a
 function decodeEvidence(value: unknown): ExactCampaignEvidence {
   const record = exactRecord(value, ["adjudications", "artifacts", "authorizedLocatorIds",
     "authorizedLocatorInventory", "campaignByteCeiling", "finalRootBindingSha256",
-    "goldRelevanceReceipt", "outcomes",
+    "forbiddenLocatorReceipt", "goldRelevanceReceipt", "outcomes",
     "questionReviewReceipts", "repetitionEvidence"], "decrypted exact campaign evidence");
   if (!Array.isArray(record.adjudications) || !Array.isArray(record.artifacts) ||
     !Array.isArray(record.outcomes) || !Number.isSafeInteger(record.campaignByteCeiling) ||

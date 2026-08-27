@@ -1,9 +1,11 @@
+/* oxlint-disable max-lines -- one closed evidence contract keeps main and holdout reconstruction identical */
 import type { CampaignQuestion } from "./admission.js";
 import type { FinalAdjudicationEnvelope } from "./adjudication.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { admitCumulativeSpend, type CumulativeSpendLedgerPort } from "./cumulative-spend.js";
-import type { AttemptIdentity, VerifiedSpendReservation } from "./execution.js";
-import type { QualityCampaignAuthorityPolicy } from "./release.js";
+import { type AttemptIdentity, type VerifiedSpendReservation,
+  verifyExternalSignedValue } from "./execution.js";
+import type { PinnedReleaseDocument, QualityCampaignAuthorityPolicy } from "./release.js";
 import { assertTerminalChain } from "./production-evidence-terminals.js";
 import type { ScheduledExactOutcome } from "./production-scheduler.js";
 import { verifyExactRetentionInventory, type ArtifactCustodyPort,
@@ -58,6 +60,7 @@ export interface ExactCampaignEvidence {
   readonly authorizedLocatorIds: readonly string[];
   readonly campaignByteCeiling: number;
   readonly finalRootBindingSha256: string;
+  readonly forbiddenLocatorReceipt: unknown;
   readonly goldRelevanceReceipt: unknown;
   readonly outcomes: readonly ExactOutcomeEvidence[];
   readonly questionReviewReceipts: readonly [unknown, unknown];
@@ -110,6 +113,12 @@ function attemptIdentityFromChain(execution: ScheduledExactOutcome): AttemptIden
   return execution.answerIdentity;
 }
 
+export interface ExactOutcomeAuthorityBindings {
+  readonly forbiddenLocatorReceiptSha256: string;
+  readonly goldRelevanceReceiptSha256: string;
+  readonly locatorInventoryReceiptSha256: string;
+}
+
 const RATIO_THRESHOLDS = Object.freeze({
   abstentionPrecision: [19, 20], abstentionRecall: [9, 10],
   citationEntailment: [1, 1], citationMembership: [1, 1],
@@ -139,6 +148,9 @@ export async function reconstructExactMainEvidence(input: {
   }));
   assertExactMembership(input.campaignRootSha256, expected, input.evidence.outcomes,
     input.evidence.adjudications);
+  verifyExactOutcomeAuthorities(input.authorityPolicy, { campaignRootSha256:
+    input.campaignRootSha256, evidence: input.evidence, questions: input.questions,
+    releaseRootSha256: input.releaseRootSha256 });
   for (const outcome of input.evidence.outcomes) {
     const question = input.questions.find(({ questionId }) => questionId === outcome.questionId);
     if (question === undefined) {throw new Error("terminal chain question is foreign");}
@@ -183,21 +195,35 @@ export async function reconstructExactMainEvidence(input: {
 }
 
 export async function reconstructExactHoldoutEvidence(input: {
-  readonly artifacts: readonly RetainedArtifact[];
-  readonly artifactKeyCustodySha256: string; readonly authorityPolicy: QualityCampaignAuthorityPolicy;
-  readonly campaignByteCeiling: number; readonly custody: ArtifactCustodyPort;
+  readonly authorityBindings: ExactOutcomeAuthorityBindings;
+  readonly authorityPolicy: QualityCampaignAuthorityPolicy;
+  readonly artifactKeyCustodySha256: string;
   readonly campaignRootSha256: string; readonly adjudications: readonly ExactAdjudicationEvidence[];
+  readonly artifacts: readonly RetainedArtifact[];
+  readonly campaignByteCeiling: number;
+  readonly custody: ArtifactCustodyPort;
   readonly effectVerificationEpochMs: number;
+  readonly forbiddenLocatorReceipt: unknown;
+  readonly goldRelevanceReceipt: unknown;
+  readonly authorizedLocatorIds: readonly string[];
+  readonly authorizedLocatorInventory: unknown;
   readonly outcomes: readonly ExactOutcomeEvidence[];
   readonly providerResultAuthority: { readonly keyId: string; readonly publicKeyPem: string };
-  readonly questions: readonly CampaignQuestion[]; readonly releaseDocumentSha256: string;
-  readonly releaseRootSha256: string; readonly spendLedger: CumulativeSpendLedgerPort;
+  readonly questions: readonly CampaignQuestion[]; readonly releaseRootSha256: string;
+  readonly release: PinnedReleaseDocument;
+  readonly releaseDocumentSha256: string;
+  readonly spendLedger: CumulativeSpendLedgerPort;
   readonly spendReservations: readonly VerifiedSpendReservation[];
   readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
-}): Promise<{ readonly cumulativeSpendProofSha256: string;
+  readonly keyNamespace: string;
+}): Promise<{ readonly cumulativeSpendProofSha256: string; readonly inventorySha256: string;
   readonly metrics: readonly LocallyComputedMetrics[]; readonly metricsSha256: string }> {
   if (input.questions.length !== 30) {
     throw new Error("exact holdout evidence requires 3 x 30 questions");
+  }
+  if (sha256(input.release.document) !== input.releaseDocumentSha256 ||
+    input.release.releaseRootSha256 !== input.releaseRootSha256) {
+    throw new Error("holdout release document binding is foreign");
   }
   const expected = ([1, 2, 3] as const).flatMap((repetition) => input.questions.map((question) => {
     const outcome = input.outcomes.find((candidate) => candidate.questionId === question.questionId &&
@@ -207,6 +233,18 @@ export async function reconstructExactHoldoutEvidence(input: {
   }));
   assertExactMembership(input.campaignRootSha256, expected, input.outcomes,
     input.adjudications);
+  const evidence = { adjudications: input.adjudications, artifacts: input.artifacts,
+    authorizedLocatorIds: input.authorizedLocatorIds,
+    authorizedLocatorInventory: input.authorizedLocatorInventory,
+    campaignByteCeiling: input.campaignByteCeiling, finalRootBindingSha256: "",
+    forbiddenLocatorReceipt: input.forbiddenLocatorReceipt,
+    goldRelevanceReceipt: input.goldRelevanceReceipt, outcomes: input.outcomes,
+    questionReviewReceipts: [] as unknown as readonly [unknown, unknown],
+    repetitionEvidence: [] };
+  assertAuthorityReceiptBindings(input.authorityBindings, evidence);
+  verifyExactOutcomeAuthorities(input.authorityPolicy, { campaignRootSha256:
+    input.campaignRootSha256, evidence, questions: input.questions,
+    releaseRootSha256: input.releaseRootSha256 });
   for (const outcome of input.outcomes) {
     const question = input.questions.find(({ questionId }) => questionId === outcome.questionId)!;
     assertTerminalChain({ authority: input.providerResultAuthority, outcome, question,
@@ -236,9 +274,9 @@ export async function reconstructExactHoldoutEvidence(input: {
         resolverRequired: adjudication.resolverReceipt !== null,
         retrievalLatencyUs: outcome.retrievalLatencyUs,
         scopeViolationLocatorIds: outcome.scopeViolationLocatorIds,
-        speakerTimeChecks: outcome.speakerTimeChecks };
+        speakerTimeChecks: outcome.speakerTimeChecks, terminalChain: outcome.terminalChain };
     }), perRepetitionCardinality: 30,
-    providerResultAuthorityRole: "holdout_provider_result",
+    keyNamespace: input.keyNamespace, providerResultAuthorityRole: "holdout_provider_result",
     releaseDocumentSha256: input.releaseDocumentSha256,
     spendReservations: input.spendReservations });
   const schedulerClaims = (await Promise.all(input.spendReservations.map(async (reservation) =>
@@ -250,8 +288,115 @@ export async function reconstructExactHoldoutEvidence(input: {
     input.adjudications.filter((value) => value.repetition === repetition), outcomes:
     input.outcomes.filter((value) => value.repetition === repetition), repetition }));
   for (const value of metrics) {assertThresholds(value);}
-  return Object.freeze({ cumulativeSpendProofSha256: sha256(cumulativeSpend), metrics,
-    metricsSha256: sha256(metrics) });
+  return Object.freeze({ cumulativeSpendProofSha256: sha256(cumulativeSpend),
+    inventorySha256: retained.inventorySha256, metrics, metricsSha256: sha256(metrics) });
+}
+
+function assertAuthorityReceiptBindings(bindings: ExactOutcomeAuthorityBindings,
+  evidence: Pick<ExactCampaignEvidence, "authorizedLocatorInventory" |
+    "forbiddenLocatorReceipt" | "goldRelevanceReceipt">): void {
+  if (sha256(evidence.forbiddenLocatorReceipt) !==
+      digest(bindings.forbiddenLocatorReceiptSha256, "authorized forbidden locator receipt") ||
+    sha256(evidence.goldRelevanceReceipt) !==
+      digest(bindings.goldRelevanceReceiptSha256, "authorized relevance receipt") ||
+    sha256(evidence.authorizedLocatorInventory) !==
+      digest(bindings.locatorInventoryReceiptSha256, "authorized locator inventory receipt")) {
+    throw new Error("holdout outcome authority receipt was substituted or replayed");
+  }
+}
+
+// oxlint-disable-next-line complexity -- exact role schemas are compared fail closed in one pass
+export function verifyExactOutcomeAuthorities(policy: QualityCampaignAuthorityPolicy, input: {
+  readonly campaignRootSha256: string; readonly evidence: ExactCampaignEvidence;
+  readonly questions: readonly CampaignQuestion[]; readonly releaseRootSha256: string }): void {
+  const locatorAuthority = policy.authority("locator");
+  const locatorReceipt = verifyExternalSignedValue<Record<string, unknown>>(
+    input.evidence.authorizedLocatorInventory, locatorAuthority.keyId,
+    locatorAuthority.publicKeyPem, "authoritative locator inventory");
+  const locatorPayload = exactRecord(locatorReceipt.payload, ["campaignRootSha256", "locatorIds",
+    "releaseRootSha256", "schemaVersion"], "authoritative locator inventory payload");
+  if (locatorPayload.schemaVersion !== "meeting_knowledge.semantic_quality_locator_inventory.v1" ||
+    locatorPayload.campaignRootSha256 !== input.campaignRootSha256 ||
+    locatorPayload.releaseRootSha256 !== input.releaseRootSha256 ||
+    !Array.isArray(locatorPayload.locatorIds)) {
+    throw new Error("authoritative locator inventory is foreign or incomplete");
+  }
+  const locatorIds = (locatorPayload.locatorIds as unknown[]).map((value) =>
+    digest(value, "authoritative locator"));
+  if (locatorIds.length === 0 || new Set(locatorIds).size !== locatorIds.length ||
+    canonicalJson(locatorIds) !== canonicalJson(input.evidence.authorizedLocatorIds)) {
+    throw new Error("outcome locator inventory differs from signed locator authority");
+  }
+  const relevanceAuthority = policy.authority("gold_relevance");
+  const relevanceReceipt = verifyExternalSignedValue<Record<string, unknown>>(
+    input.evidence.goldRelevanceReceipt, relevanceAuthority.keyId,
+    relevanceAuthority.publicKeyPem, "authoritative per-question gold relevance");
+  const relevancePayload = exactRecord(relevanceReceipt.payload, ["campaignRootSha256", "entries",
+    "releaseRootSha256", "schemaVersion"], "authoritative gold relevance payload");
+  const forbiddenReceipt = verifyExternalSignedValue<Record<string, unknown>>(
+    input.evidence.forbiddenLocatorReceipt, locatorAuthority.keyId,
+    locatorAuthority.publicKeyPem, "authoritative forbidden locator inventory");
+  const forbiddenPayload = exactRecord(forbiddenReceipt.payload, ["campaignRootSha256", "entries",
+    "releaseRootSha256", "schemaVersion"], "authoritative forbidden locator payload");
+  if (relevancePayload.schemaVersion !== "meeting_knowledge.semantic_quality_gold_relevance.v1" ||
+    forbiddenPayload.schemaVersion !==
+      "meeting_knowledge.semantic_quality_forbidden_locators.v1" ||
+    relevancePayload.campaignRootSha256 !== input.campaignRootSha256 ||
+    forbiddenPayload.campaignRootSha256 !== input.campaignRootSha256 ||
+    relevancePayload.releaseRootSha256 !== input.releaseRootSha256 ||
+    forbiddenPayload.releaseRootSha256 !== input.releaseRootSha256 ||
+    !Array.isArray(relevancePayload.entries) || !Array.isArray(forbiddenPayload.entries) ||
+    relevancePayload.entries.length !== input.questions.length ||
+    forbiddenPayload.entries.length !== input.questions.length) {
+    throw new Error("authoritative relevance or forbidden locator evidence is foreign or incomplete");
+  }
+  const locatorSet = new Set(locatorIds);
+  for (const [index, question] of input.questions.entries()) {
+    const relevance = exactRecord(relevancePayload.entries[index], ["campaignRootSha256",
+      "expectedAbstention", "locale", "questionDigestSha256", "questionId",
+      "releaseRootSha256", "relevantLocatorIds", "rubricDigestSha256", "source"],
+    "authoritative relevance entry");
+    const forbidden = exactRecord(forbiddenPayload.entries[index], ["campaignRootSha256",
+      "forbiddenLocatorIds", "questionDigestSha256", "questionId", "releaseRootSha256"],
+    "authoritative forbidden locator entry");
+    const relevantLocatorIds = locatorArray(relevance.relevantLocatorIds,
+      "authoritative relevant locator");
+    const forbiddenLocatorIds = locatorArray(forbidden.forbiddenLocatorIds,
+      "authoritative forbidden locator");
+    const questionBinding = { locale: relevance.locale,
+      questionDigestSha256: relevance.questionDigestSha256, questionId: relevance.questionId,
+      rubricDigestSha256: relevance.rubricDigestSha256, source: relevance.source };
+    if (canonicalJson(questionBinding) !== canonicalJson(question) ||
+      relevance.campaignRootSha256 !== input.campaignRootSha256 ||
+      relevance.releaseRootSha256 !== input.releaseRootSha256 ||
+      forbidden.campaignRootSha256 !== input.campaignRootSha256 ||
+      forbidden.releaseRootSha256 !== input.releaseRootSha256 ||
+      forbidden.questionId !== question.questionId ||
+      forbidden.questionDigestSha256 !== question.questionDigestSha256 ||
+      typeof relevance.expectedAbstention !== "boolean" ||
+      relevantLocatorIds.some((locator) => !locatorSet.has(locator))) {
+      throw new Error("authoritative outcome inputs do not bind the exact sealed question");
+    }
+    const matching = input.evidence.outcomes.filter((outcome) =>
+      outcome.questionId === question.questionId);
+    if (matching.length !== 3 || matching.some((outcome) =>
+      canonicalJson(outcome.relevantLocatorDigests) !== canonicalJson(relevantLocatorIds) ||
+      canonicalJson(outcome.forbiddenLocatorDigests) !== canonicalJson(forbiddenLocatorIds) ||
+      outcome.expectedAnswer !== (relevance.expectedAbstention ? "abstain" : "answerable"))) {
+      throw new Error("outcome relevance or forbidden locators differ from signed authority");
+    }
+  }
+}
+
+function locatorArray(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new Error(`${label} inventory is not bounded`);
+  }
+  const locators = value.map((item) => digest(item, label));
+  if (new Set(locators).size !== locators.length) {
+    throw new Error(`${label} inventory contains duplicates`);
+  }
+  return Object.freeze(locators);
 }
 
 function assertExactMembership(campaignRootSha256: string, expected: readonly {

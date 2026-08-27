@@ -11,17 +11,18 @@ import {
   artifactAttemptIdentity, assertObservedRelease, attemptIdentity, bindExactExecutionEvidence,
   canonicalJson, createHoldoutReport, DurableAttemptJournal, executeReservedExchange,
   executeDerivedCleanup, FROZEN_ANSWER_EXECUTION, publicKeyFingerprintSha256, reconstructMetrics,
+  holdoutReleaseExecutionBindingSha256,
   QUALITY_AUTHORITY_ROLES, QualityCampaignAuthorityPolicy, sha256,
   verifyReleaseRoot,
   verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt, verifySpendReservation,
-  verifyRetainedFinalAdjudication,
+  verifyExactOutcomeAuthorities, verifyRetainedFinalAdjudication,
   type AdjudicationRequest, type ArtifactCustodyPort,
   type AdjudicationEffectEvidence,
   type AttemptIdentity, type CampaignQuestion, type CanonicalAdjudicationDecision,
-  type EncryptedArtifactKind,
+  type EncryptedArtifactKind, type ExactCampaignEvidence, type ExactOutcomeEvidence,
   type PinnedReleaseDocument, type QualificationOutcome, type QualityCampaignRelease,
   type ProtectedCampaignEvidence, type RepetitionQualificationEvidence, type RetainedArtifact,
-  type ExactCampaignEvidence, type ScheduledExactOutcome,
+  type ScheduledExactOutcome,
   type VerifiedSpendReservation,
 } from "../src/index.js";
 
@@ -1473,20 +1474,84 @@ describe("production quality campaign final evidence", () => {
       mainReleaseRootSha256: main.mainReleaseRootSha256,
       questionReceiptSha256: sha256(questionReceipt),
       schemaVersion: "meeting_knowledge.semantic_quality_holdout_root.v1" });
-    const authorization = { holdoutLocatorSetSha256: sha256(holdoutLocatorDigests),
+    const derivedArtifactInventory = { sealed: "derived" };
+    const forbiddenLocatorReceipt = FINAL.authorities.signers.locator.signed({
+      campaignRootSha256: holdoutRootSha256, entries: questions.map((question) => ({
+        campaignRootSha256: holdoutRootSha256, forbiddenLocatorIds: [d("e")],
+        questionDigestSha256: question.questionDigestSha256, questionId: question.questionId,
+        releaseRootSha256: FINAL.release.releaseRootSha256 })), releaseRootSha256:
+      FINAL.release.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_forbidden_locators.v1" });
+    const goldRelevanceReceipt = FINAL.authorities.signers.gold_relevance.signed({
+      campaignRootSha256: holdoutRootSha256, entries: questions.map((question) => ({
+        ...question, campaignRootSha256: holdoutRootSha256, expectedAbstention: false,
+        releaseRootSha256: FINAL.release.releaseRootSha256,
+        relevantLocatorIds: [d("c")] })), releaseRootSha256: FINAL.release.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" });
+    const locatorInventoryReceipt = FINAL.authorities.signers.locator.signed({
+      campaignRootSha256: holdoutRootSha256, locatorIds: holdoutLocatorDigests,
+      releaseRootSha256: FINAL.release.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_locator_inventory.v1" });
+    const spendReservationSha256ByRepetition = { 1: d("8"), 2: d("9"), 3: d("a") } as const;
+    const authorization = { derivedArtifactInventorySha256: sha256(derivedArtifactInventory),
+      forbiddenLocatorReceiptSha256: sha256(forbiddenLocatorReceipt),
+      goldRelevanceReceiptSha256: sha256(goldRelevanceReceipt),
+      holdoutLocatorSetSha256: sha256(holdoutLocatorDigests),
       holdoutQuestionSetSha256: sha256(questions), holdoutRootSha256,
       keyNamespace: `holdout:${holdoutRootSha256}`, mainInputRootSha256: main.mainInputRootSha256,
+      locatorInventoryReceiptSha256: sha256(locatorInventoryReceipt),
       mainReleaseRootSha256: main.mainReleaseRootSha256,
+      providerInputMaximumBytes: 16_000 as const,
       questionReceiptSha256: sha256(questionReceipt),
-      schemaVersion: "meeting_knowledge.semantic_quality_holdout_authorization.v2" };
+      releaseExecutionBindingSha256: holdoutReleaseExecutionBindingSha256(FINAL.release.release),
+      schemaVersion: "meeting_knowledge.semantic_quality_holdout_authorization.v3",
+      spendReservationSetSha256: sha256([d("8"), d("9"), d("a")]) };
     const input = { authorization: holdoutSigner.signed(authorization),
-      authorizationAuthorityKeyId: holdoutSigner.keyId, holdoutLocatorDigests,
+      authorizationAuthorityKeyId: holdoutSigner.keyId, derivedArtifactInventory,
+      forbiddenLocatorReceipt, goldRelevanceReceipt, holdoutLocatorDigests,
+      locatorInventoryReceipt,
       main: mainSigner.signed(main), mainAuthorityKeyId: mainSigner.keyId,
       questionAuthorityKeyId: questionSigner.keyId,
-      questionReceipt, questions };
+      questionReceipt, questions, release: FINAL.release.release,
+      spendReservationSha256ByRepetition };
     expect(admitIsolatedHoldout(FINAL.authorities.policy, input).questions).toHaveLength(30);
     expect(() => admitIsolatedHoldout(FINAL.authorities.policy, { ...input,
       authorizationAuthorityKeyId: questionSigner.keyId })).toThrow(/not trusted/u);
+    for (const hostile of [
+      { ...input, derivedArtifactInventory: { sealed: "replacement" } },
+      { ...input, forbiddenLocatorReceipt: locatorInventoryReceipt },
+      { ...input, goldRelevanceReceipt: forbiddenLocatorReceipt },
+      { ...input, locatorInventoryReceipt: forbiddenLocatorReceipt },
+      { ...input, release: { ...FINAL.release.release, promptSha256: d("f") } },
+      { ...input, spendReservationSha256ByRepetition: { ...spendReservationSha256ByRepetition,
+        3: d("b") } },
+    ]) {
+      expect(() => admitIsolatedHoldout(FINAL.authorities.policy, hostile as never))
+        .toThrow(/exact isolated inputs/u);
+    }
+    const { spendReservationSetSha256: _missingSpendSet, ...incompleteAuthorization } =
+      authorization;
+    expect(() => admitIsolatedHoldout(FINAL.authorities.policy, { ...input,
+      authorization: holdoutSigner.signed(incompleteAuthorization) })).toThrow(/invalid shape/u);
+    const outcomes = ([1, 2, 3] as const).flatMap((repetition) => questions.map((question) => ({
+      expectedAnswer: "answerable", forbiddenLocatorDigests: [d("e")],
+      questionId: question.questionId, relevantLocatorDigests: [d("c")], repetition,
+    } as unknown as ExactOutcomeEvidence)));
+    const evidence = { authorizedLocatorIds: holdoutLocatorDigests,
+      authorizedLocatorInventory: locatorInventoryReceipt, forbiddenLocatorReceipt,
+      goldRelevanceReceipt, outcomes } as unknown as ExactCampaignEvidence;
+    expect(() => verifyExactOutcomeAuthorities(FINAL.authorities.policy, {
+      campaignRootSha256: holdoutRootSha256, evidence, questions,
+      releaseRootSha256: FINAL.release.releaseRootSha256 })).not.toThrow();
+    for (const field of ["relevantLocatorDigests", "forbiddenLocatorDigests"] as const) {
+      const substituted = outcomes.map((outcome, index) => index === 0 ?
+        { ...outcome, [field]: [] } : outcome);
+      expect(() => verifyExactOutcomeAuthorities(FINAL.authorities.policy, {
+        campaignRootSha256: holdoutRootSha256,
+        evidence: { ...evidence, outcomes: substituted }, questions,
+        releaseRootSha256: FINAL.release.releaseRootSha256 }))
+        .toThrow(/differ.*signed authority/u);
+    }
     expect(createHoldoutReport({ cleanupReceiptSha256: d("1"), holdoutRootSha256,
       outcomeCount: 90, reportMetricsSha256: d("2") }).affectsMainQualification).toBe(false);
   });

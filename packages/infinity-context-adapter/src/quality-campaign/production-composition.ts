@@ -187,10 +187,12 @@ Promise<ProductionCompositionResult> {
     return { blockerCode: "none", receipt, status: "completed" };
   }
   const holdoutResult = await runHoldoutCommand({ absenceAuthority, admitted, checkpoints,
+    artifactKeyCustodySha256: verifiedRelease.release.artifactKeyCustodySha256,
     command: input.command, config, custody, custodyAuthority,
     deadlineEpochMs: deadline.campaignDeadlineEpochMs, ports: input.ports,
     policy, release: pinnedRelease, targetInventoryAuthorityKeySha256:
-      verifiedRelease.release.targetInventoryAuthorityKeySha256 });
+      verifiedRelease.release.targetInventoryAuthorityKeySha256,
+    verifiedRelease: verifiedRelease.release });
   if (holdoutResult !== null) {return holdoutResult;}
   if (input.command === "status" || input.command === "final-admission") {
     const qualifiedCheckpointSha256 = await checkpoints.requirePhase(
@@ -203,13 +205,15 @@ Promise<ProductionCompositionResult> {
 
 async function runHoldoutCommand(input: { readonly absenceAuthority: AdmissionAuthority;
   readonly admitted: Awaited<ReturnType<typeof admitMainCampaign>>;
+  readonly artifactKeyCustodySha256: string;
   readonly checkpoints: ProductionCheckpointStore; readonly command: ProductionCampaignCommand;
   readonly config: ProductionOperatorConfiguration; readonly custody: CanonicalCustodyEvidence;
   readonly custodyAuthority: AdmissionAuthority; readonly deadlineEpochMs: number;
   readonly ports: QualityCampaignProductionPorts;
   readonly policy: import("./release.js").QualityCampaignAuthorityPolicy;
   readonly release: Parameters<typeof executeIsolatedProductionHoldout>[0]["release"];
-  readonly targetInventoryAuthorityKeySha256: string }):
+  readonly targetInventoryAuthorityKeySha256: string;
+  readonly verifiedRelease: import("./release.js").QualityCampaignRelease }):
 Promise<ProductionCompositionResult | null> {
   if (!input.command.startsWith("holdout-")) {return null;}
   const holdoutAuthority = await loadProductionAuthority(input.config.holdoutAuthorityPath);
@@ -221,6 +225,7 @@ Promise<ProductionCompositionResult | null> {
     authority: holdoutAuthority, custody: input.custody,
     nowEpochMs: input.ports.clock.nowEpochMs(), path: input.config.holdoutInputPath,
     policy: input.policy, ports: input.ports,
+    release: input.verifiedRelease,
     releaseRootSha256: input.release.releaseRootSha256 });
   const holdoutRootSha256 = holdout.authorization.holdoutRootSha256;
   if (input.command === "holdout-execute" || input.command === "holdout-resume") {
@@ -263,19 +268,30 @@ Promise<ProductionCompositionResult | null> {
       spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition });
     assertAdjudicationCheckpoint(adjudicatedReceiptSha256, holdoutRootSha256,
       evidence.adjudications);
-    const metrics = await reconstructExactHoldoutEvidence({ campaignRootSha256: holdoutRootSha256,
-      ...evidence, artifactKeyCustodySha256:
+    const metrics = await reconstructExactHoldoutEvidence({ authorityBindings:
+      holdout.authorityBindings, authorityPolicy: input.policy,
+      artifactKeyCustodySha256:
         verifyPinnedReleaseDocument(input.policy, input.release).release.artifactKeyCustodySha256,
-      authorityPolicy: input.policy, custody: input.ports.artifactCustody,
+      campaignRootSha256: holdoutRootSha256, ...evidence,
+      custody: input.ports.artifactCustody,
       effectVerificationEpochMs: input.ports.clock.nowEpochMs(),
+      keyNamespace: holdout.authorization.keyNamespace,
       providerResultAuthority: input.ports.holdoutProvider.resultAuthority,
-      questions: holdout.questions, releaseDocumentSha256: sha256(input.release.document),
+      questions: holdout.questions, release: input.release,
+      releaseDocumentSha256: sha256(input.release.document),
       releaseRootSha256: input.release.releaseRootSha256,
       spendLedger: new DurableAttemptJournal(input.config.holdoutJournalRoot, input.policy,
-        "holdout_provider_result"), spendReservations: holdout.verifiedSpends,
+        "holdout_provider_result"),
+      spendReservations: holdout.verifiedSpends,
       spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition });
     const targetInventoryAuthority = await loadProductionAuthority(
       input.config.deletionAuthorityPath);
+    const targetInventoryReceipt = await readProductionJson(
+      input.config.holdoutCleanupPlanPath, "holdout target inventory");
+    if (sha256(targetInventoryReceipt) !==
+      holdout.authorization.derivedArtifactInventorySha256) {
+      throw new Error("holdout derived artifact inventory was substituted or replayed");
+    }
     const cleanup = await withCallContext(input.deadlineEpochMs, async (context) =>
       await executeDerivedCleanup({ absenceAuthority: input.absenceAuthority,
         campaignRootSha256: holdoutRootSha256, context, deletion: input.ports.deletion,
@@ -283,8 +299,7 @@ Promise<ProductionCompositionResult | null> {
         observation: input.ports.absence, protectedEvidence: input.custody.protectedEvidence,
         releaseRootSha256: input.release.releaseRootSha256, targetInventoryAuthority,
         targetInventoryAuthorityKeySha256: input.targetInventoryAuthorityKeySha256,
-        targetInventoryReceipt: await readProductionJson(input.config.holdoutCleanupPlanPath,
-          "holdout target inventory") }));
+        targetInventoryReceipt }));
     const report = createHoldoutReport({ cleanupReceiptSha256: cleanup.absenceReceiptSha256,
       holdoutRootSha256, outcomeCount: evidence.outcomes.length,
       reportMetricsSha256: sha256({ cumulativeSpendProofSha256:

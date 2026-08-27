@@ -2,7 +2,8 @@ import { canonicalJson, digest, exactRecord, sha256 } from "./canonical.js";
 import { HOLDOUT_CARDINALITY, type CampaignQuestion,
   validateCampaignQuestion } from "./admission.js";
 import { verifyExternalSignedValue } from "./execution.js";
-import { QualityCampaignAuthorityPolicy } from "./release.js";
+import { type QualityCampaignRelease, QualityCampaignAuthorityPolicy } from "./release.js";
+import { MAX_PROVIDER_INPUT_BYTES } from "./retention.js";
 
 export interface FrozenMainInputProof {
   readonly loadedLocatorDigests: readonly string[];
@@ -14,14 +15,21 @@ export interface FrozenMainInputProof {
 }
 
 export interface HoldoutAuthorization {
+  readonly derivedArtifactInventorySha256: string;
+  readonly forbiddenLocatorReceiptSha256: string;
+  readonly goldRelevanceReceiptSha256: string;
   readonly holdoutLocatorSetSha256: string;
   readonly holdoutQuestionSetSha256: string;
   readonly holdoutRootSha256: string;
   readonly keyNamespace: string;
+  readonly locatorInventoryReceiptSha256: string;
   readonly mainInputRootSha256: string;
   readonly mainReleaseRootSha256: string;
   readonly questionReceiptSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_holdout_authorization.v2";
+  readonly providerInputMaximumBytes: 16000;
+  readonly releaseExecutionBindingSha256: string;
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_holdout_authorization.v3";
+  readonly spendReservationSetSha256: string;
 }
 
 export interface HoldoutQuestionReceipt {
@@ -41,13 +49,20 @@ export interface AdmittedHoldout {
 }
 
 /** Enforces that main admission was frozen first and never loaded holdout identities. */
+// oxlint-disable-next-line complexity -- all independently sealed holdout bindings fail closed together
 export function admitIsolatedHoldout(policy: QualityCampaignAuthorityPolicy,
   input: { readonly authorization: unknown;
   readonly authorizationAuthorityKeyId: string;
+  readonly derivedArtifactInventory: unknown;
+  readonly forbiddenLocatorReceipt: unknown;
+  readonly goldRelevanceReceipt: unknown;
   readonly holdoutLocatorDigests: readonly string[]; readonly main: unknown;
+  readonly locatorInventoryReceipt: unknown;
   readonly mainAuthorityKeyId: string;
   readonly questionAuthorityKeyId: string; readonly questionReceipt: unknown;
-  readonly questions: readonly CampaignQuestion[] }): AdmittedHoldout {
+  readonly questions: readonly CampaignQuestion[];
+  readonly release: QualityCampaignRelease;
+  readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>> }): AdmittedHoldout {
   const authorizationAuthority = policy.assertReference("holdout_authorization",
     input.authorizationAuthorityKeyId);
   const mainAuthority = policy.assertReference("main_proof", input.mainAuthorityKeyId);
@@ -66,7 +81,10 @@ export function admitIsolatedHoldout(policy: QualityCampaignAuthorityPolicy,
   for (const value of [authorization.holdoutLocatorSetSha256,
     authorization.holdoutQuestionSetSha256, authorization.holdoutRootSha256,
     authorization.mainInputRootSha256, authorization.mainReleaseRootSha256,
-    authorization.questionReceiptSha256, main.mainInputRootSha256,
+    authorization.questionReceiptSha256, authorization.derivedArtifactInventorySha256,
+    authorization.forbiddenLocatorReceiptSha256, authorization.goldRelevanceReceiptSha256,
+    authorization.locatorInventoryReceiptSha256, authorization.releaseExecutionBindingSha256,
+    authorization.spendReservationSetSha256, main.mainInputRootSha256,
     main.mainReleaseRootSha256, main.tuningCorpusSha256]) {digest(value, "holdout binding");}
   if (authorization.mainInputRootSha256 !== main.mainInputRootSha256 ||
     authorization.mainReleaseRootSha256 !== main.mainReleaseRootSha256) {
@@ -99,7 +117,15 @@ export function admitIsolatedHoldout(policy: QualityCampaignAuthorityPolicy,
     authorization.holdoutLocatorSetSha256 !== sha256(locatorDigests) ||
     authorization.questionReceiptSha256 !== questionReceiptSha256 ||
     authorization.holdoutRootSha256 !== holdoutRootSha256 ||
-    authorization.keyNamespace !== `holdout:${holdoutRootSha256}`) {
+    authorization.keyNamespace !== `holdout:${holdoutRootSha256}` ||
+    authorization.derivedArtifactInventorySha256 !== sha256(input.derivedArtifactInventory) ||
+    authorization.forbiddenLocatorReceiptSha256 !== sha256(input.forbiddenLocatorReceipt) ||
+    authorization.goldRelevanceReceiptSha256 !== sha256(input.goldRelevanceReceipt) ||
+    authorization.locatorInventoryReceiptSha256 !== sha256(input.locatorInventoryReceipt) ||
+    authorization.providerInputMaximumBytes !== MAX_PROVIDER_INPUT_BYTES ||
+    authorization.releaseExecutionBindingSha256 !== holdoutReleaseExecutionBindingSha256(
+      input.release) || authorization.spendReservationSetSha256 !== sha256(([1, 2, 3] as const)
+        .map((repetition) => input.spendReservationSha256ByRepetition[repetition]))) {
     throw new Error("holdout authorization does not bind the exact isolated inputs");
   }
   return Object.freeze({ authorization, authorizationReceiptSha256: sha256(authorizationReceipt),
@@ -108,13 +134,30 @@ export function admitIsolatedHoldout(policy: QualityCampaignAuthorityPolicy,
 }
 
 function decodeAuthorization(value: unknown): HoldoutAuthorization {
-  const record = exactRecord(value, ["holdoutLocatorSetSha256", "holdoutQuestionSetSha256",
-    "holdoutRootSha256", "keyNamespace", "mainInputRootSha256", "mainReleaseRootSha256",
-    "questionReceiptSha256", "schemaVersion"], "holdout authorization payload");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_authorization.v2") {
+  const record = exactRecord(value, ["derivedArtifactInventorySha256",
+    "forbiddenLocatorReceiptSha256", "goldRelevanceReceiptSha256", "holdoutLocatorSetSha256",
+    "holdoutQuestionSetSha256", "holdoutRootSha256", "keyNamespace",
+    "locatorInventoryReceiptSha256", "mainInputRootSha256", "mainReleaseRootSha256",
+    "providerInputMaximumBytes", "questionReceiptSha256", "releaseExecutionBindingSha256",
+    "schemaVersion", "spendReservationSetSha256"], "holdout authorization payload");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_authorization.v3") {
     throw new Error("holdout authorization schema is invalid");
   }
   return record as unknown as HoldoutAuthorization;
+}
+
+export function holdoutReleaseExecutionBindingSha256(release: QualityCampaignRelease): string {
+  return sha256({ answerImageSha256: release.answerImageSha256,
+    answerProcessIdentitySha256: release.answerProcessIdentitySha256,
+    answerReleaseSha256: release.answerReleaseSha256,
+    infinityCapabilitySha256: release.infinityCapabilitySha256,
+    infinityProfileSha256: release.infinityProfileSha256,
+    infinityReleaseSha256: release.infinityReleaseSha256, mapperSha256: release.mapperSha256,
+    model: release.model, policySha256: release.policySha256,
+    promptSha256: release.promptSha256, reasoning: release.reasoning,
+    schemaVersion: "meeting_knowledge.semantic_quality_holdout_release_execution.v1",
+    sdkArchiveSha256: release.sdkArchiveSha256, serviceTier: release.serviceTier,
+    tokenizerSha256: release.tokenizerSha256 });
 }
 
 function decodeMainProof(value: unknown): FrozenMainInputProof {

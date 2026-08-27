@@ -6,6 +6,7 @@ import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
   verifyPinnedReleaseDocument } from "./release.js";
 import type { CampaignClockPort, CampaignProviderPorts } from "./production-ports.js";
 import type { ExactTerminalEvidence } from "./production-evidence.js";
+import { MAX_PROVIDER_INPUT_BYTES } from "./retention.js";
 
 const PER_CALL_DEADLINE_MS = 120_000;
 const CALLS = Object.freeze(["capability", "retrieval", "answer"] as const);
@@ -228,6 +229,9 @@ async function executeQuestion(input: {
       releaseRootSha256: input.binding.releaseRootSha256, repetition: input.job.repetition,
       schemaVersion: "meeting_knowledge.semantic_quality_provider_request.v1",
       spendReservationSha256: input.binding.spendReservationSha256 }));
+    if (request.byteLength > MAX_PROVIDER_INPUT_BYTES) {
+      throw new Error("production provider request exceeds the immutable input bound");
+    }
     const controller = new AbortController();
     const timeout = setTimeout(() => {controller.abort(new Error("production call deadline exceeded"));},
       Math.max(0, callDeadlineEpochMs - nowEpochMs));

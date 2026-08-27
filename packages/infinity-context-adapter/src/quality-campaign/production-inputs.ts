@@ -3,11 +3,12 @@ import { isAbsolute, resolve } from "node:path";
 
 import { type AdmittedMainCampaign, type AdmissionAuthority,
   type CampaignQuestion } from "./admission.js";
-import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256, safeId } from
+import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256, safeId, sha256 } from
   "./canonical.js";
 import { verifyExternalSignedValue, verifySpendReservation } from "./execution.js";
 import type { HoldoutAuthorization } from "./holdout.js";
-import { QUALITY_AUTHORITY_ROLES, QualityCampaignAuthorityPolicy } from "./release.js";
+import { type QualityCampaignRelease, QUALITY_AUTHORITY_ROLES,
+  QualityCampaignAuthorityPolicy } from "./release.js";
 import type { ProtectedCampaignEvidence } from "./production-cleanup.js";
 import type { DerivedCampaignArtifact, QualityCampaignProductionPorts } from
   "./production-ports.js";
@@ -162,13 +163,16 @@ export async function loadProductionHoldout(input: { readonly admitted: Admitted
   readonly authority: AdmissionAuthority; readonly custody: CanonicalCustodyEvidence;
   readonly nowEpochMs: number; readonly path: string;
   readonly policy: QualityCampaignAuthorityPolicy;
-  readonly ports: QualityCampaignProductionPorts; readonly releaseRootSha256: string }) {
+  readonly ports: QualityCampaignProductionPorts; readonly release: QualityCampaignRelease;
+  readonly releaseRootSha256: string }) {
   const record = exactRecord(await readProductionJson(input.path, "holdout input"),
-    ["authorizationReceiptPath", "locatorDigestsPath", "mainProofAuthorityPath",
+    ["authorizationReceiptPath", "derivedArtifactInventoryPath",
+      "forbiddenLocatorReceiptPath", "goldRelevanceReceiptPath", "locatorDigestsPath",
+      "locatorInventoryReceiptPath", "mainProofAuthorityPath",
       "mainProofReceiptPath", "questionAuthorityPath", "questionReceiptPath", "questionsPath",
       "schemaVersion", "spendAuthorityPath", "spendReservationPath",
       "tuningEvidenceDigestsPath"], "holdout input");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_input.v3") {
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_input.v4") {
     throw new Error("holdout input is invalid");
   }
   const authorization = await readProductionJson(absolute(String(record.authorizationReceiptPath),
@@ -190,6 +194,18 @@ export async function loadProductionHoldout(input: { readonly admitted: Admitted
   const tuningEvidenceDigests = await readProductionArray(absolute(
     String(record.tuningEvidenceDigestsPath), "holdout tuning evidence"),
   "holdout tuning evidence") as string[];
+  const derivedArtifactInventory = await readProductionJson(absolute(String(
+    record.derivedArtifactInventoryPath), "holdout derived artifact inventory"),
+  "holdout derived artifact inventory");
+  const forbiddenLocatorReceipt = await readProductionJson(absolute(String(
+    record.forbiddenLocatorReceiptPath), "holdout forbidden locator authority"),
+  "holdout forbidden locator authority");
+  const goldRelevanceReceipt = await readProductionJson(absolute(String(
+    record.goldRelevanceReceiptPath), "holdout relevance authority"),
+  "holdout relevance authority");
+  const locatorInventoryReceipt = await readProductionJson(absolute(String(
+    record.locatorInventoryReceiptPath), "holdout locator authority"),
+  "holdout locator authority");
   const spendAuthority = await loadProductionAuthority(absolute(String(record.spendAuthorityPath),
     "holdout spend authority"));
   const spendReservations = await readProductionJson(absolute(String(record.spendReservationPath),
@@ -209,9 +225,18 @@ export async function loadProductionHoldout(input: { readonly admitted: Admitted
   assertHoldoutIsolation({ authorization: authorizationReceipt.payload, holdoutLocatorDigests, input,
     questions, tuningEvidenceDigests });
   return { admission: { authorization, authorizationAuthorityKeyId: input.authority.keyId,
-    holdoutLocatorDigests, main, mainAuthorityKeyId: mainAuthority.keyId,
-    questionAuthorityKeyId: questionAuthority.keyId, questionReceipt, questions },
+    derivedArtifactInventory, forbiddenLocatorReceipt, goldRelevanceReceipt,
+    holdoutLocatorDigests, locatorInventoryReceipt, main,
+    mainAuthorityKeyId: mainAuthority.keyId, questionAuthorityKeyId: questionAuthority.keyId,
+    questionReceipt, questions, release: input.release,
+    spendReservationSha256ByRepetition: Object.freeze({
+      1: verifiedSpends[0]!.spendReservationSha256,
+      2: verifiedSpends[1]!.spendReservationSha256,
+      3: verifiedSpends[2]!.spendReservationSha256 }) },
   authorization: authorizationReceipt.payload, holdoutLocatorDigests, main, questions,
+  authorityBindings: { forbiddenLocatorReceiptSha256: sha256(forbiddenLocatorReceipt),
+    goldRelevanceReceiptSha256: sha256(goldRelevanceReceipt),
+    locatorInventoryReceiptSha256: sha256(locatorInventoryReceipt) },
   provider: verifiedSpends[0]!.payload.provider, spendAuthority,
   spendReservationSha256ByRepetition: Object.freeze({ 1: verifiedSpends[0]!.spendReservationSha256,
     2: verifiedSpends[1]!.spendReservationSha256, 3: verifiedSpends[2]!.spendReservationSha256 }),

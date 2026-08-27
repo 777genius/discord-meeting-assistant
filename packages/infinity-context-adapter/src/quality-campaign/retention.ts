@@ -12,6 +12,8 @@ import { assertAttemptIdentity, type AttemptIdentity, type VerifiedSpendReservat
   verifyExternalSignedValue } from "./execution.js";
 import { QualityCampaignAuthorityPolicy } from "./release.js";
 
+export const MAX_PROVIDER_INPUT_BYTES = 16_000;
+
 export const REQUIRED_RETAINED_KINDS = Object.freeze([
   "capability_request", "capability_response", "retrieval_request", "retrieval_response",
   "evidence", "answer_request", "answer_response", "raw_outcome", "adjudication_input",
@@ -81,6 +83,7 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
   readonly effectVerificationEpochMs: number;
   readonly expectedOutcomes: readonly ExpectedOutcomeInventory[];
   readonly perRepetitionCardinality: 30 | 240;
+  readonly keyNamespace?: string;
   readonly providerResultAuthorityRole?: "holdout_provider_result" | "provider_result";
   readonly releaseDocumentSha256: string;
   readonly spendReservations: readonly VerifiedSpendReservation[] }): Promise<{
@@ -100,6 +103,7 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
     effectVerificationEpochMs: input.effectVerificationEpochMs, expected, releaseDocumentSha256:
     digest(input.releaseDocumentSha256, "retained release document"), reviewSpendClaims: [], seen,
     expectedSpendClaims: [],
+    keyNamespace: input.keyNamespace,
     providerResultAuthorityRole: input.providerResultAuthorityRole ?? "provider_result",
     spendReservations: input.spendReservations };
   let totalStoredBytes = 0;
@@ -149,6 +153,7 @@ interface RetentionContext {
   readonly expected: ReadonlyMap<string, ExpectedArtifactMembership>; readonly seen: RetentionSeen;
   readonly expectedSpendClaims: ExpectedSpendClaim[];
   readonly releaseDocumentSha256: string;
+  readonly keyNamespace: string | undefined;
   readonly providerResultAuthorityRole: "holdout_provider_result" | "provider_result";
   readonly reviewSpendClaims: DurableSpendClaim[];
   readonly spendReservations: readonly VerifiedSpendReservation[];
@@ -159,7 +164,8 @@ function buildExpectedMembership(outcomes: readonly ExpectedOutcomeInventory[],
   perRepetitionCardinality: number):
 Map<string, ExpectedArtifactMembership> {
   const total = perRepetitionCardinality * MAIN_CARDINALITY.repetitions;
-  if (outcomes.length !== total ||
+  if (!Number.isSafeInteger(perRepetitionCardinality) || perRepetitionCardinality < 1 ||
+    outcomes.length !== total ||
     new Set(outcomes.map(({ identity }) => identity.attemptId)).size !== total) {
     throw new Error("expected outcome inventory does not match its exact repetition cardinality");
   }
@@ -215,6 +221,10 @@ async function admitRetainedArtifact(policy: QualityCampaignAuthorityPolicy,
     digest(value, `retained ${label}`);
   }
   safeId(artifact.keyId, "retained key ID");
+  if (context.keyNamespace !== undefined &&
+    !artifact.keyId.startsWith(`${context.keyNamespace}:`)) {
+    throw new Error("retained artifact key is outside the authorized namespace");
+  }
   const keyBindingSha256 = sha256({ attemptId: artifact.attemptId, keyId: artifact.keyId,
     kind: artifact.kind, questionId: artifact.questionId, repetition: artifact.repetition,
     schemaVersion: "meeting_knowledge.semantic_quality_retained_key_binding.v1" });
@@ -376,6 +386,9 @@ function assertArtifactHeader(value: Record<string, unknown>, kind: RetainedArti
 
 function assertProviderRequestDigest(value: unknown, chainValue: unknown, label: string): string {
   const bytes = decodeCanonicalBase64Value(value, `${label} request bytes`);
+  if (bytes.byteLength < 1 || bytes.byteLength > MAX_PROVIDER_INPUT_BYTES) {
+    throw new Error(`authenticated ${label} exceeds the production provider-input bound`);
+  }
   const chain = chainValue as Record<string, unknown>;
   const requestDigestSha256 = sha256(bytes);
   if (chain.requestDigestSha256 !== requestDigestSha256) {

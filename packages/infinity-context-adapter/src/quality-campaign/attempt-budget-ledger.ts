@@ -14,6 +14,15 @@ interface BudgetClaim {
   readonly spendReservationSha256: string;
 }
 
+export async function loadAdmittedAttemptBudgetClaims(input: { readonly campaignRootSha256: string;
+  readonly ledgerPath: string; readonly spendReservationSha256: string;
+  readonly spend: SpendReservation }): Promise<readonly BudgetClaim[]> {
+  const claims = await readBudgetClaims(input.ledgerPath, input.spendReservationSha256,
+    input.campaignRootSha256);
+  const admitted = admittedBudgetClaims(claims, input.spend);
+  return Object.freeze(claims.filter(({ admissionId }) => admitted.has(admissionId)));
+}
+
 export async function claimDurableAttemptBudget(input: { readonly admissionId: string;
   readonly identity: AttemptIdentity; readonly ledgerPath: string;
   readonly requestDigestSha256: string; readonly requestedEncryptedBytes: number;

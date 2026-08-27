@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { link, mkdir, open, readFile, stat, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 
-import { claimDurableAttemptBudget } from "./attempt-budget-ledger.js";
+import { claimDurableAttemptBudget, loadAdmittedAttemptBudgetClaims } from
+  "./attempt-budget-ledger.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import type { CumulativeSpendLedgerPort, DurableSpendClaim } from "./cumulative-spend.js";
 import { assertAttemptIdentity, CALL_KINDS, type AttemptIdentity, type CallKind,
@@ -266,10 +267,10 @@ export class DurableAttemptJournal implements CumulativeSpendLedgerPort {
   }
   public async loadAdmittedClaims(spend: VerifiedSpendReservation):
   Promise<readonly DurableSpendClaim[]> {
-    const claims = await readBudgetClaims(this.budgetPath(spend.spendReservationSha256),
-      spend.spendReservationSha256, spend.payload.campaignRootSha256);
-    const admitted = admittedBudgetClaims(claims, spend.payload);
-    return Object.freeze(claims.filter(({ admissionId }) => admitted.has(admissionId)));
+    return await loadAdmittedAttemptBudgetClaims({ campaignRootSha256:
+      spend.payload.campaignRootSha256, ledgerPath:
+      this.budgetPath(spend.spendReservationSha256), spend: spend.payload,
+    spendReservationSha256: spend.spendReservationSha256 });
   }
 }
 

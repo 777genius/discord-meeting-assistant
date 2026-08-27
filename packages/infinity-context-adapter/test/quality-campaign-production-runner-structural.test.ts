@@ -16,6 +16,7 @@ import {
   attemptIdentity,
   canonicalJson,
   publicKeyFingerprintSha256,
+  holdoutReleaseExecutionBindingSha256,
   reconstructMetrics,
   runQualityCampaignProductionCli,
   sha256,
@@ -301,12 +302,55 @@ async function createFixture() {
     admitted.rootBindingSha256, mainReleaseRootSha256: releaseRootSha256,
     questionReceiptSha256: sha256(questionReceipt),
     schemaVersion: "meeting_knowledge.semantic_quality_holdout_root.v1" });
-  const holdoutAuthorization = { holdoutLocatorSetSha256: sha256(holdoutLocatorDigests),
+  const holdoutAuthorizedLocatorIds = holdoutQuestions.map(({ questionId }) =>
+    digest(`locator:${questionId}`));
+  const holdoutGoldEntries = holdoutQuestions.map((question) => ({ ...question,
+    campaignRootSha256: holdoutRootSha256, expectedAbstention:
+    Number(question.questionId.split("-").at(-1)) % 10 === 9,
+    releaseRootSha256, relevantLocatorIds:
+    Number(question.questionId.split("-").at(-1)) % 10 === 9 ? [] :
+      [digest(`locator:${question.questionId}`)] }));
+  const holdoutForbiddenEntries = holdoutQuestions.map((question) => ({
+    campaignRootSha256: holdoutRootSha256,
+    forbiddenLocatorIds: [digest(`forbidden:${question.questionId}`)],
+    questionDigestSha256: question.questionDigestSha256, questionId: question.questionId,
+    releaseRootSha256 }));
+  const holdoutGoldRelevanceReceipt = goldRelevance.signed({ campaignRootSha256:
+    holdoutRootSha256, entries: holdoutGoldEntries, releaseRootSha256,
+  schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" });
+  const holdoutForbiddenLocatorReceipt = locator.signed({ campaignRootSha256:
+    holdoutRootSha256, entries: holdoutForbiddenEntries, releaseRootSha256,
+  schemaVersion: "meeting_knowledge.semantic_quality_forbidden_locators.v1" });
+  const holdoutLocatorInventoryReceipt = locator.signed({ campaignRootSha256:
+    holdoutRootSha256, locatorIds: holdoutAuthorizedLocatorIds, releaseRootSha256,
+  schemaVersion: "meeting_knowledge.semantic_quality_locator_inventory.v1" });
+  const holdoutSpendDocuments = ([1, 2, 3] as const).map((repetition) => spend.signed({
+    allowedCallKinds: ["answer", "capability", "retrieval"], campaignRootSha256:
+    holdoutRootSha256, expiresAtEpochMs: 4_000_000_000_000, maxCalls: 270,
+    maxEncryptedBytes: 100_000_000, maxCallsByKind: { adjudicator_1: 0, adjudicator_2: 0,
+      answer: 90, capability: 90, resolver: 0, retrieval: 90 }, maximumEffectDurationMs: 120_000,
+    maxTokens: 1_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
+    releaseRootSha256, repetition }));
+  const holdoutTargets = [{ artifactId: "holdout-index", kind: "derived_index" },
+    { artifactId: "holdout-prompt", kind: "temporary_prompt" }] as const;
+  const holdoutTargetInventoryReceipt = deletion.signed({ campaignRootSha256: holdoutRootSha256,
+    protectedOriginals, releaseRootSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v1",
+    targets: holdoutTargets });
+  const holdoutSpendDigests = holdoutSpendDocuments.map(sha256);
+  const holdoutAuthorization = { derivedArtifactInventorySha256:
+    sha256(holdoutTargetInventoryReceipt), forbiddenLocatorReceiptSha256:
+    sha256(holdoutForbiddenLocatorReceipt), goldRelevanceReceiptSha256:
+    sha256(holdoutGoldRelevanceReceipt), holdoutLocatorSetSha256: sha256(holdoutLocatorDigests),
     holdoutQuestionSetSha256: sha256(holdoutQuestions), holdoutRootSha256,
     keyNamespace: `holdout:${holdoutRootSha256}`,
+    locatorInventoryReceiptSha256: sha256(holdoutLocatorInventoryReceipt),
     mainInputRootSha256: admitted.rootBindingSha256, mainReleaseRootSha256: releaseRootSha256,
+    providerInputMaximumBytes: 16_000,
     questionReceiptSha256: sha256(questionReceipt),
-    schemaVersion: "meeting_knowledge.semantic_quality_holdout_authorization.v2" };
+    releaseExecutionBindingSha256: holdoutReleaseExecutionBindingSha256(release),
+    schemaVersion: "meeting_knowledge.semantic_quality_holdout_authorization.v3",
+    spendReservationSetSha256: sha256(holdoutSpendDigests) };
   const holdoutAuthorizationPath = join(root, "holdout-authorization.json");
   const holdoutQuestionsPath = join(root, "holdout-questions.json");
   const holdoutLocatorsPath = join(root, "holdout-locators.json");
@@ -314,6 +358,9 @@ async function createFixture() {
   const mainProofPath = join(root, "holdout-main-proof.json");
   const questionReceiptPath = join(root, "holdout-question-receipt.json");
   const holdoutSpendPath = join(root, "holdout-spend.json");
+  const holdoutForbiddenPath = join(root, "holdout-forbidden.json");
+  const holdoutGoldPath = join(root, "holdout-gold.json");
+  const holdoutLocatorInventoryPath = join(root, "holdout-locator-inventory.json");
   await writeFile(holdoutAuthorizationPath,
     canonicalJson(holdoutAuthority.signed(holdoutAuthorization)));
   await writeFile(holdoutQuestionsPath, canonicalJson(holdoutQuestions));
@@ -321,32 +368,24 @@ async function createFixture() {
   await writeFile(holdoutTuningPath, canonicalJson(holdoutTuningEvidence));
   await writeFile(mainProofPath, canonicalJson(mainProof));
   await writeFile(questionReceiptPath, canonicalJson(questionReceipt));
-  await writeFile(holdoutSpendPath, canonicalJson(([1, 2, 3] as const).map((repetition) =>
-    spend.signed({ allowedCallKinds:
-    ["answer", "capability", "retrieval", "adjudicator_1", "adjudicator_2", "resolver"],
-  campaignRootSha256: holdoutRootSha256,
-  expiresAtEpochMs: 4_000_000_000_000, maxCalls: 180, maxEncryptedBytes: 100_000_000,
-  maxCallsByKind: { adjudicator_1: 30, adjudicator_2: 30, answer: 30, capability: 30,
-    resolver: 30, retrieval: 30 }, maximumEffectDurationMs: 120_000,
-  maxTokens: 1_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
-  releaseRootSha256, repetition }))));
+  await writeFile(holdoutSpendPath, canonicalJson(holdoutSpendDocuments));
+  await writeFile(holdoutForbiddenPath, canonicalJson(holdoutForbiddenLocatorReceipt));
+  await writeFile(holdoutGoldPath, canonicalJson(holdoutGoldRelevanceReceipt));
+  await writeFile(holdoutLocatorInventoryPath, canonicalJson(holdoutLocatorInventoryReceipt));
+  const holdoutCleanupPlanPath = join(root, "holdout-cleanup-plan.json");
+  await writeFile(holdoutCleanupPlanPath, canonicalJson(holdoutTargetInventoryReceipt));
   const holdoutInputPath = join(root, "holdout-input.json");
   await writeFile(holdoutInputPath, canonicalJson({ authorizationReceiptPath:
-    holdoutAuthorizationPath, locatorDigestsPath: holdoutLocatorsPath,
+    holdoutAuthorizationPath, derivedArtifactInventoryPath: holdoutCleanupPlanPath,
+    forbiddenLocatorReceiptPath: holdoutForbiddenPath,
+    goldRelevanceReceiptPath: holdoutGoldPath, locatorDigestsPath: holdoutLocatorsPath,
+    locatorInventoryReceiptPath: holdoutLocatorInventoryPath,
     mainProofAuthorityPath: authorityPaths.mainProofAuthority, mainProofReceiptPath: mainProofPath,
     questionAuthorityPath: authorityPaths.holdoutQuestion, questionReceiptPath,
     questionsPath: holdoutQuestionsPath, schemaVersion:
-    "meeting_knowledge.semantic_quality_holdout_input.v3",
+    "meeting_knowledge.semantic_quality_holdout_input.v4",
     spendAuthorityPath: authorityPaths.spend, spendReservationPath: holdoutSpendPath,
     tuningEvidenceDigestsPath: holdoutTuningPath }));
-  const holdoutTargets = [{ artifactId: "holdout-index", kind: "derived_index" },
-    { artifactId: "holdout-prompt", kind: "temporary_prompt" }] as const;
-  const holdoutCleanupPlanPath = join(root, "holdout-cleanup-plan.json");
-  await writeFile(holdoutCleanupPlanPath, canonicalJson(deletion.signed({ campaignRootSha256:
-    holdoutAuthorization.holdoutRootSha256, protectedOriginals, releaseRootSha256,
-  schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v2",
-  targets: holdoutTargets })));
-
   const configPath = join(root, "operator.json");
   await writeFile(configPath, canonicalJson({ absenceAuthorityPath: authorityPaths.absence,
     adjudicationAuthorityPaths: [authorityPaths.judge1, authorityPaths.judge2,
@@ -370,7 +409,9 @@ async function createFixture() {
 
   const runtime = createRuntimeFixture({ absence, artifactCustody: custody, clock, deletion, holdoutProvider,
     goldRelevance, judge1: reviewer1, judge2: reviewer2, locator, protectedEvidence, protectedOriginals,
-    provider, questions: allQuestions, holdoutQuestions, release, releaseDocument, releaseRootSha256,
+    holdoutForbiddenLocatorReceipt, holdoutGoldRelevanceReceipt,
+    holdoutLocatorInventoryReceipt, holdoutQuestions, provider, questions: allQuestions,
+    release, releaseDocument, releaseRootSha256,
     repetitionAuthority, resolver, reviewer1, reviewer2, spend });
   const { ports } = runtime;
   const cli = async (command: string, statusName: string) =>
@@ -434,6 +475,9 @@ interface RuntimeFixtureInput { readonly absence: ReturnType<typeof signer>;
   readonly judge1: ReturnType<typeof signer>; readonly judge2: ReturnType<typeof signer>;
   readonly locator: ReturnType<typeof signer>;
   readonly goldRelevance: ReturnType<typeof signer>;
+  readonly holdoutForbiddenLocatorReceipt: unknown;
+  readonly holdoutGoldRelevanceReceipt: unknown;
+  readonly holdoutLocatorInventoryReceipt: unknown;
   readonly protectedEvidence: readonly unknown[]; readonly provider: ReturnType<typeof signer>;
   readonly holdoutQuestions: readonly CampaignQuestion[];
   readonly protectedOriginals: readonly { readonly artifactId: string; readonly kind: string }[];
@@ -532,7 +576,9 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
   const finalAdjudicationByAttempt = new Map<string, string>();
   const encodeArtifact = (answer: AttemptIdentity,
     kind: typeof REQUIRED_RETAINED_KINDS[number] | "resolver_result", plaintext: Buffer) => {
-    const identity = artifactAttemptIdentity(answer, kind); const keyId = "retention-key";
+    const identity = artifactAttemptIdentity(answer, kind); const keyId =
+      answer.questionId.startsWith("h-") ?
+        `holdout:${answer.campaignRootSha256}:retention-key` : "retention-key";
     const plaintextSha256 = sha256(plaintext);
     const aad = { artifactKind: kind, attemptId: identity.attemptId,
       callKind: identity.callKind, callOrdinal: identity.callOrdinal,
@@ -563,6 +609,8 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       String(request.releaseRootSha256), repetition: Number(request.repetition) as 1 | 2 | 3,
       spendReservationSha256: String(request.spendReservationSha256) });
     const bindings: Record<string, string> = {};
+    const resultSigner = answerIdentity.questionId.startsWith("h-") ? input.holdoutProvider :
+      input.provider;
     let predecessorPlaintextSha256: string | null = null;
     const kinds = adjudication.resolverReceipt === null ? REQUIRED_RETAINED_KINDS :
       [...REQUIRED_RETAINED_KINDS.slice(0, -1), "resolver_result" as const,
@@ -708,6 +756,14 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       outcomes[0]!.campaignRootSha256, entries: goldRelevanceEntries,
       releaseRootSha256: input.releaseRootSha256,
       schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" });
+    const forbiddenLocatorReceipt = input.locator.signed({ campaignRootSha256:
+      outcomes[0]!.campaignRootSha256, entries: input.questions.map((question) => ({
+        campaignRootSha256: outcomes[0]!.campaignRootSha256,
+        forbiddenLocatorIds: [digest(`forbidden:${question.questionId}`)],
+        questionDigestSha256: question.questionDigestSha256, questionId: question.questionId,
+        releaseRootSha256: input.releaseRootSha256 })), releaseRootSha256:
+      input.releaseRootSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_forbidden_locators.v1" });
     const rootBindingSha256 = sha256({ authorizedLocatorSetSha256: sha256(authorizedLocatorIds),
       campaignRootSha256: outcomes[0]!.campaignRootSha256,
       questionSetSha256: sha256(evidenceQuestions), relevanceAuthoritySha256:
@@ -760,7 +816,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       schemaVersion: "meeting_knowledge.semantic_quality_reviewed_main_questions.v2" } as const;
     return { adjudications, artifacts, authorizedLocatorIds, authorizedLocatorInventory,
       campaignByteCeiling: 100_000_000, finalRootBindingSha256: rootBindingSha256,
-      goldRelevanceReceipt, outcomes, questionReviewReceipts:
+      forbiddenLocatorReceipt, goldRelevanceReceipt, outcomes, questionReviewReceipts:
       [input.reviewer1.signed(reviewedQuestions), input.reviewer2.signed(reviewedQuestions)] as const,
       repetitionEvidence };
   };
@@ -776,7 +832,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
           .toSorted((left, right) => left.kind.localeCompare(right.kind))), releaseRootSha256:
           input.releaseRootSha256,
         schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v5" });
-    } }, artifactCustody: { loadKey: async ({ keyId }) => keyId === "retention-key" ? {
+    } }, artifactCustody: { loadKey: async ({ keyId }) => keyId.endsWith("retention-key") ? {
       authorityKeyId: input.artifactCustody.keyId,
       authorityPublicKeyFingerprintSha256: input.release.artifactKeyCustodySha256,
       key: artifactKey, keyCustodySha256: input.release.artifactKeyCustodySha256 } : null,
@@ -788,8 +844,15 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
     } }, evidence: { holdout: async () => ({ envelopeBytes: Buffer.from("holdout"),
       signedReceipt: {} }), main: async () => ({ envelopeBytes: Buffer.from("main"),
       signedReceipt: {} }) }, evidenceCustody: { open: async ({ attemptIds, kind }) => kind ===
-      "main" ? mainEvidence(attemptIds) : mainEvidence(attemptIds, input.holdoutQuestions,
-        input.holdoutProvider) },
+      "main" ? mainEvidence(attemptIds) : (() => {const artifacts = artifactsFor(attemptIds);
+        const outcomes = outcomesFor(attemptIds, input.holdoutProvider); return {
+        adjudications: attemptIds.map(adjudicationFor), artifacts, authorizedLocatorIds:
+        (input.holdoutLocatorInventoryReceipt as { payload: { locatorIds: string[] } }).payload.locatorIds,
+        authorizedLocatorInventory: input.holdoutLocatorInventoryReceipt,
+        campaignByteCeiling: 100_000_000, finalRootBindingSha256: digest("holdout-final-root"),
+        forbiddenLocatorReceipt: input.holdoutForbiddenLocatorReceipt,
+        goldRelevanceReceipt: input.holdoutGoldRelevanceReceipt, outcomes,
+        questionReviewReceipts: [{}, {}], repetitionEvidence: [] };})() },
     holdoutProvider: { answer: holdoutExchange, capability: holdoutExchange,
       resultAuthority: input.holdoutProvider, retrieval: holdoutExchange },
     mainProvider: { answer: mainExchange, capability: mainExchange,
@@ -930,7 +993,7 @@ function exactOutcome(attemptId: string, source: {
     forbiddenLocatorDigests: [digest(`forbidden:${questionId}`)],
     questionDigestSha256: String(request.questionDigestSha256), questionId,
     rankedLocatorDigests: [locator],
-    relevantLocatorDigests: [locator],
+    relevantLocatorDigests: isAbstention ? [] : [locator],
     repetition, retrievalLatencyUs: 200_000, scopeViolationLocatorIds: [],
     speakerTimeChecks: [{ canonicalTurnId: `turn-${repetition}-${questionId}`,
       expectedSpeakerId: "speaker-1", expectedStartMs: 1_000, observedSpeakerId: "speaker-1",
