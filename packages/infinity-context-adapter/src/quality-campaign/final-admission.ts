@@ -137,6 +137,7 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
     campaignByteCeiling: input.campaignByteCeiling, custody: input.artifactCustody,
     effectVerificationEpochMs: input.effectVerificationEpochMs, expectedOutcomes,
     perRepetitionCardinality: MAIN_CARDINALITY.perRepetition,
+    release: release.release,
     releaseDocumentSha256: sha256(input.release.document),
     spendReservations: verifiedSpendReservations });
   const schedulerSpendClaims = (await Promise.all(verifiedSpendReservations.map(

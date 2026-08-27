@@ -6,7 +6,8 @@ import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
   verifyPinnedReleaseDocument } from "./release.js";
 import type { CampaignClockPort, CampaignProviderPorts } from "./production-ports.js";
 import type { ExactTerminalEvidence } from "./production-evidence.js";
-import { MAX_PROVIDER_INPUT_BYTES } from "./retention.js";
+import { QUALIFICATION_PROVIDER_INPUT_CONTRACT, qualificationExecutionBinding } from
+  "./qualification-contract.js";
 
 const PER_CALL_DEADLINE_MS = 120_000;
 const CALLS = Object.freeze(["capability", "retrieval", "answer"] as const);
@@ -217,6 +218,7 @@ async function executeQuestion(input: {
       releaseRootSha256: input.binding.releaseRootSha256, repetition: input.job.repetition,
       spendReservationSha256: input.binding.spendReservationSha256 });
     const callDeadlineEpochMs = Math.min(input.deadlineEpochMs, nowEpochMs + PER_CALL_DEADLINE_MS);
+    const verifiedRelease = verifyPinnedReleaseDocument(input.binding.policy, input.binding.release);
     const request = Buffer.from(canonicalJson({ attemptId: identity.attemptId,
       callKind, campaignDeadlineEpochMs: input.deadlineEpochMs,
       campaignRootSha256: input.binding.campaignRootSha256,
@@ -225,11 +227,13 @@ async function executeQuestion(input: {
       predecessorResultEnvelopeDigestSha256: predecessor?.digestSha256 ?? null,
       questionDigestSha256: input.job.question.questionDigestSha256,
       questionId: input.job.question.questionId,
-      release: verifyPinnedReleaseDocument(input.binding.policy, input.binding.release).release,
+      providerInputContract: QUALIFICATION_PROVIDER_INPUT_CONTRACT,
+      qualificationExecutionBinding: qualificationExecutionBinding(verifiedRelease.release),
+      release: verifiedRelease.release,
       releaseRootSha256: input.binding.releaseRootSha256, repetition: input.job.repetition,
       schemaVersion: "meeting_knowledge.semantic_quality_provider_request.v1",
       spendReservationSha256: input.binding.spendReservationSha256 }));
-    if (request.byteLength > MAX_PROVIDER_INPUT_BYTES) {
+    if (request.byteLength > QUALIFICATION_PROVIDER_INPUT_CONTRACT.answer.maximumInputUtf8Bytes) {
       throw new Error("production provider request exceeds the immutable input bound");
     }
     const controller = new AbortController();
@@ -239,7 +243,9 @@ async function executeQuestion(input: {
     try {
       state = await executeReservedExchange({ campaignRootSha256:
         input.binding.campaignRootSha256, deadlineEpochMs: callDeadlineEpochMs,
-      effectReservation: { requestedEncryptedBytes: request.byteLength, requestedTokens: 1 },
+      effectReservation: { requestedEncryptedBytes: request.byteLength,
+        requestedTokens: callKind === "answer" ?
+          QUALIFICATION_PROVIDER_INPUT_CONTRACT.answer.maximumOutputTokens * 2 : 1 },
       identity, journal: input.journal, nowEpochMs, port: input.ports[callKind],
       provider: input.binding.provider, release: input.binding.release, request,
       signal: controller.signal, spendReservation: input.binding.spendReservation });

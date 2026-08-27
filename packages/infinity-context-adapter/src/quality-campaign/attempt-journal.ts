@@ -9,7 +9,10 @@ import type { CumulativeSpendLedgerPort, DurableSpendClaim } from "./cumulative-
 import { assertAttemptIdentity, CALL_KINDS, type AttemptIdentity, type CallKind,
   type JournalState, type SignedValue, type TerminalState,
   type VerifiedSpendReservation, verifyExternalSignedValue } from "./execution.js";
-import { QualityCampaignAuthorityPolicy, type QualityAuthorityRole } from "./release.js";
+import { assertQualificationProviderAccounting,
+  type QualificationProviderAccounting } from "./qualification-contract.js";
+import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
+  type QualityAuthorityRole, verifyPinnedReleaseDocument } from "./release.js";
 
 interface ReservationRecord extends AttemptIdentity {
   readonly requestDigestSha256: string; readonly state: "provider_reserved";
@@ -17,6 +20,7 @@ interface ReservationRecord extends AttemptIdentity {
 }
 
 export interface ProviderTerminalPayload extends Omit<ReservationRecord, "schemaVersion" | "state"> {
+  readonly providerAccounting: QualificationProviderAccounting;
   readonly resultDigestSha256: string; readonly state: Exclude<TerminalState, "outcome_unknown">;
   readonly schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4";
 }
@@ -106,6 +110,7 @@ export class DurableAttemptJournal implements CumulativeSpendLedgerPort {
   }
 
   public async terminal(input: { readonly identity: AttemptIdentity;
+    readonly release: PinnedReleaseDocument;
     readonly reservation: ReservationRecord; readonly signedResult: unknown;
     readonly requestBytes: Uint8Array; readonly resultEnvelopeBytes: Uint8Array;
     readonly state: TerminalState; readonly expectedResultDigestSha256: string }):
@@ -120,11 +125,15 @@ export class DurableAttemptJournal implements CumulativeSpendLedgerPort {
     if (canonicalJson(reservation) !== canonicalJson(input.reservation)) {
       throw new Error("terminal result reservation is stale");}
     const result = decodeProviderTerminalPayload(signedResult.payload);
+    const release = verifyPinnedReleaseDocument(this.authorityPolicy, input.release);
+    const providerAccounting = assertQualificationProviderAccounting(result.providerAccounting,
+      { callKind: input.identity.callKind, release: release.release });
     if (result.resultDigestSha256 !== digest(input.expectedResultDigestSha256,
       "expected terminal result digest")) {
       throw new Error("terminal result digest differs from the exact provider response");
     }
-    const expected = { ...reservation, resultDigestSha256: result.resultDigestSha256,
+    const expected = { ...reservation, providerAccounting,
+      resultDigestSha256: result.resultDigestSha256,
       schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4" as const,
       state: input.state };
     if (canonicalJson(result) !== canonicalJson(expected)) {
@@ -146,6 +155,7 @@ export class DurableAttemptJournal implements CumulativeSpendLedgerPort {
 
   /** A durable reservation without an authenticated terminal is never retryable after restart. */
   public async recoveredState(input: { readonly identity: AttemptIdentity;
+    readonly release: PinnedReleaseDocument;
     readonly requestDigestSha256: string }):
   Promise<JournalState> {
     try {
@@ -178,11 +188,15 @@ export class DurableAttemptJournal implements CumulativeSpendLedgerPort {
       const signed = verifyExternalSignedValue<ProviderTerminalPayload>(terminal.signedResult,
         this.resultAuthority.keyId, this.resultAuthority.publicKeyPem, "provider result");
       const payload = decodeProviderTerminalPayload(signed.payload);
+      const release = verifyPinnedReleaseDocument(this.authorityPolicy, input.release);
+      const providerAccounting = assertQualificationProviderAccounting(payload.providerAccounting,
+        { callKind: input.identity.callKind, release: release.release });
       if (blockedValue !== null) {return "blocked_evidence";}
       if (terminal.attemptId !== input.identity.attemptId ||
         terminal.reservationSha256 !== sha256(reservation) || terminal.state !== payload.state ||
         canonicalJson(terminal.binding) !== canonicalJson(payload) ||
         canonicalJson(payload) !== canonicalJson({ ...reservation,
+          providerAccounting,
           resultDigestSha256: payload.resultDigestSha256,
           schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
           state: terminal.state })) {
@@ -209,6 +223,7 @@ export class DurableAttemptJournal implements CumulativeSpendLedgerPort {
   public async reconcileTerminal(input: { readonly identity: AttemptIdentity;
     readonly expectedResultDigestSha256: string; readonly requestDigestSha256: string;
     readonly requestBytes: Uint8Array; readonly resultEnvelopeBytes: Uint8Array;
+    readonly release: PinnedReleaseDocument;
     readonly signedResult: unknown;
     readonly state: Exclude<TerminalState, "outcome_unknown"> }): Promise<JournalState> {
     const reservation = await this.requireReservation(input.identity.attemptId);
@@ -222,7 +237,7 @@ export class DurableAttemptJournal implements CumulativeSpendLedgerPort {
     return (await this.terminal({ identity: input.identity, reservation,
       expectedResultDigestSha256: input.expectedResultDigestSha256,
       requestBytes: input.requestBytes, resultEnvelopeBytes: input.resultEnvelopeBytes,
-      signedResult: input.signedResult, state: input.state })).state;
+      release: input.release, signedResult: input.signedResult, state: input.state })).state;
   }
   public async completedExchange(identity: AttemptIdentity): Promise<CompletedProviderExchange> {
     assertAttemptIdentity(identity);
@@ -383,7 +398,7 @@ function decodeBlocked(value: unknown): BlockedRecord {
 }
 function decodeProviderTerminalPayload(value: unknown): ProviderTerminalPayload {
   const record = exactRecord(value, ["attemptId", "callKind", "callOrdinal",
-    "campaignRootSha256", "questionDigestSha256", "questionId", "releaseRootSha256",
+    "campaignRootSha256", "providerAccounting", "questionDigestSha256", "questionId", "releaseRootSha256",
     "repetition", "requestDigestSha256", "resultDigestSha256", "schemaVersion",
     "spendReservationSha256", "state"],
   "provider result payload");
@@ -392,11 +407,12 @@ function decodeProviderTerminalPayload(value: unknown): ProviderTerminalPayload 
     throw new Error("provider terminal payload is invalid");
   }
   digest(record.resultDigestSha256, "terminal result digest");
-  const { resultDigestSha256, ...reservationFields } = record;
+  const { providerAccounting, resultDigestSha256, ...reservationFields } = record;
   const reservation = decodeReservation({ ...reservationFields,
     schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3",
     state: "provider_reserved" });
-  return { ...reservation, resultDigestSha256: String(resultDigestSha256),
+  return { ...reservation, providerAccounting: providerAccounting as QualificationProviderAccounting,
+    resultDigestSha256: String(resultDigestSha256),
     schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
     state: record.state as ProviderTerminalPayload["state"] };
 }

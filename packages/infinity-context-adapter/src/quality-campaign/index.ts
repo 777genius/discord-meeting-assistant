@@ -9,6 +9,7 @@ export * from "./execution.js";
 export * from "./final-admission.js";
 export * from "./holdout.js";
 export * from "./operator-cli.js";
+export * from "./qualification-contract.js";
 export * from "./qualification-metrics.js";
 export * from "./release.js";
 export * from "./retention.js";

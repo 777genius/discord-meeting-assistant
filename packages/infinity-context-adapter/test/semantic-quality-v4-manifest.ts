@@ -6,30 +6,32 @@ import {
   frozenSemanticQualityCorpusV4,
   type FrozenSemanticQualityCorpusV4,
 } from "./semantic-quality-v4-corpus.js";
+import { QUALIFICATION_PROVIDER_INPUT_CONTRACT, QUALIFICATION_THRESHOLDS } from
+  "../src/quality-campaign/qualification-contract.js";
 
 export const v4EvaluationBounds = Object.freeze({
-  maximumEvidenceBytes: 16_000,
-  maximumPromptBytes: 16_000,
-  maximumRankedLocators: 10,
+  maximumEvidenceBytes: QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.evidenceByteLimit,
+  maximumPromptBytes: QUALIFICATION_PROVIDER_INPUT_CONTRACT.answer.maximumInputUtf8Bytes,
+  maximumRankedLocators: QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.resultLimit,
 });
 
 export const v4Thresholds = Object.freeze({
-  abstentionPrecision: Object.freeze({ denominator: 20, numerator: 19 }),
-  abstentionRecall: Object.freeze({ denominator: 10, numerator: 9 }),
-  citationEntailment: Object.freeze({ denominator: 1, numerator: 1 }),
-  citationMembership: Object.freeze({ denominator: 1, numerator: 1 }),
-  claimPrecision: Object.freeze({ denominator: 100, numerator: 97 }),
-  crossScopeLeakageMaximum: 0,
-  finalAnswerRecall: Object.freeze({ denominator: 10, numerator: 9 }),
+  abstentionPrecision: QUALIFICATION_THRESHOLDS.abstentionPrecision,
+  abstentionRecall: QUALIFICATION_THRESHOLDS.abstentionRecall,
+  citationEntailment: QUALIFICATION_THRESHOLDS.citationEntailment,
+  citationMembership: QUALIFICATION_THRESHOLDS.citationMembership,
+  claimPrecision: QUALIFICATION_THRESHOLDS.claimPrecision,
+  crossScopeLeakageMaximum: QUALIFICATION_THRESHOLDS.crossScopeLeakageMaximum,
+  finalAnswerRecall: QUALIFICATION_THRESHOLDS.completeQuestionRecallAt5,
   markerBlindRecallAt5: Object.freeze({ denominator: 25, numerator: 23 }),
   maximumMarkerBlindDegradation: Object.freeze({ denominator: 20, numerator: 1 }),
-  maximumRetrievalLatencyP95Us: 3_000_000,
-  mrrAt10: Object.freeze({ denominator: 5, numerator: 4 }),
-  blockLocatorRecallAt5: Object.freeze({ denominator: 10, numerator: 9 }),
-  completeQuestionRecallAt5: Object.freeze({ denominator: 10, numerator: 9 }),
-  speakerAccuracy: Object.freeze({ denominator: 20, numerator: 19 }),
-  timeAccuracy: Object.freeze({ denominator: 20, numerator: 19 }),
-  unsupportedFactualClaimsMaximum: 0,
+  maximumRetrievalLatencyP95Us: QUALIFICATION_THRESHOLDS.maximumRetrievalLatencyP95Us,
+  mrrAt10: QUALIFICATION_THRESHOLDS.firstRelevantReciprocalRank,
+  blockLocatorRecallAt5: QUALIFICATION_THRESHOLDS.locatorRecallAt5,
+  completeQuestionRecallAt5: QUALIFICATION_THRESHOLDS.completeQuestionRecallAt5,
+  speakerAccuracy: QUALIFICATION_THRESHOLDS.speakerTimeAccuracy,
+  timeAccuracy: QUALIFICATION_THRESHOLDS.speakerTimeAccuracy,
+  unsupportedFactualClaimsMaximum: QUALIFICATION_THRESHOLDS.unsupportedFactualClaimsMaximum,
   wholeTranscriptIncludedMaximum: 0,
 });
 

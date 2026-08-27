@@ -5,6 +5,7 @@ import { assertAttemptIdentity, type AttemptIdentity, type SignedValue,
   verifyExternalSignedValue, verifySpendReservation } from "./execution.js";
 import { type PinnedReleaseDocument, type QualityAuthorityRole,
   QualityCampaignAuthorityPolicy, verifyPinnedReleaseDocument } from "./release.js";
+import { assertQualificationProviderAccounting } from "./qualification-contract.js";
 
 export interface CanonicalClaimDecision {
   readonly abstentionCorrect: boolean;
@@ -228,9 +229,11 @@ function verifyAdjudicationEffect(policy: QualityCampaignAuthorityPolicy, input:
   const terminal = verifyExternalSignedValue<Record<string, unknown>>(record.signedProviderTerminal,
     authority.keyId, authority.publicKeyPem, "adjudication provider terminal");
   const payload = exactRecord(terminal.payload, ["attemptId", "callKind", "callOrdinal",
-    "campaignRootSha256", "questionDigestSha256", "questionId", "releaseRootSha256",
+    "campaignRootSha256", "providerAccounting", "questionDigestSha256", "questionId", "releaseRootSha256",
     "repetition", "requestDigestSha256", "resultDigestSha256", "schemaVersion",
     "spendReservationSha256", "state"], "adjudication provider terminal payload");
+  assertQualificationProviderAccounting(payload.providerAccounting,
+    { callKind: role, release: release.release });
   if (payload.schemaVersion !== "meeting_knowledge.semantic_quality_provider_terminal_payload.v4" ||
     payload.state !== "terminal_success" || payload.requestDigestSha256 !==
       expectedRequestDigestSha256 || payload.resultDigestSha256 !== expectedResultDigestSha256 ||

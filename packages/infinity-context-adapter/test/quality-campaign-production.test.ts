@@ -12,7 +12,8 @@ import {
   canonicalJson, createHoldoutReport, DurableAttemptJournal, executeReservedExchange,
   executeDerivedCleanup, FROZEN_ANSWER_EXECUTION, publicKeyFingerprintSha256, reconstructMetrics,
   holdoutReleaseExecutionBindingSha256,
-  QUALITY_AUTHORITY_ROLES, QualityCampaignAuthorityPolicy, sha256,
+  qualificationProviderAccountingFixture, QUALITY_AUTHORITY_ROLES,
+  QualityCampaignAuthorityPolicy, sha256,
   verifyReleaseRoot,
   verifyCampaignCreatedTargetInventory, verifyCleanupAbsenceReceipt, verifySpendReservation,
   verifyExactOutcomeAuthorities, verifyRetainedFinalAdjudication,
@@ -168,9 +169,12 @@ function answerIdentity(input: { readonly question: CampaignQuestion;
 }
 
 function terminalPayload(input: { readonly identity: AttemptIdentity;
+  readonly release: QualityCampaignRelease;
   readonly request: Uint8Array; readonly resultDigestSha256: string;
   readonly state: "terminal_failure" | "terminal_success" }) {
-  return { ...input.identity, requestDigestSha256: sha256(input.request),
+  return { ...input.identity, providerAccounting:
+    qualificationProviderAccountingFixture(input.release, input.identity.callKind),
+    requestDigestSha256: sha256(input.request),
     resultDigestSha256: input.resultDigestSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
     state: input.state };
@@ -278,6 +282,8 @@ function artifactChain(input: { readonly authorities: ReturnType<typeof authorit
     attemptId: input.identity.attemptId, artifactKind: input.kind, direction: "result" }) : null;
   const signedProviderTerminal = input.terminal ?
     input.authorities.signers.provider_result.signed({ ...input.identity, requestDigestSha256,
+      providerAccounting: qualificationProviderAccountingFixture(FINAL_RELEASE,
+        input.identity.callKind),
       resultDigestSha256, schemaVersion:
       "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
     state: "terminal_success" }) : null;
@@ -294,6 +300,7 @@ function artifactChain(input: { readonly authorities: ReturnType<typeof authorit
 }
 
 let FINAL_RELEASE_DOCUMENT: unknown;
+let FINAL_RELEASE: QualityCampaignRelease;
 
 function durableExchangeAttestation(input: { readonly authorities:
   ReturnType<typeof authorityFixture>; readonly identity: AttemptIdentity;
@@ -343,6 +350,7 @@ function adjudicationEffectEvidence(input: { readonly answerAttempt: AttemptIden
   const attempt = artifactAttemptIdentity(input.answerAttempt, input.kind);
   const resultDigestSha256 = sha256(input.result);
   const signedProviderTerminal = input.authorities.signers.provider_result.signed({ ...attempt,
+    providerAccounting: qualificationProviderAccountingFixture(FINAL_RELEASE, attempt.callKind),
     requestDigestSha256: input.requestDigestSha256, resultDigestSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
     state: "terminal_success" });
@@ -357,6 +365,7 @@ function finalFixture() {
   const authorities = authorityFixture(); const targetInventoryAuthority = authorities.signers.inventory;
   const release = releaseFixture(authorities); const spendAuthority = authorities.signers.spend;
   FINAL_RELEASE_DOCUMENT = release.document;
+  FINAL_RELEASE = release.release;
   const spends = ([1, 2, 3] as const).map((repetition) => spendReceipt({ authority:
     spendAuthority, releaseRootSha256: release.releaseRootSha256, repetition }));
   const spendDigests = spends.map((receipt) => sha256(receipt)) as [string, string, string];
@@ -669,7 +678,8 @@ describe("production quality campaign authority", () => {
     const port = { exchange: vi.fn(async () => ({ effect: "certain_success" as const,
       resultDigestSha256: resultEnvelopeSha256, resultEnvelopeBytes: resultEnvelope,
       signedResult: providerAuthority.signed(terminalPayload({
-        identity: attempt, request, resultDigestSha256: resultEnvelopeSha256,
+        identity: attempt, release: FINAL.release.release, request,
+        resultDigestSha256: resultEnvelopeSha256,
         state: "terminal_success" })) })) };
     const journal = new DurableAttemptJournal(await mkdtemp(join(tmpdir(), "quality-journal-")),
       FINAL.authorities.policy);
@@ -684,6 +694,33 @@ describe("production quality campaign authority", () => {
     await expect(executeReservedExchange({ ...exact, nowEpochMs: 11_000 })).rejects
       .toThrow(/spend reservation/u);
     expect(port.exchange).toHaveBeenCalledTimes(1);
+
+    const exactAccounting = qualificationProviderAccountingFixture(FINAL.release.release,
+      "answer");
+    const invalidAccounting = [
+      { ...exactAccounting, repair: { callCount: 2, inputUtf8Bytes: 2, outputBytes: 2 } },
+      { ...exactAccounting, original: { ...exactAccounting.original, inputUtf8Bytes: 16_001 } },
+      { ...exactAccounting, original: { ...exactAccounting.original, outputBytes: 16_385 } },
+      { ...exactAccounting, promptSha256: d("f") },
+    ];
+    for (const providerAccounting of invalidAccounting) {
+      const invalidPort = { exchange: vi.fn(async () => ({ effect: "certain_success" as const,
+        resultDigestSha256: d("6"), signedResult: providerAuthority.signed({ ...attempt,
+          providerAccounting, requestDigestSha256: sha256(request), resultDigestSha256: d("6"),
+          schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+          state: "terminal_success" }) })) };
+      expect(await executeReservedExchange({ ...exact, journal: new DurableAttemptJournal(
+        await mkdtemp(join(tmpdir(), "quality-accounting-")), FINAL.authorities.policy),
+      port: invalidPort })).toBe("blocked_evidence");
+    }
+    const outcomeAccountingPort = { exchange: vi.fn(async () => ({ accounting: exactAccounting,
+      effect: "certain_success" as const, resultDigestSha256: d("6"),
+      signedResult: providerAuthority.signed(terminalPayload({ identity: attempt,
+        release: FINAL.release.release, request, resultDigestSha256: d("6"),
+        state: "terminal_success" })) })) };
+    expect(await executeReservedExchange({ ...exact, journal: new DurableAttemptJournal(
+      await mkdtemp(join(tmpdir(), "quality-outcome-accounting-")), FINAL.authorities.policy),
+    port: outcomeAccountingPort })).toBe("blocked_evidence");
 
     const aborted = new AbortController(); aborted.abort();
     const invalidCases = [
@@ -795,10 +832,12 @@ describe("production quality campaign authority", () => {
     const reconciledResult = Buffer.from("reconciled-result");
     const resultDigestSha256 = sha256(reconciledResult);
     const terminal = FINAL.authorities.signers.provider_result.signed(terminalPayload({ identity:
-      identities[0]!, request, resultDigestSha256, state: "terminal_success" }));
+      identities[0]!, release: FINAL.release.release, request, resultDigestSha256,
+      state: "terminal_success" }));
     expect(await restarted.reconcileTerminal({ expectedResultDigestSha256: resultDigestSha256,
       identity: identities[0]!, requestDigestSha256: sha256(request), signedResult: terminal,
       requestBytes: request, resultEnvelopeBytes: reconciledResult,
+      release: FINAL.release.pinned,
       state: "terminal_success" })).toBe("terminal_success");
     expect(await executeReservedExchange(makeInput(identities[0]!, restarted)))
       .toBe("terminal_success");
@@ -1297,6 +1336,8 @@ describe("production quality campaign final evidence", () => {
       const chain = value.chain as Record<string, unknown>;
       const signedProviderTerminal = FINAL.authorities.signers.provider_result.signed({
         ...artifactAttemptIdentity(selected.identity, "raw_outcome"),
+        providerAccounting: qualificationProviderAccountingFixture(FINAL.release.release,
+          "answer"),
         requestDigestSha256: chain.requestDigestSha256, resultDigestSha256,
         schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
         state: "terminal_success" });

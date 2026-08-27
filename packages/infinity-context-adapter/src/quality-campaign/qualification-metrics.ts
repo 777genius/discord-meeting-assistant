@@ -1,5 +1,6 @@
 import type { CampaignQuestion } from "./admission.js";
 import type { ExpectedOutcomeInventory } from "./retention.js";
+import { QUALIFICATION_THRESHOLDS } from "./qualification-contract.js";
 
 export interface SpeakerTimeCheck {
   readonly canonicalTurnId: string; readonly expectedSpeakerId: string;
@@ -55,19 +56,31 @@ readonly QualificationMetricGroup[] {
     const latencies = applicable.map(({ retrievalLatencyUs }) => retrievalLatencyUs)
       .toSorted((left, right) => left - right);
     const retrievalLatencyP95Us = latencies[Math.ceil(latencies.length * 0.95) - 1]!;
-    const thresholdPassed = counters.completeRecallAt5PassedCount * 10 >=
-      counters.retrievalApplicableOutcomeCount * 9 &&
-      counters.retrievedRelevantLocatorCountAt5 * 10 >= counters.relevantLocatorCount * 9 &&
-      counters.firstRelevantReciprocalRankMillionthsTotal * 10 >=
-        counters.retrievalApplicableOutcomeCount * 9_000_000 &&
+    const thresholdPassed = atLeast(counters.completeRecallAt5PassedCount,
+      counters.retrievalApplicableOutcomeCount,
+      QUALIFICATION_THRESHOLDS.completeQuestionRecallAt5) &&
+      atLeast(counters.retrievedRelevantLocatorCountAt5, counters.relevantLocatorCount,
+        QUALIFICATION_THRESHOLDS.locatorRecallAt5) &&
+      atLeast(counters.firstRelevantReciprocalRankMillionthsTotal,
+        counters.retrievalApplicableOutcomeCount * 1_000_000,
+        QUALIFICATION_THRESHOLDS.firstRelevantReciprocalRank) &&
       counters.citationPassedCount === counters.citationCheckCount &&
-      counters.supportedFactualClaimCount * 10 >= counters.factualClaimCount * 9 &&
-      counters.speakerTimePassedCount === counters.speakerTimeCheckCount &&
-      counters.abstentionPassedCount === counters.abstentionCheckCount &&
-      counters.scopeLeakageCount === 0 && retrievalLatencyP95Us <= 1_000_000;
+      atLeast(counters.supportedFactualClaimCount, counters.factualClaimCount,
+        QUALIFICATION_THRESHOLDS.claimPrecision) &&
+      atLeast(counters.speakerTimePassedCount, counters.speakerTimeCheckCount,
+        QUALIFICATION_THRESHOLDS.speakerTimeAccuracy) &&
+      atLeast(counters.abstentionPassedCount, counters.abstentionCheckCount,
+        QUALIFICATION_THRESHOLDS.abstentionRecall) &&
+      counters.scopeLeakageCount <= QUALIFICATION_THRESHOLDS.crossScopeLeakageMaximum &&
+      retrievalLatencyP95Us <= QUALIFICATION_THRESHOLDS.maximumRetrievalLatencyP95Us;
     return [Object.freeze({ ...counters, applicableOutcomeCount: applicable.length, group,
       retrievalLatencyP95Us, thresholdPassed })];
   }));
+}
+
+function atLeast(numerator: number, denominator: number,
+  minimum: { readonly denominator: number; readonly numerator: number }): boolean {
+  return denominator > 0 && numerator * minimum.denominator >= denominator * minimum.numerator;
 }
 
 function emptyMetricCounters(): Counters {

@@ -271,6 +271,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-ports.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
+      - packages/infinity-context-adapter/src/quality-campaign/qualification-contract.ts
       - packages/infinity-context-adapter/src/quality-campaign/qualification-metrics.ts
       - packages/infinity-context-adapter/src/quality-campaign/release.ts
       - packages/infinity-context-adapter/src/quality-campaign/retention.ts

@@ -8,7 +8,8 @@ import { expect, it } from "vitest";
 
 import { attemptIdentity, canonicalJson, DurableAttemptJournal, executeReservedExchange,
   FROZEN_ANSWER_EXECUTION, publicKeyFingerprintSha256, QUALITY_AUTHORITY_ROLES,
-  QualityCampaignAuthorityPolicy, sha256, verifySpendReservation } from "../src/index.js";
+  QualityCampaignAuthorityPolicy, qualificationProviderAccountingFixture, sha256,
+  verifySpendReservation } from "../src/index.js";
 
 const digest = (value: string) => value.repeat(64);
 const campaignRootSha256 = digest("1"), provider = "pinned-provider";
@@ -47,7 +48,7 @@ function fixture() {
       resolver: 0, retrieval: 0 }, maxEncryptedBytes: 2, maximumEffectDurationMs: 1_000,
     maxTokens: 2, ...FROZEN_ANSWER_EXECUTION, provider, releaseRootSha256, repetition: 1,
     ...overrides });
-  return { makeSpend, pins, policy, release, releaseRootSha256, signers };
+  return { makeSpend, pins, policy, release, releasePayload, releaseRootSha256, signers };
 }
 
 function identity(releaseRootSha256: string, spendReservationSha256: string, questionId: string) {
@@ -189,6 +190,7 @@ it("accepts identical terminal publishers and rejects a different create-only wr
   };
   const signedTerminal = (resultDigestSha256: string, state: "terminal_failure" |
     "terminal_success") => value.signers.provider_result.signed({ ...attempt,
+    providerAccounting: qualificationProviderAccountingFixture(value.releasePayload, "answer"),
     requestDigestSha256, resultDigestSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4", state });
 
@@ -199,6 +201,7 @@ it("accepts identical terminal publishers and rejects a different create-only wr
     expectedResultDigestSha256: identicalResult, identity: attempt,
     requestBytes: Buffer.from(attempt.questionId), reservation: identical.reservation,
     resultEnvelopeBytes: Buffer.from("6"), signedResult: identicalReceipt,
+    release: value.release,
     state: "terminal_success" as const }));
   expect((await Promise.all(identicalWriters)).map(({ state }) => state))
     .toEqual(Array.from({ length: 8 }, () => "terminal_success"));
@@ -214,6 +217,7 @@ it("accepts identical terminal publishers and rejects a different create-only wr
       identity: attempt, reservation: conflicting.reservation,
       requestBytes: Buffer.from(attempt.questionId), resultEnvelopeBytes:
         Buffer.from(resultDigestSha256 === sha256(Buffer.from("7")) ? "7" : "8"),
+      release: value.release,
       signedResult: signedTerminal(resultDigestSha256, state), state });
   };
   const writers = [write(sha256(Buffer.from("7")), "terminal_success"),

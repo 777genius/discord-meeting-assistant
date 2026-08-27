@@ -23,7 +23,6 @@ import { loadCanonicalCustody, loadProductionAuthority, loadProductionAuthorityP
   type ProductionOperatorConfiguration } from "./production-inputs.js";
 import type { CampaignCallContext, QualityCampaignProductionPorts } from "./production-ports.js";
 import { executeProductionMain } from "./production-main-execution.js";
-
 const AUTHORITY_CALL_DEADLINE_MS = 120_000;
 
 export type ProductionCampaignCommand = "adjudicate" | "cleanup-absence" | "execute" |
@@ -121,6 +120,7 @@ Promise<ProductionCompositionResult> {
       admitted.rootBindingSha256, custody: input.ports.artifactCustody,
     effectVerificationEpochMs: input.ports.clock.nowEpochMs(), evidence,
     providerResultAuthority: input.ports.mainProvider.resultAuthority,
+    release: verifiedRelease.release,
     questions: admitted.questions, releaseRootSha256: verifiedRelease.releaseRootSha256,
     releaseDocumentSha256: sha256(pinnedRelease.document), spendReservations: reservations,
     spendReservationSha256ByRepetition: spendDigests });
@@ -143,6 +143,7 @@ Promise<ProductionCompositionResult> {
       admitted.rootBindingSha256, custody: input.ports.artifactCustody,
     effectVerificationEpochMs: input.ports.clock.nowEpochMs(), evidence,
     providerResultAuthority: input.ports.mainProvider.resultAuthority,
+    release: verifiedRelease.release,
     questions: admitted.questions, releaseRootSha256: verifiedRelease.releaseRootSha256,
     releaseDocumentSha256: sha256(pinnedRelease.document), spendReservations: reservations,
     spendReservationSha256ByRepetition: spendDigests });
@@ -277,7 +278,8 @@ Promise<ProductionCompositionResult | null> {
       effectVerificationEpochMs: input.ports.clock.nowEpochMs(),
       keyNamespace: holdout.authorization.keyNamespace,
       providerResultAuthority: input.ports.holdoutProvider.resultAuthority,
-      questions: holdout.questions, release: input.release,
+      questions: holdout.questions, release: input.verifiedRelease,
+      releaseDocument: input.release,
       releaseDocumentSha256: sha256(input.release.document),
       releaseRootSha256: input.release.releaseRootSha256,
       spendLedger: new DurableAttemptJournal(input.config.holdoutJournalRoot, input.policy,

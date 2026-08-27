@@ -11,6 +11,8 @@ import type { DurableSpendClaim, ExpectedSpendClaim } from "./cumulative-spend.j
 import { assertAttemptIdentity, type AttemptIdentity, type VerifiedSpendReservation,
   verifyExternalSignedValue } from "./execution.js";
 import { QualityCampaignAuthorityPolicy } from "./release.js";
+import type { QualityCampaignRelease } from "./release.js";
+import { assertQualificationProviderAccounting } from "./qualification-contract.js";
 
 export const MAX_PROVIDER_INPUT_BYTES = 16_000;
 
@@ -85,6 +87,7 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
   readonly perRepetitionCardinality: 30 | 240;
   readonly keyNamespace?: string;
   readonly providerResultAuthorityRole?: "holdout_provider_result" | "provider_result";
+  readonly release: QualityCampaignRelease;
   readonly releaseDocumentSha256: string;
   readonly spendReservations: readonly VerifiedSpendReservation[] }): Promise<{
     readonly artifactCount: number; readonly expectedSpendClaims: readonly ExpectedSpendClaim[];
@@ -105,6 +108,7 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
     expectedSpendClaims: [],
     keyNamespace: input.keyNamespace,
     providerResultAuthorityRole: input.providerResultAuthorityRole ?? "provider_result",
+    release: input.release,
     spendReservations: input.spendReservations };
   let totalStoredBytes = 0;
   for (const artifact of input.artifacts) {
@@ -156,6 +160,7 @@ interface RetentionContext {
   readonly keyNamespace: string | undefined;
   readonly providerResultAuthorityRole: "holdout_provider_result" | "provider_result";
   readonly reviewSpendClaims: DurableSpendClaim[];
+  readonly release: QualityCampaignRelease;
   readonly spendReservations: readonly VerifiedSpendReservation[];
 }
 interface AuthenticatedArtifact { readonly artifact: RetainedArtifact; readonly value: unknown }
@@ -594,9 +599,11 @@ function verifyArtifactChain(policy: QualityCampaignAuthorityPolicy, artifact: R
   const receipt = verifyExternalSignedValue<Record<string, unknown>>(chain.signedProviderTerminal,
     authority.keyId, authority.publicKeyPem, "retained provider terminal");
   const payload = exactRecord(receipt.payload, ["attemptId", "callKind", "callOrdinal",
-    "campaignRootSha256", "questionDigestSha256", "questionId", "releaseRootSha256",
+    "campaignRootSha256", "providerAccounting", "questionDigestSha256", "questionId", "releaseRootSha256",
     "repetition", "requestDigestSha256", "resultDigestSha256", "schemaVersion",
     "spendReservationSha256", "state"], "retained provider terminal payload");
+  assertQualificationProviderAccounting(payload.providerAccounting,
+    { callKind: identity.callKind, release: context.release });
   if (payload.schemaVersion !== "meeting_knowledge.semantic_quality_provider_terminal_payload.v4" ||
     payload.state !== "terminal_success" || payload.requestDigestSha256 !==
       chain.requestDigestSha256 || payload.resultDigestSha256 !== chain.resultDigestSha256 ||

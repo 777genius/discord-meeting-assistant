@@ -3,10 +3,14 @@ import { digest, exactRecord, sha256 } from "./canonical.js";
 import { attemptIdentity, verifyExternalSignedValue } from
   "./execution.js";
 import type { ExactOutcomeEvidence, ExactTerminalEvidence } from "./production-evidence.js";
+import { assertQualificationProviderAccounting,
+  type QualificationProviderAccounting } from "./qualification-contract.js";
+import type { QualityCampaignRelease } from "./release.js";
 
 interface EvidenceProviderTerminalPayload {
   readonly attemptId: string; readonly callKind: "answer" | "capability" | "retrieval";
   readonly callOrdinal: number; readonly campaignRootSha256: string;
+  readonly providerAccounting: QualificationProviderAccounting;
   readonly questionDigestSha256: string;
   readonly questionId: string; readonly releaseRootSha256: string; readonly repetition: 1 | 2 | 3;
   readonly requestDigestSha256: string; readonly resultDigestSha256: string;
@@ -35,6 +39,7 @@ function terminalPayloadMatches(payload: EvidenceProviderTerminalPayload, input:
 export function assertTerminalChain(input: { readonly authority: { readonly keyId: string;
   readonly publicKeyPem: string }; readonly outcome: ExactOutcomeEvidence;
   readonly question: CampaignQuestion; readonly releaseRootSha256: string; readonly root: string;
+  readonly release: QualityCampaignRelease;
   readonly spendReservationSha256: string }): void {
   const { authority, outcome, question, releaseRootSha256, root, spendReservationSha256 } = input;
   const terminalChain: unknown = outcome.terminalChain;
@@ -58,9 +63,12 @@ export function assertTerminalChain(input: { readonly authority: { readonly keyI
       terminal.resultEnvelopeDigestSha256, terminal.terminalDigestSha256]) {
       digest(terminalDigest, "outcome terminal");
     }
-    const signed = verifyExternalSignedValue<EvidenceProviderTerminalPayload>(terminal.signedResult,
+    const signed = verifyExternalSignedValue<unknown>(terminal.signedResult,
       authority.keyId, authority.publicKeyPem, "evidence provider terminal");
-    if (!terminalPayloadMatches(signed.payload, { identity, callKind, callOrdinal: 0, outcome, predecessor,
+    const payload = decodeProviderTerminalPayload(signed.payload);
+    assertQualificationProviderAccounting(payload.providerAccounting,
+      { callKind, release: input.release });
+    if (!terminalPayloadMatches(payload, { identity, callKind, callOrdinal: 0, outcome, predecessor,
       question, releaseRootSha256, root, spendReservationSha256, terminal }) ||
       terminal.terminalDigestSha256 !== sha256(signed)) {
       throw new Error("provider terminal signature is foreign to request, result, release, spend, or call");
@@ -70,4 +78,12 @@ export function assertTerminalChain(input: { readonly authority: { readonly keyI
   if (outcome.attemptId !== outcome.terminalChain[2]!.attemptId) {
     throw new Error("answer outcome is not bound to its provider terminal");
   }
+}
+
+function decodeProviderTerminalPayload(value: unknown): EvidenceProviderTerminalPayload {
+  return exactRecord(value, ["attemptId", "callKind", "callOrdinal", "campaignRootSha256",
+    "providerAccounting", "questionDigestSha256", "questionId", "releaseRootSha256", "repetition",
+    "requestDigestSha256", "resultDigestSha256", "schemaVersion", "spendReservationSha256",
+    "state"], "evidence provider terminal payload") as unknown as
+    EvidenceProviderTerminalPayload;
 }

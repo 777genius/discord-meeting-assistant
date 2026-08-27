@@ -5,9 +5,12 @@ import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.
 import { admitCumulativeSpend, type CumulativeSpendLedgerPort } from "./cumulative-spend.js";
 import { type AttemptIdentity, type VerifiedSpendReservation,
   verifyExternalSignedValue } from "./execution.js";
-import type { PinnedReleaseDocument, QualityCampaignAuthorityPolicy } from "./release.js";
+import type { PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
+  QualityCampaignRelease } from "./release.js";
 import { assertTerminalChain } from "./production-evidence-terminals.js";
 import type { ScheduledExactOutcome } from "./production-scheduler.js";
+import { QUALIFICATION_PROVIDER_INPUT_CONTRACT, QUALIFICATION_THRESHOLDS } from
+  "./qualification-contract.js";
 import { verifyExactRetentionInventory, type ArtifactCustodyPort,
   type RetainedArtifact, type RetainedArtifactKind } from "./retention.js";
 
@@ -120,11 +123,19 @@ export interface ExactOutcomeAuthorityBindings {
 }
 
 const RATIO_THRESHOLDS = Object.freeze({
-  abstentionPrecision: [19, 20], abstentionRecall: [9, 10],
-  citationEntailment: [1, 1], citationMembership: [1, 1],
-  claimPrecision: [97, 100], completeQuestionRecallAt5: [9, 10],
+  abstentionPrecision: [QUALIFICATION_THRESHOLDS.abstentionPrecision.numerator,
+    QUALIFICATION_THRESHOLDS.abstentionPrecision.denominator],
+  abstentionRecall: [QUALIFICATION_THRESHOLDS.abstentionRecall.numerator,
+    QUALIFICATION_THRESHOLDS.abstentionRecall.denominator],
+  citationEntailment: [QUALIFICATION_THRESHOLDS.citationEntailment.numerator,
+    QUALIFICATION_THRESHOLDS.citationEntailment.denominator],
+  citationMembership: [QUALIFICATION_THRESHOLDS.citationMembership.numerator,
+    QUALIFICATION_THRESHOLDS.citationMembership.denominator],
+  claimPrecision: [QUALIFICATION_THRESHOLDS.claimPrecision.numerator,
+    QUALIFICATION_THRESHOLDS.claimPrecision.denominator],
+  completeQuestionRecallAt5: [QUALIFICATION_THRESHOLDS.completeQuestionRecallAt5.numerator,
+    QUALIFICATION_THRESHOLDS.completeQuestionRecallAt5.denominator],
 } as const);
-
 export async function reconstructExactMainEvidence(input: {
   readonly authorityPolicy: QualityCampaignAuthorityPolicy;
   readonly artifactKeyCustodySha256: string; readonly custody: ArtifactCustodyPort;
@@ -132,6 +143,7 @@ export async function reconstructExactMainEvidence(input: {
   readonly evidence: ExactCampaignEvidence;
   readonly providerResultAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly questions: readonly CampaignQuestion[];
+  readonly release: QualityCampaignRelease;
   readonly releaseRootSha256: string;
   readonly releaseDocumentSha256: string;
   readonly effectVerificationEpochMs: number;
@@ -155,6 +167,7 @@ export async function reconstructExactMainEvidence(input: {
     const question = input.questions.find(({ questionId }) => questionId === outcome.questionId);
     if (question === undefined) {throw new Error("terminal chain question is foreign");}
     assertTerminalChain({ authority: input.providerResultAuthority, outcome, question,
+      release: input.release,
       releaseRootSha256: input.releaseRootSha256, root: input.campaignRootSha256,
       spendReservationSha256: input.spendReservationSha256ByRepetition[outcome.repetition] });
   }
@@ -167,6 +180,7 @@ export async function reconstructExactMainEvidence(input: {
     custody: input.custody, effectVerificationEpochMs: input.effectVerificationEpochMs,
     perRepetitionCardinality: 240,
     releaseDocumentSha256: input.releaseDocumentSha256,
+    release: input.release,
     spendReservations: input.spendReservations, expectedOutcomes: expected.map(({ attempt }) => {
       const outcome = input.evidence.outcomes.find(({ identity }) =>
         identity.attemptId === attempt.attemptId)!;
@@ -210,7 +224,8 @@ export async function reconstructExactHoldoutEvidence(input: {
   readonly outcomes: readonly ExactOutcomeEvidence[];
   readonly providerResultAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly questions: readonly CampaignQuestion[]; readonly releaseRootSha256: string;
-  readonly release: PinnedReleaseDocument;
+  readonly releaseDocument: PinnedReleaseDocument;
+  readonly release: QualityCampaignRelease;
   readonly releaseDocumentSha256: string;
   readonly spendLedger: CumulativeSpendLedgerPort;
   readonly spendReservations: readonly VerifiedSpendReservation[];
@@ -221,8 +236,8 @@ export async function reconstructExactHoldoutEvidence(input: {
   if (input.questions.length !== 30) {
     throw new Error("exact holdout evidence requires 3 x 30 questions");
   }
-  if (sha256(input.release.document) !== input.releaseDocumentSha256 ||
-    input.release.releaseRootSha256 !== input.releaseRootSha256) {
+  if (sha256(input.releaseDocument.document) !== input.releaseDocumentSha256 ||
+    input.releaseDocument.releaseRootSha256 !== input.releaseRootSha256) {
     throw new Error("holdout release document binding is foreign");
   }
   const expected = ([1, 2, 3] as const).flatMap((repetition) => input.questions.map((question) => {
@@ -248,6 +263,7 @@ export async function reconstructExactHoldoutEvidence(input: {
   for (const outcome of input.outcomes) {
     const question = input.questions.find(({ questionId }) => questionId === outcome.questionId)!;
     assertTerminalChain({ authority: input.providerResultAuthority, outcome, question,
+      release: input.release,
       releaseRootSha256: input.releaseRootSha256, root: input.campaignRootSha256,
       spendReservationSha256: input.spendReservationSha256ByRepetition[outcome.repetition] });
   }
@@ -277,6 +293,7 @@ export async function reconstructExactHoldoutEvidence(input: {
         speakerTimeChecks: outcome.speakerTimeChecks, terminalChain: outcome.terminalChain };
     }), perRepetitionCardinality: 30,
     keyNamespace: input.keyNamespace, providerResultAuthorityRole: "holdout_provider_result",
+    release: input.release,
     releaseDocumentSha256: input.releaseDocumentSha256,
     spendReservations: input.spendReservations });
   const schedulerClaims = (await Promise.all(input.spendReservations.map(async (reservation) =>
@@ -456,7 +473,8 @@ function decodeOutcome(value: ExactOutcomeEvidence): void {
   assertLocatorDigests(value.rankedLocatorDigests);
   assertLocatorDigests(value.relevantLocatorDigests);
   assertLocatorDigests(value.forbiddenLocatorDigests);
-  if (value.rankedLocatorDigests.length > 10) {
+  if (value.rankedLocatorDigests.length >
+    QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.resultLimit) {
     throw new Error("outcome contains a missing or unknown metric field");
   }
 }
@@ -510,15 +528,21 @@ function assertThresholds(metrics: LocallyComputedMetrics): void {
   if (metrics.outcomeCount < 1 || metrics.retrievalLatencyP95Us < 0) {
     throw new Error("metrics are missing or unknown");
   }
-  for (const [key, [minimumNumerator, minimumDenominator]] of
-    Object.entries(RATIO_THRESHOLDS) as [keyof typeof RATIO_THRESHOLDS,
-      readonly [number, number]][]) {
+  const ratios = { abstentionPrecision: QUALIFICATION_THRESHOLDS.abstentionPrecision,
+    abstentionRecall: QUALIFICATION_THRESHOLDS.abstentionRecall,
+    citationEntailment: QUALIFICATION_THRESHOLDS.citationEntailment,
+    citationMembership: QUALIFICATION_THRESHOLDS.citationMembership,
+    claimPrecision: QUALIFICATION_THRESHOLDS.claimPrecision,
+    completeQuestionRecallAt5: QUALIFICATION_THRESHOLDS.completeQuestionRecallAt5 } as const;
+  for (const [key, minimum] of Object.entries(ratios) as [keyof typeof ratios,
+    { readonly denominator: number; readonly numerator: number }][]) {
     const observed = metrics[key];
-    if (observed.denominator < 1 || observed.numerator * minimumDenominator <
-      observed.denominator * minimumNumerator) {throw new Error(`metric threshold failed: ${key}`);}
+    if (observed.denominator < 1 || observed.numerator * minimum.denominator <
+      observed.denominator * minimum.numerator) {throw new Error(`metric threshold failed: ${key}`);}
   }
-  if (metrics.crossScopeLeakageCount !== 0 || metrics.unsupportedFactualClaims !== 0 ||
-    metrics.retrievalLatencyP95Us > 3_000_000) {
+  if (metrics.crossScopeLeakageCount > QUALIFICATION_THRESHOLDS.crossScopeLeakageMaximum ||
+    metrics.unsupportedFactualClaims > QUALIFICATION_THRESHOLDS.unsupportedFactualClaimsMaximum ||
+    metrics.retrievalLatencyP95Us > QUALIFICATION_THRESHOLDS.maximumRetrievalLatencyP95Us) {
     throw new Error("metric threshold failed: leakage, unsupported facts, or retrieval p95");
   }
 }

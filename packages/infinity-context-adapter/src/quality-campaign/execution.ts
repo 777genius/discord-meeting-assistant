@@ -139,7 +139,7 @@ Promise<JournalState> {
     spendReservationSha256: authorization.spendReservationSha256 });
   const requestDigestSha256 = sha256(input.request); const recovered =
     await input.journal.recoveredState({ identity: input.identity,
-    requestDigestSha256 });
+    release: input.release, requestDigestSha256 });
   if (recovered !== "never_reserved") {return recovered;}
   const refreshed = verifyEffectAuthorization(input);
   const admission = await input.journal.admit({ identity: input.identity,
@@ -149,9 +149,13 @@ Promise<JournalState> {
   if (!admission.admitted || admission.reservation === undefined) {return admission.state;}
   const reservation = admission.reservation;
   if (input.signal.aborted) {return "outcome_unknown";}
-  const result = await input.port.exchange({ attempt: input.identity,
+  const rawResult = await input.port.exchange({ attempt: input.identity,
     deadlineEpochMs: input.deadlineEpochMs, request: input.request,
     requestDigestSha256, signal: input.signal });
+  let result: Awaited<ReturnType<ProviderExchangePort["exchange"]>>;
+  try {result = decodeProviderExchangeResult(rawResult);}
+  catch {await input.journal.blockEvidence(reservation).catch(() => null);
+    return "blocked_evidence";}
   if (result.effect === "unknown") {return "outcome_unknown";}
   if (result.signedResult === undefined || result.resultDigestSha256 === undefined) {
     await input.journal.blockEvidence(reservation).catch(() => null);
@@ -166,11 +170,29 @@ Promise<JournalState> {
     return (await input.journal.terminal({ identity: input.identity, reservation,
       expectedResultDigestSha256: result.resultDigestSha256, requestBytes: input.request,
       resultEnvelopeBytes: result.resultEnvelopeBytes, signedResult: result.signedResult,
+      release: input.release,
       state: result.effect === "certain_success" ? "terminal_success" : "terminal_failure" })).state;
   } catch {
     await input.journal.blockEvidence(reservation).catch(() => null);
     return "blocked_evidence";
   }
+}
+
+function decodeProviderExchangeResult(value: unknown): Awaited<ReturnType<
+  ProviderExchangePort["exchange"]>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("provider exchange result is invalid");
+  }
+  const effect = (value as Record<string, unknown>).effect;
+  const keys = effect === "unknown" ? ["effect"] :
+    ["effect", "resultDigestSha256", "signedResult"];
+  const record = exactRecord(value, keys, "provider exchange result");
+  if (effect === "unknown") {return { effect: "unknown" };}
+  if (!["certain_failure", "certain_success"].includes(String(effect))) {
+    throw new Error("provider exchange effect is invalid");
+  }
+  digest(record.resultDigestSha256, "provider result");
+  return record as unknown as Awaited<ReturnType<ProviderExchangePort["exchange"]>>;
 }
 
 function verifyEffectAuthorization(input: { readonly campaignRootSha256: string;

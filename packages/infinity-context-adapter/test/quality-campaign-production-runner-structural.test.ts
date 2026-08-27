@@ -17,6 +17,9 @@ import {
   canonicalJson,
   publicKeyFingerprintSha256,
   holdoutReleaseExecutionBindingSha256,
+  QUALIFICATION_PROVIDER_INPUT_CONTRACT,
+  qualificationExecutionBinding,
+  qualificationProviderAccountingFixture,
   reconstructMetrics,
   runQualityCampaignProductionCli,
   sha256,
@@ -75,6 +78,11 @@ describe("installed production quality-campaign CLI", () => {
     expect(fixture.maximumProviderConcurrency).toBeLessThanOrEqual(8);
     for (const call of fixture.mainCalls) {
       expect(call.request.release).toEqual(fixture.release);
+      expect(call.request.providerInputContract).toEqual(QUALIFICATION_PROVIDER_INPUT_CONTRACT);
+      expect(call.request.qualificationExecutionBinding).toEqual(
+        qualificationExecutionBinding(fixture.release));
+      expect(call.request.callDeadlineEpochMs).toBeLessThanOrEqual(
+        call.request.campaignDeadlineEpochMs as number);
       expect((call.request.campaignDeadlineEpochMs as number) - fixture.startedAt)
         .toBe(72 * 60 * 60 * 1_000);
       expect(call.request.spendReservationSha256).toMatch(/^[a-f0-9]{64}$/u);
@@ -518,6 +526,8 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         schemaVersion: "meeting_knowledge.semantic_quality_test_provider_result.v2" }));
       const resultDigestSha256 = sha256(resultEnvelopeBytes);
       const signedResult = resultSigner.signed({ ...call.attempt,
+        providerAccounting: qualificationProviderAccountingFixture(input.release,
+          call.attempt.callKind),
         requestDigestSha256: call.requestDigestSha256, resultDigestSha256,
         schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
         state: "terminal_success" });
@@ -663,6 +673,8 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
           } else {
             signedProviderTerminal = signedResultByAttempt.get(identity.attemptId) ??
               resultSigner.signed({ ...identity, requestDigestSha256,
+                providerAccounting: qualificationProviderAccountingFixture(input.release,
+                  identity.callKind),
                 resultDigestSha256, schemaVersion:
                 "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
               state: "terminal_success" });
@@ -902,6 +914,7 @@ function reviewerEffect(answer: AttemptIdentity,
   const attempt = artifactAttemptIdentity(answer, kind);
   const resultDigestSha256 = sha256(result);
   const signedProviderTerminal = input.provider.signed({ ...attempt, requestDigestSha256,
+    providerAccounting: qualificationProviderAccountingFixture(input.release, attempt.callKind),
     resultDigestSha256, schemaVersion:
     "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
   state: "terminal_success" });
@@ -972,7 +985,9 @@ function exactOutcome(attemptId: string, source: {
     const requestDigestSha256 = sha256(requestBytes);
     const resultEnvelopeDigestSha256 = sha256(resultBytes);
     const signedResult = source.signedResultByAttempt.get(callIdentity.attemptId) ??
-      provider.signed({ ...callIdentity, requestDigestSha256,
+      provider.signed({ ...callIdentity,
+        providerAccounting: qualificationProviderAccountingFixture(
+          request.release as QualityCampaignRelease, callIdentity.callKind), requestDigestSha256,
         resultDigestSha256: resultEnvelopeDigestSha256, schemaVersion:
         "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
         state: "terminal_success" as const });
