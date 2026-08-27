@@ -34,14 +34,14 @@ export function assertPlannedCraigStackMatchesHostedCampaign(
     projectName: craigProjectName(campaignId, release),
     release };
   const observed = { campaignId: actual.campaignId, campaignRoot: actual.campaignRoot,
-    credentialAuthority: actual.credentialSecret?.authority, credentialFile: actual.credentialFile,
+    credentialAuthority: actual.credentialSecret.authority, credentialFile: actual.credentialFile,
     hostedPlanSha256, networkPolicy: actual.networkPolicy, planSha256, projectName: actual.projectName,
     release: actual.release };
   if (digestCraigCampaignStackCanonical(observed) !== digestCraigCampaignStackCanonical(expected)
     || actual.projectName !== plan.target.craigProject
     || JSON.stringify(definition.craigRelease) !== JSON.stringify(release)
-    || !/^(?!0{64})[a-f\d]{64}$/u.test(actual.credentialSecret?.sha256 ?? "")
-    || !/^(?!0{64})[a-f\d]{64}$/u.test(planSha256 ?? "")) {
+    || !/^(?!0{64})[a-f\d]{64}$/u.test(actual.credentialSecret.sha256)
+    || !/^(?!0{64})[a-f\d]{64}$/u.test(planSha256)) {
     throw new Error("Craig stack plan/release does not match the compiled hosted campaign before provisioning");
   }
 }

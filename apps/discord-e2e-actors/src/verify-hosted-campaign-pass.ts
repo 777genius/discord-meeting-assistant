@@ -151,8 +151,7 @@ async function verifyCraigTeardownReceipt(
   const parsed = schema.safeParse(value);
   if (!parsed.success) { throw new Error("Craig teardown receipt schema is not closed", { cause: parsed.error }); }
   const teardown = parsed.data;
-  if (teardown.kind !== "craig-stack-teardown" || teardown.schemaVersion !== 1
-    || JSON.stringify(teardown.absenceProof.release) !== JSON.stringify(stack.release)
+  if (JSON.stringify(teardown.absenceProof.release) !== JSON.stringify(stack.release)
     || teardown.stackReceiptSha256 !== pass.craigStack.receiptSha256
     || teardown.campaignLeaseReceiptSha256 !== lease.receiptSha256
     || teardown.campaignLeaseSha256 !== lease.leaseSha256

@@ -296,7 +296,7 @@ export async function runHostedCampaign(
   } catch (error) { failure = error; }
   await cleanupCampaign({ failure, handles: state.handles, lease,
     finalizeAfterLeaseCleanup: authorization?.finalizeAfterLeaseCleanup,
-    retainFailureUnderLease: authorization?.retainFailureUnderLease,
+    retainFailureUnderLease: authorization?.retainFailureUnderLease?.bind(authorization),
     leaseQuarantined: state.barrierTeardownIncomplete, ports,
     retainLeaseOnFailure: authorization?.retainLeaseOnFailure?.() === true });
   if (failure !== undefined) {throw failure instanceof Error
