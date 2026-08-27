@@ -12,10 +12,6 @@ import {
   InfinityContextClient,
   type HttpTransport,
 } from "@infinity-context/sdk";
-import {
-  InfinityContextClient as InfinityContextClientV2,
-  type HttpTransport as HttpTransportV2,
-} from "@infinity-context/sdk";
 
 import {
   decodeInfinityContextCapabilityAttestation,
@@ -59,7 +55,7 @@ type InfinityContextHistoricalMemoryConfigInputV1 = Omit<
 export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryPort {
   readonly #actorKeys: HistoricalRetrievalActorKeyMapper | undefined;
   readonly #client: InfinityContextClient;
-  readonly #indexClient: InfinityContextClientV2;
+  readonly #indexClient: InfinityContextClient;
   readonly #operationTimeoutMs: number;
   readonly #requestTimeoutMs: number;
   readonly #embeddingTokenProfile: (() => string | undefined) | undefined;
@@ -93,14 +89,14 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
         ? {}
         : { transport: config.transport as HttpTransport }),
     });
-    this.#indexClient = new InfinityContextClientV2({
+    this.#indexClient = new InfinityContextClient({
       baseUrl: config.baseUrl,
       retryPolicy: { maxAttempts: 1 },
       timeoutMs: config.requestTimeoutMs,
       ...(config.token === undefined ? {} : { token: config.token }),
       ...(config.transport === undefined
         ? {}
-        : { transport: config.transport as HttpTransportV2 }),
+        : { transport: config.transport as HttpTransport }),
     });
   }
 
