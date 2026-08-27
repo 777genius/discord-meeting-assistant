@@ -19,8 +19,17 @@ export interface QualificationOutcome extends ExpectedOutcomeInventory {
   readonly repetition: 1 | 2 | 3; readonly rootBindingSha256: string;
   readonly source: CampaignQuestion["source"]; readonly speakerTimeChecks: readonly SpeakerTimeCheck[];
 }
+export interface AbstentionStatistics {
+  readonly abstentionPrecision: Readonly<{ denominator: number; numerator: number }>;
+  readonly abstentionRecall: Readonly<{ denominator: number; numerator: number }>;
+  readonly correctAbstentionCount: number; readonly expectedAbstentionCount: number;
+  readonly predictedAbstentionCount: number;
+}
 export interface QualificationMetricGroup {
-  readonly abstentionCheckCount: number; readonly abstentionPassedCount: number;
+  readonly abstentionPrecision: AbstentionStatistics["abstentionPrecision"];
+  readonly abstentionRecall: AbstentionStatistics["abstentionRecall"];
+  readonly correctAbstentionCount: number; readonly expectedAbstentionCount: number;
+  readonly predictedAbstentionCount: number;
   readonly applicableOutcomeCount: number; readonly citationCheckCount: number;
   readonly citationPassedCount: number; readonly completeRecallAt10PassedCount: number;
   readonly completeRecallAt5PassedCount: number;
@@ -36,8 +45,9 @@ export interface QualificationMetricGroup {
   readonly thresholdPassed: boolean;
 }
 
-type Counters = Omit<QualificationMetricGroup, "applicableOutcomeCount" | "group" |
-  "retrievalLatencyP95Us" | "thresholdPassed">;
+type Counters = Omit<QualificationMetricGroup, "abstentionPrecision" | "abstentionRecall" |
+  "applicableOutcomeCount" | "correctAbstentionCount" | "expectedAbstentionCount" | "group" |
+  "predictedAbstentionCount" | "retrievalLatencyP95Us" | "thresholdPassed">;
 
 export function reconstructMetrics(outcomes: readonly QualificationOutcome[]):
 readonly QualificationMetricGroup[] {
@@ -53,6 +63,8 @@ readonly QualificationMetricGroup[] {
     const applicable = outcomes.filter(includes); if (applicable.length === 0) {return [];}
     const counters = applicable.reduce((sum, outcome) => accumulateOutcome(sum, outcome),
       emptyMetricCounters());
+    const abstention = calculateAbstentionStatistics(applicable.map(({ abstention: value }) =>
+      value));
     const latencies = applicable.map(({ retrievalLatencyUs }) => retrievalLatencyUs)
       .toSorted((left, right) => left - right);
     const retrievalLatencyP95Us = latencies[Math.ceil(latencies.length * 0.95) - 1]!;
@@ -69,13 +81,33 @@ readonly QualificationMetricGroup[] {
         QUALIFICATION_THRESHOLDS.claimPrecision) &&
       atLeast(counters.speakerTimePassedCount, counters.speakerTimeCheckCount,
         QUALIFICATION_THRESHOLDS.speakerTimeAccuracy) &&
-      atLeast(counters.abstentionPassedCount, counters.abstentionCheckCount,
+      atLeast(abstention.abstentionPrecision.numerator,
+        abstention.abstentionPrecision.denominator,
+        QUALIFICATION_THRESHOLDS.abstentionPrecision) &&
+      atLeast(abstention.abstentionRecall.numerator,
+        abstention.abstentionRecall.denominator,
         QUALIFICATION_THRESHOLDS.abstentionRecall) &&
       counters.scopeLeakageCount <= QUALIFICATION_THRESHOLDS.crossScopeLeakageMaximum &&
       retrievalLatencyP95Us <= QUALIFICATION_THRESHOLDS.maximumRetrievalLatencyP95Us;
-    return [Object.freeze({ ...counters, applicableOutcomeCount: applicable.length, group,
-      retrievalLatencyP95Us, thresholdPassed })];
+    return [Object.freeze({ ...counters, ...abstention, applicableOutcomeCount: applicable.length,
+      group, retrievalLatencyP95Us, thresholdPassed })];
   }));
+}
+
+export function calculateAbstentionStatistics(
+  outcomes: readonly { readonly expected: boolean; readonly observed: boolean }[],
+): AbstentionStatistics {
+  const correctAbstentionCount = outcomes.filter(({ expected, observed }) =>
+    expected && observed).length;
+  const expectedAbstentionCount = outcomes.filter(({ expected }) => expected).length;
+  const predictedAbstentionCount = outcomes.filter(({ observed }) => observed).length;
+  return Object.freeze({
+    abstentionPrecision: Object.freeze({ denominator: predictedAbstentionCount,
+      numerator: correctAbstentionCount }),
+    abstentionRecall: Object.freeze({ denominator: expectedAbstentionCount,
+      numerator: correctAbstentionCount }),
+    correctAbstentionCount, expectedAbstentionCount, predictedAbstentionCount,
+  });
 }
 
 function atLeast(numerator: number, denominator: number,
@@ -84,8 +116,7 @@ function atLeast(numerator: number, denominator: number,
 }
 
 function emptyMetricCounters(): Counters {
-  return { abstentionCheckCount: 0, abstentionPassedCount: 0, citationCheckCount: 0,
-    citationPassedCount: 0, completeRecallAt10PassedCount: 0,
+  return { citationCheckCount: 0, citationPassedCount: 0, completeRecallAt10PassedCount: 0,
     completeRecallAt5PassedCount: 0, factualClaimCount: 0,
     firstRelevantReciprocalRankMillionthsTotal: 0, ndcgAt10MillionthsTotal: 0,
     relevantLocatorCount: 0, retrievalApplicableOutcomeCount: 0,
@@ -113,10 +144,7 @@ function accumulateOutcome(sum: Counters, outcome: QualificationOutcome): Counte
     check.expectedSpeakerId === check.observedSpeakerId &&
     Math.abs(check.expectedStartMs - check.observedStartMs) <= check.toleranceMs).length;
   const factualClaims = outcome.claimChecks.filter(({ factual }) => factual);
-  return { abstentionCheckCount: sum.abstentionCheckCount + 1,
-    abstentionPassedCount: sum.abstentionPassedCount +
-      (outcome.abstention.expected === outcome.abstention.observed ? 1 : 0),
-    citationCheckCount: sum.citationCheckCount + outcome.citationChecks.length,
+  return { citationCheckCount: sum.citationCheckCount + outcome.citationChecks.length,
     citationPassedCount: sum.citationPassedCount +
       outcome.citationChecks.filter(({ entailed }) => entailed).length,
     completeRecallAt10PassedCount: sum.completeRecallAt10PassedCount + (completeAt10 ? 1 : 0),

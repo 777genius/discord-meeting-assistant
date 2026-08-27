@@ -18,7 +18,7 @@ export interface RepetitionQualificationEvidence {
   readonly metricsSha256: string; readonly outcomes: readonly QualificationOutcome[];
   readonly outcomesSha256: string; readonly releaseRootSha256: string;
   readonly repetition: 1 | 2 | 3; readonly rootBindingSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v3";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v4";
   readonly spendReservationSha256: string;
   readonly thresholdsPassed: boolean;
 }
@@ -288,7 +288,7 @@ function decodeRepetitionEvidence(value: unknown,
     "outcomes", "outcomesSha256", "releaseRootSha256", "repetition", "rootBindingSha256",
     "schemaVersion", "spendReservationSha256", "thresholdsPassed"],
   "repetition qualification evidence payload");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_repetition_evidence.v3" ||
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_repetition_evidence.v4" ||
     record.campaignRootSha256 !== expected.campaignRootSha256 ||
     record.releaseRootSha256 !== expected.releaseRootSha256 ||
     record.repetition !== expected.repetition ||
@@ -319,7 +319,7 @@ function decodeRepetitionEvidence(value: unknown,
     metricsSha256: record.metricsSha256, outcomes, outcomesSha256: record.outcomesSha256,
     releaseRootSha256: expected.releaseRootSha256, repetition: expected.repetition,
     rootBindingSha256: expected.rootBindingSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v3",
+    schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v4",
     spendReservationSha256: expected.spendReservationSha256, thresholdsPassed: true });
 }
 
@@ -338,7 +338,11 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
   assertOutcomeQuestionBinding(record, identity, expected, question);
   const relevance = expected.relevanceByQuestionId.get(identity.questionId);
   if (relevance === undefined) {throw new Error("question lacks authoritative gold relevance");}
-  const rankedLocatorIds = decodeIdList(record.rankedLocatorIds, "ranked locator", 10, false);
+  const abstention = decodeAbstention(record.abstention);
+  if (abstention.expected !== relevance.expectedAbstention) {
+    throw new Error("qualification outcome relevance differs from signed per-question gold");
+  }
+  const rankedLocatorIds = decodeIdList(record.rankedLocatorIds, "ranked locator", 10, true);
   const relevantLocatorIds = decodeIdList(record.relevantLocatorIds, "relevant locator", 100, true);
   const scopeViolationLocatorIds = decodeIdList(record.scopeViolationLocatorIds,
     "scope violation locator", 100, true);
@@ -350,23 +354,24 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
     !expected.authorizedLocatorIds.has(id))) {
     throw new Error("qualification outcome contains a foreign locator ID");
   }
-  const evidenceTurnIds = decodeIdList(record.evidenceTurnIds, "evidence turn", 256, false);
+  const evidenceTurnIds = decodeIdList(record.evidenceTurnIds, "evidence turn", 256,
+    abstention.observed);
   const speakerTimeChecks = decodeSpeakerTimeChecks(record.speakerTimeChecks,
-    new Set(evidenceTurnIds));
+    new Set(evidenceTurnIds), abstention.observed);
   const terminalChain = decodeTerminalChain(record.terminalChain);
-  const citationChecks = decodeCitationChecks(record.citationChecks, new Set(evidenceTurnIds));
-  const claimChecks = decodeClaimChecks(record.claimChecks);
+  const citationChecks = decodeCitationChecks(record.citationChecks, new Set(evidenceTurnIds),
+    abstention.observed);
+  const claimChecks = decodeClaimChecks(record.claimChecks, abstention.observed);
   const claimIds = new Set(claimChecks.map(({ claimId }) => claimId));
   if (citationChecks.some(({ claimId }) => !claimIds.has(claimId))) {
     throw new Error("citation check references a foreign claim ID");}
-  const abstention = decodeAbstention(record.abstention);
-  if (canonicalJson(relevantLocatorIds) !== canonicalJson(relevance.relevantLocatorIds) ||
-    abstention.expected !== relevance.expectedAbstention) {
+  if (canonicalJson(relevantLocatorIds) !== canonicalJson(relevance.relevantLocatorIds)) {
     throw new Error("qualification outcome relevance differs from signed per-question gold");
   }
   const factualClaimIds = claimChecks.filter(({ factual }) => factual)
     .map(({ claimId }) => claimId).toSorted();
-  if (!abstention.expected && factualClaimIds.length === 0 || canonicalJson(factualClaimIds) !==
+  if ((abstention.observed && (claimChecks.length > 0 || citationChecks.length > 0)) ||
+    (!abstention.observed && factualClaimIds.length === 0) || canonicalJson(factualClaimIds) !==
     canonicalJson(citationChecks.map(({ claimId }) => claimId).toSorted())) {
     throw new Error("factual claims and actual citation checks are not exact");}
   digest(record.finalAdjudicationSha256, "final adjudication");
@@ -431,9 +436,10 @@ function decodeIdList(value: unknown, label: string, maximum: number,
   return Object.freeze(ids);
 }
 
-function decodeSpeakerTimeChecks(value: unknown, evidenceTurnIds: ReadonlySet<string>):
+function decodeSpeakerTimeChecks(value: unknown, evidenceTurnIds: ReadonlySet<string>,
+  allowEmpty: boolean):
 readonly SpeakerTimeCheck[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 256) {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || value.length > 256) {
     throw new Error("speaker/time checks are not bounded");
   }
   const checks = value.map((check) => {
@@ -460,9 +466,10 @@ readonly SpeakerTimeCheck[] {
   return Object.freeze(checks);
 }
 
-function decodeCitationChecks(value: unknown, evidenceTurnIds: ReadonlySet<string>):
+function decodeCitationChecks(value: unknown, evidenceTurnIds: ReadonlySet<string>,
+  allowEmpty: boolean):
 readonly CitationCheck[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 256) {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || value.length > 256) {
     throw new Error("citation checks are not bounded");
   }
   const checks = value.map((check) => {
@@ -480,8 +487,8 @@ readonly CitationCheck[] {
   return Object.freeze(checks);
 }
 
-function decodeClaimChecks(value: unknown): readonly ClaimCheck[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 256) {
+function decodeClaimChecks(value: unknown, allowEmpty: boolean): readonly ClaimCheck[] {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || value.length > 256) {
     throw new Error("claim checks are not bounded");
   }
   const checks = value.map((check) => {

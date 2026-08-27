@@ -38,6 +38,11 @@ import { qualificationProviderAccountingFixture } from
 
 const digest = (value: string) => sha256({ value });
 
+function isExpectedAbstentionQuestion(questionId: string): boolean {
+  const index = Number(questionId.split("-").at(-1));
+  return index % 20 === 8 || index % 20 === 19;
+}
+
 function signer(keyId: string) {
   const keys = generateKeyPairSync("ed25519");
   const publicKeyPem = keys.publicKey.export({ format: "pem", type: "spki" }).toString();
@@ -53,8 +58,8 @@ function questions(count: number, source: CampaignQuestion["source"], prefix: st
 }
 
 function decisionFor(questionId: string, outcomeDigestSha256: string,
-  answerComplete: boolean): CanonicalAdjudicationDecision {
-  return { answerComplete, claims: [{ abstentionCorrect: true,
+  answerComplete: boolean, answerAbstained = false): CanonicalAdjudicationDecision {
+  return { answerComplete, claims: answerAbstained ? [] : [{ abstentionCorrect: true,
     citationEntailed: true, claimFactual: true, claimId: `${questionId}-claim`,
     claimSupported: true, matchedGoldClaimId: `${questionId}-gold` }],
   outcomeDigestSha256, questionId };
@@ -316,9 +321,9 @@ async function createFixture() {
     digest(`locator:${questionId}`));
   const holdoutGoldEntries = holdoutQuestions.map((question) => ({ ...question,
     campaignRootSha256: holdoutRootSha256, expectedAbstention:
-    Number(question.questionId.split("-").at(-1)) % 10 === 9,
+    isExpectedAbstentionQuestion(question.questionId),
     releaseRootSha256, relevantLocatorIds:
-    Number(question.questionId.split("-").at(-1)) % 10 === 9 ? [] :
+    isExpectedAbstentionQuestion(question.questionId) ? [] :
       [digest(`locator:${question.questionId}`)] }));
   const holdoutForbiddenEntries = holdoutQuestions.map((question) => ({
     campaignRootSha256: holdoutRootSha256,
@@ -546,13 +551,15 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
     const request = attemptRequests.get(attemptId);
     if (request === undefined) {throw new Error("missing exact attempt request");}
     const questionId = String(request.questionId);
+    const answerAbstained = isExpectedAbstentionQuestion(questionId);
     const encryptedEvidenceSha256 = digest(`evidence:${attemptId}`);
     const outcomeDigestSha256 = digest(`outcome:${attemptId}`);
     const base = { attemptId, encryptedEvidenceSha256, firstDecisionDigestSha256: null,
       outcomeDigestSha256, questionId, resolverBindingSha256: null,
       secondDecisionDigestSha256: null };
-    const firstDecision = decisionFor(questionId, outcomeDigestSha256, true);
-    const secondDecision = decisionFor(questionId, outcomeDigestSha256, questionId !== "a-0");
+    const firstDecision = decisionFor(questionId, outcomeDigestSha256, true, answerAbstained);
+    const secondDecision = decisionFor(questionId, outcomeDigestSha256,
+      questionId !== "a-0", answerAbstained);
     const first = input.judge1.signed({ ...base, decision: firstDecision,
       decisionDigestSha256: sha256(firstDecision) });
     const second = input.judge2.signed({ ...base, decision: secondDecision,
@@ -817,7 +824,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         outcomes[0]!.campaignRootSha256, metrics, metricsSha256: sha256(metrics),
       outcomes: selected, outcomesSha256: sha256(selected), releaseRootSha256:
         input.releaseRootSha256, repetition, rootBindingSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v3",
+      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v4",
       spendReservationSha256: spendDigests[repetition - 1], thresholdsPassed: true });
     });
     const authorizedLocatorInventory = input.locator.signed({ campaignRootSha256:
@@ -964,7 +971,7 @@ function exactOutcome(attemptId: string, source: {
   const request = source.requests.get(attemptId);
   if (request === undefined) {throw new Error("missing exact outcome request");}
   const questionId = String(request.questionId);
-  const isAbstention = Number(questionId.split("-").at(-1)) % 10 === 9;
+  const isAbstention = isExpectedAbstentionQuestion(questionId);
   const locator = digest(`locator:${questionId}`);
   const repetition = Number(request.repetition) as 1 | 2 | 3;
   const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0,

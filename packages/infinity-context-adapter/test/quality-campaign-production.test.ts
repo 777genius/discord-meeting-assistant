@@ -34,6 +34,10 @@ const ARTIFACT_KEY = Buffer.alloc(32, 7);
 const PROVIDER = "pinned-provider";
 const ACTIVE_SIGNAL = new AbortController().signal;
 
+function overallMetrics(outcomes: readonly QualificationOutcome[]) {
+  return reconstructMetrics(outcomes).find(({ group }) => group === "overall")!;
+}
+
 describe("scheduler-owned exact evidence chain", () => {
   it("rejects missing, reordered, substituted, replayed, and digest-mismatched evidence streams", () => {
     const exactAnswerIdentity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
@@ -235,10 +239,10 @@ ArtifactCustodyPort {
 
 function finalAdjudicationValue(attempt: AttemptIdentity, resolverRequired: boolean,
   authorities: ReturnType<typeof authorityFixture>, predecessorPlaintextSha256 = d("9"),
-  answerComplete = true) {
+  answerComplete = true, expectedAbstention = false) {
   const outcomeDigestSha256 = sha256({ attemptId: attempt.attemptId, kind: "raw-outcome" });
   const encryptedEvidenceSha256 = sha256({ attemptId: attempt.attemptId, kind: "evidence" });
-  const decision = { answerComplete, claims: [{ abstentionCorrect: true,
+  const decision = { answerComplete, claims: expectedAbstention ? [] : [{ abstentionCorrect: true,
     citationEntailed: true, claimFactual: true, claimId: `final-${attempt.questionId}`,
     claimSupported: true, matchedGoldClaimId: `gold-${attempt.questionId}` }],
   outcomeDigestSha256, questionId: attempt.questionId };
@@ -377,10 +381,10 @@ function finalFixture() {
   const authorizedLocatorInventory = locatorAuthority.signed({ campaignRootSha256: CAMPAIGN_ROOT,
     locatorIds: authorizedLocatorIds, releaseRootSha256: release.releaseRootSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_locator_inventory.v1" });
-  const goldRelevanceEntries = questions.map((question) => ({ ...question,
-    campaignRootSha256: CAMPAIGN_ROOT, expectedAbstention: false,
+  const goldRelevanceEntries = questions.map((question, index) => ({ ...question,
+    campaignRootSha256: CAMPAIGN_ROOT, expectedAbstention: index % 10 === 9,
     releaseRootSha256: release.releaseRootSha256,
-    relevantLocatorIds: authorizedLocatorIds.slice(0, 5) }));
+    relevantLocatorIds: index % 10 === 9 ? [] : authorizedLocatorIds.slice(0, 5) }));
   const goldRelevanceAuthority = authorities.signers.gold_relevance;
   const goldRelevanceReceipt = goldRelevanceAuthority.signed({ campaignRootSha256: CAMPAIGN_ROOT,
     entries: goldRelevanceEntries, releaseRootSha256: release.releaseRootSha256,
@@ -403,13 +407,15 @@ function finalFixture() {
     questions.map((question, index): QualificationOutcome => {
       const identity = answerIdentity({ question, releaseRootSha256: release.releaseRootSha256,
         repetition, spendReservationSha256: spendDigests[repetition - 1]! });
+      const expectedAbstention = index % 10 === 9;
       const resolverRequired = index === 0;
       const turnId = `turn-${repetition}-${index}`; const claimId = `final-${question.questionId}`;
-      const rankedLocatorIds = authorizedLocatorIds.slice(0, 5);
+      const rankedLocatorIds = expectedAbstention ? [] : authorizedLocatorIds.slice(0, 5);
       const speakerTimeChecks = [{ canonicalTurnId: turnId, expectedSpeakerId: "speaker-1",
         expectedStartMs: 1_000, observedSpeakerId: "speaker-1", observedStartMs: 1_050,
         toleranceMs: 100 }];
-      let finalValue = finalAdjudicationValue(identity, resolverRequired, authorities);
+      let finalValue = finalAdjudicationValue(identity, resolverRequired, authorities,
+        d("9"), true, expectedAbstention);
       let finalPlaintext = Buffer.from(canonicalJson(finalValue));
       let finalAdjudicationSha256 = sha256(finalPlaintext);
       const artifactBindingSha256ByKind: Record<string, string> = {};
@@ -516,13 +522,17 @@ function finalFixture() {
         artifacts.push(artifact); artifactBindingSha256ByKind[kind] = artifact.artifactBindingSha256;
         predecessorPlaintextSha256 = artifact.plaintextSha256;
       }
-      return { abstention: { expected: false, observed: false }, artifactBindingSha256ByKind,
+      return { abstention: { expected: expectedAbstention, observed: expectedAbstention },
+        artifactBindingSha256ByKind,
         campaignRootSha256: CAMPAIGN_ROOT,
-        citationChecks: [{ citedTurnId: turnId, claimId, entailed: true }],
-        claimChecks: [{ claimId, factual: true, supported: true }], evidenceTurnIds: [turnId],
+        citationChecks: expectedAbstention ? [] :
+          [{ citedTurnId: turnId, claimId, entailed: true }],
+        claimChecks: expectedAbstention ? [] : [{ claimId, factual: true, supported: true }],
+        evidenceTurnIds: [turnId],
         finalAdjudicationSha256, identity, locale: question.locale,
         rankedLocatorIds,
-        relevantLocatorIds: authorizedLocatorIds.slice(0, 5), repetition, resolverRequired,
+        relevantLocatorIds: expectedAbstention ? [] : authorizedLocatorIds.slice(0, 5),
+        repetition, resolverRequired,
         retrievalLatencyUs: 200_000,
         rootBindingSha256, source: question.source,
         scopeViolationLocatorIds: [],
@@ -535,7 +545,7 @@ function finalFixture() {
       metrics, metricsSha256: sha256(metrics), outcomes, outcomesSha256: sha256(outcomes),
       releaseRootSha256: release.releaseRootSha256, repetition: (index + 1) as 1 | 2 | 3,
       rootBindingSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v3",
+      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v4",
       spendReservationSha256: spendDigests[index]!, thresholdsPassed: true };
     return repetitionAuthority.signed(payload);
   });
@@ -979,11 +989,23 @@ describe("production quality campaign final evidence", () => {
     expect(metrics.find(({ group }) => group === "independent_review")?.applicableOutcomeCount)
       .toBe(40);
     expect(metrics.find(({ group }) => group === "overall")?.ndcgAt10MillionthsTotal)
-      .toBe(240_000_000);
+      .toBe(216_000_000);
+    expect(metrics.find(({ group }) => group === "overall")?.abstentionPrecision)
+      .toEqual({ denominator: 24, numerator: 24 });
+    expect(metrics.find(({ group }) => group === "overall")?.abstentionRecall)
+      .toEqual({ denominator: 24, numerator: 24 });
     expect(metrics.find(({ group }) => group === "overall")?.retrievalLatencyP95Us).toBe(200_000);
     expect(metrics.find(({ group }) => group === "overall")?.scopeLeakageCount).toBe(0);
     expect(metrics.every(({ thresholdPassed }) => thresholdPassed)).toBe(true);
   }, 60_000);
+
+  it("rejects legacy accuracy-shaped repetition evidence", async () => {
+    const legacy = FINAL.repetitionAuthority.signed({ ...FINAL.evidence[0]!.payload,
+      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v3" });
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      repetitionEvidence: [legacy, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
+      .rejects.toThrow(/binding or structure/u);
+  });
 
   it("rejects caller-selected final-evidence authority references", async () => {
     await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
@@ -1023,6 +1045,8 @@ describe("production quality campaign final evidence", () => {
       { rankedLocatorIds: ["foreign-locator"] },
       { rankedLocatorIds: Array.from({ length: 11 }, (_, index) => `locator-${index % 10}`) },
       { relevantLocatorIds: ["locator-0", "locator-0"] },
+      { citationChecks: [] },
+      { claimChecks: [] },
     ];
     for (const mutation of mutations) {
       const outcomes = first.outcomes.map((outcome, index) => index === 0 ?
@@ -1129,6 +1153,64 @@ describe("production quality campaign final evidence", () => {
         recall5: answerableOnly.retrievedRelevantLocatorCountAt5,
         relevant: answerableOnly.relevantLocatorCount,
         retrievalApplicable: answerableOnly.retrievalApplicableOutcomeCount });
+  });
+
+  it("gates abstention precision and recall instead of classification accuracy", () => {
+    const source = FINAL.outcomesByRepetition[0]!;
+    const answerable = source.find(({ abstention }) => !abstention.expected)!;
+    const correct = source.find(({ abstention }) => abstention.expected)!;
+    const missed = { ...correct, abstention: { expected: true, observed: false } };
+    const falsePositive = { ...answerable, abstention: { expected: false, observed: true },
+      citationChecks: [], claimChecks: [] };
+
+    const noExpectedAbstention = overallMetrics([answerable]);
+    expect(noExpectedAbstention.abstentionRecall).toEqual({ denominator: 0, numerator: 0 });
+    expect(noExpectedAbstention.thresholdPassed).toBe(false);
+
+    const accuracyCounterexample = overallMetrics([
+      ...Array.from({ length: 19 }, () => answerable), missed,
+    ]);
+    expect(accuracyCounterexample.abstentionPrecision)
+      .toEqual({ denominator: 0, numerator: 0 });
+    expect(accuracyCounterexample.abstentionRecall)
+      .toEqual({ denominator: 1, numerator: 0 });
+    expect(accuracyCounterexample.thresholdPassed).toBe(false);
+
+    const precisionBoundary = overallMetrics([
+      ...Array.from({ length: 19 }, () => correct), falsePositive, answerable,
+    ]);
+    expect(precisionBoundary.abstentionPrecision)
+      .toEqual({ denominator: 20, numerator: 19 });
+    expect(precisionBoundary.thresholdPassed).toBe(true);
+    expect(overallMetrics([...Array.from({ length: 18 }, () => correct), falsePositive, falsePositive,
+      answerable])
+      .thresholdPassed).toBe(false);
+
+    const recallBoundary = overallMetrics([
+      ...Array.from({ length: 9 }, () => correct), missed, answerable,
+    ]);
+    expect(recallBoundary.abstentionRecall).toEqual({ denominator: 10, numerator: 9 });
+    expect(recallBoundary.thresholdPassed).toBe(true);
+    expect(overallMetrics([...Array.from({ length: 8 }, () => correct), missed, missed, answerable])
+      .thresholdPassed).toBe(false);
+  });
+
+  it("isolates abstention thresholds by locale and fails the affected aggregate", () => {
+    const outcomes = FINAL.outcomesByRepetition[0]!;
+    const baseline = reconstructMetrics(outcomes);
+    for (const group of ["locale:en", "locale:ru", "locale:mixed"] as const) {
+      const metric = baseline.find((candidate) => candidate.group === group)!;
+      expect(metric.expectedAbstentionCount).toBeGreaterThan(0);
+      expect(metric.thresholdPassed).toBe(true);
+    }
+    const missedRussian = outcomes.map((outcome) => outcome.locale === "ru" &&
+      outcome.abstention.expected ? { ...outcome,
+        abstention: { expected: true, observed: false } } : outcome);
+    const changed = reconstructMetrics(missedRussian);
+    expect(changed.find(({ group }) => group === "locale:ru")?.thresholdPassed).toBe(false);
+    expect(changed.find(({ group }) => group === "locale:en")?.thresholdPassed).toBe(true);
+    expect(changed.find(({ group }) => group === "locale:mixed")?.thresholdPassed).toBe(true);
+    expect(changed.find(({ group }) => group === "overall")?.thresholdPassed).toBe(false);
   });
 
   it("derives impossible top-five recall, MRR, citation, precision, speaker/time, and abstention failures", async () => {

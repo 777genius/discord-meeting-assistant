@@ -10,6 +10,7 @@ import type { PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
 import { assertTerminalChain } from "./production-evidence-terminals.js";
 import { QUALIFICATION_PROVIDER_INPUT_CONTRACT, QUALIFICATION_THRESHOLDS } from
   "./qualification-contract.js";
+import { calculateAbstentionStatistics } from "./qualification-metrics.js";
 import { verifyExactRetentionInventory, type ArtifactCustodyPort,
   type RetainedArtifact, type RetainedArtifactKind } from "./retention.js";
 
@@ -485,16 +486,15 @@ LocallyComputedMetrics {
   const decisions = input.adjudications.flatMap(({ decision }) => decision.claims);
   const factual = decisions.filter(({ claimFactual }) => claimFactual);
   const citations = factual;
-  const expectedAbstentions = input.outcomes.filter(({ expectedAnswer }) =>
-    expectedAnswer === "abstain");
-  const predictedAbstentions = input.outcomes.filter(({ answerAbstained }) => answerAbstained);
-  const correctAbstentions = expectedAbstentions.filter(({ answerAbstained }) => answerAbstained);
+  const abstention = calculateAbstentionStatistics(input.outcomes.map((outcome) => ({
+    expected: outcome.expectedAnswer === "abstain", observed: outcome.answerAbstained,
+  })));
   const answerable = input.outcomes.filter(({ expectedAnswer }) => expectedAnswer === "answerable");
   const latencies = input.outcomes.map(({ retrievalLatencyUs }) => retrievalLatencyUs)
     .toSorted((a, b) => a - b);
   return Object.freeze({
-    abstentionPrecision: ratio(correctAbstentions.length, predictedAbstentions.length),
-    abstentionRecall: ratio(correctAbstentions.length, expectedAbstentions.length),
+    abstentionPrecision: abstention.abstentionPrecision,
+    abstentionRecall: abstention.abstentionRecall,
     citationEntailment: ratio(citations.filter(({ citationEntailed }) => citationEntailed).length,
       citations.length),
     citationMembership: ratio(input.outcomes.reduce((sum, value) => sum +

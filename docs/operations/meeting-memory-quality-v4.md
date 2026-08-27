@@ -161,6 +161,13 @@ schema is sealed separately for overall, automated, and real corpora.
 - retrieval p95 microseconds, timeout count, failure count, request/response
   bytes, prompt/evidence totals and maxima, and whole-transcript inclusion.
 
+Abstention precision is true abstentions divided by every answer the model
+marked as abstained. Abstention recall is true abstentions divided by every
+question whose expected result is abstention. The implementation uses exact
+integer ratios; a missing predicted or expected denominator fails that gate
+instead of passing vacuously. The same arithmetic is applied independently to
+the overall, EN, RU, and mixed groups whenever the group is applicable.
+
 Both Recall@5 forms gate at 9/10. Automated and overall reports apply EN, RU,
 and mixed locale gates; the real report applies EN and RU only. Both Recall@10
 forms and nDCG@10 are reported only. Final-answer recall is a hard gate at 9/10
