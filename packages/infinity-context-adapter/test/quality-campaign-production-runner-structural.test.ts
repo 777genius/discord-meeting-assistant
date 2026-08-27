@@ -355,7 +355,7 @@ async function createFixture() {
 
   const runtime = createRuntimeFixture({ absence, artifactCustody: custody, clock, deletion, holdoutProvider,
     goldRelevance, judge1: reviewer1, judge2: reviewer2, locator, protectedEvidence, protectedOriginals,
-    provider, questions: allQuestions, release, releaseDocument, releaseRootSha256,
+    provider, questions: allQuestions, holdoutQuestions, release, releaseDocument, releaseRootSha256,
     repetitionAuthority, resolver, reviewer1, reviewer2, spend });
   const { ports } = runtime;
   const cli = async (command: string, statusName: string) =>
@@ -414,6 +414,7 @@ interface RuntimeFixtureInput { readonly absence: ReturnType<typeof signer>;
   readonly locator: ReturnType<typeof signer>;
   readonly goldRelevance: ReturnType<typeof signer>;
   readonly protectedEvidence: readonly unknown[]; readonly provider: ReturnType<typeof signer>;
+  readonly holdoutQuestions: readonly CampaignQuestion[];
   readonly protectedOriginals: readonly { readonly artifactId: string; readonly kind: string }[];
   readonly questions: readonly CampaignQuestion[];
   readonly release: QualityCampaignRelease; readonly releaseDocument: unknown;
@@ -528,7 +529,8 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       tagBase64: cipher.getAuthTag().toString("base64") }));
     return { aad, envelope, identity, keyId, plaintextSha256 };
   };
-  const artifactsFor = (attemptIds: readonly string[]): RetainedArtifact[] =>
+  const artifactsFor = (attemptIds: readonly string[], resultSigner = input.provider):
+  RetainedArtifact[] =>
     attemptIds.flatMap((attemptId) => {
     const cached = artifactsByAttempt.get(attemptId);
     if (cached !== undefined) {return cached;}
@@ -548,9 +550,9 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       .map((kind) => {
         const identity = artifactAttemptIdentity(answerIdentity, kind);
         const providerRequestBytes = Buffer.from(requestBytesByAttempt.get(identity.attemptId) ??
-          Buffer.from(canonicalJson({ callKind: identity.callKind,
-          questionDigestSha256: identity.questionDigestSha256,
-          schemaVersion: "meeting_knowledge.semantic_quality_test_provider_request.v1" })));
+          Buffer.from(canonicalJson(attemptRequests.get(identity.attemptId) ?? {
+            callKind: identity.callKind, questionDigestSha256: identity.questionDigestSha256,
+            schemaVersion: "meeting_knowledge.semantic_quality_test_provider_request.v1" })));
         const providerResultBytes = Buffer.from(resultBytesByAttempt.get(identity.attemptId) ??
           Buffer.from(canonicalJson({ callKind: identity.callKind,
           questionId: identity.questionId,
@@ -591,7 +593,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
             signedDurableExchange = effect.signedDurableExchange;
           } else {
             signedProviderTerminal = signedResultByAttempt.get(identity.attemptId) ??
-              input.provider.signed({ ...identity, requestDigestSha256,
+              resultSigner.signed({ ...identity, requestDigestSha256,
                 resultDigestSha256, schemaVersion:
                 "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
               state: "terminal_success" });
@@ -663,15 +665,17 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
   const deletedIds: string[] = []; const observedIds: string[] = [];
   const mainExchange = exchange(mainCalls, input.provider);
   const holdoutExchange = exchange(holdoutCalls, input.holdoutProvider);
-  const mainEvidence = (attemptIds: readonly string[]) => {
+  const mainEvidence = (attemptIds: readonly string[], evidenceQuestions = input.questions,
+    resultSigner = input.provider) => {
     const adjudications = attemptIds.map(adjudicationFor);
-    const artifacts = artifactsFor(attemptIds); const outcomes = outcomesFor(attemptIds);
+    const artifacts = artifactsFor(attemptIds, resultSigner);
+    const outcomes = outcomesFor(attemptIds, resultSigner);
     const authorizedLocatorIds = [...new Set(outcomes.flatMap(({ rankedLocatorDigests,
       relevantLocatorDigests }) => [...rankedLocatorDigests, ...relevantLocatorDigests]))].toSorted();
     const spendDigests = ([1, 2, 3] as const).map((repetition) => outcomes.find((outcome) =>
       outcome.repetition === repetition)!.identity.spendReservationSha256) as
       [string, string, string];
-    const goldRelevanceEntries = input.questions.map((question) => {
+    const goldRelevanceEntries = evidenceQuestions.map((question) => {
       const outcome = outcomes.find((candidate) => candidate.questionId === question.questionId)!;
       return { ...question, campaignRootSha256: outcomes[0]!.campaignRootSha256,
         expectedAbstention: outcome.expectedAnswer === "abstain",
@@ -685,13 +689,14 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" });
     const rootBindingSha256 = sha256({ authorizedLocatorSetSha256: sha256(authorizedLocatorIds),
       campaignRootSha256: outcomes[0]!.campaignRootSha256,
-      questionSetSha256: sha256(input.questions), relevanceAuthoritySha256:
+      questionSetSha256: sha256(evidenceQuestions), relevanceAuthoritySha256:
       sha256(goldRelevanceEntries), releaseRootSha256: input.releaseRootSha256,
       schemaVersion: "meeting_knowledge.semantic_quality_final_root_binding.v3",
       spendReservationSetSha256: sha256(spendDigests) });
     const qualification = outcomes.map((outcome): QualificationOutcome => {
       const adjudication = adjudications.find(({ attemptId }) => attemptId === outcome.attemptId)!;
-      const question = input.questions.find(({ questionId }) => questionId === outcome.questionId)!;
+      const question = evidenceQuestions.find(({ questionId }) =>
+        questionId === outcome.questionId)!;
       const turnId = `turn-${outcome.repetition}-${outcome.questionId}`;
       return { abstention: { expected: outcome.expectedAnswer === "abstain",
         observed: outcome.answerAbstained }, artifactBindingSha256ByKind:
@@ -729,7 +734,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       releaseRootSha256: input.releaseRootSha256, schemaVersion:
       "meeting_knowledge.semantic_quality_locator_inventory.v1" });
     const reviewedQuestions = { campaignRootSha256: outcomes[0]!.campaignRootSha256,
-      goldRelevanceReceiptSha256: sha256(goldRelevanceReceipt), questions: input.questions,
+      goldRelevanceReceiptSha256: sha256(goldRelevanceReceipt), questions: evidenceQuestions,
       releaseRootSha256: input.releaseRootSha256,
       schemaVersion: "meeting_knowledge.semantic_quality_reviewed_main_questions.v2" } as const;
     return { adjudications, artifacts, authorizedLocatorIds, authorizedLocatorInventory,
@@ -762,11 +767,8 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
     } }, evidence: { holdout: async () => ({ envelopeBytes: Buffer.from("holdout"),
       signedReceipt: {} }), main: async () => ({ envelopeBytes: Buffer.from("main"),
       signedReceipt: {} }) }, evidenceCustody: { open: async ({ attemptIds, kind }) => kind ===
-      "main" ? mainEvidence(attemptIds) : ({ adjudications: attemptIds.map(adjudicationFor),
-        artifacts: [], authorizedLocatorIds: [], authorizedLocatorInventory: {},
-        campaignByteCeiling: 1, finalRootBindingSha256: digest("holdout-final-root"),
-        goldRelevanceReceipt: {}, outcomes: outcomesFor(attemptIds, input.holdoutProvider), questionReviewReceipts:
-        [{}, {}], repetitionEvidence: [] }) },
+      "main" ? mainEvidence(attemptIds) : mainEvidence(attemptIds, input.holdoutQuestions,
+        input.holdoutProvider) },
     holdoutProvider: { answer: holdoutExchange, capability: holdoutExchange,
       resultAuthority: input.holdoutProvider, retrieval: holdoutExchange },
     mainProvider: { answer: mainExchange, capability: mainExchange,
