@@ -267,7 +267,7 @@ function errorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
     ? error.code : undefined;
 }
-export function parseCraigRecoveryArguments(arguments_: readonly string[]) {
+function parseCraigRecoveryArguments(arguments_: readonly string[]) {
   const values = arguments_[0] === "--" ? arguments_.slice(1) : arguments_;
   if (values.length !== 4 || values.some((value) => !value.startsWith("/"))) {
     throw new Error("Usage: recover:craig-stack <stack-input.json> <mutation.json> <failure.json> <recovery.json>");

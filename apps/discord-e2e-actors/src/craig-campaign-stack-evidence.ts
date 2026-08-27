@@ -7,7 +7,7 @@ import { craigAbsolutePathSchema, craigComposeCoordinateSchema, craigIdentifierS
 import { digestCraigCampaignStackCanonical as digestCanonical } from "./craig-campaign-stack-digest.js";
 import { hostedCampaignReleaseReferenceV1Schema } from "./hosted-campaign-release-reference.js";
 
-export const craigStackMutationStartReceiptV1Schema = z.object({
+const craigStackMutationStartReceiptV1Schema = z.object({
   campaignId: craigIdentifierSchema, campaignLeaseSha256: craigSha256Schema,
   composeCanonicalSha256: craigSha256Schema,
   composeServiceConfigHashes: z.record(craigComposeCoordinateSchema, craigSha256Schema),
@@ -19,7 +19,7 @@ export const craigStackMutationStartReceiptV1Schema = z.object({
 }).strict();
 export type CraigStackMutationStartReceiptV1 = Readonly<z.infer<typeof craigStackMutationStartReceiptV1Schema>>;
 
-export const craigFailedStackReceiptV1Schema = z.object({
+const craigFailedStackReceiptV1Schema = z.object({
   campaignId: craigIdentifierSchema, campaignLeaseSha256: craigSha256Schema,
   campaignRoot: craigAbsolutePathSchema, failedAt: z.iso.datetime(), failureClass: craigIdentifierSchema,
   failureSha256: craigSha256Schema, hostedPlanSha256: craigSha256Schema,
@@ -39,7 +39,7 @@ const recoveryAbsenceSchema = z.object({
   release: hostedCampaignReleaseReferenceV1Schema, schemaVersion: z.literal(1),
 }).strict();
 
-export const craigFailedStackRecoveryReceiptV1Schema = z.object({
+const craigFailedStackRecoveryReceiptV1Schema = z.object({
   absenceProof: recoveryAbsenceSchema, campaignId: craigIdentifierSchema, campaignLeaseRemoved: z.literal(true),
   completedAt: z.iso.datetime(), failureReceiptSha256: craigSha256Schema,
   hostedPlanSha256: craigSha256Schema, kind: z.literal("craig-failed-stack-recovery"),

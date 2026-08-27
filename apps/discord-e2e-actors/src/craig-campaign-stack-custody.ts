@@ -332,23 +332,6 @@ export async function verifyStableFileIdentity(
   } finally { await handle?.close(); }
 }
 
-export async function inspectStableFile(path: string): Promise<PinnedFileIdentityV1> {
-  let handle: FileHandle | undefined;
-  try {
-    await assertUnsymlinkedParents(path);
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const before = await handle.stat();
-    const contents = await handle.readFile();
-    const after = await handle.stat();
-    if (!before.isFile() || before.nlink !== 1 || before.dev !== after.dev || before.ino !== after.ino
-      || before.size !== after.size || before.mtimeMs !== after.mtimeMs) {
-      throw new Error("Craig pinned input changed while it was opened");
-    }
-    return Object.freeze({ device: after.dev, inode: after.ino,
-      sha256: createHash("sha256").update(contents).digest("hex") });
-  } finally { await handle?.close(); }
-}
-
 export async function assertCanonicalUnsymlinkedCampaignPath(
   campaignRoot: string,
   campaignId: string,

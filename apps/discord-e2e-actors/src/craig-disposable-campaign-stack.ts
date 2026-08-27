@@ -38,7 +38,7 @@ import { craigAbsolutePathSchema as absolutePath, craigCampaignStackInputSchema 
 import { craigCampaignComposeProjectSchema, craigCampaignNetworkPolicySchema as networkPolicySchema,
   craigProjectName, deriveCraigCampaignNetworkPolicy } from "./craig-campaign-network-plan.js";
 export { FileCraigCampaignCredentialStore } from "./craig-campaign-stack-local-adapters.js";
-export { craigCampaignComposeProjectSchema, craigProjectName, deriveCraigCampaignNetworkPolicy } from
+export { craigProjectName, deriveCraigCampaignNetworkPolicy } from
   "./craig-campaign-network-plan.js";
 export type { CraigCampaignStackInput } from "./craig-campaign-stack-schemas.js";
 export interface CraigCampaignStackCommandRequest { readonly args: readonly string[];

@@ -39,7 +39,7 @@
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "packages/infinity-context-adapter": {
-      "entry": ["src/index.ts", "src/quality-campaign/production-entrypoint.ts"],
+      "entry": ["src/index.ts", "src/packed-root.ts", "src/quality-campaign/production-entrypoint.ts"],
       "ignoreDependencies": ["@huggingface/tokenizers"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
@@ -98,6 +98,7 @@
     "apps/discord-e2e-actors": {
       "entry": [
         "src/main.ts",
+        "src/run-hosted-campaign-main.ts",
         "src/capacity-main.ts",
         "src/assemble-remediation-bundle.ts",
         "src/collect-hosted-campaign-provenance.ts",

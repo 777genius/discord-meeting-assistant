@@ -6,7 +6,7 @@ import { craigCampaignNetworkPolicySchema } from "./craig-campaign-network-plan.
 export const craigIdentifierSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 export const craigComposeCoordinateSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u);
 export const craigSha256Schema = z.string().regex(/^[a-f\d]{64}$/u);
-export const craigContainerIdSchema = craigSha256Schema;
+export const craigContainerIdSchema = z.string().regex(/^[a-f\d]{64}$/u);
 export const craigImageIdSchema = z.string().regex(/^sha256:[a-f\d]{64}$/u);
 export const craigRepositoryDigestSchema = z.string().regex(/^[^\s@]+@sha256:[a-f\d]{64}$/u);
 export const craigSourceRevisionSchema = z.string().regex(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u);
