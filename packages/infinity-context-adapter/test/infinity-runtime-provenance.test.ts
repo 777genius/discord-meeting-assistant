@@ -97,7 +97,7 @@ describe("Infinity Context official SDK provenance", () => {
     expect(typedSearch.projectAnchorPolicy).toBe("advisory");
   });
 
-  it("retains the predecessor package while binding Retrieval V2 to 0.2.0", () => {
+  it("binds the single default Retrieval SDK at 0.2.1", () => {
     const immutablePackage = readFileSync(new URL(
       `../../../${INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackagePath}`,
       import.meta.url,
@@ -119,8 +119,8 @@ describe("Infinity Context official SDK provenance", () => {
       .toBe(INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE.immutablePackageIntegrity);
     expect(INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE).toMatchObject({
       packageName: "@infinity-context/sdk",
-      packageVersion: "0.2.0",
-      reviewedSourceCommit: "4ea98c141770666dcbae3d46f9dddb2b974b5879",
+      packageVersion: "0.2.1",
+      reviewedSourceCommit: "e685b41a12e630b7e787fb2fa26b08c0eb6137d4",
     });
     const packedManifest = execFileSync("tar", [
       "-xOf",
@@ -134,7 +134,7 @@ describe("Infinity Context official SDK provenance", () => {
       .toBe(INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE.packageManifestSha256);
     expect(JSON.parse(packedManifest.toString("utf8"))).toMatchObject({
       name: "@infinity-context/sdk",
-      version: "0.2.0",
+      version: "0.2.1",
     });
   });
 
@@ -158,7 +158,7 @@ describe("Infinity Context official SDK provenance", () => {
         sdk_tests: { failed: 0, passed: 86 },
         server_tests: { failed: 0, passed: 116 },
       },
-      head_revision: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
+      head_revision: INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadRevision,
       production_capabilities: {
         deletion_reconciliation: true,
         indexing: false,
@@ -167,8 +167,9 @@ describe("Infinity Context official SDK provenance", () => {
       sdk: {
         source_bundle_sha256:
           INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadSourceBundleSha256,
-        tarball_sha256: INFINITY_CONTEXT_SDK_PROVENANCE.packageTarballSha256,
-        tree: INFINITY_CONTEXT_SDK_PROVENANCE.tree,
+        tarball_sha256:
+          INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadSdkTarballSha256,
+        tree: INFINITY_CONTEXT_SDK_PROVENANCE.retainedExactHeadSdkTree,
       },
     });
     const evidenceRoot = new URL(

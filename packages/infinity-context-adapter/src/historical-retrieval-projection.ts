@@ -6,7 +6,7 @@ import {
   DOCUMENT_RETRIEVAL_PROJECTION_SCHEMA_V1,
   documentRetrievalProjectionV1Payload,
   type DocumentRetrievalProjectionV1Input,
-} from "@infinity-context/sdk-v2";
+} from "@infinity-context/sdk";
 
 const HISTORICAL_RETRIEVAL_CATEGORY = "meeting_evidence";
 

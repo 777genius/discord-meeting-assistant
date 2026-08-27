@@ -51,9 +51,7 @@ describe("packed package qualification exports", () => {
 overrides:
   "@discord-meeting/meeting-core": ${JSON.stringify(`file:${meetingCoreArchive}`)}
   "@infinity-context/sdk": ${JSON.stringify(`file:${join(repositoryRoot,
-    "vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz")}`)}
-  "@infinity-context/sdk-v2": ${JSON.stringify(`file:${join(repositoryRoot,
-    "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.0.tgz")}`)}
+    "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz")}`)}
 `);
     execFileSync("pnpm", ["install", "--offline", "--ignore-scripts", "--prod",
       "--no-frozen-lockfile", "--network-concurrency=1"], {

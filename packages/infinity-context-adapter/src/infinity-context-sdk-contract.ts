@@ -13,7 +13,7 @@ import {
   InfinityContextError as InfinityContextErrorV2,
   type DocumentRecord as DocumentRecordV2,
   type InfinityContextClient as InfinityContextClientV2,
-} from "@infinity-context/sdk-v2";
+} from "@infinity-context/sdk";
 
 import {
   historicalRetrievalProjection,

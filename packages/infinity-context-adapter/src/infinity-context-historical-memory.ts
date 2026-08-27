@@ -15,7 +15,7 @@ import {
 import {
   InfinityContextClient as InfinityContextClientV2,
   type HttpTransport as HttpTransportV2,
-} from "@infinity-context/sdk-v2";
+} from "@infinity-context/sdk";
 
 import {
   decodeInfinityContextCapabilityAttestation,

@@ -26,10 +26,10 @@ import {
 } from "./disposable-infinity-endpoint-support.js";
 const require = createRequire(import.meta.url);
 const retrievalCapability = JSON.parse(readFileSync(require.resolve(
-  "@infinity-context/sdk-v2/fixtures/context_retrieval_v2/capability.json",
+  "@infinity-context/sdk/fixtures/context_retrieval_v2/capability.json",
 ), "utf8")) as Record<string, unknown>;
 const retrievalSuccess = JSON.parse(readFileSync(require.resolve(
-  "@infinity-context/sdk-v2/fixtures/context_retrieval_v2/success.json",
+  "@infinity-context/sdk/fixtures/context_retrieval_v2/success.json",
 ), "utf8")) as Record<string, unknown>;
 export const DISPOSABLE_RETRIEVAL_V2_BINDING = Object.freeze({
   capabilityFingerprint: retrievalCapability.capability_fingerprint as string,

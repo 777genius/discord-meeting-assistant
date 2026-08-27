@@ -96,8 +96,8 @@ export async function runSemanticQualityV4QualificationProductionComposition(
   const trustAnchor = verifySemanticQualityV4ReleaseTrustAnchor(readJson(config.trustAnchorPath),
     readExternalReleaseRoot());
   const pinnedKeys = trustAnchor.reviewerKeys;
-  const sdkRuntimeUrl = import.meta.resolve("@infinity-context/sdk-v2");
-  const sdkRuntime = await import(sdkRuntimeUrl) as typeof import("@infinity-context/sdk-v2");
+  const sdkRuntimeUrl = import.meta.resolve("@infinity-context/sdk");
+  const sdkRuntime = await import(sdkRuntimeUrl) as typeof import("@infinity-context/sdk");
   const questionReviewReceipts = readJson(config.questionReviewReceiptsPath) as readonly unknown[];
   const topology = decodeTopology(readJson(config.topologyPath));
   const capability = decodeCapability(readJson(config.infinityCapabilityPath));
@@ -533,14 +533,14 @@ function decodeCapability(value: unknown) {const record = value as Record<string
   } return record as Record<string, unknown> & { capability_fingerprint: string; index_profile_digest: string;
     profile_id: string; service_revision: string };}
 function providerBindingFrom(value: ReturnType<typeof decodeCapability>, sdkRuntime:
-  Pick<typeof import("@infinity-context/sdk-v2"), "CONTEXT_RETRIEVAL_CONTRACT_V2" |
-    "CONTEXT_RETRIEVAL_RANKING_POLICY_V2">): FocusedLocatorRetrievalV2ProviderBinding {
+  Pick<typeof import("@infinity-context/sdk"), "CONTEXT_RETRIEVAL_CONTRACT" |
+    "CONTEXT_RETRIEVAL_RANKING_POLICY">): FocusedLocatorRetrievalV2ProviderBinding {
   if (value.profile_id !== `locator-v2-full-${value.index_profile_digest}`) {
     throw new Error("qualification capability is not the full production profile");
   }
   return Object.freeze({ capabilityFingerprint: value.capability_fingerprint,
-    contractVersion: sdkRuntime.CONTEXT_RETRIEVAL_CONTRACT_V2, indexProfileDigest: value.index_profile_digest,
-    profileId: value.profile_id, rankingPolicy: sdkRuntime.CONTEXT_RETRIEVAL_RANKING_POLICY_V2,
+    contractVersion: sdkRuntime.CONTEXT_RETRIEVAL_CONTRACT, indexProfileDigest: value.index_profile_digest,
+    profileId: value.profile_id, rankingPolicy: sdkRuntime.CONTEXT_RETRIEVAL_RANKING_POLICY,
     requiredProviderLanes: Object.freeze(["postgres_keyword", "qdrant_dense"]),
     serviceRevision: value.service_revision });
 }

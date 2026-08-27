@@ -6,17 +6,17 @@ import type {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { createHash } from "node:crypto";
 import {
-  CONTEXT_RETRIEVAL_CONTRACT_V2,
-  CONTEXT_RETRIEVAL_RANKING_POLICY_V2,
+  CONTEXT_RETRIEVAL_CONTRACT,
+  CONTEXT_RETRIEVAL_RANKING_POLICY,
   InfinityContextClient,
   InfinityContextError,
   FetchTransport,
-  assertContextRetrievalCapabilityV2,
-  retrievalV2RequestPayload,
+  assertRetrievalCapability,
+  retrievalRequestPayload,
   type HttpTransport,
-  type RetrieveContextV2Input,
-  type RetrieveContextV2Response,
-} from "@infinity-context/sdk-v2";
+  type RetrieveContextInput,
+  type RetrieveContextResponse,
+} from "@infinity-context/sdk";
 
 import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
 
@@ -58,7 +58,7 @@ function unqualified(code: string): FocusedLocatorRetrievalV2Result {
   return Object.freeze({ code, retryable: false, status: "unqualified" });
 }
 
-function providerReason(response: RetrieveContextV2Response): string {
+function providerReason(response: RetrieveContextResponse): string {
   return response.provider_outcomes.find(({ status, reason_code: reasonCode }) =>
     status === response.status && reasonCode !== null
   )?.reason_code ?? `provider_${response.status}`;
@@ -103,7 +103,7 @@ function canonicalFingerprintValue(value: unknown): unknown {
     .map(([key, nested]) => [key, canonicalFingerprintValue(nested)]));
 }
 
-function requestFrom(input: InfinityContextRetrievalV2Request): RetrieveContextV2Input {
+function requestFrom(input: InfinityContextRetrievalV2Request): RetrieveContextInput {
   const runtimeInput = input as unknown as { readonly schemaVersion: unknown;
     readonly binding: { readonly contractVersion: unknown; readonly rankingPolicy: unknown };
     readonly budgets: { readonly neighborRadius: unknown } };
@@ -125,13 +125,13 @@ function requestFrom(input: InfinityContextRetrievalV2Request): RetrieveContextV
       ...(input.scope.threadId === undefined ? [] : ["threadId"]),
     ]) ||
     runtimeInput.schemaVersion !== 2 ||
-    runtimeInput.binding.contractVersion !== CONTEXT_RETRIEVAL_CONTRACT_V2 ||
-    runtimeInput.binding.rankingPolicy !== CONTEXT_RETRIEVAL_RANKING_POLICY_V2 ||
+    runtimeInput.binding.contractVersion !== CONTEXT_RETRIEVAL_CONTRACT ||
+    runtimeInput.binding.rankingPolicy !== CONTEXT_RETRIEVAL_RANKING_POLICY ||
     runtimeInput.budgets.neighborRadius !== 0
   ) {
     throw new RangeError("Infinity Retrieval V2 binding or policy is invalid");
   }
-  const request: RetrieveContextV2Input = {
+  const request: RetrieveContextInput = {
     bounds: {
       candidateLimit: input.budgets.candidateLimit,
       deadlineMs: input.budgets.deadlineMs,
@@ -140,7 +140,7 @@ function requestFrom(input: InfinityContextRetrievalV2Request): RetrieveContextV
       resultLimit: input.budgets.resultLimit,
     },
     capabilityFingerprint: input.binding.capabilityFingerprint,
-    contractVersion: CONTEXT_RETRIEVAL_CONTRACT_V2,
+    contractVersion: CONTEXT_RETRIEVAL_CONTRACT,
     filters: input.filters,
     profileId: input.binding.profileId,
     queries: input.queries,
@@ -149,7 +149,7 @@ function requestFrom(input: InfinityContextRetrievalV2Request): RetrieveContextV
   };
   // Official validation runs before either network request and rejects unknown,
   // unsafe, unordered, oversized, or out-of-contract request values.
-  retrievalV2RequestPayload(request);
+  retrievalRequestPayload(request);
   return request;
 }
 
@@ -201,7 +201,7 @@ implements FocusedLocatorRetrievalV2Port {
   ): Promise<FocusedLocatorRetrievalV2Result> {
     this.#observation = null;
     this.#exactExchange = null;
-    let request: RetrieveContextV2Input;
+    let request: RetrieveContextInput;
     try {
       request = requestFrom(input);
     } catch {
@@ -224,7 +224,7 @@ implements FocusedLocatorRetrievalV2Port {
         timeoutMs,
         (signal) => this.#client.system.capabilities({ signal, timeoutMs }),
       );
-      const capability = assertContextRetrievalCapabilityV2(capabilities, required);
+      const capability = assertRetrievalCapability(capabilities, required);
       if (
         capability.capability_fingerprint !== retrievalV2CapabilityFingerprint(
           capability as unknown as Readonly<Record<string, unknown>>,
@@ -319,7 +319,7 @@ implements FocusedLocatorRetrievalV2Port {
 
   readonly #qualificationTransport: ExactRetrievalExchangeTransport | null;
 
-  private captureExchangeBytes(request: RetrieveContextV2Input, response: unknown): {
+  private captureExchangeBytes(request: RetrieveContextInput, response: unknown): {
     readonly requestBytes: Uint8Array; readonly responseBytes: Uint8Array } {
     if (this.#qualificationTransport === null) {
       return { requestBytes: Buffer.from(JSON.stringify(request), "utf8"),

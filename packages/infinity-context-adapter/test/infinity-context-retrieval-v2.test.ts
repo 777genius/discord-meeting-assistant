@@ -6,7 +6,7 @@ import type {
   HttpResponse,
   HttpTransport,
   JsonValue,
-} from "@infinity-context/sdk-v2";
+} from "@infinity-context/sdk";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -17,7 +17,7 @@ import {
 
 const require = createRequire(import.meta.url);
 const fixture = (name: string): Record<string, unknown> => JSON.parse(readFileSync(
-  require.resolve(`@infinity-context/sdk-v2/fixtures/context_retrieval_v2/${name}.json`),
+  require.resolve(`@infinity-context/sdk/fixtures/context_retrieval_v2/${name}.json`),
   "utf8",
 )) as Record<string, unknown>;
 const capability = fixture("capability");

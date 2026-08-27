@@ -8,7 +8,7 @@ import {
   DOCUMENT_RETRIEVAL_PROJECTION_SCHEMA_V1,
   InfinityContextClient as InfinityContextClientV2,
   type HttpTransport as HttpTransportV2,
-} from "@infinity-context/sdk-v2";
+} from "@infinity-context/sdk";
 
 import type { HistoricalRetrievalActorKeyMapper } from
   "./historical-retrieval-projection.js";

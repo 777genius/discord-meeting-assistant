@@ -49,8 +49,7 @@
   "dependencies": {
     "@discord-meeting/meeting-core": "workspace:*",
     "@huggingface/tokenizers": "catalog:",
-    "@infinity-context/sdk": "catalog:",
-    "@infinity-context/sdk-v2": "catalog:"
+    "@infinity-context/sdk": "catalog:"
   },
   "devDependencies": {
     "@discord-meeting/postgres-adapter": "workspace:*",

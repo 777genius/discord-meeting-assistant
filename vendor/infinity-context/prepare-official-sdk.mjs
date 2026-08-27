@@ -6,13 +6,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const provenance = Object.freeze({
-  packageManifestSha256: "d1c84a8c9e1eeb9987247616731fd3b3d7ad3002b9a84607c36cd60f8c642367",
+  packageManifestSha256: "146308a393c2e2f2961da477581b15da900c8b16a6e1ff4530ed8aec6057e70b",
   packageName: "@infinity-context/sdk",
   packageTarballIntegrity:
-    "sha512-c/qRsUrKGOm7fxUZh5o7Vkg5AAuCg2UeyftZsBbcOpFKUqrmMRALjwQAJpLqhlNh3NKrWcRvZZZMUvkXJmnVQQ==",
-  packageTarballSha256: "ecaa837b0a07ff31a786d070c6c0c34acf3b919241928ed75af5645541b790b2",
-  packageVersion: "0.2.0",
-  reviewedSourceCommit: "4ea98c141770666dcbae3d46f9dddb2b974b5879",
+    "sha512-lCIL90wIF9dSme7qhMVdjN/ey+SAGCrmraKc3mak5oyer6ye7ZxbUBPMaCBBApr3+HTO8HduTtUPtqUPbrhJ/A==",
+  packageTarballSha256: "aae17e2817b198f0f5e4151cdf023fb013370c12a58fe3245ccd92ba5d6b4166",
+  packageVersion: "0.2.1",
+  reviewedSourceCommit: "e685b41a12e630b7e787fb2fa26b08c0eb6137d4",
 });
 
 const argumentsSet = new Set(process.argv.slice(2));
@@ -28,7 +28,7 @@ if ([...argumentsSet].some((argument) => !supportedArguments.has(argument))) {
 const vendorRoot = dirname(fileURLToPath(import.meta.url));
 const retainedPackagePath = resolve(
   vendorRoot,
-  "artifacts/infinity-context-sdk-0.2.0.tgz",
+  "artifacts/infinity-context-sdk-0.2.1.tgz",
 );
 
 function digest(algorithm, bytes, encoding) {

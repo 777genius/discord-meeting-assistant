@@ -26,8 +26,7 @@ if (operation === "prepare") {
   manifest.optionalDependencies = {
     "@discord-meeting/meeting-core": "0.1.0",
     "@huggingface/tokenizers": "0.1.3",
-    "@infinity-context/sdk": "0.1.0",
-    "@infinity-context/sdk-v2": "0.2.0",
+    "@infinity-context/sdk": "0.2.1",
   };
   const packed = JSON.stringify(manifest);
   if (packed.includes("workspace:") || packed.includes("catalog:")) {
