@@ -4,13 +4,13 @@ import { attemptIdentity } from "./execution.js";
 import { bindExactExecutionEvidence } from "./production-evidence.js";
 import type { QualityCampaignProductionPorts } from "./production-ports.js";
 import { loadScheduledExactOutcomes } from "./production-scheduler.js";
-import type { QualityCampaignAuthorityPolicy } from "./release.js";
+import type { QualityCampaignAuthorityPolicy, QualityCampaignRelease } from "./release.js";
 
 interface ExecutionEvidenceInput {
   readonly campaignRootSha256: string; readonly deadlineEpochMs: number;
   readonly journalRoot: string; readonly policy: QualityCampaignAuthorityPolicy;
   readonly ports: QualityCampaignProductionPorts; readonly questions: readonly CampaignQuestion[];
-  readonly releaseRootSha256: string;
+  readonly release: QualityCampaignRelease; readonly releaseRootSha256: string;
   readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
 }
 
@@ -24,9 +24,11 @@ export async function loadHoldoutExecutionEvidence(input: ExecutionEvidenceInput
 
 async function loadExecutionEvidence(input: ExecutionEvidenceInput, kind: "holdout" | "main") {
   const attemptIds = answerAttemptIds(input);
-  const executions = await loadScheduledExactOutcomes({ campaignRootSha256:
-    input.campaignRootSha256, journalRoot: input.journalRoot, policy: input.policy,
+  const executions = await loadScheduledExactOutcomes({ campaignDeadlineEpochMs:
+    input.deadlineEpochMs, campaignRootSha256: input.campaignRootSha256,
+    journalRoot: input.journalRoot, policy: input.policy,
     questions: input.questions, releaseRootSha256: input.releaseRootSha256,
+    release: input.release,
     ...(kind === "holdout" ? { resultAuthorityRole: "holdout_provider_result" as const } : {}),
     spendReservationSha256ByRepetition: input.spendReservationSha256ByRepetition });
   return await withEvidenceContext(input.deadlineEpochMs, async (context) => {

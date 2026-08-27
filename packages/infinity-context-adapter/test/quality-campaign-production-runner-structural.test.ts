@@ -81,8 +81,6 @@ describe("installed production quality-campaign CLI", () => {
       expect(call.request.providerInputContract).toEqual(QUALIFICATION_PROVIDER_INPUT_CONTRACT);
       expect(call.request.qualificationExecutionBinding).toEqual(
         qualificationExecutionBinding(fixture.release));
-      expect(call.request.callDeadlineEpochMs).toBeLessThanOrEqual(
-        call.request.campaignDeadlineEpochMs as number);
       expect((call.request.campaignDeadlineEpochMs as number) - fixture.startedAt)
         .toBe(72 * 60 * 60 * 1_000);
       expect(call.request.spendReservationSha256).toMatch(/^[a-f0-9]{64}$/u);
@@ -336,17 +334,18 @@ async function createFixture() {
     holdoutRootSha256, locatorIds: holdoutAuthorizedLocatorIds, releaseRootSha256,
   schemaVersion: "meeting_knowledge.semantic_quality_locator_inventory.v1" });
   const holdoutSpendDocuments = ([1, 2, 3] as const).map((repetition) => spend.signed({
-    allowedCallKinds: ["answer", "capability", "retrieval"], campaignRootSha256:
-    holdoutRootSha256, expiresAtEpochMs: 4_000_000_000_000, maxCalls: 270,
-    maxEncryptedBytes: 100_000_000, maxCallsByKind: { adjudicator_1: 0, adjudicator_2: 0,
-      answer: 90, capability: 90, resolver: 0, retrieval: 90 }, maximumEffectDurationMs: 120_000,
+    allowedCallKinds: ["answer", "capability", "retrieval", "adjudicator_1", "adjudicator_2"],
+    campaignRootSha256: holdoutRootSha256, expiresAtEpochMs: 4_000_000_000_000,
+    maxCalls: 150, maxEncryptedBytes: 100_000_000, maxCallsByKind: { adjudicator_1: 30,
+      adjudicator_2: 30, answer: 30, capability: 30, resolver: 0, retrieval: 30 },
+    maximumEffectDurationMs: 120_000,
     maxTokens: 1_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
     releaseRootSha256, repetition }));
   const holdoutTargets = [{ artifactId: "holdout-index", kind: "derived_index" },
     { artifactId: "holdout-prompt", kind: "temporary_prompt" }] as const;
   const holdoutTargetInventoryReceipt = deletion.signed({ campaignRootSha256: holdoutRootSha256,
     protectedOriginals, releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v1",
+    schemaVersion: "meeting_knowledge.semantic_quality_campaign_target_inventory.v2",
     targets: holdoutTargets });
   const holdoutSpendDigests = holdoutSpendDocuments.map(sha256);
   const holdoutAuthorization = { derivedArtifactInventorySha256:
@@ -466,9 +465,9 @@ function spendDocument(spend: ReturnType<typeof signer>, campaignRootSha256: str
   releaseRootSha256: string, repetition: 1 | 2 | 3) {
   return spend.signed({
     allowedCallKinds: ["answer", "capability", "retrieval", "adjudicator_1", "adjudicator_2",
-      "resolver"], campaignRootSha256, expiresAtEpochMs: 4_000_000_000_000, maxCalls: 1_440,
+      "resolver"], campaignRootSha256, expiresAtEpochMs: 4_000_000_000_000, maxCalls: 1_201,
     maxEncryptedBytes: 100_000_000, maxCallsByKind: { adjudicator_1: 240, adjudicator_2: 240,
-      answer: 240, capability: 240, resolver: 240, retrieval: 240 }, maximumEffectDurationMs: 120_000,
+      answer: 240, capability: 240, resolver: 1, retrieval: 240 }, maximumEffectDurationMs: 120_000,
     maxTokens: 10_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
     releaseRootSha256, repetition });
 }

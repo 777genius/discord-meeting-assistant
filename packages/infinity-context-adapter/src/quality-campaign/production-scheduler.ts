@@ -3,6 +3,7 @@ import { canonicalJson, digest, exactRecord, sha256 } from "./canonical.js";
 import { DurableAttemptJournal } from "./attempt-journal.js";
 import { attemptIdentity, executeReservedExchange } from "./execution.js";
 import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
+  type QualityCampaignRelease,
   verifyPinnedReleaseDocument } from "./release.js";
 import type { CampaignClockPort, CampaignProviderPorts } from "./production-ports.js";
 import type { ExactTerminalEvidence } from "./production-evidence.js";
@@ -126,9 +127,10 @@ async function executeSchedule(input: {
 }
 
 export async function loadScheduledExactOutcomes(input: {
-  readonly campaignRootSha256: string; readonly journalRoot: string;
+  readonly campaignDeadlineEpochMs: number; readonly campaignRootSha256: string;
+  readonly journalRoot: string;
   readonly policy: QualityCampaignAuthorityPolicy; readonly questions: readonly CampaignQuestion[];
-  readonly releaseRootSha256: string;
+  readonly release: QualityCampaignRelease; readonly releaseRootSha256: string;
   readonly resultAuthorityRole?: "holdout_provider_result" | "provider_result";
   readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
 }): Promise<readonly ScheduledExactOutcome[]> {
@@ -145,7 +147,9 @@ export async function loadScheduledExactOutcomes(input: {
           releaseRootSha256: input.releaseRootSha256, repetition,
           spendReservationSha256: input.spendReservationSha256ByRepetition[repetition] });
         const completed = await journal.completedExchange(identity);
-        assertExactRequest(completed.requestBytes, { callKind, identity, predecessor });
+        assertExactRequest(completed.requestBytes, { callKind,
+          campaignDeadlineEpochMs: input.campaignDeadlineEpochMs, identity, predecessor,
+          release: input.release });
         terminalChain.push(Object.freeze({ attemptId: identity.attemptId, callKind,
           callOrdinal: 0, predecessorResultDigestSha256: predecessor?.digestSha256 ?? null,
           requestDigestSha256: completed.requestDigestSha256,
@@ -166,24 +170,33 @@ export async function loadScheduledExactOutcomes(input: {
 }
 
 function assertExactRequest(bytes: Uint8Array, input: { readonly callKind: typeof CALLS[number];
+  readonly campaignDeadlineEpochMs: number;
   readonly identity: ReturnType<typeof attemptIdentity>;
-  readonly predecessor: { readonly bytes: Uint8Array; readonly digestSha256: string } | null }): void {
+  readonly predecessor: { readonly bytes: Uint8Array; readonly digestSha256: string } | null;
+  readonly release: QualityCampaignRelease }): void {
   let parsed: unknown;
   try {parsed = JSON.parse(Buffer.from(bytes).toString("utf8"));}
   catch {throw new Error("scheduled provider request bytes are not canonical JSON");}
   const request = exactRecord(parsed, ["attemptId", "callKind",
     "campaignDeadlineEpochMs", "campaignRootSha256", "predecessorResultEnvelopeBase64",
-    "predecessorResultEnvelopeDigestSha256", "questionDigestSha256", "questionId", "release",
-    "releaseRootSha256", "repetition", "schemaVersion", "spendReservationSha256"],
+    "predecessorResultEnvelopeDigestSha256", "providerInputContract", "questionDigestSha256",
+    "questionId", "qualificationExecutionBinding", "release", "releaseRootSha256", "repetition",
+    "schemaVersion", "spendReservationSha256"],
   "scheduled provider request");
   const predecessorBase64 = input.predecessor === null ? null :
     Buffer.from(input.predecessor.bytes).toString("base64");
   if (canonicalJson(parsed) !== Buffer.from(bytes).toString("utf8") ||
     request.schemaVersion !== "meeting_knowledge.semantic_quality_provider_request.v1" ||
     request.attemptId !== input.identity.attemptId || request.callKind !== input.callKind ||
+    request.campaignDeadlineEpochMs !== input.campaignDeadlineEpochMs ||
     request.campaignRootSha256 !== input.identity.campaignRootSha256 ||
     request.questionDigestSha256 !== input.identity.questionDigestSha256 ||
     request.questionId !== input.identity.questionId ||
+    canonicalJson(request.providerInputContract) !==
+      canonicalJson(QUALIFICATION_PROVIDER_INPUT_CONTRACT) ||
+    canonicalJson(request.qualificationExecutionBinding) !==
+      canonicalJson(qualificationExecutionBinding(input.release)) ||
+    canonicalJson(request.release) !== canonicalJson(input.release) ||
     request.releaseRootSha256 !== input.identity.releaseRootSha256 ||
     request.repetition !== input.identity.repetition ||
     request.spendReservationSha256 !== input.identity.spendReservationSha256 ||

@@ -110,6 +110,7 @@ Promise<ProductionCompositionResult> {
       admitted.rootBindingSha256, questions: admitted.questions,
       journalRoot: config.journalRoot, policy,
       deadlineEpochMs: deadline.campaignDeadlineEpochMs,
+      release: verifiedRelease.release,
       releaseRootSha256: verifiedRelease.releaseRootSha256,
       spendReservationSha256ByRepetition: spendDigests });
     assertAdjudicationCheckpoint(adjudicatedReceiptSha256, admitted.rootBindingSha256, evidence.adjudications);
@@ -134,6 +135,7 @@ Promise<ProductionCompositionResult> {
       admitted.rootBindingSha256, questions: admitted.questions,
       journalRoot: config.journalRoot, policy,
       deadlineEpochMs: deadline.campaignDeadlineEpochMs,
+      release: verifiedRelease.release,
       releaseRootSha256: verifiedRelease.releaseRootSha256,
       spendReservationSha256ByRepetition: spendDigests });
     const reconstructed = await reconstructExactMainEvidence({ authorityPolicy: policy,
@@ -275,6 +277,7 @@ Promise<ProductionCompositionResult | null> {
       journalRoot: input.config.holdoutJournalRoot, policy: input.policy,
       deadlineEpochMs: input.deadlineEpochMs, releaseRootSha256:
       input.release.releaseRootSha256,
+      release: input.verifiedRelease,
       spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition });
     assertAdjudicationCheckpoint(adjudicatedReceiptSha256, holdoutRootSha256,
       evidence.adjudications);
