@@ -1,8 +1,7 @@
 import { expect, it } from "vitest";
 
 import { admitCumulativeSpend, attemptIdentity, CALL_KINDS, type CallKind,
-  type DurableSpendClaim, FROZEN_ANSWER_EXECUTION, sha256,
-  type VerifiedSpendReservation } from "../src/index.js";
+  type DurableSpendClaim, FROZEN_ANSWER_EXECUTION, sha256 } from "../src/index.js";
 
 const campaignRootSha256 = sha256("campaign");
 const releaseRootSha256 = sha256("release");
@@ -18,7 +17,7 @@ function fixture(questionCount: 30 | 240) {
       maximumEffectDurationMs: 1_000, maxTokens: questionCount * CALL_KINDS.length * 7,
       ...FROZEN_ANSWER_EXECUTION, provider: "provider", releaseRootSha256, repetition },
     signatureBase64: "verified-upstream", signerKeyId: "spend",
-    spendReservationSha256 } as VerifiedSpendReservation;
+    spendReservationSha256 };
   });
   const expected: { identity: ReturnType<typeof attemptIdentity>;
     requestDigestSha256: string }[] = [];

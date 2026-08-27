@@ -575,7 +575,7 @@ function verifyArtifactChain(policy: QualityCampaignAuthorityPolicy, artifact: R
       typeof chain.predecessorPlaintextSha256 !== "string") {
     throw new Error("retained artifact chain binding is foreign");
   }
-  digest(chain.requestDigestSha256, "artifact request");
+  const requestDigestSha256 = digest(chain.requestDigestSha256, "artifact request");
   if (!terminalRequired) {
     if (chain.deadlineEpochMs !== null || chain.resultDigestSha256 !== null ||
       chain.signedDurableExchange !== null || chain.signedProviderTerminal !== null) {
@@ -592,6 +592,7 @@ function verifyArtifactChain(policy: QualityCampaignAuthorityPolicy, artifact: R
       chain.resultDigestSha256 === null) {
     throw new Error("provider terminal deadline is outside signed spend authority");
   }
+  const resultDigestSha256 = digest(chain.resultDigestSha256, "artifact result");
   const durableRequired = ["adjudicator_1_result", "adjudicator_2_result", "resolver_result"]
     .includes(artifact.kind);
   const authority = policy.authority(durableRequired ? "provider_result" :
@@ -618,11 +619,11 @@ function verifyArtifactChain(policy: QualityCampaignAuthorityPolicy, artifact: R
     const durable = verifyDurableReservedExchangeEvidence(policy, chain.signedDurableExchange, {
       attempt: identity, cancellationBoundary: "not_cancelled",
       deadlineEpochMs: Number(chain.deadlineEpochMs), releaseDocumentSha256:
-        context.releaseDocumentSha256, requestDigestSha256: String(chain.requestDigestSha256),
-      resultDigestSha256: String(chain.resultDigestSha256),
+        context.releaseDocumentSha256, requestDigestSha256,
+      resultDigestSha256,
       signedProviderTerminal: chain.signedProviderTerminal });
     context.expectedSpendClaims.push(Object.freeze({ identity,
-      requestDigestSha256: String(chain.requestDigestSha256) }));
+      requestDigestSha256 }));
     context.reviewSpendClaims.push(durable.budgetClaim as DurableSpendClaim);
   } else if (chain.signedDurableExchange !== null) {
     throw new Error("non-adjudication artifact contains orphan durable exchange evidence");

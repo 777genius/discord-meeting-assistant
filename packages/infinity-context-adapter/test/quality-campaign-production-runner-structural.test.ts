@@ -451,7 +451,7 @@ async function createFixture() {
     mainRootSha256: admitted.rootBindingSha256,
     get maximumProviderConcurrency() {return runtime.maximumProviderConcurrency;},
     observedIds: runtime.observedIds, protectedOriginals, release, reviewCalls: runtime.reviewCalls,
-    root, startedAt, releaseEvidence: runtime.releaseEvidence, writeCleanupProtectedOriginals,
+    root, startedAt, releaseEvidence: () => {runtime.releaseEvidence();}, writeCleanupProtectedOriginals,
     writeCustody, writeHoldoutRoot };
 }
 

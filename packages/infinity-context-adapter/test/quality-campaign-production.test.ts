@@ -464,7 +464,7 @@ function finalFixture() {
         if (["capability_response", "retrieval_response", "answer_response"].includes(kind)) {
           const callKind = kind.replace("_response", "") as "answer" | "capability" | "retrieval";
           terminalChain.push({ attemptId: artifactIdentity.attemptId, callKind, callOrdinal: 0,
-            predecessorResultDigestSha256, requestDigestSha256: chain.requestDigestSha256!,
+            predecessorResultDigestSha256, requestDigestSha256: chain.requestDigestSha256,
             resultEnvelopeDigestSha256: chain.resultDigestSha256!,
             signedResult: chain.signedProviderTerminal,
             terminalDigestSha256: sha256(chain.signedProviderTerminal) });
@@ -1581,16 +1581,16 @@ describe("production quality campaign final evidence", () => {
     const evidence = { authorizedLocatorIds: holdoutLocatorDigests,
       authorizedLocatorInventory: locatorInventoryReceipt, forbiddenLocatorReceipt,
       goldRelevanceReceipt, outcomes } as unknown as ExactCampaignEvidence;
-    expect(() => verifyExactOutcomeAuthorities(FINAL.authorities.policy, {
+    expect(() => {verifyExactOutcomeAuthorities(FINAL.authorities.policy, {
       campaignRootSha256: holdoutRootSha256, evidence, questions,
-      releaseRootSha256: FINAL.release.releaseRootSha256 })).not.toThrow();
+      releaseRootSha256: FINAL.release.releaseRootSha256 });}).not.toThrow();
     for (const field of ["relevantLocatorDigests", "forbiddenLocatorDigests"] as const) {
       const substituted = outcomes.map((outcome, index) => index === 0 ?
         { ...outcome, [field]: [] } : outcome);
-      expect(() => verifyExactOutcomeAuthorities(FINAL.authorities.policy, {
+      expect(() => {verifyExactOutcomeAuthorities(FINAL.authorities.policy, {
         campaignRootSha256: holdoutRootSha256,
         evidence: { ...evidence, outcomes: substituted }, questions,
-        releaseRootSha256: FINAL.release.releaseRootSha256 }))
+        releaseRootSha256: FINAL.release.releaseRootSha256 });})
         .toThrow(/differ.*signed authority/u);
     }
     expect(createHoldoutReport({ cleanupReceiptSha256: d("1"), holdoutRootSha256,

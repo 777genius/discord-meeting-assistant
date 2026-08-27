@@ -112,7 +112,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
       { "content-type": "application/json" }); response.end(JSON.stringify(reviewEvidence));});
     return;}
     if (request.url === "/provider") {
-      const chunks: Buffer[] = []; request.on("data", (chunk) => {chunks.push(Buffer.from(chunk));});
+      const chunks: Uint8Array[] = []; request.on("data", (chunk: Uint8Array) => {chunks.push(chunk);});
       request.on("end", () => {
         observedProviderRequests += 1; response.writeHead(200, { "content-type": "application/json" });
         if (observedProviderRequests > 1) {response.end(JSON.stringify({ effect: "unknown" })); return;}

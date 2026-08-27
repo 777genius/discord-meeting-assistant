@@ -12,8 +12,8 @@ export async function withProductionCallContext<T>(sharedDeadlineEpochMs: number
   task: (context: import("./production-ports.js").CampaignCallContext) => Promise<T>): Promise<T> {
   const deadlineEpochMs = Math.min(sharedDeadlineEpochMs, Date.now() + AUTHORITY_CALL_DEADLINE_MS);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(
-    new Error("production authority deadline exceeded")),
+  const timeout = setTimeout(() => {controller.abort(
+    new Error("production authority deadline exceeded"));},
   Math.max(0, deadlineEpochMs - Date.now()));
   try {return await task({ deadlineEpochMs, signal: controller.signal });}
   finally {clearTimeout(timeout);}
@@ -31,7 +31,7 @@ export async function loadPinnedProductionRelease(policy: QualityCampaignAuthori
     releaseRootSha256: verified.releaseRootSha256 };
   const deadlineEpochMs = ports.clock.nowEpochMs() + AUTHORITY_CALL_DEADLINE_MS;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error("release observation deadline exceeded")),
+  const timeout = setTimeout(() => {controller.abort(new Error("release observation deadline exceeded"));},
     AUTHORITY_CALL_DEADLINE_MS);
   try {assertObservedRelease(verified.release, await ports.release.observe({ deadlineEpochMs,
     signal: controller.signal }));} finally {clearTimeout(timeout);}

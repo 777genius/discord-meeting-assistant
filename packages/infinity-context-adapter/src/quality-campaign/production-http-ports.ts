@@ -286,7 +286,7 @@ function decodeEffectEvidence(value: unknown, answerAttemptId: string,
       `${callKind} provider terminal`) });
 }
 
-function nullableSignedValue(value: unknown, label: string): unknown | null {
+function nullableSignedValue(value: unknown, label: string): unknown {
   return value === null ? null : signedValue(value, label);
 }
 

@@ -53,7 +53,7 @@ async function withEvidenceContext<T>(deadlineEpochMs: number,
   task: (context: { readonly deadlineEpochMs: number; readonly signal: AbortSignal }) => Promise<T>):
 Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error("evidence call deadline exceeded")),
+  const timeout = setTimeout(() => {controller.abort(new Error("evidence call deadline exceeded"));},
     Math.max(0, deadlineEpochMs - Date.now()));
   try {return await task({ deadlineEpochMs, signal: controller.signal });}
   finally {clearTimeout(timeout);}

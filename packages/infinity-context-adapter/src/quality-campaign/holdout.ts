@@ -122,7 +122,6 @@ export function admitIsolatedHoldout(policy: QualityCampaignAuthorityPolicy,
     authorization.forbiddenLocatorReceiptSha256 !== sha256(input.forbiddenLocatorReceipt) ||
     authorization.goldRelevanceReceiptSha256 !== sha256(input.goldRelevanceReceipt) ||
     authorization.locatorInventoryReceiptSha256 !== sha256(input.locatorInventoryReceipt) ||
-    authorization.providerInputMaximumBytes !== MAX_PROVIDER_INPUT_BYTES ||
     authorization.releaseExecutionBindingSha256 !== holdoutReleaseExecutionBindingSha256(
       input.release) || authorization.spendReservationSetSha256 !== sha256(([1, 2, 3] as const)
         .map((repetition) => input.spendReservationSha256ByRepetition[repetition]))) {
@@ -140,7 +139,8 @@ function decodeAuthorization(value: unknown): HoldoutAuthorization {
     "locatorInventoryReceiptSha256", "mainInputRootSha256", "mainReleaseRootSha256",
     "providerInputMaximumBytes", "questionReceiptSha256", "releaseExecutionBindingSha256",
     "schemaVersion", "spendReservationSetSha256"], "holdout authorization payload");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_authorization.v3") {
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_authorization.v3" ||
+    record.providerInputMaximumBytes !== MAX_PROVIDER_INPUT_BYTES) {
     throw new Error("holdout authorization schema is invalid");
   }
   return record as unknown as HoldoutAuthorization;

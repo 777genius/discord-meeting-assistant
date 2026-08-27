@@ -375,6 +375,10 @@ export function verifyExactOutcomeAuthorities(policy: QualityCampaignAuthorityPo
     const questionBinding = { locale: relevance.locale,
       questionDigestSha256: relevance.questionDigestSha256, questionId: relevance.questionId,
       rubricDigestSha256: relevance.rubricDigestSha256, source: relevance.source };
+    if (typeof relevance.expectedAbstention !== "boolean") {
+      throw new Error("authoritative expected abstention is invalid");
+    }
+    const expectedAnswer = relevance.expectedAbstention ? "abstain" : "answerable";
     if (canonicalJson(questionBinding) !== canonicalJson(question) ||
       relevance.campaignRootSha256 !== input.campaignRootSha256 ||
       relevance.releaseRootSha256 !== input.releaseRootSha256 ||
@@ -382,7 +386,6 @@ export function verifyExactOutcomeAuthorities(policy: QualityCampaignAuthorityPo
       forbidden.releaseRootSha256 !== input.releaseRootSha256 ||
       forbidden.questionId !== question.questionId ||
       forbidden.questionDigestSha256 !== question.questionDigestSha256 ||
-      typeof relevance.expectedAbstention !== "boolean" ||
       relevantLocatorIds.some((locator) => !locatorSet.has(locator))) {
       throw new Error("authoritative outcome inputs do not bind the exact sealed question");
     }
@@ -391,7 +394,7 @@ export function verifyExactOutcomeAuthorities(policy: QualityCampaignAuthorityPo
     if (matching.length !== 3 || matching.some((outcome) =>
       canonicalJson(outcome.relevantLocatorDigests) !== canonicalJson(relevantLocatorIds) ||
       canonicalJson(outcome.forbiddenLocatorDigests) !== canonicalJson(forbiddenLocatorIds) ||
-      outcome.expectedAnswer !== (relevance.expectedAbstention ? "abstain" : "answerable"))) {
+      outcome.expectedAnswer !== expectedAnswer)) {
       throw new Error("outcome relevance or forbidden locators differ from signed authority");
     }
   }

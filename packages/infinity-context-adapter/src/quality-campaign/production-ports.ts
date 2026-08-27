@@ -27,7 +27,7 @@ export interface CampaignReviewEvidence {
   readonly predecessorPlaintextSha256: string;
   readonly rawOutcomeEnvelopeSha256: string;
   readonly resolverEffectEvidence: AdjudicationEffectEvidence | null;
-  readonly resolverReceipt: unknown | null;
+  readonly resolverReceipt: unknown;
   readonly secondEffectEvidence: AdjudicationEffectEvidence;
   readonly secondReceipt: unknown;
 }

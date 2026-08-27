@@ -31,9 +31,7 @@ function terminalPayloadMatches(payload: EvidenceProviderTerminalPayload, input:
     payload.releaseRootSha256 === input.releaseRootSha256 && payload.repetition ===
     input.outcome.repetition && payload.requestDigestSha256 === input.terminal.requestDigestSha256 &&
     payload.resultDigestSha256 === input.terminal.resultEnvelopeDigestSha256 &&
-    payload.spendReservationSha256 === input.spendReservationSha256 &&
-    payload.schemaVersion === "meeting_knowledge.semantic_quality_provider_terminal_payload.v4" &&
-    payload.state === "terminal_success";
+    payload.spendReservationSha256 === input.spendReservationSha256;
 }
 
 export function assertTerminalChain(input: { readonly authority: { readonly keyId: string;
@@ -81,9 +79,13 @@ export function assertTerminalChain(input: { readonly authority: { readonly keyI
 }
 
 function decodeProviderTerminalPayload(value: unknown): EvidenceProviderTerminalPayload {
-  return exactRecord(value, ["attemptId", "callKind", "callOrdinal", "campaignRootSha256",
+  const record = exactRecord(value, ["attemptId", "callKind", "callOrdinal", "campaignRootSha256",
     "providerAccounting", "questionDigestSha256", "questionId", "releaseRootSha256", "repetition",
     "requestDigestSha256", "resultDigestSha256", "schemaVersion", "spendReservationSha256",
-    "state"], "evidence provider terminal payload") as unknown as
-    EvidenceProviderTerminalPayload;
+    "state"], "evidence provider terminal payload");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_provider_terminal_payload.v4" ||
+    record.state !== "terminal_success") {
+    throw new Error("evidence provider terminal payload is not a successful v4 terminal");
+  }
+  return record as unknown as EvidenceProviderTerminalPayload;
 }
