@@ -1,4 +1,3 @@
-/* oxlint-disable max-lines -- one closed production dispatcher retains phase and proof ordering */
 import { admitMainCampaign, type AdmissionAuthority, type CampaignQuestion } from "./admission.js";
 import { adjudicateOutcome } from "./adjudication.js";
 import { sha256 } from "./canonical.js";

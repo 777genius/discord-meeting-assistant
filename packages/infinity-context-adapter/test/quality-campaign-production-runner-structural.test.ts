@@ -608,8 +608,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       tagBase64: cipher.getAuthTag().toString("base64") }));
     return { aad, envelope, identity, keyId, plaintextSha256 };
   };
-  const artifactsFor = (attemptIds: readonly string[], resultSigner = input.provider):
-  RetainedArtifact[] =>
+  const artifactsFor = (attemptIds: readonly string[]): RetainedArtifact[] =>
     attemptIds.flatMap((attemptId) => {
     const cached = artifactsByAttempt.get(attemptId);
     if (cached !== undefined) {return cached;}
@@ -751,7 +750,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
   const mainEvidence = (attemptIds: readonly string[], evidenceQuestions = input.questions,
     resultSigner = input.provider) => {
     const adjudications = attemptIds.map(adjudicationFor);
-    const artifacts = artifactsFor(attemptIds, resultSigner);
+    const artifacts = artifactsFor(attemptIds);
     const outcomes = outcomesFor(attemptIds, resultSigner);
     const authorizedLocatorIds = [...new Set(outcomes.flatMap(({ rankedLocatorDigests,
       relevantLocatorDigests }) => [...rankedLocatorDigests, ...relevantLocatorDigests]))].toSorted();

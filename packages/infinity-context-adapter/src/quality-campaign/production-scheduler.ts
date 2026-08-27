@@ -186,20 +186,7 @@ function assertExactRequest(bytes: Uint8Array, input: { readonly callKind: typeo
   const predecessorBase64 = input.predecessor === null ? null :
     Buffer.from(input.predecessor.bytes).toString("base64");
   if (canonicalJson(parsed) !== Buffer.from(bytes).toString("utf8") ||
-    request.schemaVersion !== "meeting_knowledge.semantic_quality_provider_request.v1" ||
-    request.attemptId !== input.identity.attemptId || request.callKind !== input.callKind ||
-    request.campaignDeadlineEpochMs !== input.campaignDeadlineEpochMs ||
-    request.campaignRootSha256 !== input.identity.campaignRootSha256 ||
-    request.questionDigestSha256 !== input.identity.questionDigestSha256 ||
-    request.questionId !== input.identity.questionId ||
-    canonicalJson(request.providerInputContract) !==
-      canonicalJson(QUALIFICATION_PROVIDER_INPUT_CONTRACT) ||
-    canonicalJson(request.qualificationExecutionBinding) !==
-      canonicalJson(qualificationExecutionBinding(input.release)) ||
-    canonicalJson(request.release) !== canonicalJson(input.release) ||
-    request.releaseRootSha256 !== input.identity.releaseRootSha256 ||
-    request.repetition !== input.identity.repetition ||
-    request.spendReservationSha256 !== input.identity.spendReservationSha256 ||
+    !requestMatchesIdentity(request, input) || !requestMatchesPinnedContext(request, input) ||
     request.predecessorResultEnvelopeBase64 !== predecessorBase64 ||
     request.predecessorResultEnvelopeDigestSha256 !==
       (input.predecessor?.digestSha256 ?? null)) {
@@ -208,6 +195,30 @@ function assertExactRequest(bytes: Uint8Array, input: { readonly callKind: typeo
   if (input.predecessor !== null) {
     digest(request.predecessorResultEnvelopeDigestSha256, "scheduled predecessor digest");
   }
+}
+
+function requestMatchesIdentity(request: Readonly<Record<string, unknown>>, input: {
+  readonly callKind: typeof CALLS[number]; readonly identity: ReturnType<typeof attemptIdentity>
+}): boolean {
+  return request.attemptId === input.identity.attemptId && request.callKind === input.callKind &&
+    request.campaignRootSha256 === input.identity.campaignRootSha256 &&
+    request.questionDigestSha256 === input.identity.questionDigestSha256 &&
+    request.questionId === input.identity.questionId &&
+    request.releaseRootSha256 === input.identity.releaseRootSha256 &&
+    request.repetition === input.identity.repetition &&
+    request.spendReservationSha256 === input.identity.spendReservationSha256;
+}
+
+function requestMatchesPinnedContext(request: Readonly<Record<string, unknown>>, input: {
+  readonly campaignDeadlineEpochMs: number; readonly release: QualityCampaignRelease
+}): boolean {
+  return request.schemaVersion === "meeting_knowledge.semantic_quality_provider_request.v1" &&
+    request.campaignDeadlineEpochMs === input.campaignDeadlineEpochMs &&
+    canonicalJson(request.providerInputContract) ===
+      canonicalJson(QUALIFICATION_PROVIDER_INPUT_CONTRACT) &&
+    canonicalJson(request.qualificationExecutionBinding) ===
+      canonicalJson(qualificationExecutionBinding(input.release)) &&
+    canonicalJson(request.release) === canonicalJson(input.release);
 }
 
 async function executeQuestion(input: {

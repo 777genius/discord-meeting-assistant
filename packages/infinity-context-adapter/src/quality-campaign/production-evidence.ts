@@ -122,20 +122,6 @@ export interface ExactOutcomeAuthorityBindings {
   readonly locatorInventoryReceiptSha256: string;
 }
 
-const RATIO_THRESHOLDS = Object.freeze({
-  abstentionPrecision: [QUALIFICATION_THRESHOLDS.abstentionPrecision.numerator,
-    QUALIFICATION_THRESHOLDS.abstentionPrecision.denominator],
-  abstentionRecall: [QUALIFICATION_THRESHOLDS.abstentionRecall.numerator,
-    QUALIFICATION_THRESHOLDS.abstentionRecall.denominator],
-  citationEntailment: [QUALIFICATION_THRESHOLDS.citationEntailment.numerator,
-    QUALIFICATION_THRESHOLDS.citationEntailment.denominator],
-  citationMembership: [QUALIFICATION_THRESHOLDS.citationMembership.numerator,
-    QUALIFICATION_THRESHOLDS.citationMembership.denominator],
-  claimPrecision: [QUALIFICATION_THRESHOLDS.claimPrecision.numerator,
-    QUALIFICATION_THRESHOLDS.claimPrecision.denominator],
-  completeQuestionRecallAt5: [QUALIFICATION_THRESHOLDS.completeQuestionRecallAt5.numerator,
-    QUALIFICATION_THRESHOLDS.completeQuestionRecallAt5.denominator],
-} as const);
 export async function reconstructExactMainEvidence(input: {
   readonly authorityPolicy: QualityCampaignAuthorityPolicy;
   readonly artifactKeyCustodySha256: string; readonly custody: ArtifactCustodyPort;
