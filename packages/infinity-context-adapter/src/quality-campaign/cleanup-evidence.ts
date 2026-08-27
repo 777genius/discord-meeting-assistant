@@ -63,7 +63,7 @@ export function verifyCleanupAbsenceReceipt(policy: QualityCampaignAuthorityPoli
   const protectedOriginals = sortProtectedOriginals(cleanupManifest.protectedOriginals);
   const absentIds = decodeArtifactIds(payload.absentArtifactIds, "cleanup absence");
   const presentOriginals = decodeProtectedOriginals(payload.presentProtectedOriginals,
-    "protected presence");
+    "authoritative protected presence");
   if (payload.schemaVersion !== "meeting_knowledge.semantic_quality_cleanup_absence.v5" ||
     payload.campaignRootSha256 !== cleanupManifest.campaignRootSha256 ||
     payload.releaseRootSha256 !== cleanupManifest.releaseRootSha256 ||

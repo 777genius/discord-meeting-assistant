@@ -207,11 +207,14 @@ function decodeProviderExchangeResult(value: unknown): Awaited<ReturnType<
   }
   const effect = (value as Record<string, unknown>).effect;
   const keys = effect === "unknown" ? ["effect"] :
-    ["effect", "resultDigestSha256", "signedResult"];
+    ["effect", "resultDigestSha256", "resultEnvelopeBytes", "signedResult"];
   const record = exactRecord(value, keys, "provider exchange result");
   if (effect === "unknown") {return { effect: "unknown" };}
   if (!["certain_failure", "certain_success"].includes(String(effect))) {
     throw new Error("provider exchange effect is invalid");
+  }
+  if (!(record.resultEnvelopeBytes instanceof Uint8Array)) {
+    throw new Error("provider exchange result envelope bytes are invalid");
   }
   digest(record.resultDigestSha256, "provider result");
   return record as unknown as Awaited<ReturnType<ProviderExchangePort["exchange"]>>;
