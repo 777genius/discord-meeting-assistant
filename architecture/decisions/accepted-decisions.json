@@ -291,6 +291,11 @@
       "id": "ADR-0061",
       "path": "docs/decisions/0061-atomic-quality-evidence-and-holdout-repetition.md",
       "immutableDigest": "sha256:69b2ffd4a8bfac179a5d43c4e45c7e726c8da74fa8f70d99c36cc031e50e6821"
+    },
+    {
+      "id": "ADR-0062",
+      "path": "docs/decisions/0062-initial-roster-durable-greetings.md",
+      "immutableDigest": "sha256:17777764bb85b233f2b9e3b01eba227e8cc17f70b741e291a0c560d4d073b232"
     }
   ]
 }

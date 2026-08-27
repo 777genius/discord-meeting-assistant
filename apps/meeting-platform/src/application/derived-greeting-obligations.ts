@@ -1,4 +1,7 @@
-import type { DerivedLiveLifecycleEvent } from "./recording-ingress.js";
+import type {
+  DerivedLiveLifecycleEvent,
+  RecordingLifecycleCommand,
+} from "./recording-ingress.js";
 
 export interface DerivedGreetingObligation {
   readonly eventId: string;
@@ -17,6 +20,77 @@ export interface DerivedGreetingObligationPort {
   listPending(): Promise<readonly DerivedGreetingObligation[]>;
   markDelivered(eventId: string): Promise<void>;
   markExpired(eventId: string): Promise<void>;
+}
+
+export interface DerivedGreetingObligationPlan {
+  readonly initialHumanParticipantIds: readonly string[] | null;
+  readonly obligations: readonly DerivedGreetingObligation[];
+}
+
+export function deriveGreetingObligationPlan(
+  event: RecordingLifecycleCommand,
+): DerivedGreetingObligationPlan {
+  if (event.schemaVersion === 1) {
+    return {
+      initialHumanParticipantIds: event.type === "meeting.started" ? [] : null,
+      obligations: [],
+    };
+  }
+  if (event.type === "meeting.started") {
+    const initialHumanParticipantIds = event.actors
+      .filter((actor) => actor.kind === "human")
+      .map((actor) => actor.actorId)
+      .toSorted();
+    return {
+      initialHumanParticipantIds,
+      obligations: initialHumanParticipantIds.map((actorId) =>
+        createGreetingObligation({
+          actorId,
+          event,
+          eventId: `${event.eventId}:initial:${actorId}`,
+        })
+      ),
+    };
+  }
+  if (event.type !== "participant.joined" || event.actor.kind !== "human") {
+    return { initialHumanParticipantIds: null, obligations: [] };
+  }
+  return {
+    initialHumanParticipantIds: null,
+    obligations: [createGreetingObligation({
+      actorId: event.actor.actorId,
+      event,
+      eventId: event.eventId,
+    })],
+  };
+}
+
+function createGreetingObligation(input: {
+  readonly actorId: string;
+  readonly event: RecordingLifecycleCommand & { readonly schemaVersion: 2 | 3 };
+  readonly eventId: string;
+}): DerivedGreetingObligation {
+  const { actorId, event, eventId } = input;
+  const occurredAtMilliseconds = Date.parse(event.occurredAt);
+  if (!Number.isSafeInteger(occurredAtMilliseconds) || occurredAtMilliseconds < 0) {
+    throw new Error("greeting obligation occurrence is invalid");
+  }
+  return {
+    eventId,
+    ...(event.schemaVersion !== 3
+      ? {}
+      : { memoryHumanObservation: {
+          actorId,
+          producerRevision: event.producerRevision,
+        } }),
+    notAfterMilliseconds: occurredAtMilliseconds + 5_000,
+    // The public lifecycle contract may retain precision finer than the
+    // runtime clock. The derived ledger uses one canonical millisecond anchor
+    // for both columns so valid contract precision cannot contradict itself.
+    occurredAt: new Date(occurredAtMilliseconds).toISOString(),
+    participantId: actorId,
+    recordingId: event.recordingId,
+  };
 }
 
 export interface DerivedGreetingTerminalRetentionPort {

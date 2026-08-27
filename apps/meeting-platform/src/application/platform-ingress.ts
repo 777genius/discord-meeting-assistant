@@ -17,8 +17,8 @@ import type {
 } from "./recording-ingress.js";
 import { RecordingIngressRejectedError } from "./recording-ingress.js";
 import {
+  deriveGreetingObligationPlan,
   DerivedGreetingObligationDispatcher,
-  type DerivedGreetingObligation,
   type DerivedGreetingObligationPort,
 } from "./derived-greeting-obligations.js";
 
@@ -178,8 +178,10 @@ export class PlatformRecordingIngress {
     const result = await this.acceptDurably(() =>
       this.dependencies.ingress.ingestLifecycleEvent(event),
     );
-    const greetingObligation = this.toGreetingObligation(event);
-    if (greetingObligation === null) {
+    const greetingPlan = this.dependencies.live === undefined
+      ? null
+      : deriveGreetingObligationPlan(event);
+    if (greetingPlan === null || greetingPlan.obligations.length === 0) {
       await this.acceptDerivedLifecycle(event);
     } else {
       const obligations = this.dependencies.greetingObligations;
@@ -188,11 +190,21 @@ export class PlatformRecordingIngress {
       }
       // This commit is part of HTTP admission: a 202 never acknowledges an
       // effect that can only survive in the live process heap.
-      await obligations.accept(greetingObligation);
+      for (const obligation of greetingPlan.obligations) {
+        await obligations.accept(obligation);
+      }
       if (this.greetingDispatcher === null) {
         throw new Error("durable greeting obligation dispatcher is unavailable");
       }
-      await this.greetingDispatcher.deliver(greetingObligation);
+      // The initial roster is presence at meeting-start observation time. Start
+      // the derived owner only after every human obligation is durable, then
+      // deliver those observations through the ordinary receipt/deadline path.
+      if (event.type === "meeting.started") {
+        await this.acceptDerivedLifecycle(event, greetingPlan.initialHumanParticipantIds);
+      }
+      for (const obligation of greetingPlan.obligations) {
+        await this.greetingDispatcher.deliver(obligation);
+      }
     }
     this.dependencies.metrics.recordIngress("accepted", "accepted");
     if (result.kind !== "finalized") {
@@ -260,12 +272,13 @@ export class PlatformRecordingIngress {
 
   private async acceptDerivedLifecycle(
     event: RecordingLifecycleCommand,
+    initialHumanParticipantIds: readonly string[] | null = null,
   ): Promise<void> {
     if (this.dependencies.live === undefined) {
       return;
     }
     try {
-      const derived = this.toDerivedLifecycleEvent(event);
+      const derived = this.toDerivedLifecycleEvent(event, initialHumanParticipantIds);
       if (derived === null) {
         return;
       }
@@ -277,39 +290,9 @@ export class PlatformRecordingIngress {
     }
   }
 
-  private toGreetingObligation(
-    event: RecordingLifecycleCommand,
-  ): DerivedGreetingObligation | null {
-    if (this.dependencies.live === undefined ||
-      event.type !== "participant.joined" || event.schemaVersion === 1 ||
-      event.actor.kind !== "human") {
-      return null;
-    }
-    const occurredAtMilliseconds = Date.parse(event.occurredAt);
-    if (!Number.isSafeInteger(occurredAtMilliseconds) || occurredAtMilliseconds < 0) {
-      throw new Error("greeting obligation occurrence is invalid");
-    }
-    return {
-      eventId: event.eventId,
-      ...(event.schemaVersion !== 3
-        ? {}
-        : { memoryHumanObservation: {
-            actorId: event.actor.actorId,
-            producerRevision: event.producerRevision,
-          } }),
-      notAfterMilliseconds: occurredAtMilliseconds + 5_000,
-      // The public lifecycle contract may retain precision finer than the
-      // runtime clock. The derived ledger uses one canonical millisecond
-      // anchor for both columns so valid contract precision cannot create a
-      // contradictory obligation.
-      occurredAt: new Date(occurredAtMilliseconds).toISOString(),
-      participantId: event.actor.actorId,
-      recordingId: event.recordingId,
-    };
-  }
-
   private toDerivedLifecycleEvent(
     event: RecordingLifecycleCommand,
+    initialHumanParticipantIds: readonly string[] | null,
   ): DerivedLiveLifecycleEvent | null {
     const common = {
       occurredAt: event.occurredAt,
@@ -320,11 +303,7 @@ export class PlatformRecordingIngress {
         ...common,
         // V1 carries identifiers without actor semantics. Proactive V1 voice
         // admission fails closed instead of cohorting an automation as human.
-        participantIds: event.schemaVersion === 1
-          ? []
-          : event.actors
-              .filter((actor) => actor.kind === "human")
-              .map((actor) => actor.actorId),
+        participantIds: initialHumanParticipantIds ?? [],
         publicationTarget: {
           resolve: () => this.resolvePublicationTarget(event.source),
         },

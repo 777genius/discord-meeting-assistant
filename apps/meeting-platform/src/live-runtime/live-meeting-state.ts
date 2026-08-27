@@ -135,9 +135,9 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     transcriptionFenceClosed: false,
   };
   farewell?.participantsPresent(input.event.participantIds);
-  // A meeting-start roster has no honest per-participant join occurrence. It
-  // establishes presence only; incremental join obligations own greeting and
-  // commanded-receipt recovery with their original producer timestamp.
+  // Meeting start establishes presence only. The ingress-owned per-human
+  // obligations deliver the same observation afterward through participant
+  // lifecycle admission, so receipt/deadline recovery stays on one path.
   greetings?.observeParticipants(input.event.participantIds);
   return state;
 }

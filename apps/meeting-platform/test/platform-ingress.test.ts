@@ -273,6 +273,7 @@ describe("Platform recording ingress", () => {
 
   it("defers publication lookup and preserves participant identity at the live boundary", async () => {
     const resolve = vi.fn(async () => "77777777777777777");
+    const participantLifecycleIds: string[] = [];
     const acceptLifecycle = vi.fn(async (event: DerivedLiveLifecycleEvent) => {
       if (event.type === "meeting.started") {
         expect(resolve).not.toHaveBeenCalled();
@@ -281,7 +282,7 @@ describe("Platform recording ingress", () => {
           "77777777777777777",
         );
       } else if (event.type === "participant.joined") {
-        expect(event.participantId).toBe("1533228054724346087");
+        participantLifecycleIds.push(event.participantId);
       }
     });
     const started: RecordingLifecycleCommand = {
@@ -341,7 +342,11 @@ describe("Platform recording ingress", () => {
     });
 
     expect(resolve).toHaveBeenCalledWith(started.source);
-    expect(acceptLifecycle).toHaveBeenCalledTimes(2);
+    expect(acceptLifecycle).toHaveBeenCalledTimes(3);
+    expect(participantLifecycleIds).toEqual([
+      "1533227577286852649",
+      "1533228054724346087",
+    ]);
     expect(acceptLifecycle).toHaveBeenCalledWith(expect.objectContaining({
       occurredAt: started.occurredAt,
       recordingId: started.recordingId,
