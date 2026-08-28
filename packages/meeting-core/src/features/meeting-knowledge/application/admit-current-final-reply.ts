@@ -131,9 +131,6 @@ export class AdmitCurrentFinalReply {
       roomId: current.roomId,
       scopeId: current.scopeId,
     });
-    if (retrievalV2Request === undefined || retrievalV2Request === null) {
-      return { reason: "binding_conflict", status: "ignored" };
-    }
     const binding = QuestionBinding.create({
       authorizationDigest: authorization.digest,
       authorizationPolicyVersion: authorization.policyVersion,
@@ -156,7 +153,7 @@ export class AdmitCurrentFinalReply {
       requesterSubject,
       retrievalBinding: selectRetrievalBinding({
         questionId,
-        retrievalV2Request,
+        retrievalV2Request: retrievalV2Request ?? null,
         rollout: this.policy.retrievalAdmission,
       }).toSnapshot(),
       roomId: current.roomId,

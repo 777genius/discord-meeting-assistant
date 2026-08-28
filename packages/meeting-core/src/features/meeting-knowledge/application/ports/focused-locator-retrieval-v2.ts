@@ -9,6 +9,18 @@ export type {
 
 export interface FocusedLocatorRetrievalV2Candidate {
   readonly locator: string;
+  readonly retrievalProvenance?: {
+    readonly contributions: readonly {
+      readonly contributionScorePicos: number;
+      readonly providerId: string;
+      readonly providerRank: number;
+      readonly queryId: string;
+      readonly rawScoreKind: "bm25" | "distance" | "relevance" | "similarity" | null;
+      readonly rawScoreValue: number | null;
+    }[];
+    readonly fusedScore: number;
+    readonly providerRank: number;
+  };
 }
 
 export type FocusedLocatorRetrievalV2Result =

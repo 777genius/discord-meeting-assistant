@@ -11,6 +11,7 @@ import {
 const rollout = Object.freeze({
   cutoverEpoch: "infinity-v2-only-r1",
   infinityProfileFingerprint: "a".repeat(64),
+  localProfileFingerprint: "b".repeat(64),
 });
 
 const request: FocusedLocatorRetrievalV2RequestSnapshot = Object.freeze({
@@ -24,8 +25,8 @@ const request: FocusedLocatorRetrievalV2RequestSnapshot = Object.freeze({
     serviceRevision: "revision-v2",
   }),
   budgets: Object.freeze({ candidateLimit: 100, deadlineMs: 1_000,
-    evidenceByteLimit: 24_000, neighborRadius: 0 as const,
-    responseByteLimit: 16_384, resultLimit: 8 }),
+    evidenceByteLimit: 16_000, neighborRadius: 0 as const,
+    responseByteLimit: 16_384, resultLimit: 10 }),
   filters: Object.freeze({ actorKeys: Object.freeze(["actor-1"]), category: null,
     documentKeys: Object.freeze([]), excludedSourceKeys: Object.freeze([]),
     kinds: Object.freeze(["record_block"]), relativeTimeInterval: null,
@@ -58,6 +59,15 @@ describe("Retrieval V2-only admission", () => {
       profileFingerprint: "b".repeat(64),
       retrievalPath: "legacy_downstream_v1",
     }).toSnapshot()).toMatchObject({ retrievalPath: "legacy_downstream_v1" });
+  });
+
+  it("binds an explicit canonical local path when no indexed source is available", () => {
+    expect(selectRetrievalBinding({ questionId: "question-first-meeting",
+      retrievalV2Request: null, rollout }).toSnapshot()).toEqual({
+      cutoverEpoch: "infinity-v2-only-r1",
+      profileFingerprint: "b".repeat(64),
+      retrievalPath: "canonical_local_exact_lexical_v1",
+    });
   });
 
   it("rejects malformed admission identity and request drift", () => {

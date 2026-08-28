@@ -105,6 +105,7 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
   retrievalAdmission: Object.freeze({
     cutoverEpoch: "infinity-locator-v2-only-r1",
     infinityProfileFingerprint: "2e69df6bf22461ee8d6844c7e6699cfb099ad36d84b0aa15f1d3061754ff27be",
+    localProfileFingerprint: "8b2453490a91a484b8d2825ae247a93d8ba2fa54b19cf26a3161db783f8629d5",
   }),
 });
 

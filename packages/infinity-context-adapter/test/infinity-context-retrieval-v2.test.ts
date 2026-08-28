@@ -117,7 +117,7 @@ InfinityContextRetrievalV2Request {
     budgets: {
       candidateLimit: 100,
       deadlineMs: 100,
-      evidenceByteLimit: 24_000,
+      evidenceByteLimit: 16_000,
       neighborRadius: 0,
       responseByteLimit: 16_384,
       resultLimit: 10,
@@ -166,8 +166,19 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
     const endpoint = new RetrievalV2Endpoint();
     const result = await adapter(endpoint).retrieve(request());
 
-    expect(result).toEqual({
-      candidates: [{ locator: "candidate-007" }],
+    expect(result).toMatchObject({
+      candidates: [{
+        locator: "candidate-007",
+        retrievalProvenance: {
+          contributions: expect.arrayContaining([expect.objectContaining({
+            providerId: expect.any(String),
+            providerRank: expect.any(Number),
+            queryId: "original-question",
+          })]),
+          fusedScore: expect.any(Number),
+          providerRank: expect.any(Number),
+        },
+      }],
       status: "available",
     });
     const wire = endpoint.requests[1]?.body;

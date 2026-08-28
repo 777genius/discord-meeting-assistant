@@ -55,7 +55,7 @@ export const historicalReplyRetrievalV2RequestSchema = z.object({
   budgets: z.object({
     candidateLimit: z.number().int().min(1).max(1_000),
     deadlineMs: z.number().int().min(1).max(2_000),
-    evidenceByteLimit: z.number().int().min(1).max(24_000),
+    evidenceByteLimit: z.number().int().min(1).max(16_000),
     neighborRadius: z.literal(0),
     responseByteLimit: z.number().int().min(16_384).max(1_048_576),
     resultLimit: z.number().int().min(1).max(50),

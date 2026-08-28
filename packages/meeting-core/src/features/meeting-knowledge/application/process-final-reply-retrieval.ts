@@ -13,11 +13,15 @@ export function isComposedLocalBinding(
   if (isLegacyQuestionBinding(binding)) {
     return false;
   }
-  if (binding.retrievalBinding.retrievalPath !== "infinity_locator_v2") {
-    return false;
-  }
-  return binding.retrievalBinding.profileFingerprint ===
-      policy.retrievalAdmission.infinityProfileFingerprint &&
+  const expectedFingerprint = binding.retrievalBinding.retrievalPath ===
+      "infinity_locator_v2"
+    ? policy.retrievalAdmission.infinityProfileFingerprint
+    : binding.retrievalBinding.retrievalPath ===
+        "canonical_local_exact_lexical_v1"
+      ? policy.retrievalAdmission.localProfileFingerprint
+      : null;
+  return expectedFingerprint !== null &&
+    binding.retrievalBinding.profileFingerprint === expectedFingerprint &&
     binding.retrievalBinding.cutoverEpoch === policy.retrievalAdmission.cutoverEpoch;
 }
 

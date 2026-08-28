@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   HistoricalFocusedLocatorRetrievalV2,
+  PersistedFocusedMemoryRetrievalV2,
   PrepareFocusedLocatorRetrievalV2Request,
   buildHistoricalIndexPlan,
   type FocusedLocatorRetrievalV2Port,
@@ -88,8 +89,8 @@ describe("persisted focused locator Retrieval V2 request", () => {
       .toEqual(["-", "A", "_", "a"].map((identity) => `mkrelease1.${identity}`));
   });
 
-  it.each([100, 101])(
-    "admits exactly 100 historical sources and rejects %i when the current meeting is loaded",
+  it.each([99, 100])(
+    "admits exactly 100 total sources and rejects %i historical sources beside indexed current",
     async (historicalCount) => {
       const meetings = [makeMeeting({
         meetingId: "current-meeting",
@@ -107,13 +108,71 @@ describe("persisted focused locator Retrieval V2 request", () => {
       }).prepare({ currentMeetingId: "current-meeting", question: "What changed?",
         roomId: "room-1", scopeId: "scope-1" });
 
-      if (historicalCount === 100) {
+      if (historicalCount === 99) {
         expect(request?.filters.sourceGenerations).toHaveLength(100);
       } else {
         expect(request).toBeNull();
       }
     },
   );
+
+  it("includes the exact indexed current generation and ignores an unrelated stale plan", async () => {
+    const current = makeMeeting({ meetingId: "current-meeting", turns: markerTurn("current") });
+    const stale = makeMeeting({ meetingId: "stale-history", turns: markerTurn("stale") });
+    const valid = makeMeeting({ meetingId: "valid-history", turns: markerTurn("valid") });
+    const records = [current, stale, valid].map((meeting) => ({
+      binding: meeting.binding,
+      plan: buildHistoricalIndexPlan(meeting, new TestIds()),
+      remoteDocumentIds: {},
+    }));
+    const store = new AppliedStore(records);
+    store.currentSequence = [true, false, true];
+
+    const request = await new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(), providerBinding, store,
+    }).prepare({ currentMeetingId: current.binding.meetingId,
+      question: "What changed?", roomId: "room-1", scopeId: "scope-1" });
+
+    expect(request?.filters.sourceGenerations).toHaveLength(2);
+    expect(request?.filters.sourceGenerations).toEqual(expect.arrayContaining([
+      records[0]!.plan,
+      records[2]!.plan,
+    ].map(({ topology }) => ({
+      projectionGeneration: topology.indexGeneration,
+      sourceKey: topology.releaseRef,
+    }))));
+  });
+
+  it("fails generation authority closed per source without discarding valid sources", async () => {
+    const first = makeMeeting({ meetingId: "current-meeting", turns: markerTurn("first") });
+    const unavailable = makeMeeting({ meetingId: "unavailable-history",
+      turns: markerTurn("unavailable") });
+    const last = makeMeeting({ meetingId: "valid-history", turns: markerTurn("last") });
+    const records = [first, unavailable, last].map((meeting) => ({
+      binding: meeting.binding,
+      plan: buildHistoricalIndexPlan(meeting, new TestIds()),
+      remoteDocumentIds: {},
+    }));
+    const store = new AppliedStore(records);
+    vi.spyOn(store, "isCurrentGeneration")
+      .mockResolvedValueOnce(true)
+      .mockRejectedValueOnce(new Error("source authority unavailable"))
+      .mockResolvedValueOnce(true);
+
+    const request = await new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(), providerBinding, store,
+    }).prepare({ currentMeetingId: first.binding.meetingId,
+      question: "What changed?", roomId: "room-1", scopeId: "scope-1" });
+
+    expect(request?.filters.sourceGenerations).toEqual(expect.arrayContaining([
+      records[0]!.plan,
+      records[2]!.plan,
+    ].map(({ topology }) => ({
+      projectionGeneration: topology.indexGeneration,
+      sourceKey: topology.releaseRef,
+    }))));
+    expect(request?.filters.sourceGenerations).toHaveLength(2);
+  });
 
   it.each([
     "Что Влад решил с 07:00 до 08:00?",
@@ -149,9 +208,9 @@ describe("persisted focused locator Retrieval V2 request", () => {
         threadId: null,
       });
       expect(request?.budgets).toMatchObject({
-        evidenceByteLimit: 24_000,
+        evidenceByteLimit: 16_000,
         neighborRadius: 0,
-        resultLimit: 8,
+        resultLimit: 10,
       });
       expect(request?.softPreferences).toEqual({
         actorPreferences: [],
@@ -562,6 +621,57 @@ describe("focused locator Retrieval V2 privacy and serving authority continuatio
 });
 
 describe("focused locator Retrieval V2 rehydration", () => {
+  it("rehydrates an indexed current meeting under its exact persisted generation", async () => {
+    const { meeting, plan, prepare, store } = fixture();
+    const request = await prepare.prepare({ currentMeetingId: meeting.binding.meetingId,
+      question: "Что решили?", roomId: "room-1", scopeId: "scope-1" });
+    const locator = plan.documents[0]?.manifest.candidateLocator;
+    if (request === null || locator === undefined) {
+      throw new Error("missing indexed-current fixture");
+    }
+    const result = await new HistoricalFocusedLocatorRetrievalV2({
+      authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
+      retrieval: { retrieve: async () => ({
+        candidates: [{ locator }], status: "available",
+      }) },
+      store,
+      turnHashes: { hash: ({ turnId }) => `hash:${turnId}` },
+    }).retrieve({ authorizationPrincipalRef: "principal",
+      currentMeetingId: meeting.binding.meetingId, request, roomId: "room-1",
+      scopeId: "scope-1" });
+
+    expect(result).toMatchObject({ status: "current" });
+  });
+
+  it("deduplicates indexed current evidence against canonical local hydration", async () => {
+    const duplicate = Object.freeze({ meetingId: "current-meeting",
+      transcriptId: "transcript-current", transcriptVersion: 1,
+      turnHash: "a".repeat(64), turnId: "turn-current" });
+    const memory = new PersistedFocusedMemoryRetrievalV2({
+      current: { retrieve: async () => ({ authorityGeneration: "current-generation",
+        candidates: [duplicate], schemaVersion: 1, status: "current" }) },
+      historical: { retrieve: async () => ({ authorityGeneration: "historical-generation",
+        candidates: [{ ...duplicate, historicalSource: { candidateLocator: "locator-current",
+          indexGeneration: "index-current", releaseId: "release-current" } }],
+        schemaVersion: 1, status: "current" }), reauthorizeRoom: async () => true } as
+        unknown as HistoricalFocusedLocatorRetrievalV2,
+    });
+
+    const result = await memory.retrieve({ authorizationPrincipalRef: "principal",
+      canonicalEvidenceHash: "b".repeat(64), expectedAuthorityGeneration: "current-generation",
+      finalProjectionReceipt: "receipt", maximumCandidates: 10,
+      meetingId: duplicate.meetingId, meetingRevision: 1, neighborTurns: 0,
+      projectionTargetContainerId: "container", question: "What changed?",
+      retrievalBinding: { cutoverEpoch: "epoch", profileFingerprint: "c".repeat(64),
+        request: (await prepareRequestForComposite()), retrievalPath: "infinity_locator_v2" },
+      roomId: "room-1", scopeId: "scope-1", transcriptId: duplicate.transcriptId,
+      transcriptVersion: duplicate.transcriptVersion });
+
+    expect(result).toMatchObject({ status: "current" });
+    if (result.status === "current") {
+      expect(result.candidates).toEqual([duplicate]);
+    }
+  });
   it("returns only canonical local references in provider order", async () => {
     const { meeting, plan, prepare, store } = fixture();
     const request = await prepare.prepare({
@@ -715,6 +825,14 @@ describe("focused locator Retrieval V2 rehydration", () => {
         scopeId: "scope-1", signal: controller.signal })).rejects.toThrow("cancelled");
     });
 });
+
+async function prepareRequestForComposite() {
+  const { prepare } = fixture();
+  const request = await prepare.prepare({ currentMeetingId: "current-meeting",
+    question: "What changed?", roomId: "room-1", scopeId: "scope-1" });
+  if (request === null) {throw new Error("missing composite request");}
+  return request;
+}
 
 function authority(meeting: ReturnType<typeof makeMeeting>): HistoricalEvidenceAuthority {
   return { loadAcceptedFinalMeeting: async (binding) =>

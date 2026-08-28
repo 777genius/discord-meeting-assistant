@@ -18,8 +18,8 @@ export const retrievalV2Request: FocusedLocatorRetrievalV2RequestSnapshot =
   Object.freeze({
     binding: retrievalV2ProviderBinding,
     budgets: Object.freeze({ candidateLimit: 100, deadlineMs: 1_000,
-      evidenceByteLimit: 24_000, neighborRadius: 0 as const,
-      responseByteLimit: 16_384, resultLimit: 8 }),
+      evidenceByteLimit: 16_000, neighborRadius: 0 as const,
+      responseByteLimit: 16_384, resultLimit: 10 }),
     filters: Object.freeze({ actorKeys: Object.freeze([]), category: null,
       documentKeys: Object.freeze([]), excludedSourceKeys: Object.freeze([]),
       kinds: Object.freeze(["record_block"]), relativeTimeInterval: null,
@@ -59,6 +59,7 @@ export function rollbackPolicy(
       ...base.retrievalAdmission,
       cutoverEpoch: "rollout-b",
       infinityProfileFingerprint: "b".repeat(64),
+      localProfileFingerprint: "c".repeat(64),
     },
   };
 }

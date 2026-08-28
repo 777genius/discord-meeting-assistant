@@ -40,8 +40,7 @@ const policy: LocalFinalReplyPolicy = {
     jobTtlSeconds: 900,
     requesterQuestionsPerHour: 10,
   },
-  answerMessageMaximumCharacters: 2_000,
-  authorizationPolicyVersion,
+  answerMessageMaximumCharacters: 2_000, authorizationPolicyVersion,
   groundingSafety: {
     maximumRequestBytes: 100_000,
     modelContextTokens: 128_000,
@@ -56,6 +55,7 @@ const policy: LocalFinalReplyPolicy = {
   retrieval: { maximumCandidates: 24, neighborTurns: 2 },
   retrievalAdmission: {
     cutoverEpoch: "test-cutover-r1", infinityProfileFingerprint: "e".repeat(64),
+    localProfileFingerprint: "f".repeat(64),
   },
 };
 

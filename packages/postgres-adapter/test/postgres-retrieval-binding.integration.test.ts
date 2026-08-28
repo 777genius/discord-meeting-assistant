@@ -68,8 +68,8 @@ function binding(questionId: string, current: boolean): QuestionBindingSnapshot 
               requiredProviderLanes: ["postgres_keyword", "qdrant_dense"],
               serviceRevision: "revision-v2" },
             budgets: { candidateLimit: 100, deadlineMs: 1_000,
-              evidenceByteLimit: 24_000, neighborRadius: 0,
-              responseByteLimit: 16_384, resultLimit: 8 },
+              evidenceByteLimit: 16_000, neighborRadius: 0,
+              responseByteLimit: 16_384, resultLimit: 10 },
             filters: { actorKeys: [], category: null, documentKeys: [],
               excludedSourceKeys: [], kinds: ["record_block"],
               relativeTimeInterval: null, sourceGenerations: [{

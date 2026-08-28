@@ -158,6 +158,19 @@ function locatorCandidates(
 ): readonly FocusedLocatorRetrievalV2Candidate[] {
   return Object.freeze(candidates.map((candidate) => Object.freeze({
     locator: candidate.locator,
+    retrievalProvenance: Object.freeze({
+      contributions: Object.freeze(candidate.contributions.map((contribution) =>
+        Object.freeze({
+          contributionScorePicos: contribution.contribution_score_picos,
+          providerId: contribution.provider_id,
+          providerRank: contribution.provider_rank,
+          queryId: contribution.query_id,
+          rawScoreKind: contribution.raw_score_kind,
+          rawScoreValue: contribution.raw_score_value,
+        }))),
+      fusedScore: candidate.fused_score,
+      providerRank: candidate.provider_rank,
+    }),
   })));
 }
 

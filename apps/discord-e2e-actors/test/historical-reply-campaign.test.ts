@@ -1148,8 +1148,8 @@ function retrievalV2Request() {
       serviceRevision: "infinity-context-0.2.0",
     },
     budgets: {
-      candidateLimit: 100, deadlineMs: 1_000, evidenceByteLimit: 24_000,
-      neighborRadius: 0 as const, responseByteLimit: 16_384, resultLimit: 8,
+      candidateLimit: 100, deadlineMs: 1_000, evidenceByteLimit: 16_000,
+      neighborRadius: 0 as const, responseByteLimit: 16_384, resultLimit: 10,
     },
     filters: {
       actorKeys: [], category: null, documentKeys: [], excludedSourceKeys: [],

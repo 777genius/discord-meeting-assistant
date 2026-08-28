@@ -7,15 +7,19 @@ import { createDiscordInfinityActorCustody } from
   "../src/composition/discord-infinity-actor-custody.js";
 import { localFinalReplyPolicy } from
   "../src/composition/meeting-knowledge.js";
+import { createPersistedFocusedMemoryRoute } from
+  "../src/composition/meeting-knowledge-retrieval-router.js";
 import { historicalActorA, platformConfig } from
   "./meeting-knowledge-production-composition-fixtures.js";
 
-describe("Retrieval V2-only composition policy", () => {
-  it("admits new jobs only under one V2 epoch", () => {
+describe("bounded meeting retrieval composition policy", () => {
+  it("binds indexed and explicit local paths under one deterministic epoch", () => {
     expect(localFinalReplyPolicy.retrievalAdmission).toEqual({
       cutoverEpoch: "infinity-locator-v2-only-r1",
       infinityProfileFingerprint:
         "2e69df6bf22461ee8d6844c7e6699cfb099ad36d84b0aa15f1d3061754ff27be",
+      localProfileFingerprint:
+        "8b2453490a91a484b8d2825ae247a93d8ba2fa54b19cf26a3161db783f8629d5",
     });
     expect(localFinalReplyPolicy).not.toHaveProperty("legacyRetrievalMigration");
   });
@@ -28,6 +32,23 @@ describe("Retrieval V2-only composition policy", () => {
     expect(infinityAdapter).not.toHaveProperty("createInfinitySemanticQualificationManifest");
     expect(infinityAdapter.INFINITY_CONTEXT_PRODUCTION_QUALIFICATION
       .productionSemanticQualification).toBe(false);
+  });
+
+  it("routes a first-meeting local binding without requiring Infinity composition", async () => {
+    const local = { retrieve: async () => ({ authorityGeneration: "current-generation",
+      candidates: [{ meetingId: "meeting-1", transcriptId: "transcript-1",
+        transcriptVersion: 1, turnHash: "a".repeat(64), turnId: "turn-1" }],
+      schemaVersion: 1 as const, status: "current" as const }) };
+    const route = createPersistedFocusedMemoryRoute({ current: local });
+
+    await expect(route.retrieve({ canonicalEvidenceHash: "b".repeat(64),
+      expectedAuthorityGeneration: "current-generation", finalProjectionReceipt: "receipt",
+      maximumCandidates: 10, meetingId: "meeting-1", meetingRevision: 1,
+      neighborTurns: 0, projectionTargetContainerId: "container", question: "Decision?",
+      retrievalBinding: { cutoverEpoch: "epoch", profileFingerprint: "c".repeat(64),
+        retrievalPath: "canonical_local_exact_lexical_v1" }, roomId: "room-1",
+      scopeId: "scope-1", transcriptId: "transcript-1", transcriptVersion: 1 }))
+      .resolves.toMatchObject({ status: "current" });
   });
 
   it("groups every rotated actor key under one collision-safe participant owner", () => {

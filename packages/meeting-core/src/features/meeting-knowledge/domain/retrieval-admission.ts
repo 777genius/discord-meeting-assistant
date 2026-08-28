@@ -4,7 +4,7 @@ import {
   requireSha256,
 } from "./errors.js";
 
-export const retrievalV2ConsumerEvidenceByteLimit = 24_000;
+export const retrievalV2ConsumerEvidenceByteLimit = 16_000;
 
 export interface FocusedLocatorRetrievalV2ProviderBinding {
   readonly capabilityFingerprint: string;
@@ -68,8 +68,8 @@ export interface FocusedLocatorRetrievalV2RequestSnapshot {
   };
 }
 
-export type RetrievalPath = "infinity_locator_v1" | "infinity_locator_v2" |
-  "legacy_downstream_v1";
+export type RetrievalPath = "canonical_local_exact_lexical_v1" |
+  "infinity_locator_v1" | "infinity_locator_v2" | "legacy_downstream_v1";
 
 export type RetrievalBindingSnapshot =
   | {
@@ -87,11 +87,17 @@ export type RetrievalBindingSnapshot =
       readonly cutoverEpoch: string;
       readonly profileFingerprint: string;
       readonly retrievalPath: "legacy_downstream_v1";
+    }
+  | {
+      readonly cutoverEpoch: string;
+      readonly profileFingerprint: string;
+      readonly retrievalPath: "canonical_local_exact_lexical_v1";
     };
 
 export interface RetrievalAdmissionRollout {
   readonly cutoverEpoch: string;
   readonly infinityProfileFingerprint: string;
+  readonly localProfileFingerprint: string;
   readonly retrievalV2ProviderBinding?: FocusedLocatorRetrievalV2ProviderBinding;
 }
 
@@ -144,7 +150,8 @@ export class RetrievalBinding {
     if (
       retrievalPath !== "infinity_locator_v2" &&
       retrievalPath !== "infinity_locator_v1" &&
-      retrievalPath !== "legacy_downstream_v1"
+      retrievalPath !== "legacy_downstream_v1" &&
+      retrievalPath !== "canonical_local_exact_lexical_v1"
     ) {
       throw new MeetingKnowledgeInvariantError(
         "INVALID_BINDING",
@@ -196,17 +203,25 @@ export class RetrievalBinding {
       ? { ...base, request: freezeRetrievalV2Request(this.request),
           retrievalPath: "infinity_locator_v2" }
       : { ...base, retrievalPath: this.retrievalPath === "infinity_locator_v1"
-          ? "infinity_locator_v1" : "legacy_downstream_v1" };
+          ? "infinity_locator_v1" : this.retrievalPath === "legacy_downstream_v1"
+            ? "legacy_downstream_v1" : "canonical_local_exact_lexical_v1" };
   }
 }
 
 export function selectRetrievalBinding(input: {
   readonly questionId: string;
-  readonly retrievalV2Request: FocusedLocatorRetrievalV2RequestSnapshot;
+  readonly retrievalV2Request: FocusedLocatorRetrievalV2RequestSnapshot | null;
   readonly rollout: RetrievalAdmissionRollout;
 }): RetrievalBinding {
   requireKnowledgeText(input.questionId, "questionId", 128);
-  return RetrievalBinding.create({
+  return RetrievalBinding.create(input.retrievalV2Request === null ? {
+    cutoverEpoch: requireCutoverEpoch(input.rollout.cutoverEpoch),
+    profileFingerprint: requireSha256(
+      input.rollout.localProfileFingerprint,
+      "retrievalAdmission.localProfileFingerprint",
+    ),
+    retrievalPath: "canonical_local_exact_lexical_v1",
+  } : {
     cutoverEpoch: requireCutoverEpoch(input.rollout.cutoverEpoch),
     profileFingerprint: requireSha256(
       input.rollout.infinityProfileFingerprint,

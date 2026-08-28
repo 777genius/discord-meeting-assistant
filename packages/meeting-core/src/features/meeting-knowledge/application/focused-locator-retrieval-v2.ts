@@ -42,7 +42,7 @@ FocusedLocatorRetrievalV2Policy = Object.freeze({
   evidenceByteLimit: retrievalV2ConsumerEvidenceByteLimit,
   maximumSources: 100,
   responseByteLimit: 16_384,
-  resultLimit: 8,
+  resultLimit: 10,
   version: "meeting-knowledge.locator-retrieval.v2",
 });
 export class PrepareFocusedLocatorRetrievalV2Request {
@@ -82,23 +82,27 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       ...resolveRequestedActorKeys(input.question, aliases, skeletons),
       ...(this.dependencies.actorReferences?.actorKeysForQuestion(input.question) ?? []),
     ]);
-    const plans = (await this.dependencies.store.listCurrentRoomPlans(
+    const observedPlans = await this.dependencies.store.listCurrentRoomPlans(
       input.scopeId,
       input.roomId,
       this.policy.maximumSources + 2,
       input.signal === undefined ? {} : { signal: input.signal },
-    )).filter(({ binding }) => binding.meetingId !== input.currentMeetingId);
+    );
+    const currentChecks = await Promise.all(observedPlans.map(async (plan) => {
+      try {
+        return await this.dependencies.store.isCurrentGeneration(
+          plan.binding,
+          plan.plan.topology.indexGeneration,
+          input.signal === undefined ? {} : { signal: input.signal },
+        );
+      } catch {
+        input.signal?.throwIfAborted();
+        return false;
+      }
+    }));
+    const plans = observedPlans.filter((_plan, index) => currentChecks[index] === true);
     if (plans.length < 1 || plans.length > this.policy.maximumSources) {
       return null;
-    }
-    for (const plan of plans) {
-      if (!await this.dependencies.store.isCurrentGeneration(
-        plan.binding,
-        plan.plan.topology.indexGeneration,
-        input.signal === undefined ? {} : { signal: input.signal },
-      )) {
-        return null;
-      }
     }
     if (this.dependencies.servingAuthorized?.() === false) {
       return null;
@@ -261,18 +265,30 @@ function interleave(current: readonly FocusedMemoryReference[],
   historical: readonly FocusedMemoryReference[], maximum: number):
 readonly FocusedMemoryReference[] {
   const output: FocusedMemoryReference[] = [];
+  const admitted = new Set<string>();
   for (let index = 0; output.length < maximum &&
       (index < current.length || index < historical.length); index += 1) {
     const local = current[index];
     const remote = historical[index];
-    if (local !== undefined) {
+    if (local !== undefined && admitCanonical(local, admitted)) {
       output.push(local);
     }
-    if (remote !== undefined && output.length < maximum) {
+    if (remote !== undefined && output.length < maximum &&
+      admitCanonical(remote, admitted)) {
       output.push(remote);
     }
   }
   return Object.freeze(output);
+}
+
+function admitCanonical(reference: FocusedMemoryReference, admitted: Set<string>): boolean {
+  const key = [reference.meetingId, reference.transcriptId,
+    reference.transcriptVersion, reference.turnId].join("\u0000");
+  if (admitted.has(key)) {
+    return false;
+  }
+  admitted.add(key);
+  return true;
 }
 
 function unavailable(): FocusedMemoryRetrievalResult {

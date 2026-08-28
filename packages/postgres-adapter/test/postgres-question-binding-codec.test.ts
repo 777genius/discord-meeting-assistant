@@ -46,8 +46,8 @@ const retrievalBinding = Object.freeze({
       requiredProviderLanes: Object.freeze(["postgres_keyword", "qdrant_dense"]),
       serviceRevision: "revision-v2" }),
     budgets: Object.freeze({ candidateLimit: 100, deadlineMs: 1_000,
-      evidenceByteLimit: 24_000, neighborRadius: 0 as const,
-      responseByteLimit: 16_384, resultLimit: 8 }),
+      evidenceByteLimit: 16_000, neighborRadius: 0 as const,
+      responseByteLimit: 16_384, resultLimit: 10 }),
     filters: Object.freeze({ actorKeys: Object.freeze(["actor-1"]), category: null,
       documentKeys: Object.freeze([]), excludedSourceKeys: Object.freeze([]),
       kinds: Object.freeze(["record_block"]), relativeTimeInterval: null,
@@ -132,6 +132,17 @@ describe("PostgreSQL question binding codec", () => {
     })).not.toBe(bindingHash);
   });
 
+  it("round-trips the explicit first-meeting local retrieval binding", () => {
+    const local = QuestionBinding.create({ ...legacyInput, bindingProtocolVersion: 2,
+      retrievalBinding: { cutoverEpoch: "cutover-r1",
+        profileFingerprint: "9".repeat(64),
+        retrievalPath: "canonical_local_exact_lexical_v1" } }).toSnapshot();
+    expect(decodePersistedQuestionBinding(
+      JSON.parse(JSON.stringify(local)),
+      questionAdmissionBindingHash(local),
+    )).toEqual(local);
+  });
+
   it("rejects malformed or missing protocol-2 retrieval authority", () => {
     if (currentBinding.bindingProtocolVersion !== 2) {
       throw new Error("current binding fixture must use protocol 2");
@@ -168,7 +179,7 @@ describe("PostgreSQL question binding codec", () => {
     };
     reject((request) => { request.extra = true; });
     reject((request) => { delete request.filters.tagsNone; });
-    reject((request) => { request.budgets.evidenceByteLimit = 24_001; });
+    reject((request) => { request.budgets.evidenceByteLimit = 16_001; });
     reject((request) => { request.budgets.responseByteLimit = 16_383; });
     reject((request) => { request.queries[0]!.query = "я".repeat(300); });
     reject((request) => { request.queries.push({ ...request.queries[0]! }); });

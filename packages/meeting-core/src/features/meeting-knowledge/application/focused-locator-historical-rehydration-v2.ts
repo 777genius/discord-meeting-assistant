@@ -178,7 +178,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     for (const locator of locators) {
       input.signal?.throwIfAborted();
       const record = recordsByLocator.get(locator);
-      if (record === undefined || record.binding.meetingId === input.currentMeetingId ||
+      if (record === undefined ||
         allowedSources.get(record.plan.topology.releaseRef) !==
           record.plan.topology.indexGeneration ||
         !await this.dependencies.store.isCurrentGeneration(
@@ -263,7 +263,8 @@ function unavailable(): FocusedMemoryRetrievalResult {
 
 function isExactLocatorCandidate(value: FocusedLocatorRetrievalV2Candidate): boolean {
   const keys = Object.keys(value).toSorted();
-  return keys.length === 1 && keys[0] === "locator";
+  return (keys.length === 1 && keys[0] === "locator") ||
+    (keys.length === 2 && keys[0] === "locator" && keys[1] === "retrievalProvenance");
 }
 
 function sameAuthorization(

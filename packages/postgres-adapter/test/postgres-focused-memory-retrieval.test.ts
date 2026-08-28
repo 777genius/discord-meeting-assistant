@@ -392,6 +392,31 @@ describe("PostgreSQL focused current-meeting memory", () => {
 });
 
 describe("PostgreSQL bounded canonical exact lexical fallback", () => {
+  it("reports honest low coverage for a Russian question over English-only evidence", async () => {
+    const snapshot = twoHourSnapshot(16);
+    const { input } = retrievalInput(snapshot, "Кто утвердил бюджет запуска?");
+
+    await expect(new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
+      .retrieve(input)).resolves.toEqual({ schemaVersion: 1, status: "low_coverage" });
+  });
+
+  it("keeps matching current evidence speaker/time-diverse within the bound", async () => {
+    const snapshot = twoHourSnapshot();
+    const { input } = retrievalInput(snapshot, "What changed about the Atlas rollout?");
+    const result = await new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
+      .retrieve({ ...input, maximumCandidates: 4 });
+
+    expect(result).toMatchObject({ status: "current" });
+    if (result.status === "current") {
+      const turns = snapshot.transcript?.turns ?? [];
+      const selected = result.candidates.map(({ turnId }) =>
+        turns.find((turn) => turn.turnId === turnId));
+      expect(new Set(selected.map((turn) => turn?.speakerId)).size).toBeGreaterThan(1);
+      expect(new Set(selected.map((turn) => Math.floor((turn?.startMs ?? 0) / 60_000))).size)
+        .toBeGreaterThan(1);
+    }
+  });
+
   it("does not expand neighbors or apply speaker/time boosts", async () => {
     const snapshot = twoHourSnapshot();
     const { input } = retrievalInput(

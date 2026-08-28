@@ -111,7 +111,29 @@ function selectExactLexicalTurns(
   matches: readonly ExactLexicalMatch[],
   maximumCandidates: number,
 ): readonly ExactLexicalMatch[] {
-  return Object.freeze(matches.slice(0, maximumCandidates));
+  const selected: ExactLexicalMatch[] = [];
+  const speakerBuckets = new Set<string>();
+  const timeBuckets = new Set<number>();
+  for (const match of matches) {
+    const timeBucket = Math.floor(match.turn.startMs / 60_000);
+    if (!speakerBuckets.has(match.turn.speakerId) || !timeBuckets.has(timeBucket)) {
+      selected.push(match);
+      speakerBuckets.add(match.turn.speakerId);
+      timeBuckets.add(timeBucket);
+    }
+    if (selected.length === maximumCandidates) {
+      return Object.freeze(selected);
+    }
+  }
+  for (const match of matches) {
+    if (!selected.includes(match)) {
+      selected.push(match);
+    }
+    if (selected.length === maximumCandidates) {
+      break;
+    }
+  }
+  return Object.freeze(selected);
 }
 
 function referenceFor(

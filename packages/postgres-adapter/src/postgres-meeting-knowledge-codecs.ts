@@ -145,7 +145,11 @@ const retrievalV2RequestSchema = z.object({
 const retrievalBindingSchema = z.object({
   cutoverEpoch: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/u),
   profileFingerprint: sha256Schema,
-  retrievalPath: z.enum(["infinity_locator_v1", "legacy_downstream_v1"]),
+  retrievalPath: z.enum([
+    "canonical_local_exact_lexical_v1",
+    "infinity_locator_v1",
+    "legacy_downstream_v1",
+  ]),
 }).strict().or(z.object({
   cutoverEpoch: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/u),
   profileFingerprint: sha256Schema,
