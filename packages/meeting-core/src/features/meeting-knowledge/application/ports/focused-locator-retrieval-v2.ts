@@ -1,7 +1,8 @@
 import type {
   FocusedLocatorRetrievalV2RequestSnapshot,
 } from "../../domain/retrieval-admission.js";
-import type { RehydratedEvidenceTurn } from "../../domain/grounding-plan.js";
+import type { FocusedRetrievalAudit, RehydratedEvidenceTurn } from
+  "../../domain/grounding-plan.js";
 export type {
   FocusedLocatorRetrievalV2ProviderBinding,
   FocusedLocatorRetrievalV2RequestSnapshot,
@@ -9,18 +10,7 @@ export type {
 
 export interface FocusedLocatorRetrievalV2Candidate {
   readonly locator: string;
-  readonly retrievalProvenance?: {
-    readonly contributions: readonly {
-      readonly contributionScorePicos: number;
-      readonly providerId: string;
-      readonly providerRank: number;
-      readonly queryId: string;
-      readonly rawScoreKind: "bm25" | "distance" | "relevance" | "similarity" | null;
-      readonly rawScoreValue: number | null;
-    }[];
-    readonly fusedScore: number;
-    readonly providerRank: number;
-  };
+  readonly retrievalProvenance: FocusedRetrievalAudit;
 }
 
 export type FocusedLocatorRetrievalV2Result =

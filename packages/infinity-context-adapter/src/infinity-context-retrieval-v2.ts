@@ -162,7 +162,7 @@ function locatorCandidates(
       contributions: Object.freeze(candidate.contributions.map((contribution) =>
         Object.freeze({
           contributionScorePicos: contribution.contribution_score_picos,
-          providerId: contribution.provider_id,
+          providerLaneId: contribution.provider_id,
           providerRank: contribution.provider_rank,
           queryId: contribution.query_id,
           rawScoreKind: contribution.raw_score_kind,

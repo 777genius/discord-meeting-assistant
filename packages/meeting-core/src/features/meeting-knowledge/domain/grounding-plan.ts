@@ -27,12 +27,31 @@ export interface FocusedMemoryReference {
   /** Exact local historical plan identity. Current-meeting references omit it. */
   readonly historicalSource?: HistoricalEvidenceSource;
   readonly meetingId: string;
+  /**
+   * Text-free retrieval accounting aligned to this canonical local reference.
+   * It is retained only for audit continuity and is never evidence or model input.
+   */
+  readonly retrievalAudit?: FocusedRetrievalAudit;
   readonly sourceEndCodePoint?: number;
   readonly sourceStartCodePoint?: number;
   readonly transcriptId: string;
   readonly transcriptVersion: number;
   readonly turnHash: string;
   readonly turnId: string;
+}
+
+/** Consumer-owned, provider-neutral accounting for an upstream ranking decision. */
+export interface FocusedRetrievalAudit {
+  readonly contributions: readonly {
+    readonly contributionScorePicos: number;
+    readonly providerLaneId: string;
+    readonly providerRank: number;
+    readonly queryId: string;
+    readonly rawScoreKind: "bm25" | "distance" | "relevance" | "similarity" | null;
+    readonly rawScoreValue: number | null;
+  }[];
+  readonly fusedScore: number;
+  readonly providerRank: number;
 }
 
 /** Canonical text loaded locally after focused retrieval selected a reference. */

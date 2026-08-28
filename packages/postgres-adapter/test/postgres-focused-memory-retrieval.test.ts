@@ -50,9 +50,12 @@ function corpusTurn(index: number): TranscriptTurnSnapshot {
   };
 }
 
-function twoHourSnapshot(turnCount = 720) {
+function twoHourSnapshot(
+  turnCount = 720,
+  turnAt: (index: number) => TranscriptTurnSnapshot = corpusTurn,
+) {
   const meeting = recordedMeeting("focused-memory-two-hour");
-  const turns = Array.from({ length: turnCount }, (_, index) => corpusTurn(index));
+  const turns = Array.from({ length: turnCount }, (_, index) => turnAt(index));
   meeting.beginTranscription();
   const transcript = FinalTranscript.create({
     recordingId: meeting.recording.recordingId,
@@ -391,7 +394,66 @@ describe("PostgreSQL focused current-meeting memory", () => {
   });
 });
 
+describe("PostgreSQL focused candidate hydration isolation", () => {
+  it("keeps valid local candidates around a missing turn in original order", async () => {
+    const snapshot = twoHourSnapshot();
+    const pool = snapshotPool(snapshot);
+    const { authority, input } = retrievalInput(
+      snapshot,
+      "What is the corrected Atlas rollout owner and retention?",
+    );
+    const retrieval = await new PostgresFocusedMemoryRetrieval(pool, botId)
+      .retrieve({ ...input, maximumCandidates: 4 });
+    if (retrieval.status !== "current" || retrieval.candidates.length < 2) {
+      throw new Error("missing local survivor fixture");
+    }
+    const valid = retrieval.candidates.slice(0, 2);
+    const binding = {
+      authorizationDigest: "a".repeat(64),
+      authorizationPolicyVersion: "discord.participant-current-results.v1",
+      authorizationPrincipalRef: "opaque",
+      ...authority.binding,
+      deliveryContainerId: authority.binding.projectionTargetContainerId,
+      expectedLocale: "en" as const,
+      policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+      questionHash: "c".repeat(64),
+      questionId: "question-mixed-hydration",
+      requesterSubject: "d".repeat(64),
+    };
+    const hydrated = await new PostgresFinalReplyEvidence(pool, botId)
+      .rehydrateSelectedEvidence(binding, [valid[0]!, {
+        ...valid[0]!, turnHash: "f".repeat(64), turnId: "missing-turn",
+      }, valid[1]!]);
+
+    expect(hydrated).toMatchObject({ status: "current" });
+    if (hydrated.status === "current") {
+      expect(hydrated.turns.map(({ turnId }) => turnId))
+        .toEqual(valid.map(({ turnId }) => turnId));
+    }
+  });
+});
+
 describe("PostgreSQL bounded canonical exact lexical fallback", () => {
+  it("round-robins speakers even when one speaker matches across many time buckets",
+    async () => {
+      const snapshot = twoHourSnapshot(8, (index) => ({
+        endMs: index * 60_000 + 1_000,
+        speakerId: index < 6 ? "speaker-a" : "speaker-b",
+        startMs: index * 60_000,
+        text: index < 6 ? "Atlas decision owner" : "Atlas update",
+        turnId: `turn-${String(index).padStart(4, "0")}`,
+      }));
+      const { input } = retrievalInput(snapshot, "What is the Atlas decision owner update?");
+      const result = await new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
+        .retrieve({ ...input, maximumCandidates: 4 });
+
+      expect(result).toMatchObject({ status: "current" });
+      if (result.status === "current") {
+        expect(result.candidates.map(({ turnId }) => turnId))
+          .toEqual(["turn-0000", "turn-0006", "turn-0001", "turn-0007"]);
+      }
+    });
+
   it("reports honest low coverage for a Russian question over English-only evidence", async () => {
     const snapshot = twoHourSnapshot(16);
     const { input } = retrievalInput(snapshot, "Кто утвердил бюджет запуска?");

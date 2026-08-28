@@ -171,7 +171,7 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
         locator: "candidate-007",
         retrievalProvenance: {
           contributions: expect.arrayContaining([expect.objectContaining({
-            providerId: expect.any(String),
+            providerLaneId: expect.any(String),
             providerRank: expect.any(Number),
             queryId: "original-question",
           })]),
@@ -312,6 +312,28 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
     (endpoint.response.applied_bounds as Record<string, unknown>).result_limit = 9;
     expect(await adapter(endpoint).retrieve(request())).toMatchObject({
       code: "memory.context_retrieval_response_invalid", status: "unavailable",
+    });
+  });
+
+  it.each([
+    ["missing", (candidate: Record<string, unknown>) => {
+      delete candidate.contributions;
+    }],
+    ["malformed", (candidate: Record<string, unknown>) => {
+      candidate.provider_rank = 0;
+    }],
+  ] as const)("rejects %s official-SDK ranking provenance", async (_name, mutate) => {
+    const endpoint = new RetrievalV2Endpoint();
+    const candidate = (endpoint.response.candidates as Array<Record<string, unknown>>)[0];
+    if (candidate === undefined) {
+      throw new Error("missing fixture candidate");
+    }
+    mutate(candidate);
+
+    await expect(adapter(endpoint).retrieve(request())).resolves.toEqual({
+      code: "memory.context_retrieval_response_invalid",
+      retryable: false,
+      status: "unavailable",
     });
   });
 

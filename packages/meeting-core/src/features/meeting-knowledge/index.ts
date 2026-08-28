@@ -260,6 +260,7 @@ export {
 } from "./domain/question-job.js";
 export {
   RetrievalBinding,
+  compareRetrievalV2Utf8,
   retrievalV2ConsumerEvidenceByteLimit,
   sameFocusedLocatorRetrievalV2Value,
   selectRetrievalBinding,

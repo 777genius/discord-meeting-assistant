@@ -189,6 +189,7 @@ function decodeCandidates(
       new Set([
         "historicalSource",
         "meetingId",
+        "retrievalAudit",
         "sourceEndCodePoint",
         "sourceStartCodePoint",
         "transcriptId",
@@ -203,6 +204,10 @@ function decodeCandidates(
       candidate.historicalSource,
       `${field}[${index}].historicalSource`,
     );
+    const retrievalAudit = decodeRetrievalAudit(
+      candidate.retrievalAudit,
+      `${field}[${index}].retrievalAudit`,
+    );
     return Object.freeze({
       ...(historicalSource === undefined ? {} : { historicalSource }),
       meetingId: requireKnowledgeText(
@@ -210,6 +215,7 @@ function decodeCandidates(
         `${field}[${index}].meetingId`,
         1_024,
       ),
+      ...(retrievalAudit === undefined ? {} : { retrievalAudit }),
       ...range,
       transcriptId: requireKnowledgeText(
         candidate.transcriptId as string,
@@ -239,6 +245,79 @@ function decodeCandidates(
     );
   }
   return candidates;
+}
+
+function decodeRetrievalAudit(
+  value: unknown,
+  field: string,
+): FocusedMemoryReference["retrievalAudit"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  const audit = record(value, field);
+  assertOnlyKeys(audit, new Set(["contributions", "fusedScore", "providerRank"]), field);
+  if (!Array.isArray(audit.contributions) || audit.contributions.length < 1 ||
+    audit.contributions.length > 32 || !validFiniteScore(audit.fusedScore) ||
+    !validRank(audit.providerRank)) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_GROUNDING_PLAN",
+      `${field} is malformed`,
+    );
+  }
+  const contributions = audit.contributions.map((entry, index) => {
+    const contribution = record(entry, `${field}.contributions[${index}]`);
+    assertOnlyKeys(contribution, new Set([
+      "contributionScorePicos", "providerLaneId", "providerRank", "queryId",
+      "rawScoreKind", "rawScoreValue",
+    ]), `${field}.contributions[${index}]`);
+    const rawScoreKind = contribution.rawScoreKind;
+    if (rawScoreKind !== null && rawScoreKind !== "bm25" &&
+      rawScoreKind !== "distance" && rawScoreKind !== "relevance" &&
+      rawScoreKind !== "similarity") {
+      throw new MeetingKnowledgeInvariantError(
+        "INVALID_GROUNDING_PLAN",
+        `${field}.contributions[${index}].rawScoreKind is invalid`,
+      );
+    }
+    if (!Number.isSafeInteger(contribution.contributionScorePicos) ||
+      !validRank(contribution.providerRank) ||
+      (contribution.rawScoreValue !== null &&
+        !validFiniteScore(contribution.rawScoreValue))) {
+      throw new MeetingKnowledgeInvariantError(
+        "INVALID_GROUNDING_PLAN",
+        `${field}.contributions[${index}] contains an invalid score or rank`,
+      );
+    }
+    return Object.freeze({
+      contributionScorePicos: contribution.contributionScorePicos as number,
+      providerLaneId: requireKnowledgeText(
+        contribution.providerLaneId as string,
+        `${field}.contributions[${index}].providerLaneId`,
+        128,
+      ),
+      providerRank: contribution.providerRank as number,
+      queryId: requireKnowledgeText(
+        contribution.queryId as string,
+        `${field}.contributions[${index}].queryId`,
+        128,
+      ),
+      rawScoreKind,
+      rawScoreValue: contribution.rawScoreValue as number | null,
+    });
+  });
+  return Object.freeze({
+    contributions: Object.freeze(contributions),
+    fusedScore: audit.fusedScore as number,
+    providerRank: audit.providerRank as number,
+  });
+}
+
+function validFiniteScore(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function validRank(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 1;
 }
 
 function decodeHistoricalSource(

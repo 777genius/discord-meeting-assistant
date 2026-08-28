@@ -253,36 +253,38 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
     if (!finalReplyAuthorityMatches(anchor.binding, binding)) {
       return { status: "stale" } as const;
     }
-    const meetingIds = [...new Set(references.map(({ meetingId }) => meetingId))];
-    const referencedRows = await loadCurrentHistoricalReferenceRows(
-      this.pool,
-      binding,
-      references,
-    );
-    if (referencedRows === null) {
-      return { status: "invalid_selection" } as const;
-    }
+    const validReferences: FocusedMemoryReference[] = [];
     const authorities = new Map<string, ResolvedFinalReplyAuthority>([
       [binding.meetingId, anchor],
     ]);
-    for (const row of referencedRows) {
-      if (row.meeting_id === binding.meetingId) {
+    for (const reference of references) {
+      if (reference.meetingId === binding.meetingId &&
+        reference.historicalSource === undefined) {
+        validReferences.push(reference);
         continue;
       }
-      const authority = resolveFinalReplyAuthority(row.snapshot, this.botApplicationIdentity);
-      if (
-        authority === null ||
-        authority.binding.scopeId !== binding.scopeId ||
-        authority.binding.roomId !== binding.roomId
-      ) {
-        return { status: "invalid_selection" } as const;
+      try {
+        const rows = await loadCurrentHistoricalReferenceRows(
+          this.pool,
+          binding,
+          [reference],
+        );
+        const row = rows?.find(({ meeting_id: meetingId }) =>
+          meetingId === reference.meetingId
+        );
+        const authority = row === undefined ? null : resolveFinalReplyAuthority(
+          row.snapshot, this.botApplicationIdentity,
+        );
+        if (authority !== null && authority.binding.scopeId === binding.scopeId &&
+          authority.binding.roomId === binding.roomId) {
+          validReferences.push(reference);
+          authorities.set(reference.meetingId, authority);
+        }
+      } catch {
+        continue;
       }
-      authorities.set(row.meeting_id, authority);
     }
-    if (meetingIds.some((meetingId) => !authorities.has(meetingId))) {
-      return { status: "invalid_selection" } as const;
-    }
-    const turns = references.flatMap((reference) => {
+    const turns = validReferences.flatMap((reference) => {
       const authority = authorities.get(reference.meetingId);
       if (
         authority === undefined ||
@@ -321,7 +323,7 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
         turnHash,
       })];
     });
-    if (turns.length !== references.length) {
+    if (turns.length < 1) {
       return { status: "invalid_selection" } as const;
     }
     return {

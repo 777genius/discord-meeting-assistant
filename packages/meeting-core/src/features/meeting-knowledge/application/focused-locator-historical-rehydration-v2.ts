@@ -5,11 +5,11 @@ import {
 } from "../domain/historical-evidence.js";
 import type {
   FocusedMemoryReference,
+  FocusedRetrievalAudit,
   RehydratedEvidenceTurn,
 } from "../domain/grounding-plan.js";
 import {
   buildHistoricalRoomTopology,
-  HistoricalIndexPlanError,
   rehydrateHistoricalBlock,
 } from "./historical-index-plan.js";
 import type {
@@ -40,6 +40,9 @@ interface HistoricalLocatorRetrievalV2Input {
   readonly scopeId: string;
   readonly signal?: AbortSignal;
 }
+type HistoricalCandidateRecord = Awaited<
+  ReturnType<HistoricalSyncStore["findCurrentCandidates"]>
+>[number];
 
 export class HistoricalFocusedLocatorRetrievalV2 {
   public constructor(private readonly dependencies: {
@@ -111,14 +114,16 @@ export class HistoricalFocusedLocatorRetrievalV2 {
       input.signal === undefined ? {} : { signal: input.signal },
     );
     if (remote.status !== "available" || remote.candidates.length < 1 ||
-      !remote.candidates.every(isExactLocatorCandidate)) {
+      remote.candidates.length > input.request.budgets.resultLimit) {
       return null;
     }
-    const locators = remote.candidates.map(({ locator }) => locator);
-    if (new Set(locators).size !== locators.length) {
+    const candidates = remote.candidates
+      .map(decodeLocatorCandidate)
+      .filter(isLocatorCandidate);
+    if (candidates.length < 1) {
       return null;
     }
-    const hydrated = await this.rehydrateLocators(input, locators);
+    const hydrated = await this.rehydrateLocators(input, candidates);
     if (hydrated === null) {
       return null;
     }
@@ -148,69 +153,57 @@ export class HistoricalFocusedLocatorRetrievalV2 {
 
   private async rehydrateLocators(
     input: HistoricalLocatorRetrievalV2Input,
-    locators: readonly string[],
+    candidates: readonly FocusedLocatorRetrievalV2Candidate[],
   ): Promise<{
     readonly references: readonly FocusedMemoryReference[];
     readonly turns: readonly RehydratedEvidenceTurn[];
   } | null> {
+    const uniqueLocators = [...new Set(candidates.map(({ locator }) => locator))];
     const records = await this.dependencies.store.findCurrentCandidates(
       input.scopeId,
       input.roomId,
-      locators,
+      uniqueLocators,
       input.signal === undefined ? {} : { signal: input.signal },
     );
-    if (records.length !== locators.length) {
-      return null;
-    }
-    const recordsByLocator = new Map(records.map((record) => [
-      record.plan.documents[record.ordinal]?.manifest.candidateLocator,
-      record,
-    ]));
-    if (recordsByLocator.size !== locators.length) {
-      return null;
+    const recordsByLocator = new Map<string, typeof records>();
+    for (const record of records) {
+      const locator = record.plan.documents[record.ordinal]?.manifest.candidateLocator;
+      if (locator !== undefined) {
+        recordsByLocator.set(locator, Object.freeze([
+          ...(recordsByLocator.get(locator) ?? []), record,
+        ]));
+      }
     }
     const allowedSources = new Map(input.request.filters.sourceGenerations.map(
       (source) => [source.sourceKey, source.projectionGeneration],
     ));
     const references: FocusedMemoryReference[] = [];
     const turns: RehydratedEvidenceTurn[] = [];
+    const observedLocators = new Set<string>();
     let evidenceBytes = 0;
-    for (const locator of locators) {
+    for (const candidate of candidates) {
       input.signal?.throwIfAborted();
-      const record = recordsByLocator.get(locator);
-      if (record === undefined ||
-        allowedSources.get(record.plan.topology.releaseRef) !==
-          record.plan.topology.indexGeneration ||
-        !await this.dependencies.store.isCurrentGeneration(
-          record.binding,
-          record.plan.topology.indexGeneration,
-          input.signal === undefined ? {} : { signal: input.signal },
-        )) {
-        return null;
+      if (observedLocators.has(candidate.locator)) {
+        continue;
       }
-      const meeting = await this.dependencies.authority.loadAcceptedFinalMeeting(
-        record.binding,
-        input.signal === undefined ? {} : { signal: input.signal },
+      observedLocators.add(candidate.locator);
+      const ownedRecords = recordsByLocator.get(candidate.locator);
+      const record = ownedRecords?.length === 1 ? ownedRecords[0] : undefined;
+      const block = record === undefined ? null : await this.rehydrateCandidate(
+        input, record, allowedSources,
       );
-      if (meeting === null || !admitsHistoricalRetrieval(meeting, this.profile)) {
-        return null;
-      }
-      let block: LocallyRehydratedEvidenceBlockV1;
-      try {
-        block = rehydrateHistoricalBlock(meeting, record.plan, record.ordinal,
-          this.dependencies.ids);
-      } catch (error) {
-        if (error instanceof HistoricalIndexPlanError) {
-          return null;
-        }
-        throw error;
-      }
-      evidenceBytes += new TextEncoder().encode(
+      if (block === null) {continue;}
+      const candidateBytes = new TextEncoder().encode(
         block.turns.map(({ text }) => text).join("\n"),
       ).byteLength;
-      if (evidenceBytes > input.request.budgets.evidenceByteLimit) {
-        return null;
+      const delimiterBytes = references.length === 0 ? 0 : 1;
+      if (candidateBytes < 1 ||
+        candidateBytes > input.request.budgets.evidenceByteLimit ||
+        evidenceBytes + delimiterBytes + candidateBytes >
+          input.request.budgets.evidenceByteLimit) {
+        continue;
       }
+      evidenceBytes += delimiterBytes + candidateBytes;
       references.push(...block.turns.map((turn) => Object.freeze({
         historicalSource: Object.freeze({
           candidateLocator: block.candidateLocator,
@@ -218,6 +211,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
           releaseId: block.binding.releaseId,
         }),
         meetingId: block.binding.meetingId,
+        retrievalAudit: candidate.retrievalProvenance,
         sourceEndCodePoint: turn.sourceEndCodePoint,
         sourceStartCodePoint: turn.sourceStartCodePoint,
         transcriptId: block.binding.transcriptId,
@@ -248,6 +242,38 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     });
   }
 
+  private async rehydrateCandidate(
+    input: HistoricalLocatorRetrievalV2Input,
+    record: HistoricalCandidateRecord,
+    allowedSources: ReadonlyMap<string, string>,
+  ): Promise<LocallyRehydratedEvidenceBlockV1 | null> {
+    if (allowedSources.get(record.plan.topology.releaseRef) !==
+      record.plan.topology.indexGeneration) {
+      return null;
+    }
+    try {
+      const current = await this.dependencies.store.isCurrentGeneration(
+        record.binding,
+        record.plan.topology.indexGeneration,
+        input.signal === undefined ? {} : { signal: input.signal },
+      );
+      if (!current) {return null;}
+      const meeting = await this.dependencies.authority.loadAcceptedFinalMeeting(
+        record.binding,
+        input.signal === undefined ? {} : { signal: input.signal },
+      );
+      if (meeting === null || !admitsHistoricalRetrieval(meeting, this.profile)) {
+        return null;
+      }
+      return rehydrateHistoricalBlock(
+        meeting, record.plan, record.ordinal, this.dependencies.ids,
+      );
+    } catch {
+      input.signal?.throwIfAborted();
+      return null;
+    }
+  }
+
   public async reauthorizeRoom(input: {
     readonly authorizationPrincipalRef: string;
     readonly roomId: string;
@@ -261,10 +287,84 @@ function unavailable(): FocusedMemoryRetrievalResult {
   return Object.freeze({ schemaVersion: 1, status: "unavailable" });
 }
 
-function isExactLocatorCandidate(value: FocusedLocatorRetrievalV2Candidate): boolean {
+function decodeLocatorCandidate(value: FocusedLocatorRetrievalV2Candidate):
+FocusedLocatorRetrievalV2Candidate | null {
+  if (!exactKeys(value, ["locator", "retrievalProvenance"]) ||
+    typeof value.locator !== "string" || value.locator.length < 1 ||
+    value.locator.length > 1_024) {
+    return null;
+  }
+  const provenance = decodeRetrievalAudit(value.retrievalProvenance);
+  return provenance === null ? null : Object.freeze({
+    locator: value.locator,
+    retrievalProvenance: provenance,
+  });
+}
+
+function decodeRetrievalAudit(value: FocusedRetrievalAudit): FocusedRetrievalAudit | null {
+  if (typeof value !== "object" || value === null ||
+    !exactKeys(value, ["contributions", "fusedScore", "providerRank"]) ||
+    !finite(value.fusedScore) || !rank(value.providerRank) ||
+    !Array.isArray(value.contributions) || value.contributions.length < 1 ||
+    value.contributions.length > 32) {
+    return null;
+  }
+  const contributions: Array<FocusedRetrievalAudit["contributions"][number]> = [];
+  for (const contribution of value.contributions) {
+    const decoded = decodeRetrievalContribution(contribution);
+    if (decoded === null) {return null;}
+    contributions.push(decoded);
+  }
+  return Object.freeze({
+    contributions: Object.freeze(contributions),
+    fusedScore: value.fusedScore,
+    providerRank: value.providerRank,
+  });
+}
+
+function decodeRetrievalContribution(
+  contribution: FocusedRetrievalAudit["contributions"][number],
+): FocusedRetrievalAudit["contributions"][number] | null {
+  if (typeof contribution !== "object" || contribution === null ||
+    !exactKeys(contribution, ["contributionScorePicos", "providerLaneId",
+      "providerRank", "queryId", "rawScoreKind", "rawScoreValue"]) ||
+    !Number.isSafeInteger(contribution.contributionScorePicos) ||
+    !rank(contribution.providerRank) || !boundedAuditId(contribution.providerLaneId) ||
+    !boundedAuditId(contribution.queryId) || !rawScoreKind(contribution.rawScoreKind) ||
+    (contribution.rawScoreValue !== null && !finite(contribution.rawScoreValue))) {
+    return null;
+  }
+  return Object.freeze({ ...contribution });
+}
+
+function boundedAuditId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 128;
+}
+
+function exactKeys(value: object, expected: readonly string[]): boolean {
   const keys = Object.keys(value).toSorted();
-  return (keys.length === 1 && keys[0] === "locator") ||
-    (keys.length === 2 && keys[0] === "locator" && keys[1] === "retrievalProvenance");
+  const sortedExpected = [...expected].toSorted();
+  return keys.length === sortedExpected.length &&
+    keys.every((key, index) => key === sortedExpected[index]);
+}
+
+function finite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function rank(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 1;
+}
+
+function rawScoreKind(value: unknown):
+value is FocusedRetrievalAudit["contributions"][number]["rawScoreKind"] {
+  return value === null || value === "bm25" || value === "distance" ||
+    value === "relevance" || value === "similarity";
+}
+
+function isLocatorCandidate(value: FocusedLocatorRetrievalV2Candidate | null):
+value is FocusedLocatorRetrievalV2Candidate {
+  return value !== null;
 }
 
 function sameAuthorization(

@@ -222,7 +222,7 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
       input.authorizationPrincipalRef === undefined) {
       return unavailable();
     }
-    const [current, historical] = await Promise.all([
+    const [currentLane, historicalLane] = await Promise.allSettled([
       this.dependencies.current.retrieve(input),
       this.dependencies.historical.retrieve({
         authorizationPrincipalRef: input.authorizationPrincipalRef,
@@ -233,15 +233,24 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       }),
     ]);
-    if (current.status !== "current" && current.status !== "low_coverage") {
+    input.signal?.throwIfAborted();
+    const current = currentLane.status === "fulfilled"
+      ? currentLane.value
+      : unavailable();
+    const historical = historicalLane.status === "fulfilled"
+      ? historicalLane.value
+      : unavailable();
+    // The local lane owns the bound current authority. Its explicit stale or
+    // pending result cannot be repaired with historical evidence.
+    if (current.status === "stale" || current.status === "pending") {
       return current;
-    }
-    if (historical.status !== "current") {
-      return historical;
     }
     const maximum = Math.min(input.maximumCandidates, 256);
     const currentCandidates = current.status === "current" ? current.candidates : [];
-    const candidates = interleave(currentCandidates, historical.candidates, maximum);
+    const historicalCandidates = historical.status === "current"
+      ? historical.candidates
+      : [];
+    const candidates = interleave(currentCandidates, historicalCandidates, maximum);
     return candidates.length === 0 ? unavailable() : Object.freeze({
       authorityGeneration: current.status === "current"
         ? current.authorityGeneration

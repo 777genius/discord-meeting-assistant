@@ -193,6 +193,18 @@ function currentV2Binding(): QuestionBindingSnapshot {
   };
 }
 
+function currentLocalExactBinding(): QuestionBindingSnapshot {
+  return {
+    ...binding(),
+    bindingProtocolVersion: 2,
+    retrievalBinding: {
+      cutoverEpoch: policy.retrievalAdmission.cutoverEpoch,
+      profileFingerprint: policy.retrievalAdmission.localProfileFingerprint,
+      retrievalPath: "canonical_local_exact_lexical_v1",
+    },
+  };
+}
+
 function indexedAnchorEvidence(indexGeneration = "generation-1") {
   const turns = selectedTurns.map((turn, index) => Object.freeze({
     ...turn,
@@ -460,6 +472,71 @@ describe("persisted focused evidence rehydration", () => {
     expect(fixture.evidence.references).toEqual([references, references]);
     expect(fixture.generator.requests).toEqual([]);
     expect(fixture.generator.generationCalls).toBe(0);
+  });
+});
+
+describe("canonical local-exact evidence preparation", () => {
+  it("processes a full binding without invoking the semantic selector", async () => {
+    let selectorCalls = 0;
+    const fixture = processingFixture(
+      focusedSelector(undefined, () => {selectorCalls += 1;}),
+      currentLocalExactBinding(),
+    );
+    fixture.memory.result = { authorityGeneration: authority.memoryGeneration,
+      candidates: references, schemaVersion: 1, status: "current" };
+    fixture.evidence.hydrated = { binding: authority, status: "current",
+      turns: selectedTurns };
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "answered",
+    });
+    expect(selectorCalls).toBe(0);
+    expect(fixture.evidence.references.slice(0, 2)).toEqual([references, references]);
+    expect(fixture.generator.requests[0]?.plan.evidence).toHaveLength(selectedTurns.length);
+  });
+
+  it("enforces the exact 100-candidate, 10-result, and 16000-byte bounds", async () => {
+    let selectorCalls = 0;
+    const boundedPolicy = { ...policy, retrieval: {
+      maximumCandidates: 256, neighborTurns: policy.retrieval.neighborTurns,
+    } };
+    const fixture = processingFixture(
+      focusedSelector(undefined, () => {selectorCalls += 1;}),
+      currentLocalExactBinding(),
+      boundedPolicy,
+    );
+    const turns = Array.from({ length: 100 }, (_, index) => Object.freeze({
+      endMs: index * 1_000 + 900,
+      speakerId: selectedTurns[0]!.speakerId,
+      startMs: index * 1_000,
+      text: "x".repeat(index < 9 ? 1_600 : index === 9 ? 1_591 : 1),
+      turnHash: index.toString(16).padStart(64, "0"),
+      turnId: `bounded-turn-${String(index).padStart(3, "0")}`,
+    }));
+    const boundedReferences = turns.map(({ turnHash, turnId }) => Object.freeze({
+      meetingId: authority.meetingId, transcriptId: authority.transcriptId,
+      transcriptVersion: authority.transcriptVersion, turnHash, turnId,
+    }));
+    fixture.memory.result = { authorityGeneration: authority.memoryGeneration,
+      candidates: boundedReferences, schemaVersion: 1, status: "current" };
+    fixture.evidence.hydrationResults.push(
+      { binding: authority, status: "current", turns },
+      { binding: authority, status: "current", turns: turns.slice(0, 10) },
+    );
+    fixture.evidence.hydrated = {
+      binding: authority, status: "current", turns: turns.slice(0, 10),
+    };
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "answered",
+    });
+    expect(fixture.memory.calls[0]?.maximumCandidates).toBe(100);
+    expect(fixture.evidence.references[1]).toHaveLength(10);
+    const selected = fixture.generator.requests[0]?.plan.evidence ?? [];
+    expect(selected).toHaveLength(10);
+    expect(new TextEncoder().encode(selected.map(({ text }) => text).join("\n")))
+      .toHaveLength(16_000);
+    expect(selectorCalls).toBe(0);
   });
 });
 

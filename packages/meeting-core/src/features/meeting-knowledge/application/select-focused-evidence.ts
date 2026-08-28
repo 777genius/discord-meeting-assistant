@@ -96,11 +96,10 @@ export async function prepareSelectedFocusedEvidence(input: {
   if (!authorityMatchesBinding(refreshed.binding, input.binding)) {
     return { status: "stale_binding" };
   }
-  if (!focusedHydrationMatchesReferences(
-    input.binding,
-    references,
-    refreshed.turns,
-  )) {
+  const survivors = alignFocusedHydrationSurvivors(
+    input.binding, references, refreshed.turns,
+  );
+  if (survivors === null || survivors.turns.length < 1) {
     return { status: "unavailable" };
   }
   return {
@@ -109,61 +108,10 @@ export async function prepareSelectedFocusedEvidence(input: {
       authorityGeneration: input.authorityGeneration,
       coverage: "sufficient",
       humanActorIds: admittedHumanActors(refreshed),
-      turns: refreshed.turns,
+      turns: survivors.turns,
     }),
     status: "prepared",
   };
-}
-
-/** V2 accepts Infinity's persisted provider order and never invokes the legacy selector. */
-export async function preparePersistedRetrievalV2Evidence(input: {
-  readonly authorityGeneration: string;
-  readonly binding: QuestionBindingSnapshot;
-  readonly evidence: FinalReplyEvidencePort;
-  readonly evidenceByteLimit: number;
-  readonly references: readonly FocusedMemoryReference[];
-  readonly turns: readonly RehydratedEvidenceTurn[];
-}): Promise<SelectedFocusedEvidencePreparation> {
-  const evidenceBytes = new TextEncoder().encode(
-    input.turns.map(({ text }) => text).join("\n"),
-  ).byteLength;
-  if (evidenceBytes < 1 || evidenceBytes > input.evidenceByteLimit) {
-    return { status: "unavailable" };
-  }
-  const refreshed = await input.evidence.rehydrateSelectedEvidence(
-    input.binding,
-    input.references,
-  );
-  if (refreshed.status === "stale") {
-    return { status: "stale_binding" };
-  }
-  if (refreshed.status !== "current") {
-    return { status: "unavailable" };
-  }
-  if (!authorityMatchesBinding(refreshed.binding, input.binding)) {
-    return { status: "stale_binding" };
-  }
-  if (
-    !focusedHydrationMatchesReferences(input.binding, input.references,
-      refreshed.turns)) {
-    return { status: "unavailable" };
-  }
-  const refreshedBytes = new TextEncoder().encode(
-    refreshed.turns.map(({ text }) => text).join("\n"),
-  ).byteLength;
-  if (refreshedBytes !== evidenceBytes || refreshedBytes > input.evidenceByteLimit) {
-    return { status: "unavailable" };
-  }
-  return Object.freeze({
-    authority: refreshed.binding,
-    plan: createFocusedRetrievalGroundingPlan({
-      authorityGeneration: input.authorityGeneration,
-      coverage: "sufficient",
-      humanActorIds: admittedHumanActors(refreshed),
-      turns: refreshed.turns,
-    }),
-    status: "prepared",
-  });
 }
 
 export class SelectFocusedEvidence {
@@ -413,6 +361,29 @@ export function focusedHydrationMatchesReferences(
       turn.source.transcriptVersion === reference.transcriptVersion &&
       turn.source.sourceStartCodePoint === reference.sourceStartCodePoint &&
       turn.source.sourceEndCodePoint === reference.sourceEndCodePoint;
+  });
+}
+
+export function alignFocusedHydrationSurvivors(
+  binding: QuestionBindingSnapshot,
+  references: readonly FocusedMemoryReference[],
+  turns: readonly RehydratedEvidenceTurn[],
+): { readonly references: readonly FocusedMemoryReference[];
+  readonly turns: readonly RehydratedEvidenceTurn[] } | null {
+  const survivingReferences: FocusedMemoryReference[] = [];
+  let turnIndex = 0;
+  for (const reference of references) {
+    const turn = turns[turnIndex];
+    if (turn !== undefined && focusedHydrationMatchesReferences(
+      binding, [reference], [turn],
+    )) {
+      survivingReferences.push(reference);
+      turnIndex += 1;
+    }
+  }
+  return turnIndex !== turns.length ? null : Object.freeze({
+    references: Object.freeze(survivingReferences),
+    turns: Object.freeze([...turns]),
   });
 }
 

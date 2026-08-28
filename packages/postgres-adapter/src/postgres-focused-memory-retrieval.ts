@@ -1,5 +1,6 @@
 import {
   type CanonicalEvidenceTurn,
+  compareRetrievalV2Utf8,
   type FocusedMemoryReference,
   type FocusedMemoryRetrievalPort,
   type FocusedMemoryRetrievalResult,
@@ -74,7 +75,7 @@ const ignoredQueryTerms = new Set([
 ]);
 
 function searchableTerms(value: string): ReadonlySet<string> {
-  const tokens = value.normalize("NFKC").toLocaleLowerCase()
+  const tokens = value.normalize("NFKC").toLowerCase()
     .match(/[\p{L}\p{N}]{3,}/gu) ?? [];
   return new Set(tokens);
 }
@@ -103,7 +104,7 @@ function exactLexicalMatches(
       right.matchedTerms - left.matchedTerms ||
       left.turn.startMs - right.turn.startMs ||
       left.turn.endMs - right.turn.endMs ||
-      left.turn.turnId.localeCompare(right.turn.turnId)
+      compareRetrievalV2Utf8(left.turn.turnId, right.turn.turnId)
     );
 }
 
@@ -111,25 +112,45 @@ function selectExactLexicalTurns(
   matches: readonly ExactLexicalMatch[],
   maximumCandidates: number,
 ): readonly ExactLexicalMatch[] {
-  const selected: ExactLexicalMatch[] = [];
-  const speakerBuckets = new Set<string>();
-  const timeBuckets = new Set<number>();
+  const speakerOrder: string[] = [];
+  const bySpeaker = new Map<string, Map<number, ExactLexicalMatch[]>>();
   for (const match of matches) {
+    let buckets = bySpeaker.get(match.turn.speakerId);
+    if (buckets === undefined) {
+      buckets = new Map();
+      bySpeaker.set(match.turn.speakerId, buckets);
+      speakerOrder.push(match.turn.speakerId);
+    }
     const timeBucket = Math.floor(match.turn.startMs / 60_000);
-    if (!speakerBuckets.has(match.turn.speakerId) || !timeBuckets.has(timeBucket)) {
-      selected.push(match);
-      speakerBuckets.add(match.turn.speakerId);
-      timeBuckets.add(timeBucket);
-    }
-    if (selected.length === maximumCandidates) {
-      return Object.freeze(selected);
-    }
+    buckets.set(timeBucket, [...(buckets.get(timeBucket) ?? []), match]);
   }
-  for (const match of matches) {
-    if (!selected.includes(match)) {
-      selected.push(match);
+  const selected: ExactLexicalMatch[] = [];
+  const nextBucket = new Map<string, number>();
+  while (selected.length < maximumCandidates) {
+    let progressed = false;
+    for (const speakerId of speakerOrder) {
+      const buckets = bySpeaker.get(speakerId);
+      if (buckets === undefined) {
+        continue;
+      }
+      const bucketOrder = [...buckets.keys()];
+      const start = nextBucket.get(speakerId) ?? 0;
+      for (let offset = 0; offset < bucketOrder.length; offset += 1) {
+        const index = (start + offset) % bucketOrder.length;
+        const bucket = buckets.get(bucketOrder[index]!);
+        const match = bucket?.shift();
+        if (match !== undefined) {
+          selected.push(match);
+          nextBucket.set(speakerId, (index + 1) % bucketOrder.length);
+          progressed = true;
+          break;
+        }
+      }
+      if (selected.length === maximumCandidates) {
+        break;
+      }
     }
-    if (selected.length === maximumCandidates) {
+    if (!progressed) {
       break;
     }
   }

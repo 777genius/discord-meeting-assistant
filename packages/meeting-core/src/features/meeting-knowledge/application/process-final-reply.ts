@@ -26,7 +26,7 @@ import {
   type FinalReplyJobResult,
 } from "./publish-final-reply.js";
 import {
-  focusedHydrationMatchesReferences,
+  alignFocusedHydrationSurvivors,
   type SelectFocusedEvidence,
 } from "./select-focused-evidence.js";
 import { focusedMemoryRequest, isComposedLocalBinding,
@@ -241,11 +241,10 @@ export class ProcessFinalReplyJob {
     if (!authorityMatchesBinding(hydrated.binding, binding)) {
       return this.settled(await this.publisher.settle(lease, "stale_binding"));
     }
-    if (!focusedHydrationMatchesReferences(
-      binding,
-      hydrationReferences,
-      hydrated.turns,
-    )) {
+    const hydrationSurvivors = alignFocusedHydrationSurvivors(
+      binding, hydrationReferences, hydrated.turns,
+    );
+    if (!hasHydrationSurvivors(hydrationSurvivors)) {
       return this.settled(await this.publisher.publishFixed(
         lease,
         current.binding,
@@ -282,11 +281,11 @@ export class ProcessFinalReplyJob {
         authorityGeneration: retrieval.authorityGeneration,
         binding,
         evidence: this.input.evidence,
-        hydrationReferences,
+        hydrationReferences: hydrationSurvivors.references,
         providerAttemptId,
         question: lease.questionText,
         selector: this.input.selector,
-        turns: hydrated.turns,
+        turns: hydrationSurvivors.turns,
       });
       if (prepared.status === "prepared") {
         return { ...prepared, providerAttemptId };
@@ -344,4 +343,10 @@ export class ProcessFinalReplyJob {
   private settled(result: FinalReplyJobResult): GroundingPreparation {
     return { result, status: "settled" };
   }
+}
+
+function hasHydrationSurvivors(
+  value: ReturnType<typeof alignFocusedHydrationSurvivors>,
+): value is NonNullable<ReturnType<typeof alignFocusedHydrationSurvivors>> {
+  return value !== null && value.turns.length > 0;
 }

@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   HistoricalFocusedLocatorRetrievalV2,
-  PersistedFocusedMemoryRetrievalV2,
   PrepareFocusedLocatorRetrievalV2Request,
   buildHistoricalIndexPlan,
   type FocusedLocatorRetrievalV2Port,
@@ -30,6 +29,21 @@ const identitySkeletons = Object.freeze({
     return Object.freeze({ canonical, certainty: "certain" as const, skeleton: canonical });
   },
 });
+
+function providerCandidate(locator: string, providerRank = 1) {
+  return Object.freeze({
+    locator,
+    retrievalProvenance: Object.freeze({
+      contributions: Object.freeze([Object.freeze({
+        contributionScorePicos: 500_000, providerLaneId: "postgres_keyword",
+        providerRank, queryId: "original-question",
+        rawScoreKind: "bm25" as const,
+        rawScoreValue: 2.5,
+      })]),
+      fusedScore: 0.5, providerRank,
+    }),
+  });
+}
 
 function markerTurn(marker: string) {
   return [{
@@ -208,6 +222,7 @@ describe("persisted focused locator Retrieval V2 request", () => {
         threadId: null,
       });
       expect(request?.budgets).toMatchObject({
+        candidateLimit: 100,
         evidenceByteLimit: 16_000,
         neighborRadius: 0,
         resultLimit: 10,
@@ -605,7 +620,7 @@ describe("focused locator Retrieval V2 privacy and serving authority continuatio
       throw new Error("missing guarded retrieval fixture");
     }
     const retrieve = vi.fn<FocusedLocatorRetrievalV2Port["retrieve"]>(async () => ({
-      candidates: [{ locator }], status: "available",
+      candidates: [providerCandidate(locator)], status: "available",
     }));
     const result = await new HistoricalFocusedLocatorRetrievalV2({
       authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
@@ -621,57 +636,6 @@ describe("focused locator Retrieval V2 privacy and serving authority continuatio
 });
 
 describe("focused locator Retrieval V2 rehydration", () => {
-  it("rehydrates an indexed current meeting under its exact persisted generation", async () => {
-    const { meeting, plan, prepare, store } = fixture();
-    const request = await prepare.prepare({ currentMeetingId: meeting.binding.meetingId,
-      question: "Что решили?", roomId: "room-1", scopeId: "scope-1" });
-    const locator = plan.documents[0]?.manifest.candidateLocator;
-    if (request === null || locator === undefined) {
-      throw new Error("missing indexed-current fixture");
-    }
-    const result = await new HistoricalFocusedLocatorRetrievalV2({
-      authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
-      retrieval: { retrieve: async () => ({
-        candidates: [{ locator }], status: "available",
-      }) },
-      store,
-      turnHashes: { hash: ({ turnId }) => `hash:${turnId}` },
-    }).retrieve({ authorizationPrincipalRef: "principal",
-      currentMeetingId: meeting.binding.meetingId, request, roomId: "room-1",
-      scopeId: "scope-1" });
-
-    expect(result).toMatchObject({ status: "current" });
-  });
-
-  it("deduplicates indexed current evidence against canonical local hydration", async () => {
-    const duplicate = Object.freeze({ meetingId: "current-meeting",
-      transcriptId: "transcript-current", transcriptVersion: 1,
-      turnHash: "a".repeat(64), turnId: "turn-current" });
-    const memory = new PersistedFocusedMemoryRetrievalV2({
-      current: { retrieve: async () => ({ authorityGeneration: "current-generation",
-        candidates: [duplicate], schemaVersion: 1, status: "current" }) },
-      historical: { retrieve: async () => ({ authorityGeneration: "historical-generation",
-        candidates: [{ ...duplicate, historicalSource: { candidateLocator: "locator-current",
-          indexGeneration: "index-current", releaseId: "release-current" } }],
-        schemaVersion: 1, status: "current" }), reauthorizeRoom: async () => true } as
-        unknown as HistoricalFocusedLocatorRetrievalV2,
-    });
-
-    const result = await memory.retrieve({ authorizationPrincipalRef: "principal",
-      canonicalEvidenceHash: "b".repeat(64), expectedAuthorityGeneration: "current-generation",
-      finalProjectionReceipt: "receipt", maximumCandidates: 10,
-      meetingId: duplicate.meetingId, meetingRevision: 1, neighborTurns: 0,
-      projectionTargetContainerId: "container", question: "What changed?",
-      retrievalBinding: { cutoverEpoch: "epoch", profileFingerprint: "c".repeat(64),
-        request: (await prepareRequestForComposite()), retrievalPath: "infinity_locator_v2" },
-      roomId: "room-1", scopeId: "scope-1", transcriptId: duplicate.transcriptId,
-      transcriptVersion: duplicate.transcriptVersion });
-
-    expect(result).toMatchObject({ status: "current" });
-    if (result.status === "current") {
-      expect(result.candidates).toEqual([duplicate]);
-    }
-  });
   it("returns only canonical local references in provider order", async () => {
     const { meeting, plan, prepare, store } = fixture();
     const request = await prepare.prepare({
@@ -689,7 +653,7 @@ describe("focused locator Retrieval V2 rehydration", () => {
     }
     const retrieval: FocusedLocatorRetrievalV2Port = {
       retrieve: vi.fn().mockResolvedValue({
-        candidates: [{ locator }],
+        candidates: [providerCandidate(locator)],
         status: "available",
       }),
     };
@@ -736,7 +700,7 @@ describe("focused locator Retrieval V2 rehydration", () => {
     const result = await new HistoricalFocusedLocatorRetrievalV2({
       authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
       retrieval: { retrieve: async () => ({
-        candidates: [{ locator, [field]: value }],
+        candidates: [{ ...providerCandidate(locator), [field]: value }],
         status: "available",
       }) },
       store,
@@ -763,7 +727,7 @@ describe("focused locator Retrieval V2 rehydration", () => {
     const result = await new HistoricalFocusedLocatorRetrievalV2({
       authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
       retrieval: { retrieve: async () => ({
-        candidates: [{ locator }],
+        candidates: [providerCandidate(locator)],
         status: "available",
       }) },
       store: duplicatedStore,
@@ -792,7 +756,7 @@ describe("focused locator Retrieval V2 rehydration", () => {
           authority: authority(meeting), authorization: authorized, ids: new TestIds(),
           retrieval: { retrieve: async (_request, options) => {
             options?.signal?.throwIfAborted();
-            return { candidates: [{ locator: candidateLocator }], status: "available" };
+            return { candidates: [providerCandidate(candidateLocator)], status: "available" };
           } },
           store,
           turnHashes: { hash: ({ turnId }) => `hash:${turnId}` },
@@ -825,14 +789,6 @@ describe("focused locator Retrieval V2 rehydration", () => {
         scopeId: "scope-1", signal: controller.signal })).rejects.toThrow("cancelled");
     });
 });
-
-async function prepareRequestForComposite() {
-  const { prepare } = fixture();
-  const request = await prepare.prepare({ currentMeetingId: "current-meeting",
-    question: "What changed?", roomId: "room-1", scopeId: "scope-1" });
-  if (request === null) {throw new Error("missing composite request");}
-  return request;
-}
 
 function authority(meeting: ReturnType<typeof makeMeeting>): HistoricalEvidenceAuthority {
   return { loadAcceptedFinalMeeting: async (binding) =>
