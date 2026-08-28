@@ -434,6 +434,28 @@ describe("PostgreSQL focused candidate hydration isolation", () => {
 });
 
 describe("PostgreSQL bounded canonical exact lexical fallback", () => {
+  it("reapplies canonical speaker and relative-time boundaries before returning locators",
+    async () => {
+      const snapshot = twoHourSnapshot(8, (index) => ({
+        endMs: index * 60_000 + 1_000,
+        speakerId: index % 2 === 0 ? "speaker-a" : "speaker-b",
+        startMs: index * 60_000,
+        text: index === 3 ? "Атлас Atlas решение decision" : "Atlas decision detail",
+        turnId: `turn-${String(index).padStart(4, "0")}`,
+      }));
+      const { input } = retrievalInput(snapshot, "Atlas decision решение");
+      const result = await new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
+        .retrieve({ ...input, hardFilters: {
+          relativeTimeInterval: { endMs: 241_000, startMs: 179_000 },
+          requiresSpeakerMatch: true,
+          speakerIds: ["speaker-b"],
+        }, maximumCandidates: 4 });
+
+      expect(result.status === "current"
+        ? result.candidates.map(({ turnId }) => turnId) : [])
+        .toEqual(["turn-0003"]);
+    });
+
   it("round-robins speakers even when one speaker matches across many time buckets",
     async () => {
       const snapshot = twoHourSnapshot(8, (index) => ({

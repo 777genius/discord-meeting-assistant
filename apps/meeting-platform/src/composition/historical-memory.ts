@@ -264,11 +264,10 @@ export function createPlatformHistoricalMemory(
   let searchQualified = false;
   const servingAuthorized = (): boolean => config.activation.searchEnabled && searchQualified;
   const { retrievalV2, twoHourProfile } = createInfinityRetrievalV2Composition(
-    input.config,
-    input.pool,
-    token,
-    historicalIds,
-    { actorReferences, identitySkeletons, servingAuthorized, speakerAliases },
+    input.config, input.pool, token, historicalIds, {
+      actorKeysForSpeaker: (speakerId) => actorKeys.actorKeysForFilter(speakerId),
+      actorReferences, identitySkeletons, servingAuthorized, speakerAliases,
+    },
   );
   const memory = new InfinityContextHistoricalMemoryAdapter({
     actorKeys,

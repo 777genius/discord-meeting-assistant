@@ -305,6 +305,7 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       turns: hydrated.turns,
     });
     expect(await jobs.persistGroundingPlan({
+      binding,
       generation: lease.generation,
       jobId: lease.jobId,
       measurement: { inputTokens: 1_000, requestBytes: 4_000 },

@@ -1,4 +1,6 @@
 import type {
+  FocusedMemoryReference,
+  GroundingPlan,
   QuestionJobLease,
   QuestionJobStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
@@ -15,6 +17,7 @@ import {
   questionPolicyParameters,
 } from "./postgres-question-policy-transaction.js";
 import { PostgresQuestionProviderAttemptStore } from "./postgres-question-provider-attempt-store.js";
+import { PostgresFinalReplyEvidence } from "./postgres-final-reply-evidence.js";
 
 export class PostgresQuestionJobStore implements QuestionJobStore {
   private readonly leases: PostgresQuestionJobLeaseStore;
@@ -61,8 +64,17 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   public async persistGroundingPlan(
     input: Parameters<QuestionJobStore["persistGroundingPlan"]>[0],
   ): Promise<boolean> {
-    return this.policyTransaction.execute(false, async (client) => {
+    return this.policyTransaction.executeConsistent(false, async (client) => {
       await lockMeetingKnowledgeSources(client, input.sourceMeetingIds);
+      if ("bindingProtocolVersion" in input.binding) {
+        const evidence = new PostgresFinalReplyEvidence(
+          client as unknown as Pool,
+          input.binding.botApplicationIdentity,
+        );
+        if (!await exactPlanEvidenceIsCurrent(evidence, input.binding, input.plan)) {
+          return false;
+        }
+      }
       const result = await client.query(
         `
           WITH source_fence AS (
@@ -81,6 +93,8 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
             AND generation = $2
             AND state = 'running'
             AND lease_until > transaction_timestamp()
+            AND expires_at > transaction_timestamp()
+            AND binding = $10::jsonb
             AND NOT EXISTS (
               SELECT 1 FROM source_fence WHERE operation = 'delete_meeting'
             )
@@ -103,6 +117,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           input.runtimeProfile,
           input.sourceMeetingIds,
           ...questionPolicyParameters(this.policyTransaction.identity),
+          JSON.stringify(input.binding),
         ],
       );
       return result.rowCount === 1;
@@ -249,4 +264,53 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
     );
     return result.rowCount === 1;
   }
+}
+
+function planReferences(plan: GroundingPlan, binding: Parameters<
+  PostgresFinalReplyEvidence["rehydrateSelectedEvidence"]
+>[0]): readonly FocusedMemoryReference[] {
+  return Object.freeze(plan.evidence.map(({ retrievalAudit, source, turnHash, turnId }) =>
+    Object.freeze({
+      ...(source?.historicalSource === undefined
+        ? {} : { historicalSource: source.historicalSource }),
+      meetingId: source?.meetingId ?? binding.meetingId,
+      ...(retrievalAudit === undefined ? {} : { retrievalAudit }),
+      ...(source?.sourceEndCodePoint === undefined ? {} : {
+        sourceEndCodePoint: source.sourceEndCodePoint,
+        sourceStartCodePoint: source.sourceStartCodePoint,
+      }),
+      transcriptId: source?.transcriptId ?? binding.transcriptId,
+      transcriptVersion: source?.transcriptVersion ?? binding.transcriptVersion,
+      turnHash,
+      turnId,
+    })
+  ));
+}
+
+async function exactPlanEvidenceIsCurrent(
+  evidence: PostgresFinalReplyEvidence,
+  binding: Parameters<PostgresFinalReplyEvidence["recheckCurrentBinding"]>[0],
+  plan: GroundingPlan,
+): Promise<boolean> {
+  if (plan.evidence.length === 0) {
+    return (await evidence.recheckCurrentBinding(binding)).status === "current";
+  }
+  const hydrated = await evidence.rehydrateSelectedEvidence(
+    binding,
+    planReferences(plan, binding),
+  );
+  return hydrated.status === "current" &&
+    hydrated.turns.length === plan.evidence.length &&
+    hydrated.turns.every((turn, index) => {
+      const persisted = plan.evidence[index];
+      return persisted !== undefined &&
+        persisted.turnId === turn.turnId &&
+        persisted.turnHash === turn.turnHash &&
+        persisted.speakerId === turn.speakerId &&
+        persisted.startMs === turn.startMs && persisted.endMs === turn.endMs &&
+        persisted.text === turn.text &&
+        JSON.stringify(persisted.source) === JSON.stringify(turn.source) &&
+        JSON.stringify(persisted.retrievalAudit) ===
+          JSON.stringify(turn.retrievalAudit);
+    });
 }

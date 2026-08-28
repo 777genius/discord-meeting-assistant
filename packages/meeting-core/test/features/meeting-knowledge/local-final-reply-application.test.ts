@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import {
   AdmitCurrentFinalReply,
   ProcessFinalReplyJob,
@@ -19,7 +18,6 @@ import {
   type QuestionAdmissionCommitPort,
   type QuestionBindingSnapshot,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-
 import {
   authorizationPolicyVersion,
   authority,
@@ -58,7 +56,6 @@ const policy: LocalFinalReplyPolicy = {
     localProfileFingerprint: "f".repeat(64),
   },
 };
-
 const renderer: FinalReplyRendererPort = {
   renderAnswer: ({ answer, evidence, maximumCharacters }) => {
     const evidenceById = new Map(evidence.map((item) => [item.evidenceId, item]));
@@ -97,13 +94,11 @@ class ExhaustiveMemoryFake implements ExhaustiveMemoryRetrievalPort {
       status: "current" as const,
     });
   }
-
   public recheck(): Promise<boolean> {
     this.rechecks += 1;
     return Promise.resolve(true);
   }
 }
-
 class AdmissionFake implements QuestionAdmissionCommitPort {
   commits: Parameters<QuestionAdmissionCommitPort["commit"]>[0][] = [];
   result: Awaited<ReturnType<QuestionAdmissionCommitPort["commit"]>> = {
@@ -114,7 +109,6 @@ class AdmissionFake implements QuestionAdmissionCommitPort {
     this.commits.push(input);
     return Promise.resolve(this.result);
   }
-
   withdrawProjection(): Promise<readonly string[]> {
     return Promise.resolve([]);
   }
@@ -123,9 +117,8 @@ class AdmissionFake implements QuestionAdmissionCommitPort {
 function admissionWithRollout(admissions: AdmissionFake,
   retrievalAdmission: LocalFinalReplyPolicy["retrievalAdmission"]) {
   return new AdmitCurrentFinalReply(new EvidenceFake(), new AuthorizationFake(),
-    admissions, { ...policy, retrievalAdmission }, {
-      prepare: () => Promise.resolve(retrievalV2Request),
-    });
+    admissions, { ...policy, retrievalAdmission }, { retrievalV2Admission: {
+      prepare: () => Promise.resolve(retrievalV2Request) } });
 }
 
 class GeneratorFake implements GroundedAnswerGenerator {
@@ -185,7 +178,8 @@ describe("AdmitCurrentFinalReply", () => {
     const authorization = new AuthorizationFake();
     const admissions = new AdmissionFake();
     const useCase = new AdmitCurrentFinalReply(evidence, authorization, admissions,
-      policy, { prepare: () => Promise.resolve(retrievalV2Request) });
+      policy, { retrievalV2Admission: {
+        prepare: () => Promise.resolve(retrievalV2Request) } });
 
     await expect(useCase.execute({
       authorizationPrincipalRef: "principal:v1:opaque",
@@ -237,11 +231,11 @@ describe("AdmitCurrentFinalReply", () => {
     };
     await first.execute({ ...base, questionId: "question-1" });
     await rollback.execute({ ...base, questionId: "question-2" });
-    expect(firstAdmissions.commits[0]?.binding.retrievalBinding).toEqual({
+    expect(firstAdmissions.commits[0]?.binding.retrievalBinding).toMatchObject({
       cutoverEpoch: "test-cutover-r1", profileFingerprint: "e".repeat(64),
       request: retrievalV2Request, retrievalPath: "infinity_locator_v2",
     });
-    expect(rollbackAdmissions.commits[0]?.binding.retrievalBinding).toEqual({
+    expect(rollbackAdmissions.commits[0]?.binding.retrievalBinding).toMatchObject({
       cutoverEpoch: "next-epoch-r2", profileFingerprint: "e".repeat(64),
       request: retrievalV2Request, retrievalPath: "infinity_locator_v2",
     });
@@ -469,9 +463,7 @@ async function executeFocusedPlanFixture() {
 
   await expect(processor.executeOnce()).resolves.toMatchObject({ outcome: "answered" });
   const plan = generator.requests[0]?.plan;
-  if (plan === undefined) {
-    throw new Error("focused fixture produced no grounding plan");
-  }
+  if (plan === undefined) {throw new Error("focused fixture produced no grounding plan");}
   return plan;
 }
 
@@ -548,9 +540,7 @@ describe("ProcessFinalReplyJob answer generation", () => {
   it("uses checkpointed every-block coverage and rechecks it before an exhaustive answer", async () => {
     const exhaustive = new ExhaustiveMemoryFake();
     const { generator, jobs, memory, processor } = processingFixture(exhaustive);
-    if (jobs.lease === null) {
-      throw new Error("fixture lease is missing");
-    }
+    if (jobs.lease === null) {throw new Error("fixture lease is missing");}
     jobs.lease = {
       ...jobs.lease,
       questionText: "List every release-date decision",
@@ -669,11 +659,15 @@ describe("ProcessFinalReplyJob answer generation", () => {
     expect(jobs.providerReservations).toHaveLength(1);
   });
 
+  it("blocks provider input when the atomic evidence fence sees supersession", async () => {
+    const { generator, jobs, processor } = processingFixture(); jobs.groundingFenceResult = false;
+    await expect(processor.executeOnce()).resolves.toMatchObject({ status: "stale_generation" });
+    expect([jobs.plans.length, generator.generationCalls]).toEqual([1, 0]);
+  });
+
   it("enforces the provider-attempt maximum before calling the provider", async () => {
     const { generator, jobs, processor } = processingFixture();
-    if (jobs.lease === null) {
-      throw new Error("fixture lease is missing");
-    }
+    if (jobs.lease === null) {throw new Error("fixture lease is missing");}
     jobs.lease = { ...jobs.lease, attempts: policy.maximumProviderAttempts };
 
     await expect(processor.executeOnce()).resolves.toMatchObject(

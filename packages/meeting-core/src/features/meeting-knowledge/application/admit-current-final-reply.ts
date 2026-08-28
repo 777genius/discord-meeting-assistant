@@ -6,6 +6,9 @@ import {
 import { QuestionBinding } from "../domain/question-job.js";
 import { selectRetrievalBinding } from
   "../domain/retrieval-admission.js";
+import { relativeTimeFilter } from "./focused-locator-retrieval-v2-query.js";
+import { resolveRequestedSpeakerIds, type IdentitySkeletonPortV1,
+  type SpeakerAliasMapV1 } from "./speaker-alias-resolution.js";
 import type {
   FinalReplyEvidencePort,
   FocusedLocatorRetrievalV2AdmissionPort,
@@ -44,6 +47,14 @@ export interface AdmitCurrentFinalReplyInput {
   readonly scopeId: string;
 }
 
+export interface CurrentFinalReplyRetrievalOptions {
+  readonly canonicalSpeakerFilters?: {
+    readonly aliases: SpeakerAliasMapV1;
+    readonly identitySkeletons?: IdentitySkeletonPortV1;
+  };
+  readonly retrievalV2Admission?: FocusedLocatorRetrievalV2AdmissionPort;
+}
+
 function authorizedForBinding(
   observation: QuestionAuthorizationObservation,
   binding: Awaited<ReturnType<FinalReplyEvidencePort["findCurrentBinding"]>>,
@@ -61,13 +72,22 @@ function authorizedForBinding(
 }
 
 export class AdmitCurrentFinalReply {
+  private readonly canonicalSpeakerFilters?: CurrentFinalReplyRetrievalOptions[
+    "canonicalSpeakerFilters"
+  ];
+  private readonly retrievalV2Admission: FocusedLocatorRetrievalV2AdmissionPort |
+    undefined;
+
   public constructor(
     private readonly evidence: FinalReplyEvidencePort,
     private readonly authorization: QuestionAuthorizationPort,
     private readonly admissions: QuestionAdmissionCommitPort,
     private readonly policy: LocalFinalReplyPolicy,
-    private readonly retrievalV2Admission?: FocusedLocatorRetrievalV2AdmissionPort,
-  ) {}
+    options: CurrentFinalReplyRetrievalOptions = {},
+  ) {
+    this.canonicalSpeakerFilters = options.canonicalSpeakerFilters;
+    this.retrievalV2Admission = options.retrievalV2Admission;
+  }
 
   public async execute(
     input: AdmitCurrentFinalReplyInput,
@@ -131,6 +151,21 @@ export class AdmitCurrentFinalReply {
       roomId: current.roomId,
       scopeId: current.scopeId,
     });
+    const aliasSpeakerIds = resolveRequestedSpeakerIds(
+      questionText,
+      this.canonicalSpeakerFilters?.aliases,
+      this.canonicalSpeakerFilters?.identitySkeletons,
+    );
+    const directlyRequestedSpeakerIds = current.humanActorIds.filter((actorId) =>
+      questionText.includes(actorId) || questionText.includes(`<@${actorId}>`) ||
+      questionText.includes(`<@!${actorId}>`)
+    );
+    const requestedSpeakerIds = current.humanActorIds.filter((actorId) =>
+      aliasSpeakerIds.has(actorId) || directlyRequestedSpeakerIds.includes(actorId)
+    );
+    const requiresSpeakerMatch = aliasSpeakerIds.size > 0 ||
+      directlyRequestedSpeakerIds.length > 0 ||
+      (retrievalV2Request?.filters.actorKeys.length ?? 0) > 0;
     const binding = QuestionBinding.create({
       authorizationDigest: authorization.digest,
       authorizationPolicyVersion: authorization.policyVersion,
@@ -152,6 +187,11 @@ export class AdmitCurrentFinalReply {
       questionId,
       requesterSubject,
       retrievalBinding: selectRetrievalBinding({
+        canonicalEvidenceFilters: Object.freeze({
+          relativeTimeInterval: relativeTimeFilter(questionText),
+          requiresSpeakerMatch,
+          speakerIds: Object.freeze(requestedSpeakerIds),
+        }),
         questionId,
         retrievalV2Request: retrievalV2Request ?? null,
         rollout: this.policy.retrievalAdmission,

@@ -9,6 +9,7 @@ import type {
 export class QuestionJobStoreFake implements QuestionJobStore {
   public activeLeaseResults: boolean[] = [];
   public plans: Parameters<QuestionJobStore["persistGroundingPlan"]>[0][] = [];
+  public groundingFenceResult = true;
   public providerReservations:
     Parameters<QuestionJobStore["reserveProviderAttempt"]>[0][] = [];
   public providerCompletions:
@@ -60,7 +61,7 @@ export class QuestionJobStoreFake implements QuestionJobStore {
     input: Parameters<QuestionJobStore["persistGroundingPlan"]>[0],
   ): Promise<boolean> {
     this.plans.push(input);
-    return Promise.resolve(true);
+    return Promise.resolve(this.groundingFenceResult);
   }
 
   public settle(input: Parameters<QuestionJobStore["settle"]>[0]): Promise<boolean> {

@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-
 import {
   HistoricalFocusedLocatorRetrievalV2,
   PrepareFocusedLocatorRetrievalV2Request,
@@ -9,10 +8,8 @@ import {
   type HistoricalEvidenceAuthority,
   type HistoricalOpaqueIdPort,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-
 import { AppliedStore, TestIds, makeMeeting } from
   "../../fixtures/historical-retrieval-fixtures.js";
-
 const providerBinding = Object.freeze({
   capabilityFingerprint: "3".repeat(64),
   contractVersion: "context-retrieval.v2" as const,
@@ -22,7 +19,6 @@ const providerBinding = Object.freeze({
   requiredProviderLanes: Object.freeze(["postgres_keyword", "qdrant_dense"]),
   serviceRevision: "4".repeat(40),
 });
-
 const identitySkeletons = Object.freeze({
   skeleton: (value: string) => {
     const canonical = value.normalize("NFKC").toLocaleLowerCase("und");
@@ -34,13 +30,15 @@ function providerCandidate(locator: string, providerRank = 1) {
   return Object.freeze({
     locator,
     retrievalProvenance: Object.freeze({
+      capabilityFingerprint: providerBinding.capabilityFingerprint,
       contributions: Object.freeze([Object.freeze({
         contributionScorePicos: 500_000, providerLaneId: "postgres_keyword",
         providerRank, queryId: "original-question",
         rawScoreKind: "bm25" as const,
         rawScoreValue: 2.5,
       })]),
-      fusedScore: 0.5, providerRank,
+      fusedScore: 0.5, locator, profileId: providerBinding.profileId, providerRank,
+      requestDigest: "5".repeat(64), responseDigest: "6".repeat(64),
     }),
   });
 }
@@ -80,6 +78,25 @@ function fixture() {
 }
 
 describe("persisted focused locator Retrieval V2 request", () => {
+  it("fails closed when source enumeration changes across the bounded admission snapshot",
+    async () => {
+      const firstMeeting = makeMeeting({ meetingId: "source-a", turns: markerTurn("a") });
+      const secondMeeting = makeMeeting({ meetingId: "source-b", turns: markerTurn("b") });
+      const first = { binding: firstMeeting.binding,
+        plan: buildHistoricalIndexPlan(firstMeeting, new TestIds()), remoteDocumentIds: {} };
+      const second = { binding: secondMeeting.binding,
+        plan: buildHistoricalIndexPlan(secondMeeting, new TestIds()), remoteDocumentIds: {} };
+      const store = new AppliedStore([first]);
+      vi.spyOn(store, "listCurrentRoomPlans")
+        .mockResolvedValueOnce([first])
+        .mockResolvedValueOnce([first, second]);
+
+      await expect(new PrepareFocusedLocatorRetrievalV2Request({
+        ids: new TestIds(), providerBinding, store,
+      }).prepare({ currentMeetingId: "current-meeting", question: "What changed?",
+        roomId: "room-1", scopeId: "scope-1" })).resolves.toBeNull();
+    });
+
   it("orders base64url-like source identities by UTF-8 bytes", async () => {
     const identities = ["A", "a", "_", "-"];
     expect(identities.toSorted((left, right) => left.localeCompare(right)))
@@ -636,6 +653,39 @@ describe("focused locator Retrieval V2 privacy and serving authority continuatio
 });
 
 describe("focused locator Retrieval V2 rehydration", () => {
+  it("reapplies speaker and relative-time filters to multilingual canonical turns", async () => {
+    const meeting = makeMeeting({ meetingId: "filtered-historical", turns: [{
+      endMs: 11_000, speakerId: "opaque-vlad", startMs: 10_000,
+      text: "Влад подтвердил ранний запуск", turnId: "turn-vlad-early" }, {
+      endMs: 13_000, speakerId: "opaque-anna", startMs: 12_000,
+      text: "Anna discussed an unrelated early budget", turnId: "turn-anna-early" }, {
+      endMs: 501_000, speakerId: "opaque-vlad", startMs: 500_000,
+      text: "Vlad changed a later detail", turnId: "turn-vlad-late",
+    }] });
+    const plan = buildHistoricalIndexPlan(meeting, new TestIds()), store = new AppliedStore([{ binding: meeting.binding, plan, remoteDocumentIds: {} }]);
+    const prepared = await new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(), providerBinding, store }).prepare({
+      currentMeetingId: "current-meeting", question: "launch budget",
+      roomId: "room-1", scopeId: "scope-1" });
+    const locator = plan.documents[0]?.manifest.candidateLocator; if (prepared === null || locator === undefined) {throw new Error("missing filter fixture");}
+    const request = Object.freeze({ ...prepared, filters: Object.freeze({
+      ...prepared.filters,
+      actorKeys: Object.freeze(["opaque-vlad"]),
+      relativeTimeInterval: Object.freeze({ endMs: 100_000, startMs: 0 }),
+    }) });
+    const result = await new HistoricalFocusedLocatorRetrievalV2({
+      actorKeysForSpeaker: (speakerId) => [speakerId],
+      authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
+      retrieval: { retrieve: async () => ({
+        candidates: [providerCandidate(locator)], status: "available",
+      }) }, store, turnHashes: { hash: ({ turnId }) => `hash:${turnId}` },
+    }).retrieve({ authorizationPrincipalRef: "principal", currentMeetingId: "current-meeting",
+      request, roomId: "room-1", scopeId: "scope-1" });
+    expect(result.status === "current"
+      ? result.candidates.map(({ turnId }) => turnId) : [])
+      .toEqual(["turn-vlad-early"]);
+  });
+
   it("returns only canonical local references in provider order", async () => {
     const { meeting, plan, prepare, store } = fixture();
     const request = await prepare.prepare({
@@ -659,6 +709,8 @@ describe("focused locator Retrieval V2 rehydration", () => {
     };
     const useCase = new HistoricalFocusedLocatorRetrievalV2({
       authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
+      actorKeysForSpeaker: (speakerId) => speakerId === "opaque-vlad"
+        ? ["opaque-vlad"] : [],
       retrieval, store, turnHashes: { hash: ({ turnId }) => `hash:${turnId}` },
     });
     const result = await useCase.retrieve({

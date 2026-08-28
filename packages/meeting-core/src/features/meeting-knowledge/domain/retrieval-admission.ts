@@ -71,7 +71,16 @@ export interface FocusedLocatorRetrievalV2RequestSnapshot {
 export type RetrievalPath = "canonical_local_exact_lexical_v1" |
   "infinity_locator_v1" | "infinity_locator_v2" | "legacy_downstream_v1";
 
-export type RetrievalBindingSnapshot =
+export interface CanonicalEvidenceFiltersSnapshot {
+  readonly relativeTimeInterval: {
+    readonly endMs: number;
+    readonly startMs: number;
+  } | null;
+  readonly requiresSpeakerMatch: boolean;
+  readonly speakerIds: readonly string[];
+}
+
+type RetrievalBindingPathSnapshot =
   | {
       readonly cutoverEpoch: string;
       readonly profileFingerprint: string;
@@ -93,6 +102,11 @@ export type RetrievalBindingSnapshot =
       readonly profileFingerprint: string;
       readonly retrievalPath: "canonical_local_exact_lexical_v1";
     };
+
+export type RetrievalBindingSnapshot = RetrievalBindingPathSnapshot & {
+  /** Canonical post-hydration filters sealed with newly admitted protocol-2 jobs. */
+  readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot;
+};
 
 export interface RetrievalAdmissionRollout {
   readonly cutoverEpoch: string;
@@ -130,12 +144,18 @@ function requireCutoverEpoch(value: string): string {
 }
 
 export class RetrievalBinding {
+  public readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot;
   public readonly cutoverEpoch: string;
   public readonly profileFingerprint: string;
   public readonly retrievalPath: RetrievalPath;
   public readonly request?: FocusedLocatorRetrievalV2RequestSnapshot;
 
   private constructor(input: RetrievalBindingSnapshot) {
+    if (input.canonicalEvidenceFilters !== undefined) {
+      this.canonicalEvidenceFilters = validateCanonicalEvidenceFilters(
+        input.canonicalEvidenceFilters,
+      );
+    }
     this.cutoverEpoch = input.cutoverEpoch;
     this.profileFingerprint = input.profileFingerprint;
     this.retrievalPath = input.retrievalPath;
@@ -159,6 +179,11 @@ export class RetrievalBinding {
       );
     }
     const base = {
+      ...(input.canonicalEvidenceFilters === undefined ? {} : {
+        canonicalEvidenceFilters: validateCanonicalEvidenceFilters(
+          input.canonicalEvidenceFilters,
+        ),
+      }),
       cutoverEpoch: requireCutoverEpoch(input.cutoverEpoch),
       profileFingerprint: requireSha256(
         input.profileFingerprint,
@@ -174,6 +199,9 @@ export class RetrievalBinding {
         );
       }
       return new RetrievalBinding({
+        ...(base.canonicalEvidenceFilters === undefined ? {} : {
+          canonicalEvidenceFilters: base.canonicalEvidenceFilters,
+        }),
         cutoverEpoch: base.cutoverEpoch,
         profileFingerprint: base.profileFingerprint,
         request: validateRetrievalV2Request(input.request),
@@ -187,6 +215,9 @@ export class RetrievalBinding {
       );
     }
     return new RetrievalBinding({
+      ...(base.canonicalEvidenceFilters === undefined ? {} : {
+        canonicalEvidenceFilters: base.canonicalEvidenceFilters,
+      }),
       cutoverEpoch: base.cutoverEpoch,
       profileFingerprint: base.profileFingerprint,
       retrievalPath,
@@ -195,6 +226,9 @@ export class RetrievalBinding {
 
   public toSnapshot(): RetrievalBindingSnapshot {
     const base = {
+      ...(this.canonicalEvidenceFilters === undefined ? {} : {
+        canonicalEvidenceFilters: this.canonicalEvidenceFilters,
+      }),
       cutoverEpoch: this.cutoverEpoch,
       profileFingerprint: this.profileFingerprint,
       retrievalPath: this.retrievalPath,
@@ -209,12 +243,16 @@ export class RetrievalBinding {
 }
 
 export function selectRetrievalBinding(input: {
+  readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot;
   readonly questionId: string;
   readonly retrievalV2Request: FocusedLocatorRetrievalV2RequestSnapshot | null;
   readonly rollout: RetrievalAdmissionRollout;
 }): RetrievalBinding {
   requireKnowledgeText(input.questionId, "questionId", 128);
   return RetrievalBinding.create(input.retrievalV2Request === null ? {
+    ...(input.canonicalEvidenceFilters === undefined ? {} : {
+      canonicalEvidenceFilters: input.canonicalEvidenceFilters,
+    }),
     cutoverEpoch: requireCutoverEpoch(input.rollout.cutoverEpoch),
     profileFingerprint: requireSha256(
       input.rollout.localProfileFingerprint,
@@ -222,6 +260,9 @@ export function selectRetrievalBinding(input: {
     ),
     retrievalPath: "canonical_local_exact_lexical_v1",
   } : {
+    ...(input.canonicalEvidenceFilters === undefined ? {} : {
+      canonicalEvidenceFilters: input.canonicalEvidenceFilters,
+    }),
     cutoverEpoch: requireCutoverEpoch(input.rollout.cutoverEpoch),
     profileFingerprint: requireSha256(
       input.rollout.infinityProfileFingerprint,
@@ -229,6 +270,42 @@ export function selectRetrievalBinding(input: {
     ),
     request: input.retrievalV2Request,
     retrievalPath: "infinity_locator_v2",
+  });
+}
+
+function validateCanonicalEvidenceFilters(
+  input: CanonicalEvidenceFiltersSnapshot,
+): CanonicalEvidenceFiltersSnapshot {
+  const speakerIds = Object.freeze(input.speakerIds.map((speakerId) =>
+    requireKnowledgeText(speakerId, "retrievalBinding.canonicalEvidenceFilters.speakerIds", 256)
+  ).toSorted(compareRetrievalV2Utf8));
+  if (new Set(speakerIds).size !== speakerIds.length) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_BINDING",
+      "canonical evidence speaker filters must be unique",
+    );
+  }
+  const interval = input.relativeTimeInterval;
+  if (interval !== null && (
+    !Number.isSafeInteger(interval.startMs) || interval.startMs < 0 ||
+    !Number.isSafeInteger(interval.endMs) || interval.endMs <= interval.startMs
+  )) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_BINDING",
+      "canonical evidence relative-time filter is invalid",
+    );
+  }
+  if (typeof input.requiresSpeakerMatch !== "boolean" ||
+    (!input.requiresSpeakerMatch && speakerIds.length > 0)) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_BINDING",
+      "canonical evidence speaker filter intent is invalid",
+    );
+  }
+  return Object.freeze({
+    relativeTimeInterval: interval === null ? null : Object.freeze({ ...interval }),
+    requiresSpeakerMatch: input.requiresSpeakerMatch,
+    speakerIds,
   });
 }
 

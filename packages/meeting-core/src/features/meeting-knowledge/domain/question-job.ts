@@ -275,10 +275,28 @@ function sameRetrievalBinding(
     left.cutoverEpoch === right.cutoverEpoch &&
     left.profileFingerprint === right.profileFingerprint &&
     left.retrievalPath === right.retrievalPath &&
+    sameCanonicalEvidenceFilters(
+      left.canonicalEvidenceFilters,
+      right.canonicalEvidenceFilters,
+    ) &&
     (left.retrievalPath !== "infinity_locator_v2" || (
       right.retrievalPath === "infinity_locator_v2" &&
       sameFocusedLocatorRetrievalV2Value(left.request, right.request)
     ));
+}
+
+function sameCanonicalEvidenceFilters(
+  left: RetrievalBindingSnapshot["canonicalEvidenceFilters"],
+  right: RetrievalBindingSnapshot["canonicalEvidenceFilters"],
+): boolean {
+  if (left === undefined || right === undefined) {return left === right;}
+  return left.requiresSpeakerMatch === right.requiresSpeakerMatch &&
+    left.speakerIds.length === right.speakerIds.length &&
+    left.speakerIds.every((speakerId, index) => speakerId === right.speakerIds[index]) &&
+    (left.relativeTimeInterval === null || right.relativeTimeInterval === null
+      ? left.relativeTimeInterval === right.relativeTimeInterval
+      : left.relativeTimeInterval.startMs === right.relativeTimeInterval.startMs &&
+        left.relativeTimeInterval.endMs === right.relativeTimeInterval.endMs);
 }
 
 export type QuestionJobState = "queued" | "ready" | "running" | "terminal";

@@ -491,7 +491,11 @@ describe("canonical local-exact evidence preparation", () => {
       outcome: "answered",
     });
     expect(selectorCalls).toBe(0);
-    expect(fixture.evidence.references.slice(0, 2)).toEqual([references, references]);
+    expect(fixture.evidence.references.slice(0, 2).map((items) =>
+      items.map(({ turnId }) => turnId)
+    )).toEqual([references, references].map((items) =>
+      items.map(({ turnId }) => turnId)
+    ));
     expect(fixture.generator.requests[0]?.plan.evidence).toHaveLength(selectedTurns.length);
   });
 

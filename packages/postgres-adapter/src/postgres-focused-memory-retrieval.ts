@@ -5,6 +5,7 @@ import {
   type FocusedMemoryRetrievalPort,
   type FocusedMemoryRetrievalResult,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 
 import {
@@ -160,10 +161,33 @@ function selectExactLexicalTurns(
 function referenceFor(
   input: Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0],
   matched: ExactLexicalMatch,
+  providerRank: number,
+  requestDigest: string,
+  responseDigest: string,
 ): FocusedMemoryReference {
   const { turn } = matched;
+  const fingerprint = input.retrievalBinding?.profileFingerprint ??
+    createHash("sha256").update("canonical-local-unbound", "utf8").digest("hex");
   return Object.freeze({
     meetingId: input.meetingId,
+    retrievalAudit: Object.freeze({
+      capabilityFingerprint: fingerprint,
+      contributions: Object.freeze([Object.freeze({
+        contributionScorePicos: matched.matchedTerms * 1_000_000,
+        providerLaneId: "canonical_local_exact_lexical",
+        providerRank,
+        queryId: "original-question",
+        rawScoreKind: "bm25" as const,
+        rawScoreValue: matched.matchedTerms,
+      })]),
+      fusedScore: matched.matchedTerms,
+      locator: `canonical-turn:${turn.turnId}`,
+      profileId: input.retrievalBinding?.retrievalPath ??
+        "canonical_local_exact_lexical_v1",
+      providerRank,
+      requestDigest,
+      responseDigest,
+    }),
     transcriptId: input.transcriptId,
     transcriptVersion: input.transcriptVersion,
     turnHash: canonicalFinalReplyTurnHash(turn),
@@ -243,8 +267,17 @@ export class PostgresFocusedMemoryRetrieval
         return { schemaVersion: 1, status: "stale" };
       }
       const humanActors = new Set(authority.binding.humanActorIds);
-      const humanTurns = authority.turns.filter(({ speakerId }) =>
+      const requestedSpeakers = new Set(input.hardFilters?.speakerIds ?? []);
+      const interval = input.hardFilters?.relativeTimeInterval ?? null;
+      const canonicalHumanTurns = authority.turns.filter(({ speakerId }) =>
         humanActors.has(speakerId)
+      );
+      const humanTurns = canonicalHumanTurns.filter(({ speakerId }) =>
+        (input.hardFilters?.requiresSpeakerMatch !== true ||
+          requestedSpeakers.has(speakerId))
+      ).filter((turn) =>
+        interval === null ||
+        (turn.startMs < interval.endMs && turn.endMs > interval.startMs)
       );
       if (queryTerms(input.question).size === 0) {
         return { schemaVersion: 1, status: "low_coverage" };
@@ -254,12 +287,31 @@ export class PostgresFocusedMemoryRetrieval
         return { schemaVersion: 1, status: "low_coverage" };
       }
       const selected = selectExactLexicalTurns(matches, input.maximumCandidates);
-      if (selected.length === 0 || selected.length >= humanTurns.length) {
+      if (selected.length === 0 || selected.length >= canonicalHumanTurns.length) {
         return { schemaVersion: 1, status: "low_coverage" };
       }
+      const requestDigest = input.retrievalBinding?.retrievalPath ===
+          "infinity_locator_v2"
+        ? digestJson(input.retrievalBinding.request)
+        : digestJson({ question: input.question,
+            retrievalBinding: input.retrievalBinding ?? null });
       return Object.freeze({
         authorityGeneration: authority.binding.memoryGeneration,
-        candidates: Object.freeze(selected.map((turn) => referenceFor(input, turn))),
+        candidates: Object.freeze(selected.map((turn, index) =>
+          referenceFor(input, turn, index + 1, requestDigest, digestJson({
+            contributions: [{
+              contributionScorePicos: turn.matchedTerms * 1_000_000,
+              providerLaneId: "canonical_local_exact_lexical",
+              providerRank: index + 1,
+              queryId: "original-question",
+              rawScoreKind: "bm25",
+              rawScoreValue: turn.matchedTerms,
+            }],
+            fusedScore: turn.matchedTerms,
+            locator: `canonical-turn:${turn.turn.turnId}`,
+            providerRank: index + 1,
+          }))
+        )),
         schemaVersion: 1,
         status: "current",
       });
@@ -267,4 +319,8 @@ export class PostgresFocusedMemoryRetrieval
       return { schemaVersion: 1, status: "unavailable" };
     }
   }
+}
+
+function digestJson(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }

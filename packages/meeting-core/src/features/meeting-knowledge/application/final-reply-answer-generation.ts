@@ -76,7 +76,7 @@ export class FinalReplyAnswerGeneration {
       question: lease.questionText,
     };
     const generated = await this.input.answers.execute(request, {
-      beforeGenerate: async () => {
+      beforeGenerate: async (measurement) => {
         if (!await reauthorizeHistoricalPlan(
           this.input.memory,
           binding,
@@ -95,17 +95,8 @@ export class FinalReplyAnswerGeneration {
         if (!authorizedForJob(beforeGeneration, preparation.authority, binding)) {
           return "stale_authorization";
         }
-        return preparation.providerAttemptId !== undefined
-          ? "continue"
-          : await reserveProviderAttempt(
-              this.input.jobs,
-              lease,
-              this.input.policy,
-              providerAttemptId,
-            ) ? "continue" : "stale_generation";
-      },
-      onMeasured: async (measurement) =>
-        await this.input.jobs.persistGroundingPlan({
+        if (!await this.input.jobs.persistGroundingPlan({
+          binding,
           generation: lease.generation,
           jobId: lease.jobId,
           measurement,
@@ -117,7 +108,18 @@ export class FinalReplyAnswerGeneration {
               turn.source?.meetingId ?? binding.meetingId
             ),
           ])].toSorted()),
-        }) ? "continue" : "stale_generation",
+        })) {
+          return "stale_generation";
+        }
+        return preparation.providerAttemptId !== undefined
+          ? "continue"
+          : await reserveProviderAttempt(
+              this.input.jobs,
+              lease,
+              this.input.policy,
+              providerAttemptId,
+            ) ? "continue" : "stale_generation";
+      },
     });
     if (generated.status === "stopped") {
       return generated.checkpoint === "stale_generation"

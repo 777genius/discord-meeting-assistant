@@ -38,7 +38,7 @@ describe("current final reply admission", () => {
     };
     const useCase = new AdmitCurrentFinalReply(
       new EvidenceFake(), new AuthorizationFake(), admissions, policy,
-      { prepare: () => Promise.resolve(null) },
+      { retrievalV2Admission: { prepare: () => Promise.resolve(null) } },
     );
 
     await expect(useCase.execute({
@@ -51,8 +51,41 @@ describe("current final reply admission", () => {
       schemaVersion: 2, scopeId: authority.scopeId,
     })).resolves.toEqual({ jobId: "question-1", status: "accepted" });
     expect(commits[0]?.binding.retrievalBinding).toEqual({
+      canonicalEvidenceFilters: { relativeTimeInterval: null,
+        requiresSpeakerMatch: false, speakerIds: [] },
       cutoverEpoch: policy.retrievalAdmission.cutoverEpoch,
       profileFingerprint: policy.retrievalAdmission.localProfileFingerprint,
+      retrievalPath: "canonical_local_exact_lexical_v1",
+    });
+  });
+
+  it("seals multilingual aliases and relative time for canonical filtering", async () => {
+    const commits: Parameters<QuestionAdmissionCommitPort["commit"]>[0][] = [];
+    const admissions: QuestionAdmissionCommitPort = {
+      commit: (input) => {
+        commits.push(input);
+        return Promise.resolve({ jobId: "question-filtered", status: "committed" });
+      },
+      withdrawProjection: () => Promise.resolve([]),
+    };
+    const useCase = new AdmitCurrentFinalReply(
+      new EvidenceFake(), new AuthorizationFake(), admissions, policy,
+      { canonicalSpeakerFilters: { aliases: { "speaker-b": ["Влад", "Vlad"] } } },
+    );
+    await useCase.execute({
+      authorizationPrincipalRef: "principal:v1:opaque",
+      deliveryContainerId: "question-thread-1",
+      finalProjectionReceipt: authority.finalProjectionReceipt,
+      projectionTargetContainerId: authority.projectionTargetContainerId,
+      questionHash: "c".repeat(64), questionId: "question-filtered",
+      questionText: "Что Влад решил с 07:00 до 08:00?",
+      requesterSubject: "d".repeat(64), schemaVersion: 2, scopeId: authority.scopeId,
+    });
+    expect(commits[0]?.binding.retrievalBinding).toMatchObject({
+      canonicalEvidenceFilters: {
+        relativeTimeInterval: { endMs: 480_000, startMs: 420_000 },
+        requiresSpeakerMatch: true, speakerIds: ["speaker-b"],
+      },
       retrievalPath: "canonical_local_exact_lexical_v1",
     });
   });

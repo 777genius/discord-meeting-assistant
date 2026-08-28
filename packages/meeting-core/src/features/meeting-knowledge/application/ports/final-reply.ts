@@ -150,6 +150,15 @@ export interface FocusedMemoryRetrievalPort {
     readonly canonicalEvidenceHash: string;
     readonly expectedAuthorityGeneration: string;
     readonly finalProjectionReceipt: string;
+    /** Canonical hard filters reapplied after every local hydration boundary. */
+    readonly hardFilters?: {
+      readonly relativeTimeInterval: {
+        readonly endMs: number;
+        readonly startMs: number;
+      } | null;
+      readonly requiresSpeakerMatch: boolean;
+      readonly speakerIds: readonly string[];
+    };
     readonly maximumCandidates: number;
     readonly meetingId: string;
     readonly meetingRevision: number;
@@ -309,6 +318,7 @@ export interface QuestionJobStore {
   }): Promise<"deferred" | "settled" | "stale">;
 
   persistGroundingPlan(input: {
+    readonly binding: QuestionBindingSnapshot;
     readonly generation: number;
     readonly jobId: string;
     readonly measurement: GroundingRequestMeasurement;

@@ -3,6 +3,7 @@ import { isLegacyQuestionBinding, type QuestionBindingSnapshot } from
 import { createFocusedRetrievalGroundingPlan, type FocusedMemoryReference,
   type RehydratedEvidenceTurn } from "../domain/grounding-plan.js";
 import { admittedHumanActors } from "./admitted-human-evidence.js";
+import { relativeTimeFilter } from "./focused-locator-retrieval-v2-query.js";
 import { authorityMatchesBinding } from "./final-reply-checks.js";
 import { alignFocusedHydrationSurvivors, prepareSelectedFocusedEvidence,
   type SelectedFocusedEvidencePreparation, type SelectFocusedEvidence } from
@@ -38,11 +39,27 @@ export function focusedMemoryRequest(
   lease: QuestionJobLease,
   policy: LocalFinalReplyPolicy,
 ): Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0] {
+  const sealedFilters = binding.retrievalBinding?.canonicalEvidenceFilters;
+  const requestedSpeakerIds = binding.humanActorIds.filter((actorId) =>
+    lease.questionText.includes(actorId) ||
+    lease.questionText.includes(`<@${actorId}>`) ||
+    lease.questionText.includes(`<@!${actorId}>`)
+  );
+  const providerActorFilter = binding.retrievalBinding?.retrievalPath ===
+      "infinity_locator_v2" &&
+    binding.retrievalBinding.request.filters.actorKeys.length > 0;
   return {
     authorizationPrincipalRef: binding.authorizationPrincipalRef,
     canonicalEvidenceHash: binding.canonicalEvidenceHash,
     expectedAuthorityGeneration: binding.memoryGeneration,
     finalProjectionReceipt: binding.finalProjectionReceipt,
+    hardFilters: Object.freeze({
+      relativeTimeInterval: sealedFilters?.relativeTimeInterval ??
+        relativeTimeFilter(lease.questionText),
+      requiresSpeakerMatch: sealedFilters?.requiresSpeakerMatch ??
+        (providerActorFilter || requestedSpeakerIds.length > 0),
+      speakerIds: sealedFilters?.speakerIds ?? Object.freeze(requestedSpeakerIds),
+    }),
     maximumCandidates: binding.retrievalBinding?.retrievalPath ===
         "canonical_local_exact_lexical_v1"
       ? Math.min(policy.retrieval.maximumCandidates, 100)

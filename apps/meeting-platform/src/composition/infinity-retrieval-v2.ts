@@ -22,6 +22,7 @@ export class InfinityRetrievalV2Composition {
   public constructor(private readonly input: {
     readonly baseUrl: string;
     readonly operationTimeoutMs: number;
+    readonly actorKeysForSpeaker: (speakerId: string) => readonly string[];
     readonly actorReferences: RetrievalActorReferenceAuthorityV1;
     readonly pool: Pool;
     readonly requestTimeoutMs: number;
@@ -56,6 +57,7 @@ export class InfinityRetrievalV2Composition {
   public retrieval(authorization: HistoricalAuthorizationPort) {
     return new HistoricalFocusedLocatorRetrievalV2({
       authority: new PostgresHistoricalEvidenceAuthority(this.input.pool),
+      actorKeysForSpeaker: this.input.actorKeysForSpeaker,
       authorization,
       ids: this.#ids,
       retrieval: this.#retrieval,
@@ -73,6 +75,7 @@ export function createInfinityRetrievalV2Composition(
   ids: HistoricalOpaqueIdPort,
   authority: {
     readonly actorReferences: RetrievalActorReferenceAuthorityV1;
+    readonly actorKeysForSpeaker: (speakerId: string) => readonly string[];
     readonly identitySkeletons: IdentitySkeletonPortV1;
     readonly servingAuthorized: () => boolean;
     readonly speakerAliases: readonly RetrievalActorAliasOwnerV1[];
@@ -90,6 +93,7 @@ export function createInfinityRetrievalV2Composition(
     retrievalV2: new InfinityRetrievalV2Composition({
       baseUrl: infinity.baseUrl,
       actorReferences: authority.actorReferences,
+      actorKeysForSpeaker: authority.actorKeysForSpeaker,
       operationTimeoutMs: infinity.operationTimeoutMs,
       ids,
       identitySkeletons: authority.identitySkeletons,

@@ -14,7 +14,7 @@ import {
 import type { Pool, PoolClient } from "pg";
 
 import { loadLiveReplyAuthority } from "./postgres-live-reply-evidence.js";
-import { loadCurrentHistoricalReferenceRows } from
+import { loadCurrentHistoricalReferenceBatch } from
   "./postgres-final-reply-historical-evidence.js";
 import {
   canonicalFinalReplyEvidenceHash,
@@ -257,31 +257,35 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
     const authorities = new Map<string, ResolvedFinalReplyAuthority>([
       [binding.meetingId, anchor],
     ]);
+    let historicalBatch;
+    try {
+      historicalBatch = await loadCurrentHistoricalReferenceBatch(
+        this.pool,
+        binding,
+        references,
+      );
+    } catch {
+      return { status: "unavailable" } as const;
+    }
+    for (const row of historicalBatch.rows) {
+      const authority = resolveFinalReplyAuthority(
+        row.snapshot,
+        this.botApplicationIdentity,
+      );
+      if (authority !== null && authority.binding.scopeId === binding.scopeId &&
+        authority.binding.roomId === binding.roomId) {
+        authorities.set(row.meeting_id, authority);
+      }
+    }
     for (const reference of references) {
       if (reference.meetingId === binding.meetingId &&
         reference.historicalSource === undefined) {
         validReferences.push(reference);
         continue;
       }
-      try {
-        const rows = await loadCurrentHistoricalReferenceRows(
-          this.pool,
-          binding,
-          [reference],
-        );
-        const row = rows?.find(({ meeting_id: meetingId }) =>
-          meetingId === reference.meetingId
-        );
-        const authority = row === undefined ? null : resolveFinalReplyAuthority(
-          row.snapshot, this.botApplicationIdentity,
-        );
-        if (authority !== null && authority.binding.scopeId === binding.scopeId &&
-          authority.binding.roomId === binding.roomId) {
-          validReferences.push(reference);
-          authorities.set(reference.meetingId, authority);
-        }
-      } catch {
-        continue;
+      if (historicalBatch.validReferences.has(reference) &&
+        authorities.has(reference.meetingId)) {
+        validReferences.push(reference);
       }
     }
     const turns = validReferences.flatMap((reference) => {
@@ -306,6 +310,8 @@ export class PostgresFinalReplyEvidence implements FinalReplyEvidencePort {
       }
       return [Object.freeze({
         ...sliced,
+        ...(reference.retrievalAudit === undefined
+          ? {} : { retrievalAudit: reference.retrievalAudit }),
         source: Object.freeze({
           ...(reference.historicalSource === undefined
             ? {}

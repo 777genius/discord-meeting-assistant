@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-
 import {
   QuestionBinding,
   isLegacyQuestionBinding,
@@ -11,23 +10,36 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { MeetingSnapshot } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import { z } from "zod";
-
+import { focusedRetrievalProvenanceBinds } from
+  "./postgres-retrieval-provenance-codec.js";
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
-const boundedText = z.string().trim().min(1).max(32_768);
-const localeSchema = z.enum(["en", "mixed", "ru"]);
+const boundedText = z.string().trim().min(1).max(32_768),
+  localeSchema = z.enum(["en", "mixed", "ru"]);
 const historicalEvidenceSourceSchema = z.object({
-  candidateLocator: z.string().trim().min(1).max(1_024),
-  indexGeneration: z.string().trim().min(1).max(1_024),
-  releaseId: z.string().trim().min(1).max(1_024),
+  candidateLocator: z.string().trim().min(1).max(1_024), indexGeneration: z.string().trim().min(1).max(1_024),
+  releaseId: z.string().trim().min(1).max(1_024) }).strict();
+const retrievalContributionSchema = z.object({
+  contributionScorePicos: z.number().int(),
+  providerLaneId: boundedText.max(128),
+  providerRank: z.number().int().positive(),
+  queryId: boundedText.max(128),
+  rawScoreKind: z.enum(["bm25", "distance", "relevance", "similarity"]).nullable(),
+  rawScoreValue: z.number().nullable(),
 }).strict();
-
+const focusedRetrievalAuditSchema = z.object({
+  capabilityFingerprint: sha256Schema,
+  contributions: z.array(retrievalContributionSchema).min(1).max(32),
+  fusedScore: z.number(),
+  locator: boundedText.max(1_024),
+  profileId: boundedText.max(256),
+  providerRank: z.number().int().positive(),
+  requestDigest: sha256Schema,
+  responseDigest: sha256Schema }).strict();
 export function canonicalFinalReplyTurns(
   snapshot: MeetingSnapshot,
 ): readonly CanonicalEvidenceTurn[] {
   const transcript = snapshot.transcript;
-  if (transcript === null) {
-    return [];
-  }
+  if (transcript === null) {return [];}
   return Object.freeze(transcript.turns.map((turn) => Object.freeze({
     endMs: turn.endMs,
     speakerId: turn.speakerId,
@@ -39,18 +51,15 @@ export function canonicalFinalReplyTurns(
     (left.turnId < right.turnId ? -1 : left.turnId > right.turnId ? 1 : 0)
   ));
 }
-
 export function canonicalFinalReplyEvidenceHash(snapshot: MeetingSnapshot): string {
   if (snapshot.transcript === null) {
-    throw new Error("final reply authority requires an accepted transcript");
-  }
+    throw new Error("final reply authority requires an accepted transcript");}
   return createHash("sha256").update(JSON.stringify({
     transcriptId: snapshot.transcript.transcriptId,
     turns: canonicalFinalReplyTurns(snapshot),
     version: snapshot.transcript.version,
   }), "utf8").digest("hex");
 }
-
 const questionBindingBaseSchema = z.object({
   authorizationDigest: sha256Schema,
   authorizationPolicyVersion: boundedText,
@@ -76,18 +85,16 @@ const questionBindingBaseSchema = z.object({
   transcriptVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 });
 
-const retrievalV2IntervalSchema = z.object({
-  endAt: z.string(),
-  startAt: z.string(),
-}).strict();
-const retrievalV2RelativeIntervalSchema = z.object({
-  endMs: z.number(),
-  startMs: z.number(),
-}).strict();
-const retrievalV2WeightedKeySchema = z.object({
-  key: z.string(),
-  weightMicros: z.number(),
-}).strict();
+const retrievalV2IntervalSchema = z.object({ endAt: z.string(),
+  startAt: z.string() }).strict();
+const retrievalV2RelativeIntervalSchema = z.object({ endMs: z.number(),
+  startMs: z.number() }).strict();
+const retrievalV2WeightedKeySchema = z.object({ key: z.string(),
+  weightMicros: z.number() }).strict();
+const canonicalEvidenceFiltersSchema = z.object({ relativeTimeInterval:
+    retrievalV2RelativeIntervalSchema.nullable(),
+  requiresSpeakerMatch: z.boolean(),
+  speakerIds: z.array(boundedText.max(256)).max(10_000) }).strict();
 const retrievalV2RequestSchema = z.object({
   binding: z.object({
     capabilityFingerprint: z.string(),
@@ -143,6 +150,7 @@ const retrievalV2RequestSchema = z.object({
 }).strict();
 
 const retrievalBindingSchema = z.object({
+  canonicalEvidenceFilters: canonicalEvidenceFiltersSchema.optional(),
   cutoverEpoch: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/u),
   profileFingerprint: sha256Schema,
   retrievalPath: z.enum([
@@ -151,6 +159,7 @@ const retrievalBindingSchema = z.object({
     "legacy_downstream_v1",
   ]),
 }).strict().or(z.object({
+  canonicalEvidenceFilters: canonicalEvidenceFiltersSchema.optional(),
   cutoverEpoch: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/u),
   profileFingerprint: sha256Schema,
   request: retrievalV2RequestSchema,
@@ -171,6 +180,7 @@ const groundingEvidenceSchema = z.object({
   endMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   evidenceId: boundedText,
   speakerId: boundedText,
+  retrievalAudit: focusedRetrievalAuditSchema.optional(),
   source: z.object({
     historicalSource: historicalEvidenceSourceSchema.optional(),
     meetingId: boundedText,
@@ -377,8 +387,16 @@ export function decodePersistedQuestionBinding(
   return binding;
 }
 
-export function decodeGroundingPlan(value: unknown): GroundingPlan {
+export function decodeGroundingPlan(
+  value: unknown,
+  binding: QuestionBindingSnapshot,
+  questionText: string,
+): GroundingPlan {
   const parsed = groundingPlanV1Schema.parse(value);
+  if (parsed.mode === "focused_retrieval" &&
+    !focusedRetrievalProvenanceBinds(parsed.evidence, binding, questionText)) {
+    throw new Error("persisted retrieval provenance does not bind its question request/result");
+  }
   return {
     authorityGeneration: parsed.authorityGeneration,
     ...(parsed.coverageBitmap === undefined
@@ -405,6 +423,14 @@ export function decodeGroundingPlan(value: unknown): GroundingPlan {
       endMs: evidence.endMs,
       evidenceId: evidence.evidenceId,
       speakerId: evidence.speakerId,
+      ...(evidence.retrievalAudit === undefined ? {} : {
+        retrievalAudit: {
+          ...evidence.retrievalAudit,
+          contributions: evidence.retrievalAudit.contributions.map((entry) => ({
+            ...entry,
+          })),
+        },
+      }),
       ...(evidence.source === undefined
         ? {}
         : {

@@ -12,9 +12,10 @@ import type {
   FocusedMemoryRetrievalResult,
   QuestionJobTerminalOutcome,
 } from "./final-reply.js";
+import { decodeFocusedRetrievalAudit, retrievalAuditsBindInput } from
+  "./focused-retrieval-provenance.js";
 
 export const focusedMemoryContractVersion = 1 as const;
-
 function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
   return [
     reference.historicalSource?.releaseId ?? "current",
@@ -29,7 +30,6 @@ function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
     reference.sourceEndCodePoint ?? "whole",
   ].join("\u0000");
 }
-
 export function mergeFocusedHydrationReferences(
   references: readonly FocusedMemoryReference[],
 ): readonly FocusedMemoryReference[] {
@@ -42,14 +42,12 @@ export function mergeFocusedHydrationReferences(
   }
   return Object.freeze([...merged.values()]);
 }
-
 const terminalStatuses = new Set([
   "low_coverage",
   "pending",
   "stale",
   "unavailable",
 ]);
-
 function record(value: unknown, field: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new MeetingKnowledgeInvariantError(
@@ -59,7 +57,6 @@ function record(value: unknown, field: string): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
-
 function assertOnlyKeys(
   input: Record<string, unknown>,
   allowed: ReadonlySet<string>,
@@ -149,18 +146,13 @@ export async function retrieveFocusedMemory(
 ): Promise<FocusedMemoryRetrievalResult> {
   try {
     const result = decodeFocusedMemoryRetrievalResult(await memory.retrieve(input));
-    if (result.status !== "current") {
-      return result;
-    }
+    if (result.status !== "current") {return result;}
     if (
-      result.candidates.length > input.maximumCandidates
-    ) {
-      return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };
-    }
+      result.candidates.length > input.maximumCandidates ||
+      !retrievalAuditsBindInput(result.candidates, input.retrievalBinding)
+    ) {return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };}
     return result;
-  } catch {
-    return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };
-  }
+  } catch {return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };}
 }
 
 export function fixedOutcomeForFocusedRetrieval(
@@ -204,7 +196,7 @@ function decodeCandidates(
       candidate.historicalSource,
       `${field}[${index}].historicalSource`,
     );
-    const retrievalAudit = decodeRetrievalAudit(
+    const retrievalAudit = decodeFocusedRetrievalAudit(
       candidate.retrievalAudit,
       `${field}[${index}].retrievalAudit`,
     );
@@ -245,79 +237,6 @@ function decodeCandidates(
     );
   }
   return candidates;
-}
-
-function decodeRetrievalAudit(
-  value: unknown,
-  field: string,
-): FocusedMemoryReference["retrievalAudit"] {
-  if (value === undefined) {
-    return undefined;
-  }
-  const audit = record(value, field);
-  assertOnlyKeys(audit, new Set(["contributions", "fusedScore", "providerRank"]), field);
-  if (!Array.isArray(audit.contributions) || audit.contributions.length < 1 ||
-    audit.contributions.length > 32 || !validFiniteScore(audit.fusedScore) ||
-    !validRank(audit.providerRank)) {
-    throw new MeetingKnowledgeInvariantError(
-      "INVALID_GROUNDING_PLAN",
-      `${field} is malformed`,
-    );
-  }
-  const contributions = audit.contributions.map((entry, index) => {
-    const contribution = record(entry, `${field}.contributions[${index}]`);
-    assertOnlyKeys(contribution, new Set([
-      "contributionScorePicos", "providerLaneId", "providerRank", "queryId",
-      "rawScoreKind", "rawScoreValue",
-    ]), `${field}.contributions[${index}]`);
-    const rawScoreKind = contribution.rawScoreKind;
-    if (rawScoreKind !== null && rawScoreKind !== "bm25" &&
-      rawScoreKind !== "distance" && rawScoreKind !== "relevance" &&
-      rawScoreKind !== "similarity") {
-      throw new MeetingKnowledgeInvariantError(
-        "INVALID_GROUNDING_PLAN",
-        `${field}.contributions[${index}].rawScoreKind is invalid`,
-      );
-    }
-    if (!Number.isSafeInteger(contribution.contributionScorePicos) ||
-      !validRank(contribution.providerRank) ||
-      (contribution.rawScoreValue !== null &&
-        !validFiniteScore(contribution.rawScoreValue))) {
-      throw new MeetingKnowledgeInvariantError(
-        "INVALID_GROUNDING_PLAN",
-        `${field}.contributions[${index}] contains an invalid score or rank`,
-      );
-    }
-    return Object.freeze({
-      contributionScorePicos: contribution.contributionScorePicos as number,
-      providerLaneId: requireKnowledgeText(
-        contribution.providerLaneId as string,
-        `${field}.contributions[${index}].providerLaneId`,
-        128,
-      ),
-      providerRank: contribution.providerRank as number,
-      queryId: requireKnowledgeText(
-        contribution.queryId as string,
-        `${field}.contributions[${index}].queryId`,
-        128,
-      ),
-      rawScoreKind,
-      rawScoreValue: contribution.rawScoreValue as number | null,
-    });
-  });
-  return Object.freeze({
-    contributions: Object.freeze(contributions),
-    fusedScore: audit.fusedScore as number,
-    providerRank: audit.providerRank as number,
-  });
-}
-
-function validFiniteScore(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function validRank(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 1;
 }
 
 function decodeHistoricalSource(

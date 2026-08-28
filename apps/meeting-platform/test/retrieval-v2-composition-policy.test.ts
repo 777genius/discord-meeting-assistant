@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 
 import * as infinityAdapter from "@discord-meeting/infinity-context-adapter";
 import * as meetingKnowledge from "@discord-meeting/meeting-core/meeting-knowledge";
 
 import { createDiscordInfinityActorCustody } from
   "../src/composition/discord-infinity-actor-custody.js";
-import { localFinalReplyPolicy } from
+import { localFinalReplyPolicy, meetingKnowledgeRetrievalProfilePreimages,
+  retrievalProfileFingerprint } from
   "../src/composition/meeting-knowledge.js";
 import { createPersistedFocusedMemoryRoute } from
   "../src/composition/meeting-knowledge-retrieval-router.js";
@@ -16,11 +18,30 @@ describe("bounded meeting retrieval composition policy", () => {
   it("binds indexed and explicit local paths under one deterministic epoch", () => {
     expect(localFinalReplyPolicy.retrievalAdmission).toEqual({
       cutoverEpoch: "infinity-locator-v2-only-r1",
-      infinityProfileFingerprint:
-        "2e69df6bf22461ee8d6844c7e6699cfb099ad36d84b0aa15f1d3061754ff27be",
-      localProfileFingerprint:
-        "364017ee7b386e21d90351525a1fd0b367afdf5a88c72c5e08e1707853ed1830",
+      infinityProfileFingerprint: retrievalProfileFingerprint(
+        meetingKnowledgeRetrievalProfilePreimages.infinity,
+      ),
+      localProfileFingerprint: retrievalProfileFingerprint(
+        meetingKnowledgeRetrievalProfilePreimages.local,
+      ),
     });
+    expect(localFinalReplyPolicy.retrievalAdmission.infinityProfileFingerprint)
+      .toMatch(/^[a-f0-9]{64}$/u);
+    const canonicalInfinityPreimage = JSON.stringify({
+      candidateIsolation: "candidate-local-errors-isolate;batch-authority-errors-abort",
+      contract: "context-retrieval.v2", evidenceByteLimit: 16_000,
+      path: "infinity_locator_v2", provenance: "exact-request-response-digests.v1",
+      rankingPolicy: "weighted_rrf_canonical_preferences.v1", version: 1,
+    });
+    expect(localFinalReplyPolicy.retrievalAdmission.infinityProfileFingerprint).toBe(
+      createHash("sha256").update(canonicalInfinityPreimage, "utf8").digest("hex"),
+    );
+    expect(localFinalReplyPolicy.retrievalAdmission.localProfileFingerprint).toBe(
+      createHash("sha256").update(JSON.stringify({ candidateLimit: 100,
+        evidenceByteLimit: 16_000, path: "canonical_local_exact_lexical_v1",
+        provenance: "exact-request-response-digests.v1", resultLimit: 10, version: 1 }),
+      "utf8").digest("hex"),
+    );
     expect(localFinalReplyPolicy).not.toHaveProperty("legacyRetrievalMigration");
   });
 

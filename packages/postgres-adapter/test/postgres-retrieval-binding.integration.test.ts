@@ -236,6 +236,7 @@ describe("PostgreSQL immutable retrieval binding leases", () => {
     }
     expect(isLegacyQuestionBinding(legacyLease.binding)).toBe(true);
     await expect(jobs.persistGroundingPlan({
+      binding: legacy,
       generation: legacyLease.generation,
       jobId: legacy.questionId,
       measurement: { inputTokens: 10, requestBytes: 100 },
@@ -403,6 +404,7 @@ describe("PostgreSQL binding-aware worker rolling fence", () => {
       throw new Error("current binding was not leased");
     }
     await expect(jobs.persistGroundingPlan({
+      binding: current,
       generation: firstLease.generation,
       jobId: current.questionId,
       measurement: { inputTokens: 10, requestBytes: 100 },

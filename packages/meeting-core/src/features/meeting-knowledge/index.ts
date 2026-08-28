@@ -229,6 +229,7 @@ export {
   focusedMemoryGeneration,
   type CanonicalEvidenceTurn,
   type FocusedMemoryReference,
+  type FocusedRetrievalAudit,
   type GroundingAdmission,
   type GroundingEvidence,
   type GroundingCoverageReduction,

@@ -61,11 +61,12 @@ export function referencesFromPlan(
   binding: QuestionBindingSnapshot,
   plan: GroundingPlan,
 ): readonly FocusedMemoryReference[] {
-  return Object.freeze(plan.evidence.map(({ source, turnHash, turnId }) => Object.freeze({
+  return Object.freeze(plan.evidence.map(({ retrievalAudit, source, turnHash, turnId }) => Object.freeze({
     ...(source?.historicalSource === undefined
       ? {}
       : { historicalSource: source.historicalSource }),
     meetingId: source?.meetingId ?? binding.meetingId,
+    ...(retrievalAudit === undefined ? {} : { retrievalAudit }),
     ...(source?.sourceEndCodePoint === undefined
       ? {}
       : {
@@ -97,7 +98,8 @@ function sameEvidenceItem(left: GroundingEvidence, right: GroundingEvidence): bo
     left.speakerId === right.speakerId &&
     left.startMs === right.startMs &&
     left.endMs === right.endMs &&
-    left.text === right.text;
+    left.text === right.text &&
+    JSON.stringify(left.retrievalAudit) === JSON.stringify(right.retrievalAudit);
 }
 
 function sameEvidenceSource(

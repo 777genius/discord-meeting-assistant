@@ -42,6 +42,7 @@ export interface FocusedMemoryReference {
 
 /** Consumer-owned, provider-neutral accounting for an upstream ranking decision. */
 export interface FocusedRetrievalAudit {
+  readonly capabilityFingerprint: string;
   readonly contributions: readonly {
     readonly contributionScorePicos: number;
     readonly providerLaneId: string;
@@ -51,7 +52,11 @@ export interface FocusedRetrievalAudit {
     readonly rawScoreValue: number | null;
   }[];
   readonly fusedScore: number;
+  readonly locator: string;
+  readonly profileId: string;
   readonly providerRank: number;
+  readonly requestDigest: string;
+  readonly responseDigest: string;
 }
 
 /** Canonical text loaded locally after focused retrieval selected a reference. */
@@ -69,6 +74,7 @@ export interface RehydratedEvidenceTurn extends CanonicalEvidenceTurn {
     readonly transcriptId: string;
     readonly transcriptVersion: number;
   };
+  readonly retrievalAudit?: FocusedRetrievalAudit;
   readonly turnHash: string;
 }
 

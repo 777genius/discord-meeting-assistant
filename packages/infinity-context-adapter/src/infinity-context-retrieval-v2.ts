@@ -18,8 +18,6 @@ import {
   type RetrieveContextResponse,
 } from "@infinity-context/sdk";
 
-import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
-
 export type InfinityContextRetrievalV2Binding =
   FocusedLocatorRetrievalV2RequestSnapshot["binding"];
 export type InfinityContextRetrievalV2Request =
@@ -30,6 +28,8 @@ export interface InfinityContextRetrievalV2Config {
   readonly operationTimeoutMs: number;
   readonly requestTimeoutMs: number;
   readonly token?: string | (() => Promise<string | null | undefined> | string | null | undefined);
+  /** Monotonic clock injection used by deterministic deadline/race tests. */
+  readonly monotonicNowMs?: () => number;
   /** Test-only injection; all requests still traverse the official SDK. */
   readonly transport?: HttpTransport;
 }
@@ -155,10 +155,26 @@ function requestFrom(input: InfinityContextRetrievalV2Request): RetrieveContextI
 
 function locatorCandidates(
   candidates: Awaited<ReturnType<InfinityContextClient["context"]["retrieve"]>>["candidates"],
+  binding: InfinityContextRetrievalV2Binding,
+  requestDigest: string,
 ): readonly FocusedLocatorRetrievalV2Candidate[] {
-  return Object.freeze(candidates.map((candidate) => Object.freeze({
-    locator: candidate.locator,
-    retrievalProvenance: Object.freeze({
+  return Object.freeze(candidates.map((candidate) => {
+    const canonicalResult = {
+      contributions: candidate.contributions.map((contribution) => ({
+        contributionScorePicos: contribution.contribution_score_picos,
+        providerLaneId: contribution.provider_id,
+        providerRank: contribution.provider_rank,
+        queryId: contribution.query_id,
+        rawScoreKind: contribution.raw_score_kind,
+        rawScoreValue: contribution.raw_score_value,
+      })),
+      fusedScore: candidate.fused_score,
+      locator: candidate.locator,
+      providerRank: candidate.provider_rank,
+    };
+    return Object.freeze({ locator: candidate.locator,
+      retrievalProvenance: Object.freeze({
+      capabilityFingerprint: binding.capabilityFingerprint,
       contributions: Object.freeze(candidate.contributions.map((contribution) =>
         Object.freeze({
           contributionScorePicos: contribution.contribution_score_picos,
@@ -169,9 +185,27 @@ function locatorCandidates(
           rawScoreValue: contribution.raw_score_value,
         }))),
       fusedScore: candidate.fused_score,
+      locator: candidate.locator,
+      profileId: binding.profileId,
       providerRank: candidate.provider_rank,
-    }),
-  })));
+      requestDigest,
+      responseDigest: createHash("sha256").update(
+        JSON.stringify(canonicalFingerprintValue(canonicalResult)), "utf8",
+      ).digest("hex"),
+    }) });
+  }));
+}
+
+function sdkRequestControls(signal: AbortSignal | undefined, timeoutMs: number) {
+  return signal === undefined ? { timeoutMs } : { signal, timeoutMs };
+}
+
+function assertRequestMaySettle(
+  signal: AbortSignal | undefined,
+  remainingTimeoutMs: () => number,
+): void {
+  signal?.throwIfAborted();
+  remainingTimeoutMs();
 }
 
 export class InfinityContextRetrievalV2Adapter
@@ -179,6 +213,7 @@ implements FocusedLocatorRetrievalV2Port {
   readonly #client: InfinityContextClient;
   readonly #operationTimeoutMs: number;
   readonly #requestTimeoutMs: number;
+  readonly #monotonicNowMs: () => number;
   #observation: InfinityContextRetrievalV2Observation | null = null;
   #exactExchange: InfinityContextRetrievalV2ExactExchange | null = null;
 
@@ -195,6 +230,7 @@ implements FocusedLocatorRetrievalV2Port {
     }
     this.#operationTimeoutMs = config.operationTimeoutMs;
     this.#requestTimeoutMs = config.requestTimeoutMs;
+    this.#monotonicNowMs = config.monotonicNowMs ?? (() => performance.now());
     const qualificationTransport = config.transport === undefined
       ? new ExactRetrievalExchangeTransport()
       : null;
@@ -225,17 +261,22 @@ implements FocusedLocatorRetrievalV2Port {
       profileId: input.binding.profileId,
       requiredProviderLanes: input.binding.requiredProviderLanes,
     };
-    const timeoutMs = Math.min(this.#requestTimeoutMs, input.budgets.deadlineMs);
-    const operation = new InfinityOperationDeadline(
-      Math.min(this.#operationTimeoutMs, input.budgets.deadlineMs),
-      options.signal,
-    );
+    const deadlineMs = this.#monotonicNowMs() +
+      Math.min(this.#operationTimeoutMs, input.budgets.deadlineMs);
+    const remainingTimeoutMs = (): number => {
+      const remaining = Math.floor(deadlineMs - this.#monotonicNowMs());
+      if (remaining < 1) {
+        throw new DOMException("Infinity retrieval deadline exceeded", "TimeoutError");
+      }
+      return Math.min(this.#requestTimeoutMs, remaining);
+    };
     let retrievalStarted = false;
     const operationStarted = process.hrtime.bigint();
     try {
-      const capabilities = await operation.request(
-        timeoutMs,
-        (signal) => this.#client.system.capabilities({ signal, timeoutMs }),
+      options.signal?.throwIfAborted();
+      const capabilityTimeoutMs = remainingTimeoutMs();
+      const capabilities = await this.#client.system.capabilities(
+        sdkRequestControls(options.signal, capabilityTimeoutMs),
       );
       const capability = assertRetrievalCapability(capabilities, required);
       if (
@@ -249,15 +290,15 @@ implements FocusedLocatorRetrievalV2Port {
       }
       retrievalStarted = true;
       const routeStarted = process.hrtime.bigint();
-      const response = await operation.request(
-        timeoutMs,
-        (signal) => this.#client.context.retrieve(
-          request,
-          capability,
-          required,
-          { signal, timeoutMs },
-        ),
+      options.signal?.throwIfAborted();
+      const retrievalTimeoutMs = remainingTimeoutMs();
+      const response = await this.#client.context.retrieve(
+        request,
+        capability,
+        required,
+        sdkRequestControls(options.signal, retrievalTimeoutMs),
       );
+      assertRequestMaySettle(options.signal, remainingTimeoutMs);
       const routeLatencyUs = Number((process.hrtime.bigint() - routeStarted) / 1_000n);
       const capabilityBytes = Buffer.from(JSON.stringify(canonicalFingerprintValue(capabilities)), "utf8");
       const { requestBytes, responseBytes } = this.captureExchangeBytes(request, response);
@@ -279,12 +320,18 @@ implements FocusedLocatorRetrievalV2Port {
         return unqualified(providerReason(response));
       }
       return Object.freeze({
-        candidates: locatorCandidates(response.candidates),
+        candidates: locatorCandidates(
+          response.candidates,
+          input.binding,
+          createHash("sha256").update(
+            JSON.stringify(canonicalFingerprintValue(input)), "utf8",
+          ).digest("hex"),
+        ),
         status: "available",
       });
     } catch (error) {
       if (options.signal?.aborted === true) {
-        return unavailable("memory.operation_cancelled", true);
+        return unavailable("memory.operation_cancelled", false);
       }
       if (error instanceof InfinityContextError) {
         if (error.code === "memory.context_retrieval_capability_mismatch") {
@@ -305,8 +352,6 @@ implements FocusedLocatorRetrievalV2Port {
         return unavailable("memory.context_retrieval_deadline_exceeded", true);
       }
       return unavailable("memory.context_retrieval_response_invalid", false);
-    } finally {
-      operation.close();
     }
   }
 

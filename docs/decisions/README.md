@@ -2,6 +2,7 @@
 
 ## Proposed
 
+- [ADR-0063: Current retrieval generation fence and candidate isolation](0063-current-retrieval-generation-fence.md)
 - [ADR-0026: Host subscription account pool](0026-host-subscription-account-pool.md)
 - [ADR-0053: V2-only meeting retrieval composition](0053-v2-only-meeting-retrieval.md)
 - [ADR-0057: Exact-document live-memory reconciliation](0057-exact-document-live-reconciliation.md)

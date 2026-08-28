@@ -48,16 +48,17 @@ function toLease(row: QuestionJobRow): QuestionJobLease {
   if (row.state !== "running" && row.state !== "ready") {
     throw new Error("leased question job has an unsupported state");
   }
+  const binding = decodePersistedQuestionBinding(row.binding, row.binding_hash);
   return Object.freeze({
     answerCandidate: row.answer_candidate === null
       ? null
       : decodeGroundedAnswerCandidate(row.answer_candidate),
     attempts: row.attempts,
-    binding: decodePersistedQuestionBinding(row.binding, row.binding_hash),
+    binding,
     generation: row.generation,
     groundingPlan: row.grounding_plan === null
       ? null
-      : decodeGroundingPlan(row.grounding_plan),
+      : decodeGroundingPlan(row.grounding_plan, binding, row.question_text),
     jobId: row.question_id,
     questionText: row.question_text,
     state: row.state,

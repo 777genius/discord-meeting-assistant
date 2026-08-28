@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   createFocusedRetrievalGroundingPlan,
   createHistoricalReleaseBinding,
+  type QuestionBindingSnapshot,
 } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { describe, expect, it } from "vitest";
@@ -81,6 +82,10 @@ function groundingPlan(meetingId: string) {
       turnId: "turn-1",
     }],
   });
+}
+
+function withdrawnFixtureBinding(meetingId: string): QuestionBindingSnapshot {
+  return { meetingId } as unknown as QuestionBindingSnapshot;
 }
 
 async function waitForBlockedAnswerFence(
@@ -601,6 +606,7 @@ describe("PostgreSQL withdrawal fencing", () => {
       }],
     });
     await expect(new PostgresQuestionJobStore(database, questionPolicy).persistGroundingPlan({
+      binding: withdrawnFixtureBinding(meetingId),
       generation: 1,
       jobId: questionId,
       measurement: { inputTokens: 10, requestBytes: 100 },
@@ -626,6 +632,7 @@ describe("PostgreSQL withdrawal fencing", () => {
 
     const [persisted] = await Promise.all([
       jobs.persistGroundingPlan({
+        binding: withdrawnFixtureBinding(admittedMeetingId),
         generation: 1,
         jobId: questionId,
         measurement: { inputTokens: 10, requestBytes: 100 },
@@ -650,6 +657,7 @@ describe("PostgreSQL withdrawal fencing", () => {
       expect(stored.rows).toEqual([{ grounding_plan: null, state: "running" }]);
     }
     await expect(jobs.persistGroundingPlan({
+      binding: withdrawnFixtureBinding(admittedMeetingId),
       generation: 1,
       jobId: questionId,
       measurement: { inputTokens: 10, requestBytes: 100 },

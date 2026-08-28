@@ -6,6 +6,7 @@ import {
   DiscordLocalFinalReplyHandler,
   DiscordQuestionAuthorizationAdapter,
   DiscordQuestionPrincipalCodec,
+  DiscordConfusableIdentitySkeletons,
   createDiscordOneAttemptAnswerRest,
   decodeDiscordQuestionPrincipalKey,
   discordParticipantQuestionPolicyVersion,
@@ -38,11 +39,14 @@ import {
 import type { SubscriptionRuntimeTransportPort } from
   "@discord-meeting/subscription-runtime-adapter";
 import type { Client } from "discord.js";
+import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { TestOnlyAnswerDeliveryCrashInjection } from
   "../adapters/outbound/test-only-answer-delivery-crash-injection.js";
 
 import type { PlatformConfig } from "../config.js";
+import { participantSpeakerAliases } from
+  "../config/participant-greeting-profiles.js";
 import { classifyPlatformError } from "./observability.js";
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 import { createPersistedFocusedMemoryRoute } from
@@ -65,6 +69,40 @@ const providerAttemptLeaseSeconds = (
     meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds) +
   meetingKnowledgeProviderLeasePolicy.safetyMilliseconds
 ) / 1_000;
+
+export const meetingKnowledgeRetrievalProfilePreimages = Object.freeze({
+  infinity: Object.freeze({
+    candidateIsolation: "candidate-local-errors-isolate;batch-authority-errors-abort",
+    contract: "context-retrieval.v2",
+    evidenceByteLimit: 16_000,
+    path: "infinity_locator_v2",
+    provenance: "exact-request-response-digests.v1",
+    rankingPolicy: "weighted_rrf_canonical_preferences.v1",
+    version: 1,
+  }),
+  local: Object.freeze({
+    candidateLimit: 100,
+    evidenceByteLimit: 16_000,
+    path: "canonical_local_exact_lexical_v1",
+    provenance: "exact-request-response-digests.v1",
+    resultLimit: 10,
+    version: 1,
+  }),
+});
+
+export function retrievalProfileFingerprint(preimage: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalProfileValue(preimage)), "utf8")
+    .digest("hex");
+}
+
+function canonicalProfileValue(value: unknown): unknown {
+  if (Array.isArray(value)) {return value.map(canonicalProfileValue);}
+  if (typeof value !== "object" || value === null) {return value;}
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .toSorted(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, nested]) => [key, canonicalProfileValue(nested)]));
+}
 
 export class MeetingKnowledgeDrainTimeoutError extends Error {
   public constructor(timeoutMilliseconds: number) {
@@ -104,8 +142,12 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
   retrieval: Object.freeze({ maximumCandidates: qualifiedFocusedEvidenceCandidateLimit, neighborTurns: 2 }),
   retrievalAdmission: Object.freeze({
     cutoverEpoch: "infinity-locator-v2-only-r1",
-    infinityProfileFingerprint: "2e69df6bf22461ee8d6844c7e6699cfb099ad36d84b0aa15f1d3061754ff27be",
-    localProfileFingerprint: "364017ee7b386e21d90351525a1fd0b367afdf5a88c72c5e08e1707853ed1830",
+    infinityProfileFingerprint: retrievalProfileFingerprint(
+      meetingKnowledgeRetrievalProfilePreimages.infinity,
+    ),
+    localProfileFingerprint: retrievalProfileFingerprint(
+      meetingKnowledgeRetrievalProfilePreimages.local,
+    ),
   }),
 });
 
@@ -242,6 +284,9 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
             ),
         }),
   });
+  const retrievalV2Admission = createRetrievalV2Admission(
+    input.historicalMemory, input.config,
+  );
   const admission = new AdmitCurrentFinalReply(
     evidence,
     authorization,
@@ -256,7 +301,13 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
               input.config.meetingKnowledge.retrievalV2ProviderBinding }),
       }),
     }),
-    createRetrievalV2Admission(input.historicalMemory, input.config),
+    Object.freeze({
+      canonicalSpeakerFilters: Object.freeze({
+        aliases: participantSpeakerAliases(input.config.participantGreetingProfiles),
+        identitySkeletons: new DiscordConfusableIdentitySkeletons(),
+      }),
+      ...(retrievalV2Admission === undefined ? {} : { retrievalV2Admission }),
+    }),
   );
   const generator = createGroundedAnswerGenerator({ config: input.config, runtimeTransport: input.runtimeTransport,
     timeoutMs: meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds,

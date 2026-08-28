@@ -57,12 +57,38 @@ export const selectedTurns: readonly RehydratedEvidenceTurn[] = Object.freeze([
 export const references: readonly FocusedMemoryReference[] = Object.freeze(
   selectedTurns.map(({ turnHash, turnId }) => Object.freeze({
     meetingId: authority.meetingId,
+    retrievalAudit: retrievalAuditFor("infinity_locator_v2", turnId),
     transcriptId: authority.transcriptId,
     transcriptVersion: authority.transcriptVersion,
     turnHash,
     turnId,
   })),
 );
+
+function retrievalAuditFor(
+  path: "canonical_local_exact_lexical_v1" | "infinity_locator_v2",
+  turnId: string,
+  locator = `canonical-turn:${turnId}`,
+) {
+  const local = path === "canonical_local_exact_lexical_v1";
+  return Object.freeze({
+    capabilityFingerprint: (local ? "f" : "e").repeat(64),
+    contributions: Object.freeze([Object.freeze({
+      contributionScorePicos: 1_000_000,
+      providerLaneId: local ? "canonical_local_exact_lexical" : "postgres_keyword",
+      providerRank: 1,
+      queryId: "original-question",
+      rawScoreKind: "bm25" as const,
+      rawScoreValue: 1,
+    })]),
+    fusedScore: 1,
+    locator,
+    profileId: local ? path : "profile-v2",
+    providerRank: 1,
+    requestDigest: "8".repeat(64),
+    responseDigest: "9".repeat(64),
+  });
+}
 
 export const fixedReplyText = Object.freeze({
   insufficient_evidence: "There is not enough confirmed meeting evidence.",
@@ -133,7 +159,15 @@ export class EvidenceFake implements FinalReplyEvidencePort {
     input: readonly FocusedMemoryReference[],
   ): Promise<CanonicalFinalReplyEvidenceResult> {
     this.references.push(input);
-    return Promise.resolve(this.hydrationResults.shift() ?? this.hydrated);
+    const result = this.hydrationResults.shift() ?? this.hydrated;
+    if (result.status !== "current") {return Promise.resolve(result);}
+    return Promise.resolve({ ...result, turns: result.turns.map((turn) => {
+      const reference = input.find(({ turnId }) => turnId === turn.turnId);
+      return reference?.retrievalAudit === undefined ? turn : Object.freeze({
+        ...turn,
+        retrievalAudit: reference.retrievalAudit,
+      });
+    }) });
   }
 }
 
@@ -150,7 +184,22 @@ export class MemoryFake implements FocusedMemoryRetrievalPort {
 
   public retrieve(input: Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0]) {
     this.calls.push(input);
-    return Promise.resolve(this.result);
+    if (this.result.status !== "current") {return Promise.resolve(this.result);}
+    const path = input.retrievalBinding?.retrievalPath;
+    if (path !== "infinity_locator_v2" &&
+      path !== "canonical_local_exact_lexical_v1") {
+      return Promise.resolve(this.result);
+    }
+    return Promise.resolve({ ...this.result, candidates: this.result.candidates.map(
+      (reference) => Object.freeze({
+        ...reference,
+        retrievalAudit: retrievalAuditFor(
+          path,
+          reference.turnId,
+          reference.historicalSource?.candidateLocator,
+        ),
+      }),
+    ) });
   }
 
   public reauthorizeHistoricalEvidence(): Promise<boolean> {
@@ -190,6 +239,7 @@ describe("local final reply application fixtures", () => {
   it("keeps selected references bound to the authoritative transcript", () => {
     expect(references).toEqual(selectedTurns.map(({ turnHash, turnId }) => ({
       meetingId: authority.meetingId,
+      retrievalAudit: retrievalAuditFor("infinity_locator_v2", turnId),
       transcriptId: authority.transcriptId,
       transcriptVersion: authority.transcriptVersion,
       turnHash,

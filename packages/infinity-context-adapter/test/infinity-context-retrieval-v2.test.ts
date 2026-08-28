@@ -45,6 +45,7 @@ class RetrievalV2Endpoint implements HttpTransport {
   };
   public response: Record<string, unknown> = response();
   public hang = false;
+  public afterCapabilities?: () => void;
 
   public async send(httpRequest: HttpRequest): Promise<HttpResponse> {
     this.requests.push(httpRequest);
@@ -57,6 +58,7 @@ class RetrievalV2Endpoint implements HttpTransport {
       });
     }
     if (httpRequest.url.pathname === "/v1/capabilities") {
+      this.afterCapabilities?.();
       return json(200, this.capabilities as JsonValue);
     }
     if (httpRequest.url.pathname === "/v1/context/retrieve") {
@@ -161,26 +163,37 @@ function adapter(endpoint: RetrievalV2Endpoint, timeoutMs = 100) {
   });
 }
 
+function adapterWithClock(
+  endpoint: RetrievalV2Endpoint,
+  monotonicNowMs: () => number,
+) {
+  return new InfinityContextRetrievalV2Adapter({
+    baseUrl: "http://infinity.invalid/v1",
+    monotonicNowMs,
+    operationTimeoutMs: 200,
+    requestTimeoutMs: 100,
+    transport: endpoint,
+  });
+}
+
 describe("Infinity Context locator-only Retrieval V2 adapter", () => {
   it("passes one original question and hard filters unchanged without ranking", async () => {
     const endpoint = new RetrievalV2Endpoint();
     const result = await adapter(endpoint).retrieve(request());
 
-    expect(result).toMatchObject({
-      candidates: [{
-        locator: "candidate-007",
-        retrievalProvenance: {
-          contributions: expect.arrayContaining([expect.objectContaining({
-            providerLaneId: expect.any(String),
-            providerRank: expect.any(Number),
-            queryId: "original-question",
-          })]),
-          fusedScore: expect.any(Number),
-          providerRank: expect.any(Number),
-        },
-      }],
-      status: "available",
+    expect(result.status).toBe("available");
+    if (result.status !== "available") {throw new Error("retrieval unavailable");}
+    const candidate = result.candidates[0];
+    expect(candidate?.locator).toBe("candidate-007");
+    expect(typeof candidate?.retrievalProvenance.fusedScore).toBe("number");
+    expect(typeof candidate?.retrievalProvenance.providerRank).toBe("number");
+    expect(candidate?.retrievalProvenance.contributions[0]).toMatchObject({
+      queryId: "original-question",
     });
+    expect(typeof candidate?.retrievalProvenance.contributions[0]?.providerLaneId)
+      .toBe("string");
+    expect(typeof candidate?.retrievalProvenance.contributions[0]?.providerRank)
+      .toBe("number");
     const wire = endpoint.requests[1]?.body;
     expect(wire?.kind).toBe("json");
     if (wire?.kind !== "json") {
@@ -400,6 +413,9 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
     }
   });
 
+});
+
+describe("Infinity Retrieval V2 deadline ownership", () => {
   it("maps timeout and caller cancellation without returning partial locators", async () => {
     const timeoutEndpoint = new RetrievalV2Endpoint();
     timeoutEndpoint.hang = true;
@@ -418,7 +434,41 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
       { signal: controller.signal },
     )).toEqual({
       code: "memory.operation_cancelled",
+      retryable: false,
+      status: "unavailable",
+    });
+  });
+
+  it("uses one monotonic absolute deadline across both official-SDK requests", async () => {
+    let now = 1_000;
+    const endpoint = new RetrievalV2Endpoint();
+    endpoint.afterCapabilities = () => { now = 1_201; };
+
+    await expect(adapterWithClock(endpoint, () => now).retrieve(request({
+      budgets: { ...request().budgets, deadlineMs: 200 },
+    }))).resolves.toEqual({
+      code: "memory.context_retrieval_deadline_exceeded",
       retryable: true,
+      status: "unavailable",
+    });
+    expect(endpoint.requests.map(({ url }) => url.pathname))
+      .toEqual(["/v1/capabilities"]);
+  });
+
+  it("gives caller cancellation deterministic precedence at a deadline race", async () => {
+    let now = 1_000;
+    const controller = new AbortController();
+    const endpoint = new RetrievalV2Endpoint();
+    endpoint.afterCapabilities = () => {
+      now = 1_201;
+      controller.abort(new Error("caller won the race"));
+    };
+
+    await expect(adapterWithClock(endpoint, () => now).retrieve(request({
+      budgets: { ...request().budgets, deadlineMs: 200 },
+    }), { signal: controller.signal })).resolves.toEqual({
+      code: "memory.operation_cancelled",
+      retryable: false,
       status: "unavailable",
     });
   });

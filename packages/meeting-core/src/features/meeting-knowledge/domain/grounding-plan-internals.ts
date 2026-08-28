@@ -144,6 +144,9 @@ export function normalizeRehydratedTurns(
       ...(turn.source === undefined
         ? {}
         : { source: normalizeEvidenceSource(turn.source) }),
+      ...(turn.retrievalAudit === undefined
+        ? {}
+        : { retrievalAudit: normalizeRetrievalAudit(turn.retrievalAudit) }),
       startMs,
       text: requireKnowledgeText(turn.text, "evidence.text", 32_768),
       turnHash: requireSha256(turn.turnHash, "evidence.turnHash"),
@@ -178,6 +181,34 @@ export function normalizeRehydratedTurns(
     );
   }
   return Object.freeze(normalized);
+}
+
+function normalizeRetrievalAudit(
+  audit: NonNullable<RehydratedEvidenceTurn["retrievalAudit"]>,
+): NonNullable<RehydratedEvidenceTurn["retrievalAudit"]> {
+  if (!Number.isFinite(audit.fusedScore) ||
+    !Number.isSafeInteger(audit.providerRank) || audit.providerRank < 1 ||
+    audit.contributions.length < 1 || audit.contributions.length > 32) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_EVIDENCE",
+      "retrieval provenance is outside its bounded contract",
+    );
+  }
+  return Object.freeze({
+    capabilityFingerprint: requireSha256(
+      audit.capabilityFingerprint,
+      "evidence.retrievalAudit.capabilityFingerprint",
+    ),
+    contributions: Object.freeze(audit.contributions.map((contribution) =>
+      Object.freeze({ ...contribution })
+    )),
+    fusedScore: audit.fusedScore,
+    locator: requireKnowledgeText(audit.locator, "evidence.retrievalAudit.locator", 1_024),
+    profileId: requireKnowledgeText(audit.profileId, "evidence.retrievalAudit.profileId", 256),
+    providerRank: audit.providerRank,
+    requestDigest: requireSha256(audit.requestDigest, "evidence.retrievalAudit.requestDigest"),
+    responseDigest: requireSha256(audit.responseDigest, "evidence.retrievalAudit.responseDigest"),
+  });
 }
 
 export function opaqueEvidenceId(index: number): string {

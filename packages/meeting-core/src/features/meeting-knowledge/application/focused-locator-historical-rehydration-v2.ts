@@ -5,9 +5,10 @@ import {
 } from "../domain/historical-evidence.js";
 import type {
   FocusedMemoryReference,
-  FocusedRetrievalAudit,
   RehydratedEvidenceTurn,
 } from "../domain/grounding-plan.js";
+import { decodeFocusedLocatorCandidate } from
+  "./ports/focused-retrieval-provenance.js";
 import {
   buildHistoricalRoomTopology,
   rehydrateHistoricalBlock,
@@ -48,6 +49,8 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   public constructor(private readonly dependencies: {
     readonly authority: HistoricalEvidenceAuthority;
     readonly authorization: HistoricalAuthorizationPort;
+    /** Maps one canonical actor to every retained opaque retrieval key. */
+    readonly actorKeysForSpeaker?: (speakerId: string) => readonly string[];
     readonly ids: HistoricalOpaqueIdPort;
     readonly retrieval: FocusedLocatorRetrievalV2Port;
     readonly servingAuthorized?: () => boolean;
@@ -118,7 +121,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
       return null;
     }
     const candidates = remote.candidates
-      .map(decodeLocatorCandidate)
+      .map(decodeFocusedLocatorCandidate)
       .filter(isLocatorCandidate);
     if (candidates.length < 1) {
       return null;
@@ -193,8 +196,10 @@ export class HistoricalFocusedLocatorRetrievalV2 {
         input, record, allowedSources,
       );
       if (block === null) {continue;}
+      const turnsAfterHardFilters = this.applyCanonicalHardFilters(input, block.turns);
+      if (turnsAfterHardFilters.length === 0) {continue;}
       const candidateBytes = new TextEncoder().encode(
-        block.turns.map(({ text }) => text).join("\n"),
+        turnsAfterHardFilters.map(({ text }) => text).join("\n"),
       ).byteLength;
       const delimiterBytes = references.length === 0 ? 0 : 1;
       if (candidateBytes < 1 ||
@@ -204,7 +209,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
         continue;
       }
       evidenceBytes += delimiterBytes + candidateBytes;
-      references.push(...block.turns.map((turn) => Object.freeze({
+      references.push(...turnsAfterHardFilters.map((turn) => Object.freeze({
         historicalSource: Object.freeze({
           candidateLocator: block.candidateLocator,
           indexGeneration: block.indexGeneration,
@@ -219,7 +224,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
         turnHash: this.dependencies.turnHashes.hash(turn),
         turnId: turn.turnId,
       })));
-      turns.push(...block.turns.map((turn) => Object.freeze({
+      turns.push(...turnsAfterHardFilters.map((turn) => Object.freeze({
         ...turn,
         source: Object.freeze({
           historicalSource: Object.freeze({
@@ -240,6 +245,26 @@ export class HistoricalFocusedLocatorRetrievalV2 {
       references: Object.freeze(references),
       turns: Object.freeze(turns),
     });
+  }
+
+  private applyCanonicalHardFilters(
+    input: HistoricalLocatorRetrievalV2Input,
+    turns: LocallyRehydratedEvidenceBlockV1["turns"],
+  ): LocallyRehydratedEvidenceBlockV1["turns"] {
+    const actorKeys = input.request.filters.actorKeys;
+    const interval = input.request.filters.relativeTimeInterval;
+    if (actorKeys.length > 0 && this.dependencies.actorKeysForSpeaker === undefined) {
+      return Object.freeze([]);
+    }
+    const requestedActors = new Set(actorKeys);
+    return Object.freeze(turns.filter((turn) => {
+      const actorMatches = requestedActors.size === 0 ||
+        this.dependencies.actorKeysForSpeaker!(turn.speakerId)
+          .some((key) => requestedActors.has(key));
+      const timeMatches = interval === null ||
+        (turn.startMs < interval.endMs && turn.endMs > interval.startMs);
+      return actorMatches && timeMatches;
+    }));
   }
 
   private async rehydrateCandidate(
@@ -285,81 +310,6 @@ export class HistoricalFocusedLocatorRetrievalV2 {
 
 function unavailable(): FocusedMemoryRetrievalResult {
   return Object.freeze({ schemaVersion: 1, status: "unavailable" });
-}
-
-function decodeLocatorCandidate(value: FocusedLocatorRetrievalV2Candidate):
-FocusedLocatorRetrievalV2Candidate | null {
-  if (!exactKeys(value, ["locator", "retrievalProvenance"]) ||
-    typeof value.locator !== "string" || value.locator.length < 1 ||
-    value.locator.length > 1_024) {
-    return null;
-  }
-  const provenance = decodeRetrievalAudit(value.retrievalProvenance);
-  return provenance === null ? null : Object.freeze({
-    locator: value.locator,
-    retrievalProvenance: provenance,
-  });
-}
-
-function decodeRetrievalAudit(value: FocusedRetrievalAudit): FocusedRetrievalAudit | null {
-  if (typeof value !== "object" || value === null ||
-    !exactKeys(value, ["contributions", "fusedScore", "providerRank"]) ||
-    !finite(value.fusedScore) || !rank(value.providerRank) ||
-    !Array.isArray(value.contributions) || value.contributions.length < 1 ||
-    value.contributions.length > 32) {
-    return null;
-  }
-  const contributions: Array<FocusedRetrievalAudit["contributions"][number]> = [];
-  for (const contribution of value.contributions) {
-    const decoded = decodeRetrievalContribution(contribution);
-    if (decoded === null) {return null;}
-    contributions.push(decoded);
-  }
-  return Object.freeze({
-    contributions: Object.freeze(contributions),
-    fusedScore: value.fusedScore,
-    providerRank: value.providerRank,
-  });
-}
-
-function decodeRetrievalContribution(
-  contribution: FocusedRetrievalAudit["contributions"][number],
-): FocusedRetrievalAudit["contributions"][number] | null {
-  if (typeof contribution !== "object" || contribution === null ||
-    !exactKeys(contribution, ["contributionScorePicos", "providerLaneId",
-      "providerRank", "queryId", "rawScoreKind", "rawScoreValue"]) ||
-    !Number.isSafeInteger(contribution.contributionScorePicos) ||
-    !rank(contribution.providerRank) || !boundedAuditId(contribution.providerLaneId) ||
-    !boundedAuditId(contribution.queryId) || !rawScoreKind(contribution.rawScoreKind) ||
-    (contribution.rawScoreValue !== null && !finite(contribution.rawScoreValue))) {
-    return null;
-  }
-  return Object.freeze({ ...contribution });
-}
-
-function boundedAuditId(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= 128;
-}
-
-function exactKeys(value: object, expected: readonly string[]): boolean {
-  const keys = Object.keys(value).toSorted();
-  const sortedExpected = [...expected].toSorted();
-  return keys.length === sortedExpected.length &&
-    keys.every((key, index) => key === sortedExpected[index]);
-}
-
-function finite(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function rank(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 1;
-}
-
-function rawScoreKind(value: unknown):
-value is FocusedRetrievalAudit["contributions"][number]["rawScoreKind"] {
-  return value === null || value === "bm25" || value === "distance" ||
-    value === "relevance" || value === "similarity";
 }
 
 function isLocatorCandidate(value: FocusedLocatorRetrievalV2Candidate | null):

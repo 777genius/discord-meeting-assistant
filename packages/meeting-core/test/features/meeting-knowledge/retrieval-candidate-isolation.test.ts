@@ -27,12 +27,14 @@ function providerCandidate(locator: string, providerRank = 1) {
   return Object.freeze({
     locator,
     retrievalProvenance: Object.freeze({
+      capabilityFingerprint: providerBinding.capabilityFingerprint,
       contributions: Object.freeze([Object.freeze({
         contributionScorePicos: 500_000, providerLaneId: "postgres_keyword",
         providerRank, queryId: "original-question", rawScoreKind: "bm25" as const,
         rawScoreValue: 2.5,
       })]),
-      fusedScore: 0.5, providerRank,
+      fusedScore: 0.5, locator, profileId: providerBinding.profileId, providerRank,
+      requestDigest: "5".repeat(64), responseDigest: "6".repeat(64),
     }),
   });
 }

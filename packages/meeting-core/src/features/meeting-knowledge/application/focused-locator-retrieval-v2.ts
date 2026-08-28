@@ -104,6 +104,15 @@ export class PrepareFocusedLocatorRetrievalV2Request {
     if (plans.length < 1 || plans.length > this.policy.maximumSources) {
       return null;
     }
+    const confirmedPlans = await this.dependencies.store.listCurrentRoomPlans(
+      input.scopeId,
+      input.roomId,
+      this.policy.maximumSources + 2,
+      input.signal === undefined ? {} : { signal: input.signal },
+    );
+    if (!samePlanEnumeration(observedPlans, confirmedPlans)) {
+      return null;
+    }
     if (this.dependencies.servingAuthorized?.() === false) {
       return null;
     }
@@ -172,6 +181,19 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       }),
     });
   }
+}
+
+function samePlanEnumeration(
+  left: readonly { readonly binding: { readonly releaseId: string };
+    readonly plan: { readonly topology: { readonly indexGeneration: string } } }[],
+  right: readonly { readonly binding: { readonly releaseId: string };
+    readonly plan: { readonly topology: { readonly indexGeneration: string } } }[],
+): boolean {
+  return left.length === right.length && left.every((plan, index) => {
+    const candidate = right[index];
+    return candidate?.binding.releaseId === plan.binding.releaseId &&
+      candidate.plan.topology.indexGeneration === plan.plan.topology.indexGeneration;
+  });
 }
 
 export class FocusedHistoricalEvidenceV2 implements FocusedHistoricalEvidenceV2Port {
