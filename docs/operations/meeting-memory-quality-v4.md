@@ -413,55 +413,56 @@ Exact role schemas reject unknown fields, missing or unrelated receipts, and
 uniform digest placeholders. Question/rubric, run/answer/evidence/adjudication,
 retention, deletion, and absence bindings are verified independently.
 
-The sole provider-capable executable is the repository-owned production composition in
-`semantic-quality-v4-production-composition.ts`. Its strict operator file may
-name only credentials, private/artifact/receipt paths, a campaign/run ID,
-endpoints, and isolated scope topology. Configured SDK/runtime/image provenance
-paths are not accepted. The composition loads the corpus and rubric, derives production
-turn-to-block authority from current PostgreSQL plans, constructs the official
-Infinity V2 adapter without transport injection, creates the concrete gRPC
-grounded-answer runtime only after retrieval admission, and constructs the
-journal and branded A256GCM store internally. External adjudication results are
-accepted only with two exact-input/result signatures from anchor-authorized
-reviewers; arbitrary JSON is never relabeled. It locally seals metric
-applicability, thresholds, independently anchored provenance, capability bytes,
-and all 240 prepared request snapshots. No operator-supplied port, reviewer-key
-registry, scoring mapping, authority, or threshold is accepted. Its operator
-configuration also names an absolute create-only `workflowRoot`; it cannot name
-an executable implementation.
+The installed package's provider-capable executable is
+`src/quality-campaign/production-entrypoint.ts`, which dispatches through
+`production-cli.ts` to `production-composition.ts` and constructs the HTTP
+provider and evidence ports. Each invocation requires an absolute phase JSON
+path and a distinct absolute create-only status JSON path. The phase document
+has this exact boundary shape:
 
-Use exact Node 24.18.0. Each command requires a distinct custodian handoff:
+```json
+{
+  "schemaVersion": "meeting_knowledge.semantic_quality_production_phase.v1",
+  "payload": {
+    "configurationPath": "/absolute/private/production-configuration.json",
+    "connectionsPath": "/absolute/private/production-connections.json"
+  }
+}
+```
+
+The separate source harness in
+`test/semantic-quality-v4-production-composition.ts` is invoked only by
+`test/run-semantic-quality-v4.ts --real-execute`. Its private corpus loader
+supports the `human_corpus_v1` profile, but that support is not installed CLI
+admission and is not qualification evidence. Canonical integration into the
+installed production CLI remains pending; do not use the source harness or its
+profile to claim a memory-quality GO.
+
+Use exact Node 24.18.0. The aliases below each forward the production command,
+phase path, and create-only status path to the installed CLI. Use a fresh status
+path for every invocation and custodian handoff:
 
 ```bash
 export PATH=/var/data/toolchains/node-v24.18.0/bin:$PATH
 export pnpm_config_verify_deps_before_run=false
 
-SEMANTIC_QUALITY_V4_OPERATOR_CONFIGURATION_PATH=/absolute/private/operator-configuration.json \
-  /usr/local/bin/pnpm --filter @discord-meeting/infinity-context-adapter \
-  run test:semantic-quality-v4:real-execute
+PACKAGE='@discord-meeting/infinity-context-adapter'
 
-SEMANTIC_QUALITY_V4_WORKFLOW_ROOT=/absolute/private/workflow \
-SEMANTIC_QUALITY_V4_TRUST_ANCHOR_PATH=/absolute/public/release-anchor.json \
-SEMANTIC_QUALITY_V4_PHASE_INPUT_PATH=/absolute/private/adjudication-phase.json \
-  /usr/local/bin/pnpm --filter @discord-meeting/infinity-context-adapter \
-  run test:semantic-quality-v4:real-adjudicate
-
-SEMANTIC_QUALITY_V4_WORKFLOW_ROOT=/absolute/private/workflow \
-SEMANTIC_QUALITY_V4_TRUST_ANCHOR_PATH=/absolute/public/release-anchor.json \
-SEMANTIC_QUALITY_V4_PHASE_INPUT_PATH=/absolute/private/retention-phase.json \
-  /usr/local/bin/pnpm --filter @discord-meeting/infinity-context-adapter \
-  run test:semantic-quality-v4:real-retention
-
-SEMANTIC_QUALITY_V4_WORKFLOW_ROOT=/absolute/private/workflow \
-SEMANTIC_QUALITY_V4_TRUST_ANCHOR_PATH=/absolute/public/release-anchor.json \
-SEMANTIC_QUALITY_V4_PHASE_INPUT_PATH=/absolute/private/cleanup-phase.json \
-  /usr/local/bin/pnpm --filter @discord-meeting/infinity-context-adapter \
-  run test:semantic-quality-v4:real-cleanup
-
-SEMANTIC_QUALITY_V4_WORKFLOW_ROOT=/absolute/private/workflow \
-SEMANTIC_QUALITY_V4_TRUST_ANCHOR_PATH=/absolute/public/release-anchor.json \
-  /usr/local/bin/pnpm --filter @discord-meeting/infinity-context-adapter \
-  run test:semantic-quality-v4:real-status
+/usr/local/bin/pnpm --filter "$PACKAGE" run test:semantic-quality-v4:real-preflight \
+  /absolute/private/preflight-phase.json /absolute/private/preflight-status.create-only.json
+/usr/local/bin/pnpm --filter "$PACKAGE" run test:semantic-quality-v4:real-execute \
+  /absolute/private/execute-phase.json /absolute/private/execute-status.create-only.json
+/usr/local/bin/pnpm --filter "$PACKAGE" run test:semantic-quality-v4:real-adjudicate \
+  /absolute/private/adjudicate-phase.json /absolute/private/adjudicate-status.create-only.json
+/usr/local/bin/pnpm --filter "$PACKAGE" run test:semantic-quality-v4:real-retention \
+  /absolute/private/retention-phase.json /absolute/private/retention-status.create-only.json
+/usr/local/bin/pnpm --filter "$PACKAGE" run test:semantic-quality-v4:real-cleanup \
+  /absolute/private/cleanup-phase.json /absolute/private/cleanup-status.create-only.json
+/usr/local/bin/pnpm --filter "$PACKAGE" run test:semantic-quality-v4:real-final-admission \
+  /absolute/private/final-admission-phase.json \
+  /absolute/private/final-admission-status.create-only.json
+/usr/local/bin/pnpm --filter "$PACKAGE" run test:semantic-quality-v4:real-status \
+  /absolute/private/status-phase.json /absolute/private/status-status.create-only.json
 ```
 
 Exit `0` means a provider-free status query or final `cleaned_qualified`; exit
