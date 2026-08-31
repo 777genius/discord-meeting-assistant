@@ -1,6 +1,6 @@
 ---
 id: ADR-0053
-status: proposed
+status: accepted
 supersedes: []
 superseded_by: []
 ---
@@ -9,7 +9,8 @@ superseded_by: []
 
 ## Status
 
-Proposed on 2026-08-26.
+Accepted on 2026-08-28, with ADR-0064 controlling composite accounting and
+authority fences where this decision was ambiguous.
 
 ## Context
 
@@ -24,9 +25,10 @@ constructible generic retrieval fallback.
 New jobs persist and send exactly one bounded original question. Canonical
 speaker IDs, meeting-relative time, record kind, scope, and accepted source
 generations are hard filters. The consumer neither decomposes nor weights the
-question. The Infinity adapter returns provider-ordered opaque locators and
-does not expose or consume remote score, rank, text, fusion, reranking, or
-neighbor data.
+question. The Infinity adapter returns provider-ordered opaque locators.
+Provider text, snippets, citations, and authorization claims never cross the
+port. Bounded rank, lane, query, score, and digest accounting crosses only as
+non-evidentiary audit provenance and is verified under ADR-0064.
 
 Focused addressed voice obtains historical candidates only through that same
 V2 locator port. Meeting Knowledge concurrently resolves the authoritative
@@ -51,9 +53,12 @@ their status. The exact provider reason code crosses the consumer port;
 capability evidence remains the separately classified adapter failure.
 
 Meeting Core rehydrates locator evidence from authoritative local sources and
-rechecks authorization, retention, generation, and source identity. Local
-fallback is bounded exact-token matching with deterministic quotas and order;
-it is not semantic retrieval and does not expand neighbors.
+rechecks authorization, retention, generation, and source identity. The
+local-current lane is bounded exact-token matching with deterministic quotas
+and order; it is not semantic retrieval and does not expand neighbors.
+ADR-0064 composes that lane with V2 historical locators for focused questions.
+This is composition rather than fallback: each lane retains its own identity
+and failure semantics.
 
 Production composition constructs only the V2 route. Persisted protocol-1,
 `infinity_locator_v1`, and `legacy_downstream_v1` values remain decodable for

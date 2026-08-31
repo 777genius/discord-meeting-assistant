@@ -174,7 +174,6 @@ function locatorCandidates(
     };
     return Object.freeze({ locator: candidate.locator,
       retrievalProvenance: Object.freeze({
-      capabilityFingerprint: binding.capabilityFingerprint,
       contributions: Object.freeze(candidate.contributions.map((contribution) =>
         Object.freeze({
           contributionScorePicos: contribution.contribution_score_picos,
@@ -185,8 +184,12 @@ function locatorCandidates(
           rawScoreValue: contribution.raw_score_value,
         }))),
       fusedScore: candidate.fused_score,
+      laneIdentity: Object.freeze({
+        capabilityFingerprint: binding.capabilityFingerprint,
+        lane: "historical" as const,
+        profileId: binding.profileId,
+      }),
       locator: candidate.locator,
-      profileId: binding.profileId,
       providerRank: candidate.provider_rank,
       requestDigest,
       responseDigest: createHash("sha256").update(

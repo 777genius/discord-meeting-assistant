@@ -22,6 +22,7 @@ class PayloadFake implements AnswerPayloadPort {
 }
 
 class StoreFake implements AnswerEffectStore {
+  beforeStartRequest?: () => Promise<void>;
   record?: AnswerEffectRecord;
 
   reserve(input: AnswerEffectReservationInput) {
@@ -55,22 +56,23 @@ class StoreFake implements AnswerEffectStore {
     return Promise.resolve(this.record?.effectId === effectId ? this.record : null);
   }
 
-  startRequest(input: {
+  async startRequest(input: {
     readonly effectId: string;
     readonly questionGeneration: number;
   }) {
+    await this.beforeStartRequest?.();
     if (
       this.record?.effectId !== input.effectId ||
       (this.record.state !== "reserved" && this.record.state !== "claimed")
     ) {
-      return Promise.resolve(false);
+      return false;
     }
     this.record = {
       ...this.record,
       claimGeneration: this.record.claimGeneration + 1,
       state: "request_started",
     };
-    return Promise.resolve(true);
+    return true;
   }
 
   complete(input: { readonly effectId: string; readonly externalReceipt: string }) {
@@ -298,9 +300,35 @@ describe("Publishing answer effects", () => {
       effectId: reservation.effectId,
       questionGeneration: 1,
       workerId: "worker-2",
-    })).resolves.toEqual({ status: "rejected_before_request" });
+    })).resolves.toEqual({ externalReceipt: "answer-message-1", status: "delivered" });
     expect(delivery.creates).toBe(1);
   });
+
+  it("converges a reconciliation delivery between reservation and request start",
+    async () => {
+      const store = new StoreFake();
+      const delivery = new DeliveryFake();
+      const publisher = new DurableAnswerPublication({
+        delivery, payloads: new PayloadFake(), store,
+      });
+      const reservation = await publisher.reserve(reservationInput());
+      store.beforeStartRequest = async () => {
+        if (store.record === undefined) {throw new Error("missing reserved effect");}
+        store.record = { ...store.record,
+          externalReceipt: "answer-message-from-reconciliation",
+          state: "delivered",
+        };
+      };
+
+      await expect(publisher.send({
+        authorizationDigest: "e".repeat(64), effectId: reservation.effectId,
+        questionGeneration: 1, workerId: "publication-worker",
+      })).resolves.toEqual({
+        externalReceipt: "answer-message-from-reconciliation",
+        status: "delivered",
+      });
+      expect(delivery.creates).toBe(0);
+    });
 
   it("safely resumes an expired legacy pre-request claim with one create", async () => {
     const store = new StoreFake();

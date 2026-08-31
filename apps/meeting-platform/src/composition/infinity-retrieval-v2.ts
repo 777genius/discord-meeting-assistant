@@ -10,7 +10,7 @@ import { HistoricalFocusedLocatorRetrievalV2,
   type RetrievalActorReferenceAuthorityV1,
   type TwoHourHistoricalRetrievalProfileV1 } from
   "@discord-meeting/meeting-core/meeting-knowledge";
-import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
+import { PostgresHistoricalRoomAuthoritySnapshot,
   canonicalFinalReplyTurnHash } from "@discord-meeting/postgres-adapter";
 import type { Pool } from "pg";
 
@@ -50,19 +50,18 @@ export class InfinityRetrievalV2Composition {
       providerBinding: binding,
       servingAuthorized: this.input.servingAuthorized,
       speakerAliases: this.input.speakerAliases,
-      store: new PostgresHistoricalMemoryStore(this.input.pool),
+      snapshot: new PostgresHistoricalRoomAuthoritySnapshot(this.input.pool),
     });
   }
 
   public retrieval(authorization: HistoricalAuthorizationPort) {
     return new HistoricalFocusedLocatorRetrievalV2({
-      authority: new PostgresHistoricalEvidenceAuthority(this.input.pool),
       actorKeysForSpeaker: this.input.actorKeysForSpeaker,
       authorization,
       ids: this.#ids,
       retrieval: this.#retrieval,
       servingAuthorized: this.input.servingAuthorized,
-      store: new PostgresHistoricalMemoryStore(this.input.pool),
+      snapshot: new PostgresHistoricalRoomAuthoritySnapshot(this.input.pool),
       turnHashes: { hash: canonicalFinalReplyTurnHash },
     }, this.input.twoHourProfile);
   }

@@ -4,6 +4,8 @@ import type {
   QuestionJobLease,
   QuestionJobStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { groundingPlanRetrievalAuditsBindInput } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 import type { Pool } from "pg";
 
 import { lockMeetingKnowledgeSources } from "./postgres-answer-source-withdrawal.js";
@@ -17,12 +19,17 @@ import {
   questionPolicyParameters,
 } from "./postgres-question-policy-transaction.js";
 import { PostgresQuestionProviderAttemptStore } from "./postgres-question-provider-attempt-store.js";
+import { PostgresQuestionReconciliationCheckpoint } from
+  "./postgres-question-reconciliation-checkpoint.js";
 import { PostgresFinalReplyEvidence } from "./postgres-final-reply-evidence.js";
+import { QUESTION_JOB_WORKER_PROTOCOL_EPOCH } from
+  "./postgres-question-worker-protocol.js";
 
 export class PostgresQuestionJobStore implements QuestionJobStore {
   private readonly leases: PostgresQuestionJobLeaseStore;
   private readonly policyTransaction: PostgresQuestionPolicyTransaction;
   private readonly providerAttempts: PostgresQuestionProviderAttemptStore;
+  private readonly reconciliationCheckpoint: PostgresQuestionReconciliationCheckpoint;
 
   public constructor(
     private readonly pool: Pool,
@@ -30,6 +37,7 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
   ) {
     this.policyTransaction = new PostgresQuestionPolicyTransaction(pool, policy);
     this.providerAttempts = new PostgresQuestionProviderAttemptStore(pool, policy);
+    this.reconciliationCheckpoint = new PostgresQuestionReconciliationCheckpoint(pool);
     this.leases = new PostgresQuestionJobLeaseStore(
       pool,
       policy,
@@ -65,13 +73,21 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
     input: Parameters<QuestionJobStore["persistGroundingPlan"]>[0],
   ): Promise<boolean> {
     return this.policyTransaction.executeConsistent(false, async (client) => {
+      await client.query(
+        `SELECT pg_advisory_xact_lock(
+           hashtextextended('meeting-knowledge:question:' || $1, 0)
+         )`,
+        [input.jobId],
+      );
       await lockMeetingKnowledgeSources(client, input.sourceMeetingIds);
       if ("bindingProtocolVersion" in input.binding) {
         const evidence = new PostgresFinalReplyEvidence(
           client as unknown as Pool,
           input.binding.botApplicationIdentity,
         );
-        if (!await exactPlanEvidenceIsCurrent(evidence, input.binding, input.plan)) {
+        if (!await exactPlanEvidenceIsCurrent(
+          evidence, input.binding, input.plan, input.question,
+        )) {
           return false;
         }
       }
@@ -88,6 +104,14 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
               grounding_measurement = $4::jsonb,
               runtime_profile = $5,
               source_meeting_ids = $6::text[],
+              attempts = CASE WHEN $11 THEN attempts ELSE attempts + 1 END,
+              provider_attempt_state = 'reserved',
+              provider_attempt_id = $12,
+              provider_attempt_started_at = CASE WHEN $11
+                THEN provider_attempt_started_at ELSE transaction_timestamp() END,
+              provider_attempt_finished_at = NULL,
+              provider_attempt_retryable = NULL,
+              lease_until = transaction_timestamp() + make_interval(secs => $13),
               updated_at = transaction_timestamp()
           WHERE question_id = $1
             AND generation = $2
@@ -95,6 +119,23 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
             AND lease_until > transaction_timestamp()
             AND expires_at > transaction_timestamp()
             AND binding = $10::jsonb
+            AND question_text = $15
+            AND NOT EXISTS (
+              SELECT 1
+              FROM meeting_knowledge.question_message_tombstones AS tombstone
+              WHERE tombstone.question_id = job.question_id
+                AND tombstone.expires_at > transaction_timestamp()
+            )
+            AND worker_protocol_epoch = ${QUESTION_JOB_WORKER_PROTOCOL_EPOCH}
+            AND worker_protocol_generation = generation
+            AND expires_at >
+              transaction_timestamp() + make_interval(secs => $13)
+            AND (
+              ($11 AND provider_attempt_state = 'reserved'
+                AND provider_attempt_id = $12) OR
+              (NOT $11 AND provider_attempt_state IN ('none', 'failed')
+                AND attempts < $14)
+            )
             AND NOT EXISTS (
               SELECT 1 FROM source_fence WHERE operation = 'delete_meeting'
             )
@@ -118,6 +159,11 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
           input.sourceMeetingIds,
           ...questionPolicyParameters(this.policyTransaction.identity),
           JSON.stringify(input.binding),
+          input.attemptAlreadyReserved,
+          input.attemptId,
+          input.leaseSeconds,
+          input.maximumProviderAttempts,
+          input.question,
         ],
       );
       return result.rowCount === 1;
@@ -185,12 +231,16 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
             answer_candidate = NULL,
             lease_owner = NULL,
             lease_until = NULL,
-            terminal_at = transaction_timestamp(),
-            scrubbed_at = transaction_timestamp(),
+            retry_reason = NULL,
+            reconciliation_disposition = NULL,
+            reconciliation_reason = NULL,
+            terminal_at = COALESCE(terminal_at, transaction_timestamp()),
+            scrubbed_at = COALESCE(scrubbed_at, transaction_timestamp()),
             updated_at = transaction_timestamp()
         FROM locked_question
         WHERE job.question_id = locked_question.question_id
-          AND job.state <> 'terminal'
+          AND (job.state <> 'terminal' OR
+               job.reconciliation_disposition = 'reconcile')
         RETURNING job.question_id
         )
         UPDATE meeting_core.answer_effects AS effect
@@ -241,6 +291,31 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
     return result.rowCount === 1;
   }
 
+  public async convergeDeliveredQuestion(questionId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE meeting_knowledge.question_jobs AS job
+       SET state = 'terminal', outcome = 'answered',
+           authorization_principal_ref = NULL, question_text = NULL,
+           binding = NULL, grounding_plan = NULL, answer_candidate = NULL,
+           lease_owner = NULL, lease_until = NULL, retry_reason = NULL,
+           reconciliation_disposition = NULL, reconciliation_reason = NULL,
+           terminal_at = COALESCE(terminal_at, transaction_timestamp()),
+           scrubbed_at = COALESCE(scrubbed_at, transaction_timestamp()),
+           updated_at = transaction_timestamp()
+       WHERE job.question_id = $1
+         AND (job.state <> 'terminal' OR
+              job.reconciliation_disposition = 'reconcile')
+         AND EXISTS (
+           SELECT 1 FROM meeting_core.answer_effects AS effect
+           WHERE effect.effect_id = 'meeting-knowledge-answer:v1:' || job.question_id
+             AND effect.state = 'delivered'
+             AND effect.external_receipt IS NOT NULL
+         )`,
+      [questionId],
+    );
+    return result.rowCount === 1;
+  }
+
   public async confirmActiveLease(input: {
     readonly generation: number;
     readonly jobId: string;
@@ -263,6 +338,24 @@ export class PostgresQuestionJobStore implements QuestionJobStore {
       ],
     );
     return result.rowCount === 1;
+  }
+
+  public async listActiveQuestionsForReconciliation(input: {
+    readonly afterQuestionId: string | null;
+    readonly maximumRows: number;
+  }) {
+    return this.reconciliationCheckpoint.list(input);
+  }
+
+  public async loadQuestionReconciliationCursor(): Promise<string | null> {
+    return this.reconciliationCheckpoint.load();
+  }
+
+  public async saveQuestionReconciliationCursor(input: {
+    readonly expectedAfterQuestionId: string | null;
+    readonly nextAfterQuestionId: string | null;
+  }): Promise<boolean> {
+    return this.reconciliationCheckpoint.save(input);
   }
 }
 
@@ -291,13 +384,21 @@ async function exactPlanEvidenceIsCurrent(
   evidence: PostgresFinalReplyEvidence,
   binding: Parameters<PostgresFinalReplyEvidence["recheckCurrentBinding"]>[0],
   plan: GroundingPlan,
+  question: string,
 ): Promise<boolean> {
+  const references = planReferences(plan, binding);
+  if (plan.mode === "focused_retrieval" &&
+    !await groundingPlanRetrievalAuditsBindInput(
+      references, binding.retrievalBinding, question,
+    )) {
+    return false;
+  }
   if (plan.evidence.length === 0) {
     return (await evidence.recheckCurrentBinding(binding)).status === "current";
   }
   const hydrated = await evidence.rehydrateSelectedEvidence(
     binding,
-    planReferences(plan, binding),
+    references,
   );
   return hydrated.status === "current" &&
     hydrated.turns.length === plan.evidence.length &&

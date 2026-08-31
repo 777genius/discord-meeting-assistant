@@ -4,7 +4,8 @@ import {
   type RehydratedEvidenceTurn,
 } from "../domain/grounding-plan.js";
 import type { QuestionBindingSnapshot } from "../domain/question-job.js";
-import { authorityMatchesBinding, authorizedForJob } from "./final-reply-checks.js";
+import { authorizationObservationUnavailable, authorityMatchesBinding,
+  authorizedForJob } from "./final-reply-checks.js";
 import { admittedHumanActors } from "./admitted-human-evidence.js";
 import type {
   CurrentFinalReplyBinding,
@@ -17,6 +18,9 @@ import type {
 } from "./ports/final-reply.js";
 
 export type ExhaustiveFinalReplyPreparation =
+  | {
+      readonly status: "deferred";
+    }
   | {
       readonly authority: CurrentFinalReplyBinding;
       readonly exhaustive: ExhaustiveMemoryRetrievalRequest & {
@@ -91,9 +95,8 @@ export async function prepareExhaustiveFinalReply(input: {
     return settle("stale_binding");
   }
   const beforeHydration = await input.observeBeforeHydration();
-  if (!authorizedForJob(beforeHydration, input.authority, input.binding)) {
-    return settle("stale_authorization");
-  }
+  const authorizationFailure = exhaustiveAuthorizationFailure(beforeHydration, input);
+  if (authorizationFailure !== null) {return authorizationFailure;}
   let preparedAuthority: CurrentFinalReplyBinding;
   let preparedTurns: readonly RehydratedEvidenceTurn[];
   if (selected.candidates.length === 0) {
@@ -142,6 +145,15 @@ export async function prepareExhaustiveFinalReply(input: {
   } catch {
     return fixed("unsupported_size");
   }
+}
+
+function exhaustiveAuthorizationFailure(
+  observation: QuestionAuthorizationObservation,
+  input: Pick<Parameters<typeof prepareExhaustiveFinalReply>[0], "authority" | "binding">,
+): ExhaustiveFinalReplyPreparation | null {
+  if (authorizationObservationUnavailable(observation)) {return { status: "deferred" };}
+  return authorizedForJob(observation, input.authority, input.binding)
+    ? null : settle("stale_authorization");
 }
 
 async function recheckAbsenceAuthority(input: {

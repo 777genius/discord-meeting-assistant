@@ -7,9 +7,14 @@ import type { Pool } from "pg";
 
 import {
   decodeGroundedAnswerCandidate,
-  decodeGroundingPlan,
-  decodePersistedQuestionBinding,
+  questionAdmissionBindingHash,
 } from "./postgres-meeting-knowledge-codecs.js";
+import {
+  decodePersistedQuestionRecovery,
+  durableQuestionRecoveryRetryReason,
+  reconciliationDispositionForRecoveryReason,
+  type PersistedQuestionRecovery,
+} from "./postgres-question-recovery-codec.js";
 import {
   PostgresQuestionPolicyTransaction,
   questionPolicyParameters,
@@ -44,21 +49,21 @@ function requireMaximumProviderAttempts(value: number): number {
   return value;
 }
 
-function toLease(row: QuestionJobRow): QuestionJobLease {
+function toLease(
+  row: QuestionJobRow,
+  recovery: Extract<PersistedQuestionRecovery, { readonly status: "decoded" }>,
+): QuestionJobLease {
   if (row.state !== "running" && row.state !== "ready") {
     throw new Error("leased question job has an unsupported state");
   }
-  const binding = decodePersistedQuestionBinding(row.binding, row.binding_hash);
   return Object.freeze({
     answerCandidate: row.answer_candidate === null
       ? null
       : decodeGroundedAnswerCandidate(row.answer_candidate),
     attempts: row.attempts,
-    binding,
+    binding: recovery.binding,
     generation: row.generation,
-    groundingPlan: row.grounding_plan === null
-      ? null
-      : decodeGroundingPlan(row.grounding_plan, binding, row.question_text),
+    groundingPlan: recovery.groundingPlan,
     jobId: row.question_id,
     questionText: row.question_text,
     state: row.state,
@@ -83,7 +88,8 @@ export class PostgresQuestionJobLeaseStore {
     requireMaximumProviderAttempts(input.maximumProviderAttempts);
     return this.policyTransaction.execute(null, async (client) => {
       await this.providerAttempts.failAbandoned(client);
-      const result = await client.query<QuestionJobRow>(
+      for (let isolatedRows = 0; isolatedRows < 100; isolatedRows += 1) {
+        const result = await client.query<QuestionJobRow>(
         `
           WITH selected AS (
             SELECT question_id
@@ -124,8 +130,58 @@ export class PostgresQuestionJobLeaseStore {
           ...questionPolicyParameters(this.policyTransaction.identity),
         ],
       );
-      const row = result.rows[0];
-      return row === undefined ? null : toLease(row);
+        const row = result.rows[0];
+        if (row === undefined) {return null;}
+        const recovery = decodePersistedQuestionRecovery({
+          binding: row.binding,
+          bindingHash: row.binding_hash,
+          groundingPlan: row.grounding_plan,
+          questionText: row.question_text,
+        });
+        if (recovery.status === "decoded" &&
+          recovery.binding.questionId === row.question_id) {
+          if (recovery.migration !== "current") {
+            const migratedHash = questionAdmissionBindingHash(recovery.binding);
+            const migrated = await client.query(
+              `UPDATE meeting_knowledge.question_jobs
+               SET binding = $4::jsonb, binding_hash = $5,
+                   grounding_plan = $6::jsonb,
+                   updated_at = transaction_timestamp()
+               WHERE question_id = $1 AND generation = $2
+                 AND binding_hash = $3 AND state IN ('running', 'ready')`,
+              [row.question_id, row.generation, row.binding_hash,
+                JSON.stringify(recovery.binding), migratedHash,
+                recovery.groundingPlan === null
+                  ? null : JSON.stringify(recovery.groundingPlan)],
+            );
+            if (migrated.rowCount !== 1) {continue;}
+          }
+          return toLease(row, recovery);
+        }
+        const reason = recovery.status === "decoded"
+          ? "binding_row_identity_conflict" : recovery.reason;
+        await client.query(
+          `UPDATE meeting_knowledge.question_jobs
+           SET state = 'terminal', outcome = 'stale_binding',
+               retry_reason = $4, authorization_principal_ref = NULL,
+               delivery_container_id = COALESCE(
+                 delivery_container_id, binding ->> 'deliveryContainerId'
+               ),
+               reconciliation_disposition = $5,
+               reconciliation_reason = $6,
+               question_text = NULL, binding = NULL, grounding_plan = NULL,
+               answer_candidate = NULL, lease_owner = NULL, lease_until = NULL,
+               terminal_at = COALESCE(terminal_at, transaction_timestamp()),
+               scrubbed_at = COALESCE(scrubbed_at, transaction_timestamp()),
+               updated_at = transaction_timestamp()
+           WHERE question_id = $1 AND generation = $2 AND binding_hash = $3
+             AND state IN ('running', 'ready')`,
+          [row.question_id, row.generation, row.binding_hash,
+            durableQuestionRecoveryRetryReason(reason),
+            reconciliationDispositionForRecoveryReason(reason), reason],
+        );
+      }
+      return null;
     });
   }
 

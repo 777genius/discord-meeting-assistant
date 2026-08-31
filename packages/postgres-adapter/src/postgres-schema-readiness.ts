@@ -15,6 +15,10 @@ import {
 } from "./postgres-core-schema-requirements.js";
 import { PostgresSchemaReadinessError } from "./postgres-schema-readiness-error.js";
 import { findMissingPostgresTriggers } from "./postgres-trigger-readiness.js";
+import { assertQuestionBindingFenceDefinition } from
+  "./postgres-question-binding-fence-readiness.js";
+import { assertReconciliationIndexDefinitions } from
+  "./postgres-index-readiness.js";
 
 export { PostgresSchemaReadinessError } from "./postgres-schema-readiness-error.js";
 
@@ -103,6 +107,9 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
       await this.assertIndexes();
       await this.assertConstraints();
       await this.assertTriggers();
+      if (requiredVersion >= 40) {
+        await assertQuestionBindingFenceDefinition(this.pool, migrations);
+      }
       await this.assertAnswerPayloadFenceDefinition();
       await this.assertAnswerQuarantineBijection();
       await this.assertNoUnrecoverableAnswerEffects();
@@ -171,6 +178,7 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
         `required PostgreSQL index is missing or invalid: ${result.rows.map(({ name }) => name).join(", ")}`,
       );
     }
+    await assertReconciliationIndexDefinitions(this.pool);
   }
 
   private async assertColumns(): Promise<void> {

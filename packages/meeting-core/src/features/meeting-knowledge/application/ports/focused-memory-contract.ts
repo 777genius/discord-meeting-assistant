@@ -149,7 +149,9 @@ export async function retrieveFocusedMemory(
     if (result.status !== "current") {return result;}
     if (
       result.candidates.length > input.maximumCandidates ||
-      !retrievalAuditsBindInput(result.candidates, input.retrievalBinding)
+      !await retrievalAuditsBindInput(
+        result.candidates, input.retrievalBinding, input.question,
+      )
     ) {return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };}
     return result;
   } catch {return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   AdmitCurrentFinalReply,
@@ -38,7 +38,9 @@ describe("current final reply admission", () => {
     };
     const useCase = new AdmitCurrentFinalReply(
       new EvidenceFake(), new AuthorizationFake(), admissions, policy,
-      { retrievalV2Admission: { prepare: () => Promise.resolve(null) } },
+      { retrievalV2Admission: { prepare: () => Promise.resolve({
+        reason: "no_history_or_index", status: "empty",
+      }) } },
     );
 
     await expect(useCase.execute({
@@ -50,13 +52,38 @@ describe("current final reply admission", () => {
       questionText: "What was decided?", requesterSubject: "d".repeat(64),
       schemaVersion: 2, scopeId: authority.scopeId,
     })).resolves.toEqual({ jobId: "question-1", status: "accepted" });
-    expect(commits[0]?.binding.retrievalBinding).toEqual({
+    expect(commits[0]?.binding.retrievalBinding).toMatchObject({
       canonicalEvidenceFilters: { relativeTimeInterval: null,
         requiresSpeakerMatch: false, speakerIds: [] },
       cutoverEpoch: policy.retrievalAdmission.cutoverEpoch,
       profileFingerprint: policy.retrievalAdmission.localProfileFingerprint,
+      originalQuestion: "What was decided?",
+      provenanceSchemaVersion: 1,
       retrievalPath: "canonical_local_exact_lexical_v1",
     });
+  });
+
+  it("does not create a job when configured history is revoked at admission", async () => {
+    const commit = vi.fn();
+    const useCase = new AdmitCurrentFinalReply(
+      new EvidenceFake(), new AuthorizationFake(), {
+        commit,
+        withdrawProjection: () => Promise.resolve([]),
+      }, policy, { retrievalV2Admission: { prepare: () => Promise.resolve({
+        reason: "serving_not_authorized", status: "unavailable",
+      }) } },
+    );
+
+    await expect(useCase.execute({
+      authorizationPrincipalRef: "principal:v1:opaque",
+      deliveryContainerId: "question-thread-1",
+      finalProjectionReceipt: authority.finalProjectionReceipt,
+      projectionTargetContainerId: authority.projectionTargetContainerId,
+      questionHash: "c".repeat(64), questionId: "question-revoked",
+      questionText: "What was decided?", requesterSubject: "d".repeat(64),
+      schemaVersion: 2, scopeId: authority.scopeId,
+    })).resolves.toEqual({ reason: "retrieval_unavailable", status: "ignored" });
+    expect(commit).not.toHaveBeenCalled();
   });
 
   it("seals multilingual aliases and relative time for canonical filtering", async () => {
@@ -89,4 +116,37 @@ describe("current final reply admission", () => {
       retrievalPath: "canonical_local_exact_lexical_v1",
     });
   });
+
+  it.each([
+    "What did Vlad decide between 25:60 and 26:00?",
+    "What did Vlad decide between 08:00 and 07:00?",
+    "What did Аli\u200bce decide?",
+  ])("denies recognized invalid or confusable filters before admission: %s",
+    async (questionText) => {
+      const commit = vi.fn();
+      const useCase = new AdmitCurrentFinalReply(
+        new EvidenceFake(), new AuthorizationFake(), {
+          commit,
+          withdrawProjection: () => Promise.resolve([]),
+        }, policy, { canonicalSpeakerFilters: {
+          aliases: { "speaker-b": ["Alice", "Vlad"] },
+          identitySkeletons: { skeleton: (value) => {
+            const canonical = value.normalize("NFKC").toLocaleLowerCase("und");
+            const skeleton = canonical.replaceAll("а", "a").replaceAll("\u200b", "");
+            return { canonical, certainty: canonical === skeleton ? "certain" : "uncertain",
+              skeleton };
+          } },
+        } },
+      );
+      await expect(useCase.execute({
+        authorizationPrincipalRef: "principal:v1:opaque",
+        deliveryContainerId: "question-thread-1",
+        finalProjectionReceipt: authority.finalProjectionReceipt,
+        projectionTargetContainerId: authority.projectionTargetContainerId,
+        questionHash: "c".repeat(64), questionId: "question-denied",
+        questionText, requesterSubject: "d".repeat(64), schemaVersion: 2,
+        scopeId: authority.scopeId,
+      })).resolves.toEqual({ reason: "retrieval_filter_denied", status: "ignored" });
+      expect(commit).not.toHaveBeenCalled();
+    });
 });

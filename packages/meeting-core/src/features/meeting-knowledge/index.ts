@@ -198,6 +198,9 @@ export type {
   HistoricalCandidateRecordV1,
   HistoricalEvidenceAuthority,
   HistoricalOperationOptionsV1,
+  HistoricalRoomAuthoritySnapshotEntryV1,
+  HistoricalRoomAuthoritySnapshotPort,
+  HistoricalRoomAuthoritySnapshotResultV1,
   HistoricalSyncClaimOptionsV1,
   HistoricalSyncLeaseV1,
   HistoricalSyncOperationV1,
@@ -306,9 +309,13 @@ export type {
   FocusedHistoricalEvidenceV2Port,
   FocusedHistoricalEvidenceV2Result,
   FocusedLocatorRetrievalV2Candidate,
+  FocusedLocatorRetrievalV2Preparation,
+  FocusedLocatorRetrievalV2PreparationUnavailableReason,
   FocusedLocatorRetrievalV2Port,
   FocusedLocatorRetrievalV2Result,
 } from "./application/ports/focused-locator-retrieval-v2.js";
+export { groundingPlanRetrievalAuditsBindInput, retrievalAuditsBindInput } from
+  "./application/ports/focused-retrieval-provenance.js";
 export type {
   AnswerEffectDeliveryResult,
   AnswerEffectReservation,

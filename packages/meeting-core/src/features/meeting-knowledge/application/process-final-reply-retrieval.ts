@@ -3,13 +3,14 @@ import { isLegacyQuestionBinding, type QuestionBindingSnapshot } from
 import { createFocusedRetrievalGroundingPlan, type FocusedMemoryReference,
   type RehydratedEvidenceTurn } from "../domain/grounding-plan.js";
 import { admittedHumanActors } from "./admitted-human-evidence.js";
-import { relativeTimeFilter } from "./focused-locator-retrieval-v2-query.js";
 import { authorityMatchesBinding } from "./final-reply-checks.js";
 import { alignFocusedHydrationSurvivors, prepareSelectedFocusedEvidence,
   type SelectedFocusedEvidencePreparation, type SelectFocusedEvidence } from
   "./select-focused-evidence.js";
 import type { FinalReplyEvidencePort, FocusedMemoryRetrievalPort,
   LocalFinalReplyPolicy, QuestionJobLease } from "./ports/final-reply.js";
+import { retrievalAuditsBindInput } from
+  "./ports/focused-retrieval-provenance.js";
 
 const localExactLexicalCandidateLimit = 100;
 const localExactLexicalResultLimit = 10;
@@ -24,7 +25,7 @@ export function isComposedLocalBinding(
   }
   const expectedFingerprint = binding.retrievalBinding.retrievalPath ===
       "infinity_locator_v2"
-    ? policy.retrievalAdmission.infinityProfileFingerprint
+    ? policy.retrievalAdmission.compositeProfileFingerprint
     : binding.retrievalBinding.retrievalPath ===
         "canonical_local_exact_lexical_v1"
       ? policy.retrievalAdmission.localProfileFingerprint
@@ -40,26 +41,12 @@ export function focusedMemoryRequest(
   policy: LocalFinalReplyPolicy,
 ): Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0] {
   const sealedFilters = binding.retrievalBinding?.canonicalEvidenceFilters;
-  const requestedSpeakerIds = binding.humanActorIds.filter((actorId) =>
-    lease.questionText.includes(actorId) ||
-    lease.questionText.includes(`<@${actorId}>`) ||
-    lease.questionText.includes(`<@!${actorId}>`)
-  );
-  const providerActorFilter = binding.retrievalBinding?.retrievalPath ===
-      "infinity_locator_v2" &&
-    binding.retrievalBinding.request.filters.actorKeys.length > 0;
   return {
     authorizationPrincipalRef: binding.authorizationPrincipalRef,
     canonicalEvidenceHash: binding.canonicalEvidenceHash,
     expectedAuthorityGeneration: binding.memoryGeneration,
     finalProjectionReceipt: binding.finalProjectionReceipt,
-    hardFilters: Object.freeze({
-      relativeTimeInterval: sealedFilters?.relativeTimeInterval ??
-        relativeTimeFilter(lease.questionText),
-      requiresSpeakerMatch: sealedFilters?.requiresSpeakerMatch ??
-        (providerActorFilter || requestedSpeakerIds.length > 0),
-      speakerIds: sealedFilters?.speakerIds ?? Object.freeze(requestedSpeakerIds),
-    }),
+    ...(sealedFilters === undefined ? {} : { hardFilters: sealedFilters }),
     maximumCandidates: binding.retrievalBinding?.retrievalPath ===
         "canonical_local_exact_lexical_v1"
       ? Math.min(policy.retrieval.maximumCandidates, 100)
@@ -97,6 +84,7 @@ export async function prepareFocusedEvidence(input: {
         binding: input.binding,
         evidence: input.evidence,
         evidenceByteLimit: retrievalBinding.request.budgets.evidenceByteLimit,
+        question: input.question,
         references: input.hydrationReferences,
         turns: input.turns,
       })
@@ -105,6 +93,7 @@ export async function prepareFocusedEvidence(input: {
           authorityGeneration: input.authorityGeneration,
           binding: input.binding,
           evidence: input.evidence,
+          question: input.question,
           references: input.hydrationReferences,
           turns: input.turns,
         })
@@ -117,6 +106,7 @@ async function preparePersistedRetrievalV2Evidence(input: {
   readonly binding: QuestionBindingSnapshot;
   readonly evidence: FinalReplyEvidencePort;
   readonly evidenceByteLimit: number;
+  readonly question: string;
   readonly references: readonly FocusedMemoryReference[];
   readonly turns: readonly RehydratedEvidenceTurn[];
 }): Promise<SelectedFocusedEvidencePreparation> {
@@ -135,6 +125,7 @@ async function prepareLocalExactLexicalEvidence(input: {
   readonly authorityGeneration: string;
   readonly binding: QuestionBindingSnapshot;
   readonly evidence: FinalReplyEvidencePort;
+  readonly question: string;
   readonly references: readonly FocusedMemoryReference[];
   readonly turns: readonly RehydratedEvidenceTurn[];
 }): Promise<SelectedFocusedEvidencePreparation> {
@@ -152,6 +143,7 @@ async function prepareOrderedExactEvidence(input: {
   readonly candidateLimit: number;
   readonly evidence: FinalReplyEvidencePort;
   readonly evidenceByteLimit: number;
+  readonly question: string;
   readonly references: readonly FocusedMemoryReference[];
   readonly resultLimit: number;
   readonly turns: readonly RehydratedEvidenceTurn[];
@@ -189,6 +181,9 @@ async function prepareOrderedExactEvidence(input: {
     input.binding, references, refreshed.turns,
   );
   if (survivors === null || survivors.turns.length < 1 ||
+    !await retrievalAuditsBindInput(
+      survivors.references, input.binding.retrievalBinding, input.question,
+    ) ||
     utf8Bytes(survivors.turns.map(({ text }) => text).join("\n")) >
       input.evidenceByteLimit) {
     return { status: "unavailable" };

@@ -606,14 +606,31 @@ describe("PostgreSQL withdrawal fencing", () => {
       }],
     });
     await expect(new PostgresQuestionJobStore(database, questionPolicy).persistGroundingPlan({
+      attemptAlreadyReserved: false,
+      attemptId: `${questionId}:generation:1:attempt:1`,
       binding: withdrawnFixtureBinding(meetingId),
       generation: 1,
       jobId: questionId,
+      leaseSeconds: 60,
+      maximumProviderAttempts: 2,
       measurement: { inputTokens: 10, requestBytes: 100 },
       plan: groundingPlan(meetingId),
+      question: "Sensitive question?",
       runtimeProfile: "test-runtime",
       sourceMeetingIds: [meetingId],
     })).resolves.toBe(false);
+    await expect(database.query(
+      `SELECT grounding_plan, provider_attempt_id, provider_attempt_state
+       FROM meeting_knowledge.question_jobs
+       WHERE question_id = $1`,
+      [questionId],
+    )).resolves.toMatchObject({
+      rows: [{
+        grounding_plan: null,
+        provider_attempt_id: null,
+        provider_attempt_state: "none",
+      }],
+    });
   });
 
   it("serializes a new grounding source with its tombstone", async (context) => {
@@ -632,11 +649,16 @@ describe("PostgreSQL withdrawal fencing", () => {
 
     const [persisted] = await Promise.all([
       jobs.persistGroundingPlan({
+        attemptAlreadyReserved: false,
+        attemptId: `${questionId}:generation:1:attempt:1`,
         binding: withdrawnFixtureBinding(admittedMeetingId),
         generation: 1,
         jobId: questionId,
+        leaseSeconds: 60,
+        maximumProviderAttempts: 2,
         measurement: { inputTokens: 10, requestBytes: 100 },
         plan: groundingPlan(historicalMeetingId),
+        question: "Sensitive question?",
         runtimeProfile: "test-runtime",
         sourceMeetingIds: [admittedMeetingId, historicalMeetingId],
       }),
@@ -657,11 +679,16 @@ describe("PostgreSQL withdrawal fencing", () => {
       expect(stored.rows).toEqual([{ grounding_plan: null, state: "running" }]);
     }
     await expect(jobs.persistGroundingPlan({
+      attemptAlreadyReserved: false,
+      attemptId: `${questionId}:generation:1:attempt:1`,
       binding: withdrawnFixtureBinding(admittedMeetingId),
       generation: 1,
       jobId: questionId,
+      leaseSeconds: 60,
+      maximumProviderAttempts: 2,
       measurement: { inputTokens: 10, requestBytes: 100 },
       plan: groundingPlan(historicalMeetingId),
+      question: "Sensitive question?",
       runtimeProfile: "test-runtime",
       sourceMeetingIds: [admittedMeetingId, historicalMeetingId],
     })).resolves.toBe(false);

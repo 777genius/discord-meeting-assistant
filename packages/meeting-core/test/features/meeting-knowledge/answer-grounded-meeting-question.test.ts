@@ -51,6 +51,18 @@ function live(): LiveFinalizedMemoryQueryPort {
   };
 }
 
+function mixedLaneLive(): LiveFinalizedMemoryQueryPort {
+  const query = live();
+  query.rehydrateHotTail = async () => ({
+    context, schemaVersion: 1, status: "current" as const, turns: [{
+      endMs: 2_000, speakerId: "participant-1", startMs: 1_000,
+      text: "CURRENT-ANCHOR confirms Project Atlas is active.",
+      turnHash: "b".repeat(64), turnId: "turn-1",
+    }],
+  });
+  return query;
+}
+
 function generator(): GroundedAnswerGenerator {
   return {
     measure: async () => ({
@@ -67,6 +79,15 @@ function generator(): GroundedAnswerGenerator {
       status: "completed",
     }),
   };
+}
+
+function barrier(): {
+  readonly promise: Promise<void>;
+  readonly release: () => void;
+} {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {release = resolve;});
+  return { promise, release };
 }
 
 const limits = {
@@ -125,12 +146,89 @@ describe("published grounded meeting question", () => {
     expect(rehydrateHotTail.mock.calls.every(([input]) => input.signal === signal)).toBe(true);
   });
 
-  it("deterministically interleaves authoritative live and V2-only historical evidence",
+  it("makes no answer call when configured history runtime is absent", async () => {
+    const answerGenerator = generator();
+    const generate = vi.spyOn(answerGenerator, "generate");
+    const answer = new AnswerGroundedMeetingQuestion({
+      answers: new GroundedMeetingAnswer(answerGenerator, limits),
+      historicalRequired: true,
+      ids: { digest: () => "c".repeat(64) },
+      live: live(),
+      turnHashes: { hash: () => "b".repeat(64) },
+    });
+
+    await expect(answer.execute({ ...request,
+      authorizationPrincipalRef: "opaque-principal" }, {
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({
+      reason: "historical_authority_unavailable",
+      status: "unavailable",
+    });
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+});
+
+describe("published grounded meeting question failure fencing", () => {
+  it("keeps historical failure, revocation, and malformed outcomes fail closed",
+    async () => {
+      const historicalOutcomes: Array<() => Promise<unknown>> = [
+        async () => ({ reason: "authorization_changed", status: "unavailable" }),
+        async () => {throw new Error("synthetic historical timeout");},
+        async () => ({ authorityGeneration: "", status: "current", turns: "malformed" }),
+      ];
+      for (const retrieve of historicalOutcomes) {
+        const answerGenerator = generator();
+        const generate = vi.spyOn(answerGenerator, "generate");
+        const answer = new AnswerGroundedMeetingQuestion({
+          answers: new GroundedMeetingAnswer(answerGenerator, limits),
+          authorization: { authorize: async () => ({
+            authorizationDigest: "authorization-1",
+            authorizationEpoch: "epoch-1",
+            authorized: true,
+            policyVersion: "policy-1",
+          }) },
+          historical: { retrieve } as unknown as FocusedHistoricalEvidenceV2Port,
+          historicalRequired: true,
+          ids: { digest: () => "c".repeat(64) },
+          live: live(),
+          turnHashes: { hash: () => "b".repeat(64) },
+        });
+
+        await expect(answer.execute({
+          ...request,
+          authorizationPrincipalRef: "opaque-principal",
+        }, { signal: new AbortController().signal })).resolves.toMatchObject({
+          reason: "historical_authority_unavailable",
+          status: "unavailable",
+        });
+        expect(generate).not.toHaveBeenCalled();
+      }
+    });
+});
+
+describe("published grounded meeting question authority fences", () => {
+
+  it("regresses the host failure with independently useful mixed-lane generator evidence",
     async () => {
       const observedPlans: string[][] = [];
+      const observedSources: (string | undefined)[][] = [];
+      const historicalCompleted = barrier();
+      const releaseLiveLookup = barrier();
+      const liveQuery = mixedLaneLive();
+      const searchHotTail = liveQuery.searchHotTail.bind(liveQuery);
+      let firstLiveLookup = true;
+      liveQuery.searchHotTail = async (input) => {
+        if (firstLiveLookup) {
+          firstLiveLookup = false;
+          await releaseLiveLookup.promise;
+        }
+        return searchHotTail(input);
+      };
       const retrieve = vi.fn<FocusedHistoricalEvidenceV2Port["retrieve"]>(
         async (input) => {
           expect(input.signal.aborted).toBe(false);
+          historicalCompleted.release();
           return {
             authorityGeneration: "historical-generation-1",
             status: "current" as const,
@@ -150,7 +248,7 @@ describe("published grounded meeting question", () => {
               },
               speakerId: "opaque-actor",
               startMs: 3_000,
-              text: "The prior meeting approved Atlas.",
+              text: "PINE-GOLF records that Project Atlas deployment was approved for Monday.",
               turnHash: "d".repeat(64),
               turnId: "historical-turn-1",
             }],
@@ -164,10 +262,13 @@ describe("published grounded meeting question", () => {
         ...generator(),
         generate: async (generationRequest) => {
           observedPlans.push(generationRequest.plan.evidence.map(({ text }) => text));
+          observedSources.push(generationRequest.plan.evidence.map(({ source }) =>
+            source?.meetingId
+          ));
           return {
             answer: {
-              claims: [{ evidenceIds: ["evidence-000001"],
-                text: "The launch is Friday." }],
+              claims: [{ evidenceIds: ["evidence-000001", "evidence-000002"],
+                text: "CURRENT-ANCHOR confirms Atlas is active; PINE-GOLF records Monday approval." }],
               locale: "en" as const,
               status: "answered" as const,
             },
@@ -185,19 +286,29 @@ describe("published grounded meeting question", () => {
         }) },
         historical,
         ids: { digest: () => "c".repeat(64) },
-        live: live(),
+        live: liveQuery,
         turnHashes: { hash: () => "b".repeat(64) },
       });
 
-      await expect(answer.execute({
+      const execution = answer.execute({
         ...request,
         authorizationPrincipalRef: "opaque-principal",
-      }, { signal: new AbortController().signal })).resolves.toMatchObject({
+        question: "What does CURRENT-ANCHOR confirm about Project Atlas, and which deployment day does PINE-GOLF record?",
+      }, { signal: new AbortController().signal });
+      await historicalCompleted.promise;
+      releaseLiveLookup.release();
+      await expect(execution).resolves.toMatchObject({
         status: "answered",
       });
       expect(observedPlans).toEqual([[
-        "The launch is Friday.",
-        "The prior meeting approved Atlas.",
+        "CURRENT-ANCHOR confirms Project Atlas is active.",
+        "PINE-GOLF records that Project Atlas deployment was approved for Monday.",
+      ]]);
+      expect(observedPlans[0]?.[0]).not.toContain("PINE-GOLF");
+      expect(observedPlans[0]?.[1]).not.toContain("CURRENT-ANCHOR");
+      expect(observedSources).toEqual([[
+        "meeting-1",
+        "historical-meeting-1",
       ]]);
       expect(retrieve).toHaveBeenCalledTimes(3);
     });

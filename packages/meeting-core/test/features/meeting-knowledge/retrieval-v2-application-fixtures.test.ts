@@ -35,6 +35,31 @@ export const retrievalV2Request: FocusedLocatorRetrievalV2RequestSnapshot =
       timeInterval: null, timeWeightMicros: null }),
   });
 
+export function retrievalProvenance(
+  originalQuestion = "When is the corrected release day?",
+) {
+  return Object.freeze({
+    canonicalEvidenceFilters: Object.freeze({
+      relativeTimeInterval: null,
+      requiresSpeakerMatch: false,
+      speakerIds: Object.freeze([]),
+    }),
+    localCurrentIdentity: Object.freeze({
+      algorithmId: "canonical_local_exact_lexical_v1" as const,
+      profileFingerprint: "f".repeat(64),
+      profileId: "meeting-knowledge.local-current.v2" as const,
+    }),
+    originalQuestion,
+    provenanceSchemaVersion: 1 as const,
+  });
+}
+
+export const compositeProfile = Object.freeze({
+  candidatePolicy: "bounded_lane_round_robin_dedupe.v1" as const,
+  interleavePolicy: "local_then_historical_per_rank.v1" as const,
+  profileId: "meeting-knowledge.composite-retrieval.v1" as const,
+});
+
 export function rolloutABinding(
   base: QuestionBindingSnapshot,
 ): QuestionBindingSnapshot {
@@ -42,6 +67,8 @@ export function rolloutABinding(
     ...base,
     bindingProtocolVersion: 2,
     retrievalBinding: {
+      ...retrievalProvenance(),
+      compositeProfile,
       cutoverEpoch: "rollout-a",
       profileFingerprint: "a".repeat(64),
       request: retrievalV2Request,

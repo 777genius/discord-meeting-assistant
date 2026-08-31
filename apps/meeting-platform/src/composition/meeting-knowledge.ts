@@ -1,12 +1,8 @@
 import {
-  DiscordAnswerDeliveryAdapter,
-  DiscordAnswerPayloadCodec,
-  DiscordGroundedAnswerRenderer,
-  DiscordHistoricalAuthorizationAdapter,
-  DiscordLocalFinalReplyHandler,
-  DiscordQuestionAuthorizationAdapter,
-  DiscordQuestionPrincipalCodec,
-  DiscordConfusableIdentitySkeletons,
+  DiscordAnswerDeliveryAdapter, DiscordAnswerPayloadCodec,
+  DiscordGroundedAnswerRenderer, DiscordHistoricalAuthorizationAdapter,
+  DiscordLocalFinalReplyHandler, DiscordQuestionAuthorizationAdapter,
+  DiscordQuestionPrincipalCodec, DiscordConfusableIdentitySkeletons,
   createDiscordOneAttemptAnswerRest,
   decodeDiscordQuestionPrincipalKey,
   discordParticipantQuestionPolicyVersion,
@@ -21,10 +17,8 @@ import {
   ProcessFinalReplyJob, qualifiedFocusedEvidenceCandidateLimit,
   type LocalFinalReplyPolicy,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import {
-  DurableAnswerPublication,
-  type AnswerDeliveryPort,
-} from "@discord-meeting/meeting-core/publishing";
+import { DurableAnswerPublication, type AnswerDeliveryPort } from
+  "@discord-meeting/meeting-core/publishing";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import {
   PostgresAnswerEffectStore,
@@ -45,48 +39,58 @@ import { TestOnlyAnswerDeliveryCrashInjection } from
   "../adapters/outbound/test-only-answer-delivery-crash-injection.js";
 
 import type { PlatformConfig } from "../config.js";
-import { participantSpeakerAliases } from
-  "../config/participant-greeting-profiles.js";
+import { participantSpeakerAliases } from "../config/participant-greeting-profiles.js";
 import { classifyPlatformError } from "./observability.js";
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
-import { createPersistedFocusedMemoryRoute } from
-  "./meeting-knowledge-retrieval-router.js";
+import { createPersistedFocusedMemoryRoute } from "./meeting-knowledge-retrieval-router.js";
 import { createFocusedEvidenceSelector, createGroundedAnswerGenerator } from
   "./meeting-knowledge-provider-composition.js";
+import { createMeetingKnowledgePollingRuntime,
+  type MeetingKnowledgeLocalFinalReplyRuntime } from
+  "./meeting-knowledge-polling-runtime.js";
+export { createMeetingKnowledgePollingRuntime, MeetingKnowledgeDrainTimeoutError } from
+  "./meeting-knowledge-polling-runtime.js";
+export type { MeetingKnowledgeLocalFinalReplyRuntime } from
+  "./meeting-knowledge-polling-runtime.js";
 
-const processIntervalMilliseconds = 500;
-const reconciliationIntervalMilliseconds = 30_000;
-const maximumMaintenanceJobsPerPass = 100;
-const shutdownDrainTimeoutMilliseconds = 5_000;
 const meetingKnowledgeProviderLeasePolicy = Object.freeze({
   focusedEvidenceSelectorTimeoutMilliseconds: 60_000,
-  groundedAnswerTimeoutMilliseconds: 180_000,
-  maximumGroundedAnswerExecutions: 2, safetyMilliseconds: 120_000,
+  groundedAnswerTimeoutMilliseconds: 180_000, maximumGroundedAnswerExecutions: 2,
+  safetyMilliseconds: 120_000,
 });
 const providerAttemptLeaseSeconds = (
   meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds +
   (meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions *
     meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds) +
-  meetingKnowledgeProviderLeasePolicy.safetyMilliseconds
-) / 1_000;
+  meetingKnowledgeProviderLeasePolicy.safetyMilliseconds) / 1_000;
 
 export const meetingKnowledgeRetrievalProfilePreimages = Object.freeze({
+  composite: Object.freeze({
+    candidatePolicy: "bounded-lane-round-robin-dedupe.v1",
+    historicalLane: "infinity-context-retrieval-v2-exact-request",
+    interleavePolicy: "local-then-historical-per-rank.v1",
+    localLane: "canonical-local-exact-lexical-v1",
+    maximumCandidates: qualifiedFocusedEvidenceCandidateLimit,
+    profileId: "meeting-knowledge.composite-retrieval.v1",
+    provenanceVerification: "request-result-lane-accounting.v2", version: 1,
+  }),
   infinity: Object.freeze({
-    candidateIsolation: "candidate-local-errors-isolate;batch-authority-errors-abort",
-    contract: "context-retrieval.v2",
-    evidenceByteLimit: 16_000,
-    path: "infinity_locator_v2",
-    provenance: "exact-request-response-digests.v1",
-    rankingPolicy: "weighted_rrf_canonical_preferences.v1",
-    version: 1,
+    authoritySnapshot: "repeatable-read-cursor-room-snapshot.v1",
+    candidateIsolation: "malformed-candidate-only;batch-overflow-churn-abort",
+    contract: "context-retrieval.v2", digestCanonicalization: "utf8-lexicographic-json.v1",
+    evidenceByteLimit: 16_000, path: "infinity_locator_v2",
+    provenance: "exact-request-response-digests-and-lane-accounting.v2",
+    rankingPolicy: "weighted_rrf_canonical_preferences.v1", version: 2,
   }),
   local: Object.freeze({
-    candidateLimit: 100,
+    algorithm: "nfkc-lowercase-token-exact-match-balanced-speaker-minute.v1",
+    candidateLimit: 100, digestCanonicalization: "utf8-lexicographic-json.v1",
     evidenceByteLimit: 16_000,
+    hardFilters: "sealed-speaker-and-relative-time-overlap.v1",
     path: "canonical_local_exact_lexical_v1",
-    provenance: "exact-request-response-digests.v1",
-    resultLimit: 10,
-    version: 1,
+    profileId: "meeting-knowledge.local-current.v2",
+    provenance: "exact-original-question-request-result-digests.v2",
+    queryTermPolicy: "temporal-scaffolding-stop-terms.v2", resultLimit: 10, version: 2,
   }),
 });
 
@@ -102,15 +106,6 @@ function canonicalProfileValue(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value as Record<string, unknown>)
     .toSorted(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
     .map(([key, nested]) => [key, canonicalProfileValue(nested)]));
-}
-
-export class MeetingKnowledgeDrainTimeoutError extends Error {
-  public constructor(timeoutMilliseconds: number) {
-    super(
-      `Meeting Knowledge final reply drain exceeded ${timeoutMilliseconds}ms`,
-    );
-    this.name = "MeetingKnowledgeDrainTimeoutError";
-  }
 }
 
 /**
@@ -138,10 +133,13 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
   // orchestration slack inside the durable lease.
   jobLeaseSeconds: providerAttemptLeaseSeconds,
   maximumProviderAttempts: 2,
-  policyVersion: "meeting-knowledge.focused-memory-final-reply.v3",
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v4",
   retrieval: Object.freeze({ maximumCandidates: qualifiedFocusedEvidenceCandidateLimit, neighborTurns: 2 }),
   retrievalAdmission: Object.freeze({
-    cutoverEpoch: "infinity-locator-v2-only-r1",
+    compositeProfileFingerprint: retrievalProfileFingerprint(
+      meetingKnowledgeRetrievalProfilePreimages.composite,
+    ),
+    cutoverEpoch: "composite-retrieval-authority-r3",
     infinityProfileFingerprint: retrievalProfileFingerprint(
       meetingKnowledgeRetrievalProfilePreimages.infinity,
     ),
@@ -152,7 +150,7 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
 });
 
 const localFinalReplyPolicyRelease = Object.freeze({
-  authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion, policyEpoch: 3,
+  authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion, policyEpoch: 4,
   policyVersion: localFinalReplyPolicy.policyVersion,
 });
 
@@ -178,11 +176,12 @@ function createRetrievalV2Admission(
     : historicalMemory.createRetrievalV2Admission(binding);
 }
 
-export interface MeetingKnowledgeLocalFinalReplyRuntime {
-  close(): Promise<void>;
-  processPending(): Promise<void>; reconcilePending(): Promise<void>;
-  settleIngress(): Promise<void>;
-  start(): void;
+export function meetingKnowledgeLocalServingEnabled(
+  config: PlatformConfig, historicalRuntimeAvailable: boolean,
+): boolean {
+  return config.meetingKnowledge?.localFinalReply === true && (
+    config.meetingKnowledge.retrievalV2ProviderBinding === undefined ||
+    historicalRuntimeAvailable);
 }
 
 class ConfiguredDiscordQuestionScope implements DiscordQuestionScopePort {
@@ -209,7 +208,10 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   readonly pool: Pool;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): MeetingKnowledgeLocalFinalReplyRuntime {
-  const servingEnabled = input.config.meetingKnowledge?.localFinalReply === true;
+  const servingEnabled = meetingKnowledgeLocalServingEnabled(
+    input.config,
+    input.historicalMemory !== undefined,
+  );
   const jobs = new PostgresQuestionJobStore(input.pool, localFinalReplyPolicyRelease);
   const baseDelivery = input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
       createDiscordOneAttemptAnswerRest(input.config.secrets.discordToken),
@@ -246,6 +248,9 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
       reportError,
     });
   }
+  const meetingKnowledgeConfig = input.config.meetingKnowledge;
+  if (meetingKnowledgeConfig === undefined) {throw new Error(
+    "Meeting Knowledge serving configuration is unavailable");}
 
   const secret = input.config.secrets.meetingKnowledgePrincipalKey;
   if (secret === undefined) {
@@ -295,10 +300,10 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
       ...localFinalReplyPolicy,
       retrievalAdmission: Object.freeze({
         ...localFinalReplyPolicy.retrievalAdmission,
-        ...(input.config.meetingKnowledge.retrievalV2ProviderBinding === undefined
+        ...(meetingKnowledgeConfig.retrievalV2ProviderBinding === undefined
           ? {}
           : { retrievalV2ProviderBinding:
-              input.config.meetingKnowledge.retrievalV2ProviderBinding }),
+              meetingKnowledgeConfig.retrievalV2ProviderBinding }),
       }),
     }),
     Object.freeze({
@@ -361,112 +366,4 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     reportDuplicateContainment,
     reportError,
   });
-}
-
-async function awaitBoundedFinalReplyDrain(
-  operations: readonly (Promise<unknown> | undefined)[],
-): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
-  const pending = operations.filter(
-    (operation): operation is Promise<unknown> => operation !== undefined);
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      reject(new MeetingKnowledgeDrainTimeoutError(
-        shutdownDrainTimeoutMilliseconds,
-      ));
-    }, shutdownDrainTimeoutMilliseconds);
-    timer.unref();
-  });
-  try {
-    const results = await Promise.race([
-      Promise.allSettled(pending),
-      timeout,
-    ]);
-    const failures = results.flatMap((result): unknown[] =>
-      result.status === "rejected" ? [result.reason as unknown] : [],
-    );
-    if (failures.length > 0) {
-      throw new AggregateError(failures, "Meeting Knowledge drain failed");
-    }
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-  }
-}
-
-export function createMeetingKnowledgePollingRuntime(input: {
-  readonly handler?: Pick<
-    DiscordLocalFinalReplyHandler,
-    "close" | "settle" | "start"
-  >;
-  readonly maintenance: MaintainFinalReplies;
-  readonly processor?: Pick<ProcessFinalReplyJob, "executeOnce">;
-  readonly publication: Pick<
-    DurableAnswerPublication,
-    "reconcileRetractions" | "reconcileUnknown"
-  >;
-  readonly reportDuplicateContainment?: (count: number) => void;
-  readonly reportError: (error: unknown) => void;
-}): MeetingKnowledgeLocalFinalReplyRuntime {
-  let processing: Promise<unknown> | undefined;
-  let reconciling: Promise<unknown> | undefined;
-  let processTimer: NodeJS.Timeout | undefined;
-  let reconcileTimer: NodeJS.Timeout | undefined;
-  const processOnce = (): void => {
-    processing ??= input.maintenance.execute(maximumMaintenanceJobsPerPass)
-      .then(async () => await input.processor?.executeOnce())
-      .catch(input.reportError)
-      .finally(() => {
-        processing = undefined;
-      });
-  };
-  const reconcile = (): void => {
-    reconciling ??= input.publication.reconcileUnknown(100)
-      .then((result) => {
-        if (result.containedDuplicates > 0) {
-          input.reportDuplicateContainment?.(result.containedDuplicates);
-        }
-        return result;
-      })
-      .then(async () => await input.publication.reconcileRetractions(100))
-      .catch(input.reportError)
-      .finally(() => {
-        reconciling = undefined;
-      });
-  };
-  const processPending = async (): Promise<void> => {
-    await processing;
-    processOnce();
-    await processing;
-  };
-  const reconcilePending = async (): Promise<void> => {
-    await reconciling;
-    reconcile();
-    await reconciling;
-  };
-  return {
-    close: async () => {
-      input.handler?.close();
-      clearInterval(processTimer);
-      clearInterval(reconcileTimer);
-      const ingress = input.handler?.settle();
-      await awaitBoundedFinalReplyDrain([ingress, processing, reconciling]);
-    },
-    processPending,
-    reconcilePending,
-    settleIngress: () => input.handler?.settle() ?? Promise.resolve(),
-    start: () => {
-      if (processTimer !== undefined) {
-        return;
-      }
-      input.handler?.start();
-      processTimer = setInterval(processOnce, processIntervalMilliseconds);
-      reconcileTimer = setInterval(reconcile, reconciliationIntervalMilliseconds);
-      processTimer.unref();
-      reconcileTimer.unref();
-      processOnce();
-      reconcile();
-    },
-  };
 }

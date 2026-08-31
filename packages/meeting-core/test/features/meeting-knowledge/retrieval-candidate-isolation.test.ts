@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 
 import {
   HistoricalFocusedLocatorRetrievalV2,
@@ -23,20 +24,37 @@ const providerBinding = Object.freeze({
   serviceRevision: "4".repeat(40),
 });
 
-function providerCandidate(locator: string, providerRank = 1) {
+function providerCandidate(locator: string, request: unknown, providerRank = 1) {
+  const contributions = Object.freeze([Object.freeze({
+    contributionScorePicos: 500_000, providerLaneId: "postgres_keyword",
+    providerRank, queryId: "original-question", rawScoreKind: "bm25" as const,
+    rawScoreValue: 2.5,
+  })]);
   return Object.freeze({
     locator,
     retrievalProvenance: Object.freeze({
-      capabilityFingerprint: providerBinding.capabilityFingerprint,
-      contributions: Object.freeze([Object.freeze({
-        contributionScorePicos: 500_000, providerLaneId: "postgres_keyword",
-        providerRank, queryId: "original-question", rawScoreKind: "bm25" as const,
-        rawScoreValue: 2.5,
-      })]),
-      fusedScore: 0.5, locator, profileId: providerBinding.profileId, providerRank,
-      requestDigest: "5".repeat(64), responseDigest: "6".repeat(64),
+      contributions, fusedScore: 0.5,
+      laneIdentity: Object.freeze({
+        capabilityFingerprint: providerBinding.capabilityFingerprint,
+        lane: "historical" as const,
+        profileId: providerBinding.profileId,
+      }),
+      locator, providerRank, requestDigest: digest(request),
+      responseDigest: digest({ contributions, fusedScore: 0.5, locator, providerRank }),
     }),
   });
+}
+
+function digest(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) {return value.map(canonical);}
+  if (typeof value !== "object" || value === null) {return value;}
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .toSorted(([left], [right]) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
+    .map(([key, nested]) => [key, canonical(nested)]));
 }
 
 function markerTurn(marker: string) {
@@ -58,7 +76,7 @@ async function requestFor(store: AppliedStore) {
     ids: new TestIds(), providerBinding, store,
   }).prepare({ currentMeetingId: "current-meeting", question: "What changed?",
     roomId: "room-1", scopeId: "scope-1" });
-  if (request === null) {throw new Error("missing retrieval request");}
+  if (request.status !== "prepared") {throw new Error("missing retrieval request");}
   return request;
 }
 
@@ -82,7 +100,7 @@ function composite(
 }
 
 describe("focused retrieval candidate and lane isolation", () => {
-  it("keeps either settled source lane and returns unavailable only when both fail",
+  it("fails the batch for any rejected lane while accepting a proven empty lane",
     async () => {
       const meeting = makeMeeting({ meetingId: "history", turns: markerTurn("fact") });
       const store = new AppliedStore([{ binding: meeting.binding,
@@ -115,9 +133,9 @@ describe("focused retrieval candidate and lane isolation", () => {
       });
 
       await expect(composite(rejectedLane, indexedCurrent).retrieve(input)).resolves
-        .toMatchObject({ candidates: [indexed], status: "current" });
+        .toEqual({ schemaVersion: 1, status: "unavailable" });
       await expect(composite(localCurrent, rejectedLane).retrieve(input)).resolves
-        .toMatchObject({ candidates: [local], status: "current" });
+        .toEqual({ schemaVersion: 1, status: "unavailable" });
       await expect(composite(rejectedLane, rejectedLane).retrieve(input)).resolves
         .toEqual({ schemaVersion: 1, status: "unavailable" });
       await expect(composite(unavailableLane, unavailableLane).retrieve(input)).resolves
@@ -125,6 +143,11 @@ describe("focused retrieval candidate and lane isolation", () => {
       await expect(composite(async () => ({ schemaVersion: 1, status: "stale" }),
         indexedCurrent).retrieve(input)).resolves
         .toEqual({ schemaVersion: 1, status: "stale" });
+      await expect(composite(localCurrent, async () => ({
+        authorityGeneration: "historical-empty", candidates: [],
+        schemaVersion: 1, status: "current",
+      })).retrieve(input)).resolves
+        .toMatchObject({ candidates: [local], status: "current" });
       const controller = new AbortController();
       controller.abort(new Error("cancelled composite retrieval"));
       await expect(composite(localCurrent, indexedCurrent).retrieve({
@@ -132,7 +155,7 @@ describe("focused retrieval candidate and lane isolation", () => {
       })).rejects.toThrow("cancelled composite retrieval");
     });
 
-  it("composes partial lanes and lets canonical local identity win deduplication",
+  it("composes two complete lanes and lets canonical local identity win deduplication",
     async () => {
       const meeting = makeMeeting({ meetingId: "history", turns: markerTurn("fact") });
       const store = new AppliedStore([{ binding: meeting.binding,
@@ -174,25 +197,30 @@ describe("focused retrieval candidate and lane isolation", () => {
       ];
       const records = meetings.map((meeting) => ({ binding: meeting.binding,
         plan: buildHistoricalIndexPlan(meeting, new TestIds()), remoteDocumentIds: {} }));
-      const store = new AppliedStore(records);
+      const store = new AppliedStore(records, [meetings[0]!, meetings[2]!, meetings[3]!]);
       const request = await requestFor(store);
       const locators = records.map(({ plan }) =>
         plan.documents[0]?.manifest.candidateLocator);
       if (locators.some((locator) => locator === undefined)) {
         throw new Error("missing candidate locator");
       }
-      store.currentSequence = [true, false, true, true];
-      const missing = { ...providerCandidate("missing-provenance", 5) } as
-        { locator: string; retrievalProvenance?: unknown };
-      delete missing.retrievalProvenance;
-      const malformed = structuredClone(providerCandidate("malformed", 6)) as
-        { locator: string; retrievalProvenance: { providerRank: number } };
-      malformed.retrievalProvenance.providerRank = 0;
-      const retrieval = { retrieve: async () => ({ candidates: [
-        providerCandidate(locators[0]!, 1), providerCandidate("missing", 2),
-        providerCandidate(locators[1]!, 3), providerCandidate(locators[2]!, 4),
-        missing, malformed, providerCandidate(locators[3]!, 7),
-      ], status: "available" }) } as FocusedLocatorRetrievalV2Port;
+      const retrieval = { retrieve: async (providerRequest) => {
+        const missing = {
+          ...providerCandidate("missing-provenance", providerRequest, 5),
+        } as { locator: string; retrievalProvenance?: unknown };
+        delete missing.retrievalProvenance;
+        const malformed = structuredClone(
+          providerCandidate("malformed", providerRequest, 6),
+        ) as { locator: string; retrievalProvenance: { providerRank: number } };
+        malformed.retrievalProvenance.providerRank = 0;
+        return { candidates: [
+          providerCandidate(locators[0]!, providerRequest, 1),
+          providerCandidate("missing", providerRequest, 2),
+          providerCandidate(locators[1]!, providerRequest, 3),
+          providerCandidate(locators[2]!, providerRequest, 4),
+          missing, malformed, providerCandidate(locators[3]!, providerRequest, 7),
+        ], status: "available" as const };
+      } } as FocusedLocatorRetrievalV2Port;
       const result = await new HistoricalFocusedLocatorRetrievalV2({
         authority: { loadAcceptedFinalMeeting: async (binding) =>
           meetings.find((meeting) => meeting.binding.releaseId === binding.releaseId) ?? null },

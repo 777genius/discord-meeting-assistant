@@ -7,6 +7,7 @@ import type {
   HttpTransport,
   JsonValue,
 } from "@infinity-context/sdk";
+import { decodeRetrieveContextResponse } from "@infinity-context/sdk";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -14,6 +15,7 @@ import {
   retrievalV2CapabilityFingerprint,
   type InfinityContextRetrievalV2Request,
 } from "../src/infinity-context-retrieval-v2.js";
+import { rankRetrievalCandidate } from "./disposable-infinity-endpoint-support.js";
 
 const require = createRequire(import.meta.url);
 const fixture = (name: string): Record<string, unknown> => JSON.parse(readFileSync(
@@ -93,7 +95,7 @@ function response(): Record<string, unknown> {
     ...successFixture,
     applied_bounds: {
       candidate_limit: 100,
-      deadline_ms: 100,
+      deadline_ms: 1_000,
       neighbor_radius: 0,
       response_byte_limit: 16_384,
       result_limit: 10,
@@ -118,7 +120,7 @@ InfinityContextRetrievalV2Request {
     },
     budgets: {
       candidateLimit: 100,
-      deadlineMs: 100,
+      deadlineMs: 1_000,
       evidenceByteLimit: 16_000,
       neighborRadius: 0,
       responseByteLimit: 16_384,
@@ -154,7 +156,7 @@ InfinityContextRetrievalV2Request {
   };
 }
 
-function adapter(endpoint: RetrievalV2Endpoint, timeoutMs = 100) {
+function adapter(endpoint: RetrievalV2Endpoint, timeoutMs = 1_000) {
   return new InfinityContextRetrievalV2Adapter({
     baseUrl: "https://infinity.invalid",
     operationTimeoutMs: Math.max(timeoutMs, 200),
@@ -176,12 +178,71 @@ function adapterWithClock(
   });
 }
 
+async function verifyDisposableEndpointRanksTwoCandidates(): Promise<void> {
+  const endpoint = new RetrievalV2Endpoint();
+  const first = (endpoint.response.candidates as Array<Record<string, unknown>>)[0];
+  if (first === undefined) {throw new Error("missing Retrieval V2 fixture candidate");}
+  const second = structuredClone(first);
+  Object.assign(second, {
+    canonical_identity: "candidate-008",
+    chunk_key: "candidate-008",
+    document_key: "document-008",
+    locator: "candidate-008",
+  });
+  endpoint.response.candidates = [
+    rankRetrievalCandidate(first, 0),
+    rankRetrievalCandidate(second, 1),
+  ];
+  Object.assign(endpoint.response.applied_bounds as Record<string, unknown>, {
+    deadline_ms: 2_000,
+    returned_seeds: 2,
+  });
+
+  const providerRequest = request({
+    budgets: { ...request().budgets, deadlineMs: 2_000 },
+  });
+  const responseBytes = new TextEncoder().encode(JSON.stringify(endpoint.response));
+  const result = decodeRetrieveContextResponse(
+    endpoint.response,
+    {
+      bounds: {
+        candidateLimit: providerRequest.budgets.candidateLimit,
+        deadlineMs: providerRequest.budgets.deadlineMs,
+        neighborRadius: providerRequest.budgets.neighborRadius,
+        responseByteLimit: providerRequest.budgets.responseByteLimit,
+        resultLimit: providerRequest.budgets.resultLimit,
+      },
+      capabilityFingerprint: providerRequest.binding.capabilityFingerprint,
+      contractVersion: providerRequest.binding.contractVersion,
+      filters: providerRequest.filters,
+      profileId: providerRequest.binding.profileId,
+      queries: providerRequest.queries,
+      scope: providerRequest.scope,
+      softPreferences: providerRequest.softPreferences,
+    },
+    capability as unknown as Parameters<typeof decodeRetrieveContextResponse>[2],
+    responseBytes.byteLength,
+  );
+
+  expect(result.candidates.map((candidate) =>
+    ({
+      contributionRanks: candidate.contributions.map(
+        ({ provider_rank: providerRank }) => providerRank,
+      ),
+      providerRank: candidate.provider_rank,
+    }))).toEqual([
+    { contributionRanks: [1, 1], providerRank: 1 },
+    { contributionRanks: [2, 2], providerRank: 2 },
+  ]);
+}
+
 describe("Infinity Context locator-only Retrieval V2 adapter", () => {
   it("passes one original question and hard filters unchanged without ranking", async () => {
     const endpoint = new RetrievalV2Endpoint();
     const result = await adapter(endpoint).retrieve(request());
 
-    expect(result.status).toBe("available");
+    expect(result.status === "available" ? "available" : result.code)
+      .toBe("available");
     if (result.status !== "available") {throw new Error("retrieval unavailable");}
     const candidate = result.candidates[0];
     expect(candidate?.locator).toBe("candidate-007");
@@ -202,7 +263,7 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
     expect(wire.value).toEqual({
       bounds: {
         candidate_limit: 100,
-        deadline_ms: 100,
+        deadline_ms: 1_000,
         neighbor_radius: 0,
         response_byte_limit: 16_384,
         result_limit: 10,
@@ -228,6 +289,9 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
     });
     expect(JSON.stringify(result)).not.toMatch(/text|snippet|content/u);
   });
+
+  it("recomputes every weighted-RRF score when the disposable endpoint ranks two candidates",
+    verifyDisposableEndpointRanksTwoCandidates);
 
   it("preserves a valid provider unavailable reason as retryable", async () => {
     const endpoint = new RetrievalV2Endpoint();

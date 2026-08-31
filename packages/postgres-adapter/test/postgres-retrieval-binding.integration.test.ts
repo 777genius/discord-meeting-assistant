@@ -58,8 +58,25 @@ function binding(questionId: string, current: boolean): QuestionBindingSnapshot 
         ...base,
         bindingProtocolVersion: 2,
         retrievalBinding: {
+          canonicalEvidenceFilters: {
+            relativeTimeInterval: null,
+            requiresSpeakerMatch: false,
+            speakerIds: [],
+          },
+          compositeProfile: {
+            candidatePolicy: "bounded_lane_round_robin_dedupe.v1",
+            interleavePolicy: "local_then_historical_per_rank.v1",
+            profileId: "meeting-knowledge.composite-retrieval.v1",
+          },
           cutoverEpoch: "cutover-r1",
+          localCurrentIdentity: {
+            algorithmId: "canonical_local_exact_lexical_v1",
+            profileFingerprint: "2".repeat(64),
+            profileId: "meeting-knowledge.local-current.v2",
+          },
+          originalQuestion: "Question?",
           profileFingerprint: "e".repeat(64),
+          provenanceSchemaVersion: 1,
           request: {
             binding: { capabilityFingerprint: "f".repeat(64),
               contractVersion: "context-retrieval.v2",
@@ -236,11 +253,16 @@ describe("PostgreSQL immutable retrieval binding leases", () => {
     }
     expect(isLegacyQuestionBinding(legacyLease.binding)).toBe(true);
     await expect(jobs.persistGroundingPlan({
+      attemptAlreadyReserved: false,
+      attemptId: `legacy-attempt-1`,
       binding: legacy,
       generation: legacyLease.generation,
       jobId: legacy.questionId,
+      leaseSeconds: 60,
+      maximumProviderAttempts: 2,
       measurement: { inputTokens: 10, requestBytes: 100 },
       plan: groundingPlan(),
+      question: "Question?",
       runtimeProfile: "legacy-drain-test",
       sourceMeetingIds: [legacy.meetingId],
     })).resolves.toBe(true);
@@ -250,7 +272,7 @@ describe("PostgreSQL immutable retrieval binding leases", () => {
       jobId: legacy.questionId,
       leaseSeconds: 240,
       maximumProviderAttempts: 2,
-    })).resolves.toBe(true);
+    })).resolves.toBe(false);
     await expect(jobs.failProviderAttempt({
       attemptId: "legacy-attempt-1",
       generation: legacyLease.generation,
@@ -404,40 +426,36 @@ describe("PostgreSQL binding-aware worker rolling fence", () => {
       throw new Error("current binding was not leased");
     }
     await expect(jobs.persistGroundingPlan({
+      attemptAlreadyReserved: false,
+      attemptId: `current-attempt-1`,
       binding: current,
       generation: firstLease.generation,
       jobId: current.questionId,
+      leaseSeconds: 60,
+      maximumProviderAttempts: 2,
       measurement: { inputTokens: 10, requestBytes: 100 },
       plan: groundingPlan(),
+      question: "Question?",
       runtimeProfile: "current-ready-fence-test",
       sourceMeetingIds: [current.meetingId],
-    })).resolves.toBe(true);
-    await expect(jobs.reserveProviderAttempt({
-      attemptId: "current-attempt-1",
-      generation: firstLease.generation,
-      jobId: current.questionId,
-      leaseSeconds: 240,
-      maximumProviderAttempts: 2,
-    })).resolves.toBe(true);
-    await expect(jobs.reserveProviderAttempt({
-      attemptId: "current-duplicate-attempt",
-      generation: firstLease.generation,
-      jobId: current.questionId,
-      leaseSeconds: 240,
-      maximumProviderAttempts: 2,
     })).resolves.toBe(false);
-    await expect(jobs.completeProviderAttempt({
-      answerCandidate: answerCandidate(),
-      attemptId: "current-attempt-1",
-      generation: firstLease.generation,
-      jobId: current.questionId,
-    })).resolves.toBe(true);
-    await database.query(
+    const primed = await database.query(
       `UPDATE meeting_knowledge.question_jobs
-       SET lease_until = transaction_timestamp() - interval '1 second'
-       WHERE question_id = $1`,
-      [current.questionId],
+       SET state = 'ready', grounding_plan = $2::jsonb,
+           grounding_measurement = '{"schemaVersion":1,"inputTokens":10,"requestBytes":100}'::jsonb,
+           runtime_profile = 'current-ready-fence-test',
+           source_meeting_ids = ARRAY[$3]::text[], attempts = 1,
+           provider_attempt_state = 'completed',
+           provider_attempt_id = 'current-attempt-1',
+           provider_attempt_started_at = transaction_timestamp(),
+           provider_attempt_finished_at = transaction_timestamp(),
+           answer_candidate = $4::jsonb, ready_at = transaction_timestamp(),
+           lease_until = transaction_timestamp() - interval '1 second'
+       WHERE question_id = $1 AND generation = $5 AND state = 'running'`,
+      [current.questionId, groundingPlan(), current.meetingId, answerCandidate(),
+        firstLease.generation],
     );
+    expect(primed.rowCount).toBe(1);
     await expect(database.query(
       `UPDATE meeting_knowledge.question_jobs
        SET state = 'ready', generation = generation + 1,
@@ -476,11 +494,14 @@ describe("PostgreSQL binding-aware worker rolling fence", () => {
       leaseSeconds: 60,
       maximumProviderAttempts: 2,
       workerId: "fail-closed-worker",
-    })).rejects.toThrow();
-    await expect(database.query<{ readonly state: string }>(
-      "SELECT state FROM meeting_knowledge.question_jobs WHERE question_id = $1",
+    })).resolves.toBeNull();
+    await expect(database.query<{ readonly outcome: string;
+      readonly reconciliation_disposition: string; readonly state: string }>(
+      `SELECT state, outcome, reconciliation_disposition
+       FROM meeting_knowledge.question_jobs WHERE question_id = $1`,
       [malformedAuthority.questionId],
-    )).resolves.toMatchObject({ rows: [{ state: "queued" }] });
+    )).resolves.toMatchObject({ rows: [{ outcome: "stale_binding",
+      reconciliation_disposition: "quarantined", state: "terminal" }] });
   }, RETRIEVAL_BINDING_TEST_TIMEOUT_MS);
 });
 

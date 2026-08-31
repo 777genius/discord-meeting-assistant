@@ -25,6 +25,7 @@ import {
 import {
   assertAggregateStageBudget,
   runQualificationStage,
+  waitForHistoricalRows,
 } from "./meeting-knowledge-production-composition-diagnostics.js";
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -35,6 +36,30 @@ describe("Infinity production semantic qualification composition", () => {
     expect(historicalSyncLeaseDurationMs(300_000)).toBe(330_000);
     expect(historicalSyncLeaseDurationMs(600_000)).toBe(630_000);
     expect(() => historicalSyncLeaseDurationMs(600_001)).toThrow(RangeError);
+  });
+
+  it("accepts settled historical rows when the first observation crosses its deadline", async () => {
+    let now = 0;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const query = vi.fn(async () => {
+      now = 101;
+      return {
+        rows: [{ meeting_id: "meeting-settled", state: "applied" }],
+      };
+    });
+    const pool = { query } as unknown as Pool;
+    try {
+      await expect(waitForHistoricalRows(
+        pool,
+        ({ state }) => state === "applied",
+        1,
+        new AbortController().signal,
+        100,
+      )).resolves.toBeUndefined();
+      expect(query).toHaveBeenCalledOnce();
+    } finally {
+      dateNow.mockRestore();
+    }
   });
 
   it("keeps aggregate stage ceilings below the outer timeout and aborts timed-out cleanup", async () => {
@@ -121,7 +146,7 @@ describe("Infinity production semantic qualification composition", () => {
         question: "What changed?",
         roomId: "444444444444444444",
         scopeId: "333333333333333333",
-      })).resolves.toBeNull();
+      })).resolves.toMatchObject({ status: "unavailable" });
 
       await deletionOnly.assertReady();
       expect(deletionOnly.servingAuthorized()).toBe(false);
@@ -131,7 +156,7 @@ describe("Infinity production semantic qualification composition", () => {
         question: "What changed?",
         roomId: "444444444444444444",
         scopeId: "333333333333333333",
-      })).resolves.toBeNull();
+      })).resolves.toMatchObject({ status: "unavailable" });
       expect(infinity.endpoint.requests.some(({ path }) =>
         path === "/v1/context/retrieve"
       )).toBe(false);
@@ -200,7 +225,7 @@ describe("Infinity deletion-only transport qualification", () => {
         question: "What changed?",
         roomId: "444444444444444444",
         scopeId: "333333333333333333",
-      })).resolves.toBeNull();
+      })).resolves.toMatchObject({ status: "unavailable" });
       expect(query).not.toHaveBeenCalled();
       expect(infinity.endpoint.requests.some(({ path }) =>
         path === "/v1/context/retrieve"

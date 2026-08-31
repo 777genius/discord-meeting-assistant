@@ -60,6 +60,7 @@ describe("Meeting Knowledge final reply runtime lifecycle", () => {
     const order: string[] = [];
     const handler = {
       close: vi.fn(),
+      reconcilePending: vi.fn(async () => {}),
       settle: vi.fn(async () => {}),
       start: vi.fn(() => {
         order.push("ingress");
@@ -94,7 +95,11 @@ describe("Meeting Knowledge final reply runtime lifecycle", () => {
 
     expect(order).toEqual(["ingress", "maintenance", "process"]);
     expect(handler.start).toHaveBeenCalledOnce();
+    expect(handler.reconcilePending).toHaveBeenCalledOnce();
     expect(jobs.calls).toEqual([{ maximumJobs: 100, servingEnabled: true }]);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(handler.reconcilePending).toHaveBeenCalledTimes(2);
 
     await runtime.close();
     expect(handler.close).toHaveBeenCalledOnce();

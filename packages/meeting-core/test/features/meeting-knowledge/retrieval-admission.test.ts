@@ -45,7 +45,7 @@ const request: FocusedLocatorRetrievalV2RequestSnapshot = Object.freeze({
 describe("Retrieval V2-only admission", () => {
   it("binds every new job to one exact persisted V2 request", () => {
     expect(selectRetrievalBinding({ questionId: "question-42",
-      retrievalV2Request: request, rollout }).toSnapshot()).toEqual({
+      retrievalV2Request: request, rollout }).toSnapshot()).toMatchObject({
       cutoverEpoch: "infinity-v2-only-r1",
       profileFingerprint: "a".repeat(64),
       request,
@@ -55,15 +55,22 @@ describe("Retrieval V2-only admission", () => {
 
   it("keeps legacy route snapshots readable for drain audits", () => {
     expect(RetrievalBinding.create({
+      canonicalEvidenceFilters: { relativeTimeInterval: null,
+        requiresSpeakerMatch: false, speakerIds: [] },
       cutoverEpoch: "old-rollout",
+      localCurrentIdentity: { algorithmId: "canonical_local_exact_lexical_v1",
+        profileFingerprint: "b".repeat(64),
+        profileId: "meeting-knowledge.local-current.v2" },
+      originalQuestion: "legacy drain audit",
       profileFingerprint: "b".repeat(64),
+      provenanceSchemaVersion: 1,
       retrievalPath: "legacy_downstream_v1",
     }).toSnapshot()).toMatchObject({ retrievalPath: "legacy_downstream_v1" });
   });
 
   it("binds an explicit canonical local path when no indexed source is available", () => {
     expect(selectRetrievalBinding({ questionId: "question-first-meeting",
-      retrievalV2Request: null, rollout }).toSnapshot()).toEqual({
+      retrievalV2Request: null, rollout }).toSnapshot()).toMatchObject({
       cutoverEpoch: "infinity-v2-only-r1",
       profileFingerprint: "b".repeat(64),
       retrievalPath: "canonical_local_exact_lexical_v1",

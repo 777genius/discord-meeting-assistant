@@ -1,4 +1,5 @@
 import { QuestionBinding } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,6 +10,13 @@ import {
   questionAdmissionBindingHash,
   questionAdmissionBindingHashMatches,
 } from "../src/postgres-meeting-knowledge-codecs.js";
+import { decodePersistedQuestionRecovery } from
+  "../src/postgres-question-recovery-codec.js";
+import { canonicalFixtureHash, exactPreCompositeFixture,
+  preCanonicalPreCompositeBindingHash, preCompositeProtocol2BindingJson,
+  preCompositeProtocol2GroundingPlanJson,
+  serializeQuestionReconciliationFixtureRows } from
+  "./postgres-protocol2-recovery.fixture.js";
 
 const legacyInput = {
   authorizationDigest: "a".repeat(64),
@@ -36,8 +44,22 @@ const legacyInput = {
 };
 
 const retrievalBinding = Object.freeze({
+  canonicalEvidenceFilters: Object.freeze({ relativeTimeInterval: null,
+    requiresSpeakerMatch: false, speakerIds: Object.freeze([]) }),
+  compositeProfile: Object.freeze({
+    candidatePolicy: "bounded_lane_round_robin_dedupe.v1" as const,
+    interleavePolicy: "local_then_historical_per_rank.v1" as const,
+    profileId: "meeting-knowledge.composite-retrieval.v1" as const,
+  }),
   cutoverEpoch: "cutover-r1",
+  localCurrentIdentity: Object.freeze({
+    algorithmId: "canonical_local_exact_lexical_v1" as const,
+    profileFingerprint: "2".repeat(64),
+    profileId: "meeting-knowledge.local-current.v2" as const,
+  }),
+  originalQuestion: "Question?",
   profileFingerprint: "e".repeat(64),
+  provenanceSchemaVersion: 1 as const,
   request: Object.freeze({
     binding: Object.freeze({ capabilityFingerprint: "f".repeat(64),
       contractVersion: "context-retrieval.v2" as const,
@@ -71,7 +93,133 @@ const currentBinding = QuestionBinding.create({
   retrievalBinding,
 }).toSnapshot();
 
+function expectPinnedPreCompositeBytes(
+  fixture: ReturnType<typeof exactPreCompositeFixture>,
+): void {
+  expect(createHash("sha256").update(preCompositeProtocol2BindingJson).digest("hex"))
+    .toBe("c1289bc658ef50d7f13cab3b5b7eb377a38de1ac84f81d6c99979b77cd8357e9");
+  expect(createHash("sha256").update(preCompositeProtocol2GroundingPlanJson)
+    .digest("hex"))
+    .toBe("732dcb6c551d2272c01f9e2a0a07bf75e401f9adabcf68dd1bd9056e3b9d41e6");
+  expect(decodePersistedQuestionRecovery({ ...fixture,
+    bindingHash: preCanonicalPreCompositeBindingHash(),
+    questionText: "Question?" })).toEqual({
+    reason: "protocol2_canonical_evidence_filters_absent", status: "incompatible",
+  });
+}
+
+describe("PostgreSQL question reconciliation fixture codec", () => {
+  it("serializes reconciliation fixture fields to the SQL recordset contract", () => {
+    const serialized = serializeQuestionReconciliationFixtureRows([{
+      binding: { bindingProtocolVersion: 2 }, bindingHash: "a".repeat(64),
+      groundingPlan: { mode: "focused_retrieval" },
+      questionId: "77777777777777777", state: "queued",
+    }]);
+    expect(serialized).toEqual([{
+      binding: { bindingProtocolVersion: 2 }, binding_hash: "a".repeat(64),
+      grounding_plan: { mode: "focused_retrieval" },
+      question_id: "77777777777777777", state: "queued",
+    }]);
+    expect(serialized[0]).not.toHaveProperty("bindingHash");
+    expect(serialized[0]).not.toHaveProperty("groundingPlan");
+    expect(serialized[0]).not.toHaveProperty("questionId");
+  });
+});
+
 describe("PostgreSQL question binding codec", () => {
+  it("recognizes the exact pre-composite protocol-2 bytes and terminalizes absent authority",
+    () => {
+      const fixture = exactPreCompositeFixture();
+      expectPinnedPreCompositeBytes(fixture);
+      expect(fixture.bindingHash)
+        .toBe("54d0c7c563babb111d63a520e27f05d9d0c6efc386f64c3d1feae3dab367dd64");
+      const binding = fixture.binding as { readonly retrievalBinding:
+        Readonly<Record<string, unknown>> };
+      const audit = (fixture.groundingPlan as { readonly evidence: readonly {
+        readonly retrievalAudit: Readonly<Record<string, unknown>> }[] })
+        .evidence[0]!.retrievalAudit;
+      expect(binding.retrievalBinding).not.toHaveProperty("canonicalEvidenceFilters");
+      expect(binding.retrievalBinding).not.toHaveProperty("localCurrentIdentity");
+      expect(binding.retrievalBinding).not.toHaveProperty("originalQuestion");
+      expect(binding.retrievalBinding).not.toHaveProperty("provenanceSchemaVersion");
+      expect(binding.retrievalBinding).not.toHaveProperty("compositeProfile");
+      expect(audit).toHaveProperty("capabilityFingerprint");
+      expect(audit).not.toHaveProperty("laneIdentity");
+      expect(decodePersistedQuestionRecovery({ ...fixture,
+        questionText: "Question?" })).toEqual({
+        reason: "protocol2_canonical_evidence_filters_absent",
+        status: "incompatible",
+      });
+    });
+
+  it("separates a corrupt persisted plan from valid current binding authority", () => {
+    expect(decodePersistedQuestionRecovery({ binding: currentBinding,
+      bindingHash: questionAdmissionBindingHash(currentBinding),
+      groundingPlan: { structurally: "invalid" }, questionText: "Question?" }))
+      .toEqual({ reason: "grounding_plan_structurally_corrupt",
+        status: "incompatible" });
+  });
+
+  it("migrates only derivable local protocol-2 authority and its deleted audit shape",
+    () => {
+      const fixture = exactPreCompositeFixture();
+      const binding = structuredClone(fixture.binding) as {
+        authorizationPrincipalRef: string;
+        retrievalBinding: Record<string, unknown>;
+      };
+      binding.retrievalBinding.canonicalEvidenceFilters = {
+        relativeTimeInterval: null, requiresSpeakerMatch: false, speakerIds: [],
+      };
+      const plan = structuredClone(fixture.groundingPlan) as { evidence: Array<{
+        retrievalAudit: Record<string, unknown> }> };
+      const audit = plan.evidence[0]!.retrievalAudit;
+      audit.requestDigest = canonicalFixtureHash({ question: "Question?",
+        retrievalBinding: binding.retrievalBinding });
+      audit.responseDigest = canonicalFixtureHash({
+        contributions: audit.contributions, fusedScore: audit.fusedScore,
+        locator: audit.locator, providerRank: audit.providerRank,
+      });
+      const { authorizationPrincipalRef: _principal, ...dedupe } = binding;
+      const recovered = decodePersistedQuestionRecovery({ binding,
+        bindingHash: canonicalFixtureHash(dedupe), groundingPlan: plan,
+        questionText: "Question?" });
+      if (recovered.status !== "decoded") {throw new Error(recovered.reason);}
+      expect(recovered.status).toBe("decoded");
+      expect(recovered.migration).toBe("pre_composite_local_v2");
+      expect(recovered.binding.retrievalBinding).toMatchObject({
+        canonicalEvidenceFilters: { relativeTimeInterval: null,
+          requiresSpeakerMatch: false, speakerIds: [] },
+        localCurrentIdentity: { algorithmId: "canonical_local_exact_lexical_v1",
+          profileFingerprint: "e".repeat(64),
+          profileId: "meeting-knowledge.local-current.v2" },
+        originalQuestion: "Question?", provenanceSchemaVersion: 1,
+      });
+      expect(recovered.groundingPlan?.evidence[0]?.retrievalAudit)
+        .not.toHaveProperty("capabilityFingerprint");
+      expect(recovered.groundingPlan?.evidence[0]?.retrievalAudit?.laneIdentity)
+        .toMatchObject({ lane: "local_current",
+          profileFingerprint: "e".repeat(64) });
+    });
+
+  it("terminalizes pre-composite Infinity V2 instead of inventing lane authority",
+    () => {
+      const serialized = structuredClone(currentBinding) as unknown as {
+        [key: string]: unknown;
+        retrievalBinding: Record<string, unknown>;
+      };
+      delete serialized.retrievalBinding.compositeProfile;
+      delete serialized.retrievalBinding.localCurrentIdentity;
+      delete serialized.retrievalBinding.originalQuestion;
+      delete serialized.retrievalBinding.provenanceSchemaVersion;
+      const { authorizationPrincipalRef: _principal, ...dedupe } = serialized;
+      expect(decodePersistedQuestionRecovery({ binding: serialized,
+        bindingHash: canonicalFixtureHash(dedupe), groundingPlan: null,
+        questionText: "Question?" })).toEqual({
+        reason: "protocol2_composite_authority_absent",
+        status: "incompatible",
+      });
+    });
+
   it("round-trips and hashes the complete immutable retrieval binding", () => {
     if (currentBinding.bindingProtocolVersion !== 2) {
       throw new Error("current binding fixture must use protocol 2");
@@ -134,8 +282,13 @@ describe("PostgreSQL question binding codec", () => {
 
   it("round-trips the explicit first-meeting local retrieval binding", () => {
     const local = QuestionBinding.create({ ...legacyInput, bindingProtocolVersion: 2,
-      retrievalBinding: { cutoverEpoch: "cutover-r1",
+      retrievalBinding: {
+        canonicalEvidenceFilters: retrievalBinding.canonicalEvidenceFilters,
+        cutoverEpoch: "cutover-r1",
+        localCurrentIdentity: retrievalBinding.localCurrentIdentity,
+        originalQuestion: retrievalBinding.originalQuestion,
         profileFingerprint: "9".repeat(64),
+        provenanceSchemaVersion: 1,
         retrievalPath: "canonical_local_exact_lexical_v1" } }).toSnapshot();
     expect(decodePersistedQuestionBinding(
       JSON.parse(JSON.stringify(local)),

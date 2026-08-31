@@ -10,6 +10,8 @@ const shutdownDrainTimeoutMilliseconds = 5_000;
 
 export interface MeetingKnowledgeLocalFinalReplyRuntime {
   close(): Promise<void>;
+  processPending(): Promise<void>;
+  reconcilePending(): Promise<void>;
   settleIngress(): Promise<void>;
   start(): void;
 }
@@ -22,7 +24,8 @@ export class MeetingKnowledgeDrainTimeoutError extends Error {
 }
 
 export function createMeetingKnowledgePollingRuntime(input: {
-  readonly handler?: Pick<DiscordLocalFinalReplyHandler, "close" | "settle" | "start">;
+  readonly handler?: Pick<DiscordLocalFinalReplyHandler, "close" | "settle" | "start"> &
+    Partial<Pick<DiscordLocalFinalReplyHandler, "reconcilePending">>;
   readonly maintenance: MaintainFinalReplies;
   readonly processor?: Pick<ProcessFinalReplyJob, "executeOnce">;
   readonly publication: Pick<DurableAnswerPublication, "reconcileRetractions" | "reconcileUnknown">;
@@ -40,7 +43,8 @@ export function createMeetingKnowledgePollingRuntime(input: {
       .finally(() => { processing = undefined; });
   };
   const reconcile = (): void => {
-    reconciling ??= input.publication.reconcileUnknown(100)
+    reconciling ??= (input.handler?.reconcilePending?.() ?? Promise.resolve())
+      .then(async () => await input.publication.reconcileUnknown(100))
       .then((result) => {
         if (result.containedDuplicates > 0) {
           input.reportDuplicateContainment?.(result.containedDuplicates);
@@ -51,6 +55,16 @@ export function createMeetingKnowledgePollingRuntime(input: {
       .catch(input.reportError)
       .finally(() => { reconciling = undefined; });
   };
+  const processPending = async (): Promise<void> => {
+    await processing;
+    processOnce();
+    await processing;
+  };
+  const reconcilePending = async (): Promise<void> => {
+    await reconciling;
+    reconcile();
+    await reconciling;
+  };
   return {
     close: async () => {
       input.handler?.close();
@@ -58,6 +72,8 @@ export function createMeetingKnowledgePollingRuntime(input: {
       clearInterval(reconcileTimer);
       await awaitBoundedFinalReplyDrain([input.handler?.settle(), processing, reconciling]);
     },
+    processPending,
+    reconcilePending,
     settleIngress: () => input.handler?.settle() ?? Promise.resolve(),
     start: () => {
       if (processTimer !== undefined) { return; }

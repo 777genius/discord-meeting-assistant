@@ -84,6 +84,9 @@ export class DurableAnswerPublication {
     });
     if (!started) {
       const record = await this.store.findById(input.effectId);
+      if (record?.state === "delivered" && record.externalReceipt !== null) {
+        return { externalReceipt: record.externalReceipt, status: "delivered" };
+      }
       const mayHaveStarted = record?.state === "request_started" ||
         record?.state === "outcome_unknown" ||
         record?.state === "absent_unconfirmed";

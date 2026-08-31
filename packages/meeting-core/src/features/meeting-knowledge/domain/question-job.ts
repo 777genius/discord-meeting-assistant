@@ -272,9 +272,17 @@ function sameRetrievalBinding(
   right: RetrievalBindingSnapshot | undefined,
 ): boolean {
   return left !== undefined && right !== undefined &&
+    left.provenanceSchemaVersion === right.provenanceSchemaVersion &&
     left.cutoverEpoch === right.cutoverEpoch &&
+    left.originalQuestion === right.originalQuestion &&
     left.profileFingerprint === right.profileFingerprint &&
     left.retrievalPath === right.retrievalPath &&
+    JSON.stringify(left.localCurrentIdentity) ===
+      JSON.stringify(right.localCurrentIdentity) &&
+    JSON.stringify(left.retrievalPath === "infinity_locator_v2"
+      ? left.compositeProfile : null) ===
+      JSON.stringify(right.retrievalPath === "infinity_locator_v2"
+        ? right.compositeProfile : null) &&
     sameCanonicalEvidenceFilters(
       left.canonicalEvidenceFilters,
       right.canonicalEvidenceFilters,

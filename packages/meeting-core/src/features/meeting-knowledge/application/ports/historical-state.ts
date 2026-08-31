@@ -28,6 +28,38 @@ export interface HistoricalCandidateRecordV1 extends HistoricalAppliedPlanV1 {
   readonly ordinal: number;
 }
 
+export interface HistoricalRoomAuthoritySnapshotEntryV1
+extends HistoricalAppliedPlanV1 {
+  /** Null isolates only this malformed or no-longer-admissible candidate source. */
+  readonly acceptedMeeting: AcceptedFinalMeetingV1 | null;
+}
+
+export type HistoricalRoomAuthoritySnapshotResultV1 =
+  | {
+      readonly entries: readonly HistoricalRoomAuthoritySnapshotEntryV1[];
+      readonly schemaVersion: 1;
+      readonly status: "current";
+    }
+  | {
+      readonly schemaVersion: 1;
+      readonly status: "overflow" | "unavailable";
+    };
+
+/**
+ * One adapter-owned repeatable-read operation. The adapter cursor-paginates
+ * the room catalog and returns plans, current generations and accepted local
+ * meetings from that one MVCC snapshot; a failed page aborts the whole result.
+ */
+export interface HistoricalRoomAuthoritySnapshotPort {
+  loadRoomAuthoritySnapshot(input: {
+    readonly maximumSources: number;
+    readonly pageSize: number;
+    readonly roomId: string;
+    readonly scopeId: string;
+    readonly signal?: AbortSignal;
+  }): Promise<HistoricalRoomAuthoritySnapshotResultV1>;
+}
+
 export interface HistoricalSyncClaimOptionsV1 {
   readonly allowIndex: boolean;
   readonly leaseDurationMs: number;

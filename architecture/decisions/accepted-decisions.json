@@ -258,6 +258,11 @@
       "immutableDigest": "sha256:3b44d37f9eddea75903b6eef7beb6446f40bfbf90f79dcdd3c40a9e365007ce9"
     },
     {
+      "id": "ADR-0053",
+      "path": "docs/decisions/0053-v2-only-meeting-retrieval.md",
+      "immutableDigest": "sha256:cc73cd5b6a245b0b43c75acb5d1a61ecb629f8362c39d66458de37fe9c0cc382"
+    },
+    {
       "id": "ADR-0054",
       "path": "docs/decisions/0054-official-sdk-live-memory-projection.md",
       "immutableDigest": "sha256:ded5c7dd3363857ceecb27808ab154ff634e5700b304fc00bf77e4e11ccc889f"
@@ -296,6 +301,11 @@
       "id": "ADR-0062",
       "path": "docs/decisions/0062-initial-roster-durable-greetings.md",
       "immutableDigest": "sha256:17777764bb85b233f2b9e3b01eba227e8cc17f70b741e291a0c560d4d073b232"
+    },
+    {
+      "id": "ADR-0064",
+      "path": "docs/decisions/0064-composite-retrieval-authority-fence.md",
+      "immutableDigest": "sha256:cf24d83fe00173de2186ddfab2affb26f6a59a28d997ffee26c134f98068c7c3"
     }
   ]
 }

@@ -103,6 +103,8 @@ export function createVoiceGroundedAnswers(
             ),
           }),
         }),
+    historicalRequired:
+      input.config.meetingKnowledge.retrievalV2ProviderBinding !== undefined,
     ids: {
       digest: (namespace, parts) =>
         principals.observationDigest(namespace, ...parts),

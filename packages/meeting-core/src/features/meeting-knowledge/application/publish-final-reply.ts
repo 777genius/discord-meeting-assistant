@@ -1,20 +1,22 @@
+import { GroundedAnswer, type GroundedAnswerCandidate } from
+  "../domain/grounded-answer.js";
+import { exhaustiveCoverageProvesAbsence, type GroundingPlan } from
+  "../domain/grounding-plan.js";
 import {
-  GroundedAnswer,
-  type GroundedAnswerCandidate,
-} from "../domain/grounded-answer.js";
-import {
-  exhaustiveCoverageProvesAbsence,
-  type GroundingPlan,
-} from "../domain/grounding-plan.js";
-import {
+  authorizationObservationUnavailable,
   authorityMatchesBinding,
   authorizedForJob,
+  effectMarker,
+  fenceIsCurrent,
   planEvidenceIsCurrent,
+  recheckAbsenceAuthority,
+  requireAuthorizedObservation,
   rebuildGroundingPlan,
   referencesFromPlan,
   reauthorizeHistoricalPlan,
   sameEvidenceIdentity,
   sameGroundingPlanEvidenceSections,
+  sourceMeetingsForPlan,
 } from "./final-reply-checks.js";
 import { admittedHumanActors } from "./admitted-human-evidence.js";
 import type {
@@ -31,6 +33,7 @@ import type {
   QuestionJobStore,
   QuestionJobTerminalOutcome,
 } from "./ports/final-reply.js";
+import { exactQuestionObservation } from "./ports/final-reply.js";
 
 export type FinalReplyJobResult = {
   readonly jobId: string;
@@ -38,30 +41,10 @@ export type FinalReplyJobResult = {
   readonly status: "deferred" | "settled" | "stale_generation";
 };
 
-function effectMarker(jobId: string): string {
-  return `meeting-knowledge-answer:v1:${jobId}`;
-}
-
 interface PublicationFences {
   readonly coverageCurrent?: () => Promise<boolean>;
   readonly historicalAuthorizationCurrent?: () => Promise<boolean>;
   readonly sourceMeetingIds?: readonly string[];
-}
-
-function sourceMeetingsForPlan(
-  lease: QuestionJobLease,
-  plan: GroundingPlan,
-): readonly string[] {
-  return Object.freeze([...new Set([
-    lease.binding.meetingId,
-    ...plan.evidence.map((turn) => turn.source?.meetingId ?? lease.binding.meetingId),
-  ])].toSorted());
-}
-
-async function fenceIsCurrent(
-  fence: (() => Promise<boolean>) | undefined,
-): Promise<boolean> {
-  return fence === undefined || await fence();
 }
 
 export class PublishFinalReply {
@@ -114,9 +97,11 @@ export class PublishFinalReply {
       return this.settle(lease, "stale_authorization");
     }
     const beforeHydration = await this.observe(lease, "before_hydration");
-    if (!authorizedForJob(beforeHydration, previousAuthority, lease.binding)) {
-      return this.settle(lease, "stale_authorization");
-    }
+    const hydrationAuthorization = await this.authorizationFailure(
+      lease, beforeHydration,
+      authorizedForJob(beforeHydration, previousAuthority, lease.binding),
+    );
+    if (hydrationAuthorization !== null) {return hydrationAuthorization;}
     const absenceProven = exhaustiveCoverageProvesAbsence(plan);
     const rehydrated = absenceProven
       ? await recheckAbsenceAuthority(this.evidence, lease.binding)
@@ -229,6 +214,7 @@ export class PublishFinalReply {
       authorizationPrincipalRef: lease.binding.authorizationPrincipalRef,
       checkpoint,
       expectedContainerId: lease.binding.projectionTargetContainerId,
+      expectedQuestion: exactQuestionObservation(lease.binding),
       expectedScopeId: lease.binding.scopeId,
       questionId: lease.binding.questionId,
     });
@@ -253,9 +239,11 @@ export class PublishFinalReply {
       return this.settle(lease, "stale_authorization");
     }
     const beforeReservation = await this.observe(lease, "before_effect_reservation");
-    if (!authorizedForJob(beforeReservation, authority, lease.binding)) {
-      return this.settle(lease, "stale_authorization");
-    }
+    const reservationAuthorization = await this.authorizationFailure(
+      lease, beforeReservation,
+      authorizedForJob(beforeReservation, authority, lease.binding),
+    );
+    if (reservationAuthorization !== null) {return reservationAuthorization;}
     const stillCurrent = await this.evidence.recheckCurrentBinding(lease.binding);
     if (
       stillCurrent.status !== "current" ||
@@ -272,7 +260,7 @@ export class PublishFinalReply {
     let reservation;
     try {
       reservation = await this.publication.reserve({
-        authorizationDigest: beforeReservation.digest,
+        authorizationDigest: requireAuthorizedObservation(beforeReservation).digest,
         binding: lease.binding,
         content,
         deliveryContainerId: lease.binding.deliveryContainerId,
@@ -292,13 +280,12 @@ export class PublishFinalReply {
       return { jobId: lease.jobId, status: "stale_generation" };
     }
     const beforeSend = await this.observe(lease, "before_send_cas");
-    if (!authorizedForJob(beforeSend, stillCurrent.binding, lease.binding)) {
-      return this.cancelReservedAndSettle(
-        lease,
-        "authorization_drift",
-        "stale_authorization",
-      );
-    }
+    const sendAuthorization = await this.authorizationFailure(
+      lease, beforeSend,
+      authorizedForJob(beforeSend, stillCurrent.binding, lease.binding),
+      true,
+    );
+    if (sendAuthorization !== null) {return sendAuthorization;}
     if (
       !await fenceIsCurrent(fences.historicalAuthorizationCurrent)
     ) {
@@ -334,7 +321,7 @@ export class PublishFinalReply {
       return { jobId: lease.jobId, status: "stale_generation" };
     }
     const delivery = await this.publication.send({
-      authorizationDigest: beforeSend.digest,
+      authorizationDigest: requireAuthorizedObservation(beforeSend).digest,
       effectId: reservation.effectId,
       questionGeneration: lease.generation,
       workerId: this.workerId,
@@ -353,6 +340,23 @@ export class PublishFinalReply {
       generation: lease.generation,
       jobId: lease.jobId,
     });
+  }
+
+  private authorizationFailure(
+    lease: QuestionJobLease,
+    observation: QuestionAuthorizationObservation,
+    authorized: boolean,
+    reserved = false,
+  ): Promise<FinalReplyJobResult | null> {
+    if (authorizationObservationUnavailable(observation)) {
+      return Promise.resolve({ jobId: lease.jobId, status: "deferred" });
+    }
+    if (authorized) {return Promise.resolve(null);}
+    return reserved
+      ? this.cancelReservedAndSettle(
+          lease, "authorization_drift", "stale_authorization",
+        )
+      : this.settle(lease, "stale_authorization");
   }
 
   private coverageRecheck(
@@ -404,14 +408,4 @@ export class PublishFinalReply {
     });
     return this.settle(lease, cancelled ? outcome : "delivery_unknown");
   }
-}
-
-async function recheckAbsenceAuthority(
-  evidence: FinalReplyEvidencePort,
-  binding: QuestionJobLease["binding"],
-) {
-  const current = await evidence.recheckCurrentBinding(binding);
-  return current.status === "current"
-    ? { binding: current.binding, status: "current" as const, turns: [] }
-    : current;
 }

@@ -1,7 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  QuestionBinding,
-  isLegacyQuestionBinding,
+import { QuestionBinding, isLegacyQuestionBinding,
   type CanonicalEvidenceTurn,
   type FocusedMemoryReference,
   type GroundedAnswerCandidate,
@@ -10,8 +8,6 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { MeetingSnapshot } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import { z } from "zod";
-import { focusedRetrievalProvenanceBinds } from
-  "./postgres-retrieval-provenance-codec.js";
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const boundedText = z.string().trim().min(1).max(32_768),
   localeSchema = z.enum(["en", "mixed", "ru"]);
@@ -19,33 +15,31 @@ const historicalEvidenceSourceSchema = z.object({
   candidateLocator: z.string().trim().min(1).max(1_024), indexGeneration: z.string().trim().min(1).max(1_024),
   releaseId: z.string().trim().min(1).max(1_024) }).strict();
 const retrievalContributionSchema = z.object({
-  contributionScorePicos: z.number().int(),
-  providerLaneId: boundedText.max(128),
-  providerRank: z.number().int().positive(),
-  queryId: boundedText.max(128),
+  contributionScorePicos: z.number().int(), providerLaneId: boundedText.max(128),
+  providerRank: z.number().int().positive(), queryId: boundedText.max(128),
   rawScoreKind: z.enum(["bm25", "distance", "relevance", "similarity"]).nullable(),
   rawScoreValue: z.number().nullable(),
 }).strict();
 const focusedRetrievalAuditSchema = z.object({
-  capabilityFingerprint: sha256Schema,
-  contributions: z.array(retrievalContributionSchema).min(1).max(32),
-  fusedScore: z.number(),
-  locator: boundedText.max(1_024),
-  profileId: boundedText.max(256),
-  providerRank: z.number().int().positive(),
+  contributions: z.array(retrievalContributionSchema).min(1).max(32), fusedScore: z.number(),
+  laneIdentity: z.object({
+    algorithmId: z.literal("canonical_local_exact_lexical_v1"), lane: z.literal("local_current"),
+    profileFingerprint: sha256Schema,
+    profileId: z.literal("meeting-knowledge.local-current.v2"),
+  }).strict().or(z.object({
+    capabilityFingerprint: sha256Schema, lane: z.literal("historical"),
+    profileId: boundedText.max(256),
+  }).strict()),
+  locator: boundedText.max(1_024), providerRank: z.number().int().positive(),
   requestDigest: sha256Schema,
   responseDigest: sha256Schema }).strict();
-export function canonicalFinalReplyTurns(
-  snapshot: MeetingSnapshot,
-): readonly CanonicalEvidenceTurn[] {
+export function canonicalFinalReplyTurns(snapshot: MeetingSnapshot):
+readonly CanonicalEvidenceTurn[] {
   const transcript = snapshot.transcript;
   if (transcript === null) {return [];}
   return Object.freeze(transcript.turns.map((turn) => Object.freeze({
-    endMs: turn.endMs,
-    speakerId: turn.speakerId,
-    startMs: turn.startMs,
-    text: turn.text,
-    turnId: turn.turnId,
+    endMs: turn.endMs, speakerId: turn.speakerId, startMs: turn.startMs,
+    text: turn.text, turnId: turn.turnId,
   })).toSorted((left, right) =>
     left.startMs - right.startMs || left.endMs - right.endMs ||
     (left.turnId < right.turnId ? -1 : left.turnId > right.turnId ? 1 : 0)
@@ -60,27 +54,20 @@ export function canonicalFinalReplyEvidenceHash(snapshot: MeetingSnapshot): stri
     version: snapshot.transcript.version,
   }), "utf8").digest("hex");
 }
-const questionBindingBaseSchema = z.object({
-  authorizationDigest: sha256Schema,
-  authorizationPolicyVersion: boundedText,
-  authorizationPrincipalRef: boundedText,
-  botApplicationIdentity: boundedText,
-  canonicalEvidenceHash: sha256Schema,
-  deliveryContainerId: boundedText,
-  expectedLocale: localeSchema,
-  finalProjectionEpoch: boundedText,
+export const questionBindingBaseSchema = z.object({
+  authorizationDigest: sha256Schema, authorizationPolicyVersion: boundedText,
+  authorizationPrincipalRef: boundedText, botApplicationIdentity: boundedText,
+  canonicalEvidenceHash: sha256Schema, deliveryContainerId: boundedText,
+  expectedLocale: localeSchema, finalProjectionEpoch: boundedText,
   finalProjectionReceipt: boundedText,
   humanActorIds: z.array(boundedText).min(1).max(10_000),
   meetingId: boundedText,
   meetingRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   memoryGeneration: boundedText,
-  policyVersion: boundedText,
-  projectionTargetContainerId: boundedText,
+  policyVersion: boundedText, projectionTargetContainerId: boundedText,
   questionHash: sha256Schema,
   questionId: boundedText,
-  requesterSubject: sha256Schema,
-  roomId: boundedText,
-  scopeId: boundedText,
+  requesterSubject: sha256Schema, roomId: boundedText, scopeId: boundedText,
   transcriptId: boundedText,
   transcriptVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 });
@@ -91,11 +78,20 @@ const retrievalV2RelativeIntervalSchema = z.object({ endMs: z.number(),
   startMs: z.number() }).strict();
 const retrievalV2WeightedKeySchema = z.object({ key: z.string(),
   weightMicros: z.number() }).strict();
-const canonicalEvidenceFiltersSchema = z.object({ relativeTimeInterval:
+export const canonicalEvidenceFiltersSchema = z.object({ relativeTimeInterval:
     retrievalV2RelativeIntervalSchema.nullable(),
   requiresSpeakerMatch: z.boolean(),
   speakerIds: z.array(boundedText.max(256)).max(10_000) }).strict();
-const retrievalV2RequestSchema = z.object({
+const localCurrentIdentitySchema = z.object({
+  algorithmId: z.literal("canonical_local_exact_lexical_v1"),
+  profileFingerprint: sha256Schema, profileId: z.literal("meeting-knowledge.local-current.v2"),
+}).strict();
+const compositeProfileSchema = z.object({
+  candidatePolicy: z.literal("bounded_lane_round_robin_dedupe.v1"),
+  interleavePolicy: z.literal("local_then_historical_per_rank.v1"),
+  profileId: z.literal("meeting-knowledge.composite-retrieval.v1"),
+}).strict();
+export const retrievalV2RequestSchema = z.object({
   binding: z.object({
     capabilityFingerprint: z.string(),
     contractVersion: z.literal("context-retrieval.v2"),
@@ -149,19 +145,26 @@ const retrievalV2RequestSchema = z.object({
   }).strict(),
 }).strict();
 
-const retrievalBindingSchema = z.object({
-  canonicalEvidenceFilters: canonicalEvidenceFiltersSchema.optional(),
+export const retrievalBindingSchema = z.object({
+  canonicalEvidenceFilters: canonicalEvidenceFiltersSchema,
   cutoverEpoch: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/u),
+  localCurrentIdentity: localCurrentIdentitySchema,
+  originalQuestion: boundedText.max(2_000),
   profileFingerprint: sha256Schema,
+  provenanceSchemaVersion: z.literal(1),
   retrievalPath: z.enum([
     "canonical_local_exact_lexical_v1",
     "infinity_locator_v1",
     "legacy_downstream_v1",
   ]),
 }).strict().or(z.object({
-  canonicalEvidenceFilters: canonicalEvidenceFiltersSchema.optional(),
+  canonicalEvidenceFilters: canonicalEvidenceFiltersSchema,
+  compositeProfile: compositeProfileSchema,
   cutoverEpoch: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/u),
+  localCurrentIdentity: localCurrentIdentitySchema,
+  originalQuestion: boundedText.max(2_000),
   profileFingerprint: sha256Schema,
+  provenanceSchemaVersion: z.literal(1),
   request: retrievalV2RequestSchema,
   retrievalPath: z.literal("infinity_locator_v2"),
 }).strict());
@@ -176,7 +179,7 @@ const questionBindingSchema = z.union([
   legacyQuestionBindingSchema,
 ]);
 
-const groundingEvidenceSchema = z.object({
+export const groundingEvidenceSchema = z.object({
   endMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   evidenceId: boundedText,
   speakerId: boundedText,
@@ -200,6 +203,7 @@ const groundingEvidenceSchema = z.object({
   turnHash: sha256Schema,
   turnId: boundedText,
 }).strict();
+
 
 export function canonicalFinalReplyTurnHash(turn: CanonicalEvidenceTurn): string {
   return createHash("sha256").update(JSON.stringify({
@@ -238,7 +242,7 @@ const coverageReductionValueSchema = z.union([
   z.array(z.string().max(32_768)).max(2_048),
 ]);
 
-const groundingCoverageReductionSchema = z.object({
+export const groundingCoverageReductionSchema = z.object({
   evidenceBlockCount: z.number().int().nonnegative().max(10_000),
   payload: z.record(z.string().min(1).max(128), coverageReductionValueSchema),
   schemaVersion: z.literal(1),
@@ -247,7 +251,7 @@ const groundingCoverageReductionSchema = z.object({
   selectedEvidenceBlockCount: z.number().int().nonnegative().max(256),
 }).strict();
 
-const groundingPlanV1Schema = z.object({
+export const groundingPlanV1Schema = z.object({
   authorityGeneration: boundedText,
   coverageBitmap: z.array(z.boolean()).max(10_000).optional(),
   coveragePlanDigest: boundedText.optional(),
@@ -296,6 +300,7 @@ const groundingPlanV1Schema = z.object({
   }
 });
 
+
 const groundedClaimSchema = z.object({
   evidenceIds: z.array(boundedText).max(8),
   text: z.string().trim().min(1).max(600),
@@ -330,11 +335,11 @@ export function preCanonicalProtocol2QuestionAdmissionBindingHash(
   return hashJson(dedupeBinding);
 }
 
-function hashJson(value: unknown): string {
+export function hashJson(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
 
-function canonicalQuestionBindingValue(value: unknown): unknown {
+export function canonicalQuestionBindingValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(canonicalQuestionBindingValue);
   }
@@ -389,14 +394,10 @@ export function decodePersistedQuestionBinding(
 
 export function decodeGroundingPlan(
   value: unknown,
-  binding: QuestionBindingSnapshot,
-  questionText: string,
+  _binding: QuestionBindingSnapshot,
+  _questionText: string,
 ): GroundingPlan {
   const parsed = groundingPlanV1Schema.parse(value);
-  if (parsed.mode === "focused_retrieval" &&
-    !focusedRetrievalProvenanceBinds(parsed.evidence, binding, questionText)) {
-    throw new Error("persisted retrieval provenance does not bind its question request/result");
-  }
   return {
     authorityGeneration: parsed.authorityGeneration,
     ...(parsed.coverageBitmap === undefined

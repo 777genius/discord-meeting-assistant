@@ -60,6 +60,65 @@ export function asRecord(value: unknown): Readonly<Record<string, unknown>> {
     : {};
 }
 
+export function rankRetrievalCandidate(
+  candidate: Record<string, unknown>,
+  index: number,
+): Record<string, unknown> {
+  const providerRank = index + 1;
+  const contributions = (candidate.contributions as Array<Record<string, unknown>>)
+    .map((item) => {
+      const providerWeightMicros = integer(item.provider_weight_micros);
+      const queryWeightMicros = integer(item.query_weight_micros);
+      const contributionScorePicos = weightedRrfContributionScorePicos(
+        providerWeightMicros,
+        queryWeightMicros,
+        queryWeightMicros,
+        providerRank,
+      );
+      return {
+        ...item,
+        contribution: contributionScorePicos / 1_000_000_000_000,
+        contribution_score_picos: contributionScorePicos,
+        provider_rank: providerRank,
+      };
+    });
+  const baseScorePicos = contributions.reduce((total, item) =>
+    total + integer(item.contribution_score_picos), 0);
+  return {
+    ...candidate,
+    base_score_picos: baseScorePicos,
+    contributions,
+    fused_score: baseScorePicos / 1_000_000_000_000,
+    provider_rank: providerRank,
+    rerank_score_picos: baseScorePicos,
+  };
+}
+
+function weightedRrfContributionScorePicos(
+  providerWeightMicros: number,
+  queryWeightMicros: number,
+  totalQueryWeightMicros: number,
+  providerRank: number,
+): number {
+  const numerator = BigInt(providerWeightMicros) * BigInt(queryWeightMicros) *
+    1_000_000n;
+  const denominator = BigInt(totalQueryWeightMicros) * BigInt(60 + providerRank);
+  let quotient = numerator / denominator;
+  const twiceRemainder = numerator % denominator * 2n;
+  if (twiceRemainder > denominator ||
+    (twiceRemainder === denominator && quotient % 2n !== 0n)) {
+    quotient += 1n;
+  }
+  return Number(quotient);
+}
+
+function integer(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new Error("synthetic Retrieval V2 numeric fixture is invalid");
+  }
+  return value;
+}
+
 export function string(value: unknown): string {
   return typeof value === "string" ? value : "";
 }

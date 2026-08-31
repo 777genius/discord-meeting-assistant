@@ -8,15 +8,17 @@ import { hasAmbiguousRequestedActorAlias, hasUncertainRequestedActorAlias,
   resolveRequestedActorKeys, type IdentitySkeletonPortV1,
   type RetrievalActorAliasOwnerV1, type RetrievalActorReferenceAuthorityV1 } from
   "./speaker-alias-resolution.js";
-import { boundedRetrievalQuery, redactRetrievalQueryIdentities, relativeTimeFilter } from
+import { boundedRetrievalQuery, classifyRelativeTimeFilter,
+  redactRetrievalQueryIdentities } from
   "./focused-locator-retrieval-v2-query.js";
 import type { FocusedHistoricalEvidenceV2Port,
   FocusedLocatorRetrievalV2ProviderBinding,
+  FocusedLocatorRetrievalV2Preparation,
   FocusedLocatorRetrievalV2RequestSnapshot } from
   "./ports/focused-locator-retrieval-v2.js";
 import type { HistoricalOpaqueIdPort } from
   "./ports/historical-memory.js";
-import type { HistoricalSyncStore } from
+import type { HistoricalRoomAuthoritySnapshotPort } from
   "./ports/historical-state.js";
 import type { FocusedMemoryRetrievalPort,
   FocusedMemoryRetrievalResult } from
@@ -54,7 +56,9 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       readonly actorReferences?: RetrievalActorReferenceAuthorityV1;
       readonly servingAuthorized?: () => boolean;
       readonly speakerAliases?: readonly RetrievalActorAliasOwnerV1[];
-      readonly store: HistoricalSyncStore;
+      readonly snapshot?: HistoricalRoomAuthoritySnapshotPort;
+      /** Test fixtures may retain the old property name. */
+      readonly store?: HistoricalRoomAuthoritySnapshotPort;
     },
     private readonly policy: FocusedLocatorRetrievalV2Policy =
       DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY,
@@ -66,55 +70,49 @@ export class PrepareFocusedLocatorRetrievalV2Request {
     readonly roomId: string;
     readonly scopeId: string;
     readonly signal?: AbortSignal;
-  }): Promise<FocusedLocatorRetrievalV2RequestSnapshot | null> {
+  }): Promise<FocusedLocatorRetrievalV2Preparation> {
     input.signal?.throwIfAborted();
     if (this.dependencies.servingAuthorized?.() === false) {
-      return null;
+      return unavailablePreparation("serving_not_authorized");
     }
     const aliases = this.dependencies.speakerAliases ?? [];
     const skeletons = this.dependencies.identitySkeletons;
-    if ((aliases.length > 0 && skeletons === undefined) ||
-      hasUncertainRequestedActorAlias(input.question, aliases, skeletons) ||
-      hasAmbiguousRequestedActorAlias(input.question, aliases, skeletons)) {
-      return null;
+    if (speakerFilterIsDenied(input.question, aliases, skeletons)) {
+      return unavailablePreparation("retrieval_filter_denied");
+    }
+    const timeFilter = classifyRelativeTimeFilter(input.question);
+    if (timeFilter.status === "denied") {
+      return unavailablePreparation("retrieval_filter_denied");
     }
     const requestedActorKeys = new Set([
       ...resolveRequestedActorKeys(input.question, aliases, skeletons),
       ...(this.dependencies.actorReferences?.actorKeysForQuestion(input.question) ?? []),
     ]);
-    const observedPlans = await this.dependencies.store.listCurrentRoomPlans(
-      input.scopeId,
-      input.roomId,
-      this.policy.maximumSources + 2,
-      input.signal === undefined ? {} : { signal: input.signal },
-    );
-    const currentChecks = await Promise.all(observedPlans.map(async (plan) => {
-      try {
-        return await this.dependencies.store.isCurrentGeneration(
-          plan.binding,
-          plan.plan.topology.indexGeneration,
-          input.signal === undefined ? {} : { signal: input.signal },
-        );
-      } catch {
-        input.signal?.throwIfAborted();
-        return false;
-      }
-    }));
-    const plans = observedPlans.filter((_plan, index) => currentChecks[index] === true);
-    if (plans.length < 1 || plans.length > this.policy.maximumSources) {
-      return null;
+    const snapshotPort = this.dependencies.snapshot ?? this.dependencies.store;
+    if (snapshotPort === undefined) {
+      return unavailablePreparation("historical_authority_unavailable");
     }
-    const confirmedPlans = await this.dependencies.store.listCurrentRoomPlans(
-      input.scopeId,
-      input.roomId,
-      this.policy.maximumSources + 2,
-      input.signal === undefined ? {} : { signal: input.signal },
-    );
-    if (!samePlanEnumeration(observedPlans, confirmedPlans)) {
-      return null;
+    const snapshot = await snapshotPort.loadRoomAuthoritySnapshot({
+      maximumSources: this.policy.maximumSources,
+      pageSize: Math.min(25, this.policy.maximumSources),
+      roomId: input.roomId,
+      scopeId: input.scopeId,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    if (snapshot.status !== "current") {
+      return unavailablePreparation(snapshot.status === "overflow"
+        ? "historical_authority_overflow"
+        : "historical_authority_unavailable");
+    }
+    const plans = snapshot.entries;
+    if (plans.length === 0) {
+      return Object.freeze({ reason: "no_history_or_index", status: "empty" });
+    }
+    if (plans.length > this.policy.maximumSources) {
+      return unavailablePreparation("historical_authority_overflow");
     }
     if (this.dependencies.servingAuthorized?.() === false) {
-      return null;
+      return unavailablePreparation("serving_not_authorized");
     }
     const topology = buildHistoricalRoomTopology(
       input.scopeId,
@@ -127,12 +125,13 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       skeletons,
     ));
     if (query.length === 0) {
-      return null;
+      return unavailablePreparation("query_not_admitted");
     }
     const actorKeys = Object.freeze([...requestedActorKeys]
       .toSorted(compareRetrievalV2Utf8));
-    const relativeTimeInterval = relativeTimeFilter(input.question);
-    return Object.freeze({
+    const relativeTimeInterval = timeFilter.status === "valid"
+      ? timeFilter.interval : null;
+    return preparedRequest({
       binding: Object.freeze({ ...this.dependencies.providerBinding,
         requiredProviderLanes: Object.freeze([
           ...this.dependencies.providerBinding.requiredProviderLanes,
@@ -183,17 +182,36 @@ export class PrepareFocusedLocatorRetrievalV2Request {
   }
 }
 
-function samePlanEnumeration(
-  left: readonly { readonly binding: { readonly releaseId: string };
-    readonly plan: { readonly topology: { readonly indexGeneration: string } } }[],
-  right: readonly { readonly binding: { readonly releaseId: string };
-    readonly plan: { readonly topology: { readonly indexGeneration: string } } }[],
-): boolean {
-  return left.length === right.length && left.every((plan, index) => {
-    const candidate = right[index];
-    return candidate?.binding.releaseId === plan.binding.releaseId &&
-      candidate.plan.topology.indexGeneration === plan.plan.topology.indexGeneration;
+function preparedRequest(
+  request: FocusedLocatorRetrievalV2RequestSnapshot,
+): FocusedLocatorRetrievalV2Preparation {
+  const result = request as FocusedLocatorRetrievalV2RequestSnapshot & {
+    readonly status: "prepared";
+  };
+  Object.defineProperty(result, "status", {
+    configurable: false,
+    enumerable: false,
+    value: "prepared",
+    writable: false,
   });
+  return Object.freeze(result);
+}
+
+function unavailablePreparation(
+  reason: Extract<FocusedLocatorRetrievalV2Preparation,
+    { readonly status: "unavailable" }>["reason"],
+): FocusedLocatorRetrievalV2Preparation {
+  return Object.freeze({ reason, status: "unavailable" });
+}
+
+function speakerFilterIsDenied(
+  question: string,
+  aliases: readonly RetrievalActorAliasOwnerV1[],
+  skeletons: IdentitySkeletonPortV1 | undefined,
+): boolean {
+  return (aliases.length > 0 && skeletons === undefined) ||
+    hasUncertainRequestedActorAlias(question, aliases, skeletons) ||
+    hasAmbiguousRequestedActorAlias(question, aliases, skeletons);
 }
 
 export class FocusedHistoricalEvidenceV2 implements FocusedHistoricalEvidenceV2Port {
@@ -213,8 +231,13 @@ export class FocusedHistoricalEvidenceV2 implements FocusedHistoricalEvidenceV2P
       scopeId: input.scopeId,
       signal: input.signal,
     });
-    if (request === null) {
-      return Object.freeze({ status: "unavailable" as const });
+    if (request.status === "unavailable") {
+      return Object.freeze({ reason: "request_not_admitted" as const,
+        status: "unavailable" as const });
+    }
+    if (request.status === "empty") {
+      return Object.freeze({ authorityGeneration: "historical-empty:v1",
+        status: "empty" as const });
     }
     const result = await this.dependencies.retrieval.retrieveEvidence({
       authorizationPrincipalRef: input.authorizationPrincipalRef,
@@ -267,16 +290,15 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
     if (current.status === "stale" || current.status === "pending") {
       return current;
     }
+    if (current.status !== "current" || historical.status !== "current") {
+      return unavailable();
+    }
     const maximum = Math.min(input.maximumCandidates, 256);
-    const currentCandidates = current.status === "current" ? current.candidates : [];
-    const historicalCandidates = historical.status === "current"
-      ? historical.candidates
-      : [];
+    const currentCandidates = current.candidates;
+    const historicalCandidates = historical.candidates;
     const candidates = interleave(currentCandidates, historicalCandidates, maximum);
     return candidates.length === 0 ? unavailable() : Object.freeze({
-      authorityGeneration: current.status === "current"
-        ? current.authorityGeneration
-        : input.expectedAuthorityGeneration,
+      authorityGeneration: current.authorityGeneration,
       candidates,
       schemaVersion: 1,
       status: "current",

@@ -195,20 +195,52 @@ function normalizeRetrievalAudit(
     );
   }
   return Object.freeze({
-    capabilityFingerprint: requireSha256(
-      audit.capabilityFingerprint,
-      "evidence.retrievalAudit.capabilityFingerprint",
-    ),
     contributions: Object.freeze(audit.contributions.map((contribution) =>
       Object.freeze({ ...contribution })
     )),
     fusedScore: audit.fusedScore,
+    laneIdentity: normalizeRetrievalLaneIdentity(audit.laneIdentity),
     locator: requireKnowledgeText(audit.locator, "evidence.retrievalAudit.locator", 1_024),
-    profileId: requireKnowledgeText(audit.profileId, "evidence.retrievalAudit.profileId", 256),
     providerRank: audit.providerRank,
     requestDigest: requireSha256(audit.requestDigest, "evidence.retrievalAudit.requestDigest"),
     responseDigest: requireSha256(audit.responseDigest, "evidence.retrievalAudit.responseDigest"),
   });
+}
+
+function normalizeRetrievalLaneIdentity(
+  identity: NonNullable<RehydratedEvidenceTurn["retrievalAudit"]>["laneIdentity"],
+): NonNullable<NonNullable<RehydratedEvidenceTurn["retrievalAudit"]>["laneIdentity"]> {
+  if (identity === undefined) {
+    throw new MeetingKnowledgeInvariantError(
+      "INVALID_EVIDENCE", "retrieval lane identity is absent",
+    );
+  }
+  if (identity.lane === "local_current") {
+    const algorithmId: string = identity.algorithmId;
+    const profileId: string = identity.profileId;
+    if (algorithmId !== "canonical_local_exact_lexical_v1" ||
+      profileId !== "meeting-knowledge.local-current.v2") {
+      throw new MeetingKnowledgeInvariantError(
+        "INVALID_EVIDENCE", "local retrieval lane identity is unsupported",
+      );
+    }
+    return Object.freeze({ ...identity, profileFingerprint: requireSha256(
+      identity.profileFingerprint,
+      "evidence.retrievalAudit.laneIdentity.profileFingerprint",
+    ) });
+  }
+  const lane: string = identity.lane;
+  if (lane === "historical") {
+    return Object.freeze({ ...identity, capabilityFingerprint: requireSha256(
+      identity.capabilityFingerprint,
+      "evidence.retrievalAudit.laneIdentity.capabilityFingerprint",
+    ), profileId: requireKnowledgeText(
+      identity.profileId, "evidence.retrievalAudit.laneIdentity.profileId", 256,
+    ) });
+  }
+  throw new MeetingKnowledgeInvariantError(
+    "INVALID_EVIDENCE", "retrieval lane identity is unsupported",
+  );
 }
 
 export function opaqueEvidenceId(index: number): string {

@@ -16,7 +16,7 @@ import {
   deferred,
   envelope,
   json,
-  notFound,
+  notFound, rankRetrievalCandidate,
   string,
   strings,
   type IngestGate,
@@ -42,7 +42,6 @@ export const DISPOSABLE_RETRIEVAL_V2_BINDING = Object.freeze({
   ),
   serviceRevision: retrievalCapability.service_revision as string,
 });
-
 export interface DisposableInfinityRuntimeQualificationReceipt {
   readonly embeddingProfileDigestSha256: string;
   readonly embeddingProfileId: string;
@@ -758,7 +757,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       };
     }).toSorted((left, right) => string(left.canonical_identity).localeCompare(
       string(right.canonical_identity),
-    ));
+    )).map(rankRetrievalCandidate);
     return json(200, {
       applied_bounds: {
         candidate_limit: bounds.candidate_limit,

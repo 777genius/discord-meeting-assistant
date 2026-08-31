@@ -49,9 +49,11 @@ import {
   historicalMeetingId,
   historicalRows,
   historicalTwoHourMeeting,
+  mixedLaneQuestion,
   persistPublishedMeeting,
   platformConfig,
   requiredHistoricalRuntime,
+  unavailableHistoryAnswersFixture,
   resultsContainerId,
   roomId,
   scopeId,
@@ -62,6 +64,11 @@ import {
   disposableExternalPostgresUrl,
   waitForHistoricalRows,
 } from "./meeting-knowledge-production-composition-diagnostics.js";
+import { assertDirectMixedEvidence, assertFinalReplyMixedEvidence,
+  assertHistoricalSelection, assertUnavailableHistoryFinalReplyState } from
+  "./meeting-knowledge-production-composition-assertions.js";
+import { assertRetrievalRequestPrivacy, proveActorScopedRetrievalRequest } from
+  "./meeting-knowledge-production-composition-privacy.js";
 
 const postgresImage =
   "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
@@ -160,7 +167,7 @@ describe("Meeting Knowledge V2 production composition", () => {
 
         const live = await createLiveProjection(pool, current, controller.signal);
         const authorization = allowOnlySyntheticRoom();
-        const question = `How does <@${historicalActorA}> ＶＬＡＤ---Ｖｌａｄ, 𝐕𝐥𝐚𝐝, 🔥 / 🔥 ANCHOR connect to PINE-GOLF?`;
+        const question = mixedLaneQuestion;
         const groundedFixture = compositionGroundedAnswers();
         const groundedAnswerUseCase = groundedFixture.answers;
         const platformBaseConfig = platformConfig(
@@ -185,6 +192,16 @@ describe("Meeting Knowledge V2 production composition", () => {
           scopeId,
           signal: controller.signal,
         });
+        const actorScopedRetrievalRequestIndex =
+          await proveActorScopedRetrievalRequest({
+            authorization,
+            infinity,
+            providerBinding,
+            roomId,
+            runtime: servingRuntime,
+            scopeId,
+            signal: controller.signal,
+          });
         const admittedRequest = await servingRuntime
           .createRetrievalV2Admission(providerBinding)
           .prepare({
@@ -194,32 +211,20 @@ describe("Meeting Knowledge V2 production composition", () => {
             scopeId,
             signal: controller.signal,
           });
-        if (admittedRequest === null) {
+        if (admittedRequest.status !== "prepared") {
           throw new Error("production Retrieval V2 admission was unavailable");
         }
-        const config = {
-          ...baseConfig,
-          conversation: {
-            farewellCueRoot: "/tmp/synthetic-farewell",
-            greetingCueRoot: "/tmp/synthetic-greeting",
-            runtimeAddress: "127.0.0.1:1",
-            systemPrompt: "Use only validated grounded evidence.",
-            thinkingCueRoot: "/tmp/synthetic-thinking",
-            voiceId: "synthetic",
-            voiceProfileId: "deterministic-e2e",
-          },
-          meetingKnowledge: {
-            ...baseConfig.meetingKnowledge,
-            groundedVoice: {
-              rolloutEpoch: "synthetic-composition-test-r1",
-              rolloutStateFile: "/tmp/not-read-through-authority-seam",
-            },
-          },
-          secrets: {
-            ...baseConfig.secrets,
-            meetingKnowledgePrincipalKey: "aa".repeat(32),
-          },
-        } as const;
+        assertHistoricalSelection(await servingRuntime
+          .createFocusedLocatorRetrievalV2(authorization)
+          .retrieveEvidence({
+            authorizationPrincipalRef: "synthetic-principal",
+            currentMeetingId,
+            request: admittedRequest,
+            roomId,
+            scopeId,
+            signal: controller.signal,
+          }));
+        const config = composedVoiceConfig(baseConfig);
         const groundedAnswers = createVoiceGroundedAnswers({
           authority: {
             historicalAuthorization: authorization,
@@ -244,6 +249,7 @@ describe("Meeting Knowledge V2 production composition", () => {
           ok: true,
           value: { status: "answered" },
         });
+        assertDirectMixedEvidence(groundedFixture.observedEvidence);
         groundedFixture.resetValidated();
         await proveComposedGroundedVoice({
           groundedAnswers,
@@ -253,7 +259,6 @@ describe("Meeting Knowledge V2 production composition", () => {
           roomId,
           validatedAnswerCount: groundedFixture.validatedCount,
         });
-
         expect(groundedFixture.observedEvidence.length).toBeGreaterThanOrEqual(2);
         const mixedEvidence = groundedFixture.observedEvidence.find((evidence) =>
           evidence.some((text) => text.startsWith(`${currentMeetingId}:`)) &&
@@ -265,7 +270,10 @@ describe("Meeting Knowledge V2 production composition", () => {
         )).toBeLessThan(mixedEvidence?.findIndex((text) =>
           text.startsWith(`${historicalMeetingId}:`)
         ) ?? -1);
-        const providerCallsBeforeRevocation = assertRetrievalRequestPrivacy(infinity);
+        const providerCallsBeforeRevocation = assertRetrievalRequestPrivacy(
+          infinity,
+          actorScopedRetrievalRequestIndex,
+        );
         infinity.endpoint.setCapabilitiesQualified(false);
         await servingRuntime.assertReady();
         expect(servingRuntime.servingAuthorized()).toBe(false);
@@ -279,7 +287,6 @@ describe("Meeting Knowledge V2 production composition", () => {
         expect(infinity.endpoint.requests.filter(
           ({ path }) => path === "/v1/context/retrieve",
         )).toHaveLength(providerCallsBeforeRevocation);
-
         const finalReplyMemory = createPersistedFocusedMemoryRoute({
           current: { retrieve: async () => ({ schemaVersion: 1, status: "low_coverage" }) },
           retrievalV2Historical:
@@ -315,12 +322,16 @@ describe("Meeting Knowledge V2 production composition", () => {
         infinity.endpoint.setCapabilitiesQualified(true);
         await servingRuntime.assertReady();
         expect(servingRuntime.servingAuthorized()).toBe(true);
+        groundedFixture.resetValidated();
         await proveFinalReplyFactoryRuntime({
           current,
           config,
           groundedAnswerUseCase,
           historicalMemory: servingRuntime,
+          observedEvidence: groundedFixture.observedEvidence,
+          observedEvidenceStart: groundedFixture.observedEvidence.length,
           pool,
+          validatedAnswerCount: groundedFixture.validatedCount,
         });
         expect(historical.transcript?.turns.at(-2)?.turnId)
           .toBe("history-turn-0719");
@@ -334,6 +345,32 @@ describe("Meeting Knowledge V2 production composition", () => {
       }
     }, 600_000);
 });
+
+function composedVoiceConfig(baseConfig: PlatformConfig): PlatformConfig {
+  return {
+    ...baseConfig,
+    conversation: {
+      farewellCueRoot: "/tmp/synthetic-farewell",
+      greetingCueRoot: "/tmp/synthetic-greeting",
+      runtimeAddress: "127.0.0.1:1",
+      systemPrompt: "Use only validated grounded evidence.",
+      thinkingCueRoot: "/tmp/synthetic-thinking",
+      voiceId: "synthetic",
+      voiceProfileId: "deterministic-e2e",
+    },
+    meetingKnowledge: {
+      ...baseConfig.meetingKnowledge,
+      groundedVoice: {
+        rolloutEpoch: "synthetic-composition-test-r1",
+        rolloutStateFile: "/tmp/not-read-through-authority-seam",
+      },
+    },
+    secrets: {
+      ...baseConfig.secrets,
+      meetingKnowledgePrincipalKey: "aa".repeat(32),
+    },
+  };
+}
 
 function compositionGroundedAnswers(): {
   readonly answers: GroundedMeetingAnswer;
@@ -361,7 +398,7 @@ function compositionGroundedAnswers(): {
             evidenceIds: [live, historical]
               .filter((value) => value !== undefined)
               .map(({ evidenceId }) => evidenceId),
-            text: "CURRENT-ANCHOR links Atlas to historical PINE-GOLF evidence.",
+            text: "CURRENT-ANCHOR confirms Atlas is active; PINE-GOLF records Monday approval.",
           }],
           locale: "en" as const,
           status: "answered" as const,
@@ -424,7 +461,7 @@ async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
         scopeId: input.scopeId,
         signal: input.signal,
       });
-    expect(safeRequest).not.toBeNull();
+    expect(safeRequest.status).toBe("prepared");
     expect(connect).toHaveBeenCalled();
     expect(directQuery).not.toHaveBeenCalled();
     expect(clientQuery).toHaveBeenCalled();
@@ -458,7 +495,10 @@ async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
         roomId: input.roomId,
         scopeId: input.scopeId,
         signal: input.signal,
-      })).resolves.toEqual({ status: "unavailable" });
+      })).resolves.toMatchObject({
+        reason: "request_not_admitted",
+        status: "unavailable",
+      });
     }
     expect(connect).toHaveBeenCalledTimes(connectBeforeUnsafe);
     expect(directQuery).toHaveBeenCalledTimes(directQueriesBeforeUnsafe);
@@ -485,7 +525,10 @@ async function proveFinalReplyFactoryRuntime(input: {
   readonly current: MeetingSnapshot;
   readonly groundedAnswerUseCase: GroundedMeetingAnswer;
   readonly historicalMemory: PlatformHistoricalMemoryRuntime;
+  readonly observedEvidence: readonly (readonly string[])[];
+  readonly observedEvidenceStart: number;
   readonly pool: Pool;
+  readonly validatedAnswerCount: () => number;
 }): Promise<void> {
   const participantId = currentActor;
   const questionId = "777777777777777701";
@@ -549,6 +592,10 @@ async function proveFinalReplyFactoryRuntime(input: {
   emitQuestion("777777777777777702", "999999999999999999");
   await firstRuntime.settleIngress();
   await firstRuntime.processPending();
+  expect(input.validatedAnswerCount()).toBe(1);
+  assertFinalReplyMixedEvidence(input.observedEvidence.slice(
+    input.observedEvidenceStart,
+  ));
   if (deliveries.length === 0) {
     const diagnostics = await Promise.all([
       input.pool.query<Record<string, unknown>>(
@@ -582,17 +629,24 @@ async function proveFinalReplyFactoryRuntime(input: {
   });
   expect(deliveries[0]?.payloadBytes).toContain("CURRENT-ANCHOR");
   expect(deliveries[0]?.payloadBytes).toContain("history-turn-0719");
-  await expect(input.pool.query<{ readonly count: number }>(
-    "SELECT count(*)::integer AS count FROM meeting_knowledge.question_jobs",
-  )).resolves.toMatchObject({ rows: [{ count: 1 }] });
-  await expect(input.pool.query<{ readonly state: string }>(
-    "SELECT state FROM meeting_core.answer_effects WHERE effect_id = $1",
-    [`meeting-knowledge-answer:v1:${questionId}`],
-  )).resolves.toMatchObject({ rows: [{ state: "delivered" }] });
+  await expect(input.pool.query<{ readonly question_id: string;
+    readonly state: string }>(
+    "SELECT question_id, state FROM meeting_knowledge.question_jobs",
+  )).resolves.toMatchObject({ rows: [{ question_id: questionId,
+    state: "terminal" }] });
+  await expect(input.pool.query<{ readonly effect_id: string;
+    readonly state: string }>(
+    "SELECT effect_id, state FROM meeting_core.answer_effects",
+  )).resolves.toMatchObject({ rows: [{
+    effect_id: `meeting-knowledge-answer:v1:${questionId}`, state: "delivered",
+  }] });
 
+  const unavailableHistory = unavailableHistoryAnswersFixture(
+    localFinalReplyPolicy.groundingSafety,
+  );
   const withoutHistorical = createMeetingKnowledgeLocalFinalReply({
     answerDelivery: runtimeInput.answerDelivery,
-    answers: runtimeInput.answers,
+    answers: unavailableHistory.answers,
     client: runtimeInput.client,
     config: runtimeInput.config,
     logger: runtimeInput.logger,
@@ -605,10 +659,9 @@ async function proveFinalReplyFactoryRuntime(input: {
   await withoutHistorical.settleIngress();
   await withoutHistorical.processPending();
   await withoutHistorical.close();
+  await assertUnavailableHistoryFinalReplyState(input.pool);
+  expect(unavailableHistory.calls()).toBe(0);
   expect(deliveries).toHaveLength(1);
-  await expect(input.pool.query<{ readonly count: number }>(
-    "SELECT count(*)::integer AS count FROM meeting_knowledge.question_jobs",
-  )).resolves.toMatchObject({ rows: [{ count: 1 }] });
 }
 
 function finalReplyDiscordIngress(
@@ -623,9 +676,35 @@ function finalReplyDiscordIngress(
     has: (permission: bigint) => permission === PermissionFlagsBits.ViewChannel ||
       permission === PermissionFlagsBits.ReadMessageHistory,
   };
+  const messages = new Map<string, {
+    readonly author: { readonly bot?: boolean; readonly id: string };
+    readonly channelId: string;
+    readonly content: string;
+    readonly guildId: string;
+    readonly id: string;
+    readonly reference?: { readonly channelId: string; readonly messageId: string };
+    readonly webhookId: null;
+  }>();
+  messages.set(projectionMessageId, {
+    author: { bot: true, id: "111111111111111111" },
+    channelId: resultsContainerId,
+    content: "Synthetic canonical live projection",
+    guildId: scopeId,
+    id: projectionMessageId,
+    webhookId: null,
+  });
   const channel = {
     id: resultsContainerId,
     isThread: () => false,
+    isTextBased: () => true,
+    messages: {
+      fetch: ({ message }: { readonly message: string }) => {
+        const current = messages.get(message);
+        return current === undefined
+          ? Promise.reject(new Error("synthetic Discord message is absent"))
+          : Promise.resolve(current);
+      },
+    },
     permissionsFor: () => permissionSet,
     type: ChannelType.GuildText,
   };
@@ -636,17 +715,18 @@ function finalReplyDiscordIngress(
   };
   const emitter = new EventEmitter();
   const client = Object.assign(emitter, {
+    channels: { fetch: () => Promise.resolve(channel) },
     guilds: { fetch: () => Promise.resolve(guild) },
     user: { id: "111111111111111111" },
   }) as unknown as Client;
   return {
     client,
     emitQuestion: (questionId, guildId) => {
-      emitter.emit("messageCreate", {
+      const question = {
         author: { bot: false, id: participantId },
         channel,
         channelId: resultsContainerId,
-        content: "How does CURRENT-ANCHOR connect to PINE-GOLF?",
+        content: mixedLaneQuestion,
         guildId,
         id: questionId,
         reference: {
@@ -654,52 +734,11 @@ function finalReplyDiscordIngress(
           messageId: projectionMessageId,
         },
         webhookId: null,
-      });
+      };
+      messages.set(questionId, question);
+      emitter.emit("messageCreate", question);
     },
   };
-}
-
-function assertRetrievalRequestPrivacy(
-  infinity: Awaited<ReturnType<typeof startDisposableInfinityHttpService>>,
-): number {
-  const retrievalRequests = infinity.endpoint.requests.filter(
-    ({ path }) => path === "/v1/context/retrieve",
-  );
-  expect(retrievalRequests.length).toBeGreaterThanOrEqual(2);
-  const projectedActorKeys = infinity.endpoint.requests
-    .filter(({ path }) => path === "/v1/documents")
-    .flatMap(({ body }) => (body as null | { readonly retrieval_projection?: {
-      readonly actor_keys?: readonly string[] } })
-      ?.retrieval_projection?.actor_keys ?? []);
-  for (const request of retrievalRequests) {
-    const actorKeys = (request.body as null | { readonly filters?: {
-      readonly actor_keys?: readonly string[] } })?.filters?.actor_keys ?? [];
-    expect(actorKeys).toHaveLength(2);
-    expect(actorKeys.map((key) => key.split(".")[1])).toEqual([
-      "synthetic-r0",
-      "synthetic-r1",
-    ]);
-    expect(JSON.stringify(request.body)).not.toMatch(
-      new RegExp([currentActor, historicalActorA, historicalActorB,
-        "Vlad", "Ｖｌａｄ", "𝐕𝐥𝐚𝐝", "🔥", "Boba", "Hopa"].join("|"), "u"),
-    );
-    expect(JSON.stringify(request.body)).toMatch(/anchor.*pine-golf/u);
-    expect(projectedActorKeys).toEqual(expect.arrayContaining(
-      actorKeys.filter((key) => key.startsWith("dactor1.synthetic-r1.")),
-    ));
-  }
-  const exactRetrievalBodies = infinity.endpoint.exactHttpRequests
-    .filter(({ path }) => path === "/v1/context/retrieve")
-    .map(({ bodyBytes }) => new TextDecoder().decode(bodyBytes));
-  expect(exactRetrievalBodies).toHaveLength(retrievalRequests.length);
-  for (const body of exactRetrievalBodies) {
-    expect(body).not.toMatch(
-      new RegExp([currentActor, historicalActorA, historicalActorB,
-        "Vlad", "Ｖｌａｄ", "𝐕𝐥𝐚𝐝", "🔥", "Boba", "Hopa"].join("|"), "iu"),
-    );
-    expect(body).toMatch(/anchor.*pine-golf/u);
-  }
-  return retrievalRequests.length;
 }
 
 async function createLiveProjection(

@@ -370,19 +370,11 @@ export function alignFocusedHydrationSurvivors(
   turns: readonly RehydratedEvidenceTurn[],
 ): { readonly references: readonly FocusedMemoryReference[];
   readonly turns: readonly RehydratedEvidenceTurn[] } | null {
-  const survivingReferences: FocusedMemoryReference[] = [];
-  let turnIndex = 0;
-  for (const reference of references) {
-    const turn = turns[turnIndex];
-    if (turn !== undefined && focusedHydrationMatchesReferences(
-      binding, [reference], [turn],
-    )) {
-      survivingReferences.push(reference);
-      turnIndex += 1;
-    }
+  if (!focusedHydrationMatchesReferences(binding, references, turns)) {
+    return null;
   }
-  return turnIndex !== turns.length ? null : Object.freeze({
-    references: Object.freeze(survivingReferences),
+  return Object.freeze({
+    references: Object.freeze([...references]),
     turns: Object.freeze([...turns]),
   });
 }

@@ -38,10 +38,30 @@ export interface FocusedLocatorRetrievalV2Port {
 export type FocusedHistoricalEvidenceV2Result =
   | {
       readonly authorityGeneration: string;
+      readonly status: "empty";
+    }
+  | {
+      readonly authorityGeneration: string;
       readonly status: "current";
       readonly turns: readonly RehydratedEvidenceTurn[];
     }
-  | { readonly status: "unavailable" };
+  | {
+      readonly reason: FocusedHistoricalEvidenceV2UnavailableReason;
+      readonly status: "unavailable";
+    };
+
+export type FocusedHistoricalEvidenceV2UnavailableReason =
+  | "authorization_changed"
+  | "authorization_denied"
+  | "canonical_evidence_unavailable"
+  | "canonical_provenance_invalid"
+  | "historical_authority_unavailable"
+  | "provider_candidate_invalid"
+  | "provider_result_unavailable"
+  | "request_not_admitted"
+  | "retrieval_provenance_invalid"
+  | "scope_not_bound"
+  | "serving_not_authorized";
 
 export interface FocusedHistoricalEvidenceV2Port {
   retrieve(input: {
@@ -54,3 +74,21 @@ export interface FocusedHistoricalEvidenceV2Port {
     readonly signal: AbortSignal;
   }): Promise<FocusedHistoricalEvidenceV2Result>;
 }
+
+export type FocusedLocatorRetrievalV2Preparation =
+  | (FocusedLocatorRetrievalV2RequestSnapshot & { readonly status: "prepared" })
+  | {
+      readonly reason: "no_history_or_index";
+      readonly status: "empty";
+    }
+  | {
+      readonly reason: FocusedLocatorRetrievalV2PreparationUnavailableReason;
+      readonly status: "unavailable";
+    };
+
+export type FocusedLocatorRetrievalV2PreparationUnavailableReason =
+  | "historical_authority_overflow"
+  | "historical_authority_unavailable"
+  | "query_not_admitted"
+  | "retrieval_filter_denied"
+  | "serving_not_authorized";

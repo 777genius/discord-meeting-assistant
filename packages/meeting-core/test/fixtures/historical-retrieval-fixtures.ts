@@ -6,6 +6,7 @@ import {
   type HistoricalCandidateRecordV1,
   type HistoricalOpaqueIdPort,
   type HistoricalReleaseBindingV1,
+  type HistoricalRoomAuthoritySnapshotResultV1,
   type HistoricalSyncStore,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
@@ -77,11 +78,13 @@ export function makeMeeting(input: {
 export class AppliedStore implements HistoricalSyncStore {
   public candidateBatchReads = 0;
   public candidatePointReads = 0;
+  public snapshotReads = 0;
   public current = true;
   public currentSequence: boolean[] = [];
 
   public constructor(
     private readonly records: readonly HistoricalAppliedPlanV1[],
+    private readonly acceptedMeetings: readonly AcceptedFinalMeetingV1[] = [],
   ) {}
 
   public async acceptRelease(
@@ -100,6 +103,26 @@ export class AppliedStore implements HistoricalSyncStore {
   public async recordDeadLetter(): Promise<void> {}
   public async recordDeleted(): Promise<void> {}
   public async requestMeetingDeletion(): Promise<void> {}
+
+  public async loadRoomAuthoritySnapshot(input: {
+    readonly maximumSources: number;
+    readonly roomId: string;
+    readonly scopeId: string;
+  }): Promise<HistoricalRoomAuthoritySnapshotResultV1> {
+    this.snapshotReads += 1;
+    const entries = this.records.filter(({ binding }) =>
+      binding.scopeId === input.scopeId && binding.roomId === input.roomId
+    );
+    const acceptedByRelease = new Map(this.acceptedMeetings.map((meeting) => [
+      meeting.binding.releaseId, meeting,
+    ]));
+    return entries.length > input.maximumSources
+      ? { schemaVersion: 1 as const, status: "overflow" as const }
+      : { entries: Object.freeze(entries.map((entry) => Object.freeze({
+          ...entry,
+          acceptedMeeting: acceptedByRelease.get(entry.binding.releaseId) ?? null,
+        }))), schemaVersion: 1 as const, status: "current" as const };
+  }
 
   public async findCurrentCandidate(
     scopeId: string,

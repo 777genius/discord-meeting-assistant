@@ -5,6 +5,8 @@ import { historicalEvidenceSourceKey } from
 import { requiresExhaustiveCoverage } from "../domain/question-scope.js";
 import type { HistoricalAuthorizationObservationV1 } from "./ports/historical-grounding.js";
 import type { LiveFinalizedMemoryQueryPort } from "./ports/live-finalized-memory.js";
+import type { FocusedHistoricalEvidenceV2Result } from
+  "./ports/focused-locator-retrieval-v2.js";
 import type { ExhaustiveCoverage } from "./exhaustive-coverage.js";
 
 export type GroundedPlaybackAuthorityResultV1 =
@@ -40,7 +42,7 @@ export async function recheckGroundedPlaybackAuthority(
     ) => Promise<HistoricalAuthorizationObservationV1 | null>;
     readonly live: LiveFinalizedMemoryQueryPort;
     readonly prepare: (context: LiveContext) => Promise<
-      PlaybackPreparedEvidence | "route_required" | null
+      PlaybackPreparedEvidence | "historical_unavailable" | "route_required" | null
     >;
   },
 ): Promise<GroundedPlaybackAuthorityResultV1> {
@@ -63,7 +65,8 @@ export async function recheckGroundedPlaybackAuthority(
     return stalePlaybackAuthority("playback_authority_denied");
   }
   const prepared = await dependencies.prepare(context);
-  if (prepared === null || prepared === "route_required") {
+  if (prepared === null || prepared === "historical_unavailable" ||
+    prepared === "route_required") {
     return stalePlaybackAuthority("playback_watermark_unavailable");
   }
   const currentTurnIds = new Set(prepared.turns.map(({ turnId }) => turnId));
@@ -211,4 +214,32 @@ export function notAnswered(
   readonly status: "cancelled" | "insufficient_evidence" | "unavailable";
 } {
   return Object.freeze({ reason, schemaVersion: 1, status });
+}
+
+export function normalizeHistoricalResult(
+  value: FocusedHistoricalEvidenceV2Result,
+): FocusedHistoricalEvidenceV2Result {
+  const candidate = value as unknown as Record<string, unknown>;
+  if (candidate.status === "current" &&
+    typeof candidate.authorityGeneration === "string" &&
+    candidate.authorityGeneration.length > 0 && Array.isArray(candidate.turns)) {
+    return value;
+  }
+  if (candidate.status === "empty" &&
+    typeof candidate.authorityGeneration === "string" &&
+    candidate.authorityGeneration.length > 0) {
+    return value;
+  }
+  if (candidate.status === "unavailable" && typeof candidate.reason === "string") {
+    return value;
+  }
+  return Object.freeze({ reason: "provider_result_unavailable",
+    status: "unavailable" });
+}
+
+export function unavailableHistoricalResult(signal?: AbortSignal):
+FocusedHistoricalEvidenceV2Result {
+  signal?.throwIfAborted();
+  return Object.freeze({ reason: "provider_result_unavailable",
+    status: "unavailable" });
 }

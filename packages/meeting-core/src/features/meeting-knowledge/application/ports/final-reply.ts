@@ -1,9 +1,6 @@
 import type { AnswerLocale } from "../../domain/answer-locale.js";
-import type {
-  FixedFinalReplyOutcome,
-  GroundedAnswer,
-  GroundedAnswerCandidate,
-} from "../../domain/grounded-answer.js";
+import type { FixedFinalReplyOutcome, GroundedAnswer, GroundedAnswerCandidate } from
+  "../../domain/grounded-answer.js";
 import type {
   CanonicalEvidenceTurn,
   FocusedMemoryReference,
@@ -14,29 +11,25 @@ import type {
   GroundingSafetyLimits,
   RehydratedEvidenceTurn,
 } from "../../domain/grounding-plan.js";
-import type { FocusedLocatorRetrievalV2RequestSnapshot,
-  RetrievalAdmissionRollout, RetrievalBindingSnapshot } from
+import type { RetrievalAdmissionRollout, RetrievalBindingSnapshot } from
   "../../domain/retrieval-admission.js";
-import type {
-  QuestionBindingSnapshot,
-  QuestionJobState,
-} from "../../domain/question-job.js";
+import type { FocusedLocatorRetrievalV2Preparation } from
+  "./focused-locator-retrieval-v2.js";
+import type { QuestionBindingSnapshot, QuestionJobState } from "../../domain/question-job.js";
 
 export interface CanonicalEvidenceTurnHashPort {
-  hash(turn: CanonicalEvidenceTurn): string;
+  hash(turn: CanonicalEvidenceTurn): string
 }
 
 /** Consumer-owned rendering boundary; transport-specific markup stays in adapters. */
 export interface FinalReplyRendererPort {
   renderAnswer(input: {
-    readonly answer: GroundedAnswer;
-    readonly evidence: readonly GroundingEvidence[];
+    readonly answer: GroundedAnswer; readonly evidence: readonly GroundingEvidence[];
     readonly maximumCharacters: number;
   }): string;
 
   renderFixed(input: {
-    readonly locale: AnswerLocale;
-    readonly outcome: FixedFinalReplyOutcome;
+    readonly locale: AnswerLocale; readonly outcome: FixedFinalReplyOutcome;
   }): string;
 }
 
@@ -50,19 +43,15 @@ export type QuestionAuthorizationCheckpoint =
 
 export type QuestionAuthorizationObservation =
   | {
-      readonly actorId: string;
-      readonly containerId: string;
-      readonly deliveryContainerId: string;
-      readonly digest: string;
-      readonly expiresAt: string;
-      readonly observedAt: string;
-      readonly policyVersion: string;
-      readonly scopeId: string;
+      readonly actorId: string; readonly containerId: string;
+      readonly deliveryContainerId: string; readonly digest: string;
+      readonly expiresAt: string; readonly observedAt: string;
+      readonly policyVersion: string; readonly scopeId: string;
       readonly source: "authoritative_remote";
       readonly status: "authorized";
     }
   | {
-      readonly reason: "denied" | "expired" | "partial" | "unavailable";
+      readonly reason: "absent" | "denied" | "expired" | "partial" | "unavailable";
       readonly status: "denied";
     };
 
@@ -71,40 +60,47 @@ export interface QuestionAuthorizationPort {
     readonly authorizationPrincipalRef: string;
     readonly checkpoint: QuestionAuthorizationCheckpoint;
     readonly expectedContainerId: string;
+    readonly expectedQuestion?: {
+      readonly botApplicationIdentity: string; readonly deliveryContainerId: string;
+      readonly finalProjectionReceipt: string; readonly questionHash: string;
+      readonly requesterSubject: string;
+    };
     readonly expectedScopeId: string;
     readonly questionId: string;
   }): Promise<QuestionAuthorizationObservation>;
 }
 
+export function exactQuestionObservation(
+  binding: QuestionBindingSnapshot,
+): NonNullable<Parameters<QuestionAuthorizationPort["observe"]>[0][
+  "expectedQuestion"
+]> {
+  return Object.freeze({
+    botApplicationIdentity: binding.botApplicationIdentity,
+    deliveryContainerId: binding.deliveryContainerId,
+    finalProjectionReceipt: binding.finalProjectionReceipt,
+    questionHash: binding.questionHash,
+    requesterSubject: binding.requesterSubject,
+  });
+}
+
 export interface CurrentFinalReplyBinding {
-  readonly botApplicationIdentity: string;
-  readonly canonicalEvidenceHash: string;
-  readonly finalProjectionEpoch: string;
-  readonly finalProjectionReceipt: string;
-  readonly humanActorIds: readonly string[];
-  readonly meetingId: string;
-  readonly meetingRevision: number;
-  readonly memoryGeneration: string;
-  readonly projectionTargetContainerId: string;
-  readonly roomId: string;
-  readonly scopeId: string;
-  readonly transcriptId: string;
+  readonly botApplicationIdentity: string; readonly canonicalEvidenceHash: string;
+  readonly finalProjectionEpoch: string; readonly finalProjectionReceipt: string;
+  readonly humanActorIds: readonly string[]; readonly meetingId: string;
+  readonly meetingRevision: number; readonly memoryGeneration: string;
+  readonly projectionTargetContainerId: string; readonly roomId: string;
+  readonly scopeId: string; readonly transcriptId: string;
   readonly transcriptVersion: number;
 }
 
 export type CurrentFinalReplyBindingResult =
-  | {
-      readonly binding: CurrentFinalReplyBinding;
-      readonly status: "current";
-    }
+  | { readonly binding: CurrentFinalReplyBinding; readonly status: "current" }
   | { readonly status: "stale" | "unavailable" };
 
 export type CanonicalFinalReplyEvidenceResult =
-  | {
-      readonly binding: CurrentFinalReplyBinding;
-      readonly status: "current";
-      readonly turns: readonly RehydratedEvidenceTurn[];
-    }
+  | { readonly binding: CurrentFinalReplyBinding; readonly status: "current";
+      readonly turns: readonly RehydratedEvidenceTurn[] }
   | { readonly status: "invalid_selection" | "stale" | "unavailable" };
 
 export interface FinalReplyEvidencePort {
@@ -124,8 +120,7 @@ export interface FinalReplyEvidencePort {
 }
 
 export type FocusedMemoryRetrievalResult =
-  | {
-      readonly authorityGeneration: string;
+  | { readonly authorityGeneration: string;
       readonly candidates: readonly FocusedMemoryReference[];
       readonly schemaVersion: 1;
       readonly status: "current";
@@ -247,6 +242,12 @@ export interface QuestionAdmissionCommitPort {
     readonly ratePolicy: QuestionAdmissionRatePolicy;
   }): Promise<QuestionAdmissionCommitResult>;
 
+  recordQuestionMutation?(input: {
+    readonly kind: "delete" | "edit";
+    readonly questionId: string;
+    readonly retentionSeconds: number;
+  }): Promise<void>;
+
   withdrawProjection(input: {
     readonly finalProjectionReceipt: string;
   }): Promise<readonly string[]>;
@@ -259,7 +260,7 @@ export interface FocusedLocatorRetrievalV2AdmissionPort {
     readonly roomId: string;
     readonly scopeId: string;
     readonly signal?: AbortSignal;
-  }): Promise<FocusedLocatorRetrievalV2RequestSnapshot | null>;
+  }): Promise<FocusedLocatorRetrievalV2Preparation>;
 }
 
 export type QuestionJobTerminalOutcome =
@@ -318,11 +319,16 @@ export interface QuestionJobStore {
   }): Promise<"deferred" | "settled" | "stale">;
 
   persistGroundingPlan(input: {
+    readonly attemptAlreadyReserved: boolean;
+    readonly attemptId: string;
     readonly binding: QuestionBindingSnapshot;
     readonly generation: number;
     readonly jobId: string;
+    readonly leaseSeconds: number;
+    readonly maximumProviderAttempts: number;
     readonly measurement: GroundingRequestMeasurement;
     readonly plan: GroundingPlan;
+    readonly question: string;
     readonly runtimeProfile: string;
     readonly sourceMeetingIds: readonly string[];
   }): Promise<boolean>;
@@ -336,11 +342,25 @@ export interface QuestionJobStore {
   cancelQuestion(questionId: string): Promise<void>;
 
   hasActiveQuestion(questionId: string): Promise<boolean>;
-
+  convergeDeliveredQuestion?(questionId: string): Promise<boolean>;
   confirmActiveLease(input: {
     readonly generation: number;
     readonly jobId: string;
   }): Promise<boolean>;
+  listActiveQuestionsForReconciliation?(input: { readonly afterQuestionId: string | null;
+    readonly maximumRows: number }): Promise<readonly {
+    readonly authorizationPrincipalRef: string | null;
+    readonly botApplicationIdentity: string | null;
+    readonly deliveryContainerId: string | null; readonly reconciliationDisposition?: "quarantined" | "reconcile";
+    readonly finalProjectionReceipt: string;
+    readonly questionHash: string;
+    readonly questionId: string;
+    readonly requesterSubject: string;
+    readonly scopeId: string;
+  }[]>;
+  loadQuestionReconciliationCursor?(): Promise<string | null>; saveQuestionReconciliationCursor?(
+    input: { readonly expectedAfterQuestionId: string | null; readonly nextAfterQuestionId:
+      string | null }): Promise<boolean>;
 }
 
 export interface FinalReplyMaintenancePort {
@@ -379,11 +399,7 @@ export interface GroundedAnswerMeasurement extends GroundingRequestMeasurement {
 
 export type GroundedAnswerGenerationResult =
   | { readonly answer: GroundedAnswerCandidate; readonly status: "completed" }
-  | {
-      readonly code: string;
-      readonly retryable: boolean;
-      readonly status: "failed";
-    };
+  | { readonly code: string; readonly retryable: boolean; readonly status: "failed" };
 
 export interface GroundedAnswerGenerator {
   measure(

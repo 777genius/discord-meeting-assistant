@@ -55,6 +55,21 @@ const migrationDefinitions = [
   { fileName: "0036_validate_answer_reconciliation_payload.sql" },
   { fileName: "0037_live_memory_ambiguous_outcomes.sql" },
   { fileName: "0038_derived_greeting_obligations.sql" },
+  { fileName: "0039_question_message_tombstones.sql" },
+  { fileName: "0040_question_reconciliation_remediation.sql" },
+  {
+    fileName: "0041_question_reconciliation_eligible_indexes.sql",
+    repairInvalidConcurrentIndex:
+      "meeting_knowledge.question_jobs_reconciliation_active_idx",
+    transactional: false,
+  },
+  {
+    fileName: "0042_answer_effect_question_reconciliation_index.sql",
+    repairInvalidConcurrentIndex:
+      "meeting_core.answer_effects_question_reconciliation_idx",
+    transactional: false,
+  },
+  { fileName: "0043_validate_question_reconciliation_quarantine.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

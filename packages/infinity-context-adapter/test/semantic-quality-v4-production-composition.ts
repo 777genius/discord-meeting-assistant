@@ -7,7 +7,8 @@ import { HmacHistoricalOpaqueIds } from "../src/hmac-historical-ids.js";
 import { PrepareFocusedLocatorRetrievalV2Request,
   type FocusedLocatorRetrievalV2ProviderBinding } from
   "@discord-meeting/meeting-core/meeting-knowledge";
-import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore } from
+import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
+  PostgresHistoricalRoomAuthoritySnapshot } from
   "@discord-meeting/postgres-adapter";
 import { subscriptionRuntimeCliEngine, type KnowledgeAnswerProviderExchangeIdentity,
   type KnowledgeAnswerQualificationExecutionBinding } from
@@ -105,9 +106,12 @@ export async function runSemanticQualityV4QualificationProductionComposition(
   const pool = new Pool({ connectionString: readSecret(config.postgresUrlPath),
     connectionTimeoutMillis: 5_000 });
   const store = new PostgresHistoricalMemoryStore(pool);
+  const snapshot = new PostgresHistoricalRoomAuthoritySnapshot(pool);
   const evidenceAuthority = new PostgresHistoricalEvidenceAuthority(pool);
   const ids = new HmacHistoricalOpaqueIds(readSecret(config.topologyKeyPath));
-  const preparer = new PrepareFocusedLocatorRetrievalV2Request({ ids, providerBinding, store });
+  const preparer = new PrepareFocusedLocatorRetrievalV2Request({
+    ids, providerBinding, snapshot,
+  });
   const realCorpus = loadRealSemanticQualityV4Corpus({ pinnedReviewerKeys: pinnedKeys,
     questionPath: config.privateQuestionPath, reviewReceipts: questionReviewReceipts,
     rubricPath: config.privateRubricPath, transcriptPath: config.privateTranscriptPath });

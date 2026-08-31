@@ -389,7 +389,7 @@ function createProductionRetrievalPort(context: {
     const { input, requestByQuestion, retrievalAdapter } = context;
     const { queryId, question } = portInput;
     const request = await input.preparer.prepare({ ...input.questionContext({ queryId }), question });
-    if (request === null) {
+    if (request.status !== "prepared") {
       throw new Error("semantic quality V4 production request preparation failed");
     }
     assertReleaseCandidateRequest(request);

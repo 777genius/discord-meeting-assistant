@@ -6,8 +6,8 @@ import {
 import { QuestionBinding } from "../domain/question-job.js";
 import { selectRetrievalBinding } from
   "../domain/retrieval-admission.js";
-import { relativeTimeFilter } from "./focused-locator-retrieval-v2-query.js";
-import { resolveRequestedSpeakerIds, type IdentitySkeletonPortV1,
+import { classifyRelativeTimeFilter } from "./focused-locator-retrieval-v2-query.js";
+import { classifyRequestedSpeakerFilter, type IdentitySkeletonPortV1,
   type SpeakerAliasMapV1 } from "./speaker-alias-resolution.js";
 import type {
   FinalReplyEvidencePort,
@@ -27,10 +27,13 @@ export type AdmitCurrentFinalReplyResult =
   | {
       readonly reason:
         | "authorization_denied"
+        | "authorization_unavailable"
         | "binding_conflict"
         | "not_current_final"
         | "participant_not_eligible"
-        | "rate_limited";
+        | "rate_limited"
+        | "retrieval_filter_denied"
+        | "retrieval_unavailable";
       readonly status: "ignored";
     };
 
@@ -130,7 +133,9 @@ export class AdmitCurrentFinalReply {
       questionId,
     });
     if (authorization.status !== "authorized") {
-      return { reason: "authorization_denied", status: "ignored" };
+      return { reason: authorization.reason === "partial" ||
+        authorization.reason === "unavailable"
+        ? "authorization_unavailable" : "authorization_denied", status: "ignored" };
     }
     if (authorization.policyVersion !== this.policy.authorizationPolicyVersion) {
       return { reason: "authorization_denied", status: "ignored" };
@@ -145,27 +150,37 @@ export class AdmitCurrentFinalReply {
     if (!authorizedForBinding(authorization, current, deliveryContainerId)) {
       return { reason: "participant_not_eligible", status: "ignored" };
     }
-    const retrievalV2Request = await this.retrievalV2Admission?.prepare({
-      currentMeetingId: current.meetingId,
-      question: questionText,
-      roomId: current.roomId,
-      scopeId: current.scopeId,
-    });
-    const aliasSpeakerIds = resolveRequestedSpeakerIds(
+    const timeFilter = classifyRelativeTimeFilter(questionText);
+    const speakerFilter = classifyRequestedSpeakerFilter(
       questionText,
       this.canonicalSpeakerFilters?.aliases,
       this.canonicalSpeakerFilters?.identitySkeletons,
     );
-    const directlyRequestedSpeakerIds = current.humanActorIds.filter((actorId) =>
-      questionText.includes(actorId) || questionText.includes(`<@${actorId}>`) ||
-      questionText.includes(`<@!${actorId}>`)
-    );
-    const requestedSpeakerIds = current.humanActorIds.filter((actorId) =>
-      aliasSpeakerIds.has(actorId) || directlyRequestedSpeakerIds.includes(actorId)
-    );
-    const requiresSpeakerMatch = aliasSpeakerIds.size > 0 ||
-      directlyRequestedSpeakerIds.length > 0 ||
-      (retrievalV2Request?.filters.actorKeys.length ?? 0) > 0;
+    const directActorIds = Object.freeze([
+      ...questionText.matchAll(/<@!?(\d{17,20})>|(?<!\d)(\d{17,20})(?!\d)/gu),
+    ].map((match) => match[1] ?? match[2]!).filter((value, index, values) =>
+      values.indexOf(value) === index
+    ));
+    if (retrievalFiltersDenied(
+      timeFilter.status, speakerFilter.status, directActorIds, current.humanActorIds,
+    )) {
+      return { reason: "retrieval_filter_denied", status: "ignored" };
+    }
+    const requestedSpeakerIds = Object.freeze(current.humanActorIds.filter((actorId) =>
+      (speakerFilter.status === "valid" && speakerFilter.speakerIds.includes(actorId)) ||
+      directActorIds.includes(actorId)
+    ).toSorted());
+    const requiresSpeakerMatch = speakerFilter.status === "valid" ||
+      directActorIds.length > 0;
+    const retrievalV2Preparation = await this.retrievalV2Admission?.prepare({
+      currentMeetingId: current.meetingId, question: questionText,
+      roomId: current.roomId, scopeId: current.scopeId,
+    });
+    const retrievalRejection = retrievalPreparationRejection(
+      retrievalV2Preparation, requestedSpeakerIds);
+    if (retrievalRejection !== null) {return retrievalRejection;}
+    const retrievalV2Request = retrievalV2Preparation?.status === "prepared"
+      ? retrievalRequest(retrievalV2Preparation) : null;
     const binding = QuestionBinding.create({
       authorizationDigest: authorization.digest,
       authorizationPolicyVersion: authorization.policyVersion,
@@ -188,10 +203,12 @@ export class AdmitCurrentFinalReply {
       requesterSubject,
       retrievalBinding: selectRetrievalBinding({
         canonicalEvidenceFilters: Object.freeze({
-          relativeTimeInterval: relativeTimeFilter(questionText),
+          relativeTimeInterval: timeFilter.status === "valid"
+            ? timeFilter.interval : null,
           requiresSpeakerMatch,
           speakerIds: Object.freeze(requestedSpeakerIds),
         }),
+        originalQuestion: questionText,
         questionId,
         retrievalV2Request: retrievalV2Request ?? null,
         rollout: this.policy.retrievalAdmission,
@@ -207,15 +224,56 @@ export class AdmitCurrentFinalReply {
       questionText,
       ratePolicy: this.policy.admission,
     });
-    if (committed.status === "committed") {
-      return { jobId: committed.jobId, status: "accepted" };
-    }
-    if (committed.status === "duplicate") {
-      return { jobId: committed.jobId, status: "duplicate" };
-    }
-    if (committed.status === "rate_limited") {
-      return { reason: "rate_limited", status: "ignored" };
-    }
-    return { reason: "binding_conflict", status: "ignored" };
+    return admissionCommitResult(committed);
   }
+}
+
+function retrievalRequest(
+  preparation: Extract<Awaited<ReturnType<
+    NonNullable<FocusedLocatorRetrievalV2AdmissionPort>["prepare"]
+  >>, { readonly status: "prepared" }>,
+) {
+  const { status: _status, ...request } = preparation;
+  return request;
+}
+
+function retrievalFiltersDenied(
+  timeStatus: "absent" | "denied" | "valid",
+  speakerStatus: "absent" | "denied" | "valid",
+  directActorIds: readonly string[],
+  humanActorIds: readonly string[],
+): boolean {
+  return timeStatus === "denied" || speakerStatus === "denied" ||
+    directActorIds.some((actorId) => !humanActorIds.includes(actorId));
+}
+
+function retrievalPreparationRejection(
+  preparation: Awaited<ReturnType<
+    NonNullable<FocusedLocatorRetrievalV2AdmissionPort>["prepare"]
+  >> | undefined,
+  requestedSpeakerIds: readonly string[],
+): AdmitCurrentFinalReplyResult | null {
+  if (preparation?.status === "unavailable") {
+    return { reason: preparation.reason === "retrieval_filter_denied"
+        ? "retrieval_filter_denied" : "retrieval_unavailable",
+      status: "ignored" };
+  }
+  return preparation?.status === "prepared" &&
+    preparation.filters.actorKeys.length > 0 && requestedSpeakerIds.length === 0
+    ? { reason: "retrieval_filter_denied", status: "ignored" }
+    : null;
+}
+
+function admissionCommitResult(
+  committed: Awaited<ReturnType<QuestionAdmissionCommitPort["commit"]>>,
+): AdmitCurrentFinalReplyResult {
+  if (committed.status === "committed") {
+    return { jobId: committed.jobId, status: "accepted" };
+  }
+  if (committed.status === "duplicate") {
+    return { jobId: committed.jobId, status: "duplicate" };
+  }
+  return committed.status === "rate_limited"
+    ? { reason: "rate_limited", status: "ignored" }
+    : { reason: "binding_conflict", status: "ignored" };
 }

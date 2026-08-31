@@ -1,68 +1,44 @@
-import {
-  MeetingKnowledgeInvariantError,
-  requireKnowledgeText,
-  requireSha256,
-} from "./errors.js";
+import { MeetingKnowledgeInvariantError, requireKnowledgeText, requireSha256 } from
+  "./errors.js";
 
 export const retrievalV2ConsumerEvidenceByteLimit = 16_000;
 
 export interface FocusedLocatorRetrievalV2ProviderBinding {
-  readonly capabilityFingerprint: string;
-  readonly contractVersion: "context-retrieval.v2";
-  readonly indexProfileDigest: string;
-  readonly profileId: string;
+  readonly capabilityFingerprint: string; readonly contractVersion: "context-retrieval.v2";
+  readonly indexProfileDigest: string; readonly profileId: string;
   readonly rankingPolicy: "weighted_rrf_canonical_preferences.v1";
-  readonly requiredProviderLanes: readonly string[];
-  readonly serviceRevision: string;
+  readonly requiredProviderLanes: readonly string[]; readonly serviceRevision: string;
 }
 
 export interface FocusedLocatorRetrievalV2RequestSnapshot {
   readonly binding: FocusedLocatorRetrievalV2ProviderBinding;
   readonly budgets: {
-    readonly candidateLimit: number;
-    readonly deadlineMs: number;
-    readonly evidenceByteLimit: number;
-    readonly neighborRadius: 0;
-    readonly responseByteLimit: number;
-    readonly resultLimit: number;
+    readonly candidateLimit: number; readonly deadlineMs: number;
+    readonly evidenceByteLimit: number; readonly neighborRadius: 0;
+    readonly responseByteLimit: number; readonly resultLimit: number;
   };
   readonly filters: {
-    readonly actorKeys: readonly string[];
-    readonly category: string | null;
-    readonly documentKeys: readonly string[];
-    readonly excludedSourceKeys: readonly string[];
+    readonly actorKeys: readonly string[]; readonly category: string | null;
+    readonly documentKeys: readonly string[]; readonly excludedSourceKeys: readonly string[];
     readonly kinds: readonly string[];
     readonly relativeTimeInterval: { readonly endMs: number; readonly startMs: number } | null;
-    readonly sourceGenerations: readonly {
-      readonly projectionGeneration: string;
-      readonly sourceKey: string;
-    }[];
-    readonly tagsAll: readonly string[];
-    readonly tagsAny: readonly string[];
+    readonly sourceGenerations: readonly { readonly projectionGeneration: string;
+      readonly sourceKey: string }[];
+    readonly tagsAll: readonly string[]; readonly tagsAny: readonly string[];
     readonly tagsNone: readonly string[];
     readonly timeInterval: { readonly endAt: string; readonly startAt: string } | null;
   };
-  readonly queries: readonly {
-    readonly query: string;
-    readonly queryId: string;
-    readonly weightMicros?: number;
-  }[];
+  readonly queries: readonly { readonly query: string; readonly queryId: string;
+    readonly weightMicros?: number }[];
   readonly schemaVersion: 2;
-  readonly scope: {
-    readonly memoryScopeId: string;
-    readonly spaceId: string;
-    readonly threadId?: string | null;
-  };
+  readonly scope: { readonly memoryScopeId: string; readonly spaceId: string;
+    readonly threadId?: string | null };
   readonly softPreferences: {
-    readonly actorPreferences: readonly {
-      readonly key: string;
-      readonly weightMicros: number;
-    }[];
+    readonly actorPreferences: readonly { readonly key: string;
+      readonly weightMicros: number }[];
     readonly relativeTimeInterval: { readonly endMs: number; readonly startMs: number } | null;
-    readonly sourcePreferences: readonly {
-      readonly key: string;
-      readonly weightMicros: number;
-    }[];
+    readonly sourcePreferences: readonly { readonly key: string;
+      readonly weightMicros: number }[];
     readonly timeInterval: { readonly endAt: string; readonly startAt: string } | null;
     readonly timeWeightMicros: number | null;
   };
@@ -72,43 +48,54 @@ export type RetrievalPath = "canonical_local_exact_lexical_v1" |
   "infinity_locator_v1" | "infinity_locator_v2" | "legacy_downstream_v1";
 
 export interface CanonicalEvidenceFiltersSnapshot {
-  readonly relativeTimeInterval: {
-    readonly endMs: number;
-    readonly startMs: number;
-  } | null;
-  readonly requiresSpeakerMatch: boolean;
-  readonly speakerIds: readonly string[];
+  readonly relativeTimeInterval: { readonly endMs: number;
+    readonly startMs: number } | null;
+  readonly requiresSpeakerMatch: boolean; readonly speakerIds: readonly string[];
+}
+
+export interface LocalCurrentRetrievalIdentitySnapshot {
+  readonly algorithmId: "canonical_local_exact_lexical_v1";
+  readonly profileFingerprint: string;
+  readonly profileId: "meeting-knowledge.local-current.v2";
+}
+
+export interface CompositeRetrievalProfileSnapshot {
+  readonly candidatePolicy: "bounded_lane_round_robin_dedupe.v1";
+  readonly interleavePolicy: "local_then_historical_per_rank.v1";
+  readonly profileId: "meeting-knowledge.composite-retrieval.v1";
+}
+
+interface RetrievalProvenanceBaseSnapshot {
+  readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot;
+  readonly localCurrentIdentity?: LocalCurrentRetrievalIdentitySnapshot;
+  readonly originalQuestion?: string; readonly provenanceSchemaVersion?: 1;
 }
 
 type RetrievalBindingPathSnapshot =
   | {
-      readonly cutoverEpoch: string;
-      readonly profileFingerprint: string;
+      readonly cutoverEpoch: string; readonly profileFingerprint: string;
       readonly request: FocusedLocatorRetrievalV2RequestSnapshot;
       readonly retrievalPath: "infinity_locator_v2";
+      readonly compositeProfile?: CompositeRetrievalProfileSnapshot;
     }
   | {
-      readonly cutoverEpoch: string;
-      readonly profileFingerprint: string;
+      readonly cutoverEpoch: string; readonly profileFingerprint: string;
       readonly retrievalPath: "infinity_locator_v1";
     }
   | {
-      readonly cutoverEpoch: string;
-      readonly profileFingerprint: string;
+      readonly cutoverEpoch: string; readonly profileFingerprint: string;
       readonly retrievalPath: "legacy_downstream_v1";
     }
   | {
-      readonly cutoverEpoch: string;
-      readonly profileFingerprint: string;
+      readonly cutoverEpoch: string; readonly profileFingerprint: string;
       readonly retrievalPath: "canonical_local_exact_lexical_v1";
     };
 
-export type RetrievalBindingSnapshot = RetrievalBindingPathSnapshot & {
-  /** Canonical post-hydration filters sealed with newly admitted protocol-2 jobs. */
-  readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot;
-};
+export type RetrievalBindingSnapshot = RetrievalBindingPathSnapshot &
+  RetrievalProvenanceBaseSnapshot;
 
 export interface RetrievalAdmissionRollout {
+  readonly compositeProfileFingerprint?: string;
   readonly cutoverEpoch: string;
   readonly infinityProfileFingerprint: string;
   readonly localProfileFingerprint: string;
@@ -144,97 +131,104 @@ function requireCutoverEpoch(value: string): string {
 }
 
 export class RetrievalBinding {
-  public readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot;
+  public readonly canonicalEvidenceFilters: CanonicalEvidenceFiltersSnapshot;
+  public readonly compositeProfile?: CompositeRetrievalProfileSnapshot;
   public readonly cutoverEpoch: string;
+  public readonly localCurrentIdentity: LocalCurrentRetrievalIdentitySnapshot;
+  public readonly originalQuestion: string;
   public readonly profileFingerprint: string;
+  public readonly provenanceSchemaVersion = 1 as const;
   public readonly retrievalPath: RetrievalPath;
   public readonly request?: FocusedLocatorRetrievalV2RequestSnapshot;
 
   private constructor(input: RetrievalBindingSnapshot) {
-    if (input.canonicalEvidenceFilters !== undefined) {
-      this.canonicalEvidenceFilters = validateCanonicalEvidenceFilters(
-        input.canonicalEvidenceFilters,
-      );
-    }
+    requireCompositeProvenance(input);
+    this.canonicalEvidenceFilters = validateCanonicalEvidenceFilters(
+      input.canonicalEvidenceFilters!,
+    );
+    this.localCurrentIdentity = validateLocalCurrentIdentity(
+      input.localCurrentIdentity!,
+    );
+    this.originalQuestion = requireKnowledgeText(input.originalQuestion!,
+      "retrievalBinding.originalQuestion", 2_000);
     this.cutoverEpoch = input.cutoverEpoch;
     this.profileFingerprint = input.profileFingerprint;
     this.retrievalPath = input.retrievalPath;
     if (input.retrievalPath === "infinity_locator_v2") {
+      if (input.compositeProfile === undefined) {
+        throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+          "composite retrieval profile is absent");
+      }
+      this.compositeProfile = validateCompositeProfile(input.compositeProfile);
       this.request = freezeRetrievalV2Request(input.request);
     }
     Object.freeze(this);
   }
 
   public static create(input: RetrievalBindingSnapshot): RetrievalBinding {
+    requireCompositeProvenance(input);
     const retrievalPath: unknown = input.retrievalPath;
-    if (
-      retrievalPath !== "infinity_locator_v2" &&
+    if (retrievalPath !== "infinity_locator_v2" &&
       retrievalPath !== "infinity_locator_v1" &&
       retrievalPath !== "legacy_downstream_v1" &&
-      retrievalPath !== "canonical_local_exact_lexical_v1"
-    ) {
-      throw new MeetingKnowledgeInvariantError(
-        "INVALID_BINDING",
-        "retrievalBinding.retrievalPath is unsupported",
-      );
+      retrievalPath !== "canonical_local_exact_lexical_v1") {
+      throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+        "retrievalBinding.retrievalPath is unsupported");
     }
     const base = {
-      ...(input.canonicalEvidenceFilters === undefined ? {} : {
-        canonicalEvidenceFilters: validateCanonicalEvidenceFilters(
-          input.canonicalEvidenceFilters,
-        ),
-      }),
-      cutoverEpoch: requireCutoverEpoch(input.cutoverEpoch),
-      profileFingerprint: requireSha256(
-        input.profileFingerprint,
-        "retrievalBinding.profileFingerprint",
+      canonicalEvidenceFilters: validateCanonicalEvidenceFilters(
+        input.canonicalEvidenceFilters!,
       ),
+      cutoverEpoch: requireCutoverEpoch(input.cutoverEpoch),
+      localCurrentIdentity: validateLocalCurrentIdentity(input.localCurrentIdentity!),
+      originalQuestion: requireKnowledgeText(input.originalQuestion!,
+        "retrievalBinding.originalQuestion", 2_000),
+      profileFingerprint: requireSha256(input.profileFingerprint,
+        "retrievalBinding.profileFingerprint"),
       retrievalPath,
     } as const;
     if (retrievalPath === "infinity_locator_v2") {
       if (!("request" in input)) {
-        throw new MeetingKnowledgeInvariantError(
-          "INVALID_BINDING",
-          "Infinity Retrieval V2 requires its exact persisted request",
-        );
+        throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+          "Infinity Retrieval V2 requires its exact persisted request");
       }
-      return new RetrievalBinding({
-        ...(base.canonicalEvidenceFilters === undefined ? {} : {
-          canonicalEvidenceFilters: base.canonicalEvidenceFilters,
-        }),
-        cutoverEpoch: base.cutoverEpoch,
-        profileFingerprint: base.profileFingerprint,
+      if (input.compositeProfile === undefined) {
+        throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+          "Infinity Retrieval V2 requires a composite profile");
+      }
+      return new RetrievalBinding({ canonicalEvidenceFilters: base.canonicalEvidenceFilters,
+        compositeProfile: validateCompositeProfile(input.compositeProfile),
+        cutoverEpoch: base.cutoverEpoch, localCurrentIdentity: base.localCurrentIdentity,
+        originalQuestion: base.originalQuestion, profileFingerprint: base.profileFingerprint,
+        provenanceSchemaVersion: 1,
         request: validateRetrievalV2Request(input.request),
         retrievalPath: "infinity_locator_v2",
       });
     }
     if ("request" in input) {
-      throw new MeetingKnowledgeInvariantError(
-        "INVALID_BINDING",
-        "legacy retrieval cannot contain a V2 request",
-      );
+      throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+        "legacy retrieval cannot contain a V2 request");
     }
-    return new RetrievalBinding({
-      ...(base.canonicalEvidenceFilters === undefined ? {} : {
-        canonicalEvidenceFilters: base.canonicalEvidenceFilters,
-      }),
+    return new RetrievalBinding({ canonicalEvidenceFilters: base.canonicalEvidenceFilters,
       cutoverEpoch: base.cutoverEpoch,
-      profileFingerprint: base.profileFingerprint,
+      localCurrentIdentity: base.localCurrentIdentity,
+      originalQuestion: base.originalQuestion, profileFingerprint: base.profileFingerprint,
+      provenanceSchemaVersion: 1,
       retrievalPath,
     });
   }
 
   public toSnapshot(): RetrievalBindingSnapshot {
-    const base = {
-      ...(this.canonicalEvidenceFilters === undefined ? {} : {
-        canonicalEvidenceFilters: this.canonicalEvidenceFilters,
-      }),
+    const base = { canonicalEvidenceFilters: this.canonicalEvidenceFilters,
       cutoverEpoch: this.cutoverEpoch,
-      profileFingerprint: this.profileFingerprint,
+      localCurrentIdentity: this.localCurrentIdentity,
+      originalQuestion: this.originalQuestion, profileFingerprint: this.profileFingerprint,
+      provenanceSchemaVersion: this.provenanceSchemaVersion,
       retrievalPath: this.retrievalPath,
     };
     return this.retrievalPath === "infinity_locator_v2" && this.request !== undefined
-      ? { ...base, request: freezeRetrievalV2Request(this.request),
+      ? { ...base, compositeProfile: this.compositeProfile!,
+          request: freezeRetrievalV2Request(this.request),
           retrievalPath: "infinity_locator_v2" }
       : { ...base, retrievalPath: this.retrievalPath === "infinity_locator_v1"
           ? "infinity_locator_v1" : this.retrievalPath === "legacy_downstream_v1"
@@ -244,33 +238,90 @@ export class RetrievalBinding {
 
 export function selectRetrievalBinding(input: {
   readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot;
-  readonly questionId: string;
+  readonly originalQuestion?: string; readonly questionId: string;
   readonly retrievalV2Request: FocusedLocatorRetrievalV2RequestSnapshot | null;
   readonly rollout: RetrievalAdmissionRollout;
 }): RetrievalBinding {
   requireKnowledgeText(input.questionId, "questionId", 128);
   return RetrievalBinding.create(input.retrievalV2Request === null ? {
-    ...(input.canonicalEvidenceFilters === undefined ? {} : {
-      canonicalEvidenceFilters: input.canonicalEvidenceFilters,
-    }),
+    canonicalEvidenceFilters: input.canonicalEvidenceFilters ?? emptyCanonicalFilters(),
     cutoverEpoch: requireCutoverEpoch(input.rollout.cutoverEpoch),
-    profileFingerprint: requireSha256(
-      input.rollout.localProfileFingerprint,
-      "retrievalAdmission.localProfileFingerprint",
-    ),
+    localCurrentIdentity: localCurrentIdentity(input.rollout),
+    originalQuestion: input.originalQuestion ?? input.questionId,
+    profileFingerprint: requireSha256(input.rollout.localProfileFingerprint,
+      "retrievalAdmission.localProfileFingerprint"),
+    provenanceSchemaVersion: 1,
     retrievalPath: "canonical_local_exact_lexical_v1",
   } : {
-    ...(input.canonicalEvidenceFilters === undefined ? {} : {
-      canonicalEvidenceFilters: input.canonicalEvidenceFilters,
+    canonicalEvidenceFilters: input.canonicalEvidenceFilters ?? emptyCanonicalFilters(),
+    compositeProfile: Object.freeze({ candidatePolicy: "bounded_lane_round_robin_dedupe.v1",
+      interleavePolicy: "local_then_historical_per_rank.v1",
+      profileId: "meeting-knowledge.composite-retrieval.v1",
     }),
     cutoverEpoch: requireCutoverEpoch(input.rollout.cutoverEpoch),
-    profileFingerprint: requireSha256(
-      input.rollout.infinityProfileFingerprint,
-      "retrievalAdmission.infinityProfileFingerprint",
-    ),
+    localCurrentIdentity: localCurrentIdentity(input.rollout),
+    originalQuestion: input.originalQuestion ?? input.questionId,
+    profileFingerprint: requireSha256(input.rollout.compositeProfileFingerprint ??
+        input.rollout.infinityProfileFingerprint,
+      "retrievalAdmission.compositeProfileFingerprint"),
+    provenanceSchemaVersion: 1,
     request: input.retrievalV2Request,
     retrievalPath: "infinity_locator_v2",
   });
+}
+
+function emptyCanonicalFilters(): CanonicalEvidenceFiltersSnapshot {
+  return Object.freeze({ relativeTimeInterval: null,
+    requiresSpeakerMatch: false, speakerIds: Object.freeze([]) });
+}
+
+function requireCompositeProvenance(input: RetrievalBindingSnapshot): void {
+  if (input.provenanceSchemaVersion !== 1 ||
+    input.canonicalEvidenceFilters === undefined ||
+    input.localCurrentIdentity === undefined ||
+    input.originalQuestion === undefined) {
+    throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+      "retrieval provenance is incomplete");
+  }
+}
+
+function localCurrentIdentity(
+  rollout: RetrievalAdmissionRollout,
+): LocalCurrentRetrievalIdentitySnapshot {
+  return Object.freeze({ algorithmId: "canonical_local_exact_lexical_v1",
+    profileFingerprint: requireSha256(rollout.localProfileFingerprint,
+      "retrievalAdmission.localProfileFingerprint"),
+    profileId: "meeting-knowledge.local-current.v2",
+  });
+}
+
+function validateLocalCurrentIdentity(
+  input: LocalCurrentRetrievalIdentitySnapshot,
+): LocalCurrentRetrievalIdentitySnapshot {
+  const algorithmId: string = input.algorithmId, profileId: string = input.profileId;
+  if (algorithmId !== "canonical_local_exact_lexical_v1" ||
+    profileId !== "meeting-knowledge.local-current.v2") {
+    throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+      "local-current retrieval identity is unsupported");
+  }
+  return Object.freeze({ ...input, profileFingerprint: requireSha256(
+    input.profileFingerprint, "retrievalBinding.localCurrentIdentity.profileFingerprint",
+  ) });
+}
+
+function validateCompositeProfile(
+  input: CompositeRetrievalProfileSnapshot,
+): CompositeRetrievalProfileSnapshot {
+  const candidatePolicy: string = input.candidatePolicy;
+  const interleavePolicy: string = input.interleavePolicy;
+  const profileId: string = input.profileId;
+  if (candidatePolicy !== "bounded_lane_round_robin_dedupe.v1" ||
+    interleavePolicy !== "local_then_historical_per_rank.v1" ||
+    profileId !== "meeting-knowledge.composite-retrieval.v1") {
+    throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+      "composite retrieval profile is unsupported");
+  }
+  return Object.freeze({ ...input });
 }
 
 function validateCanonicalEvidenceFilters(
@@ -280,30 +331,24 @@ function validateCanonicalEvidenceFilters(
     requireKnowledgeText(speakerId, "retrievalBinding.canonicalEvidenceFilters.speakerIds", 256)
   ).toSorted(compareRetrievalV2Utf8));
   if (new Set(speakerIds).size !== speakerIds.length) {
-    throw new MeetingKnowledgeInvariantError(
-      "INVALID_BINDING",
-      "canonical evidence speaker filters must be unique",
-    );
+    throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+      "canonical evidence speaker filters must be unique");
   }
   const interval = input.relativeTimeInterval;
   if (interval !== null && (
     !Number.isSafeInteger(interval.startMs) || interval.startMs < 0 ||
     !Number.isSafeInteger(interval.endMs) || interval.endMs <= interval.startMs
   )) {
-    throw new MeetingKnowledgeInvariantError(
-      "INVALID_BINDING",
-      "canonical evidence relative-time filter is invalid",
-    );
+    throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+      "canonical evidence relative-time filter is invalid");
   }
   if (typeof input.requiresSpeakerMatch !== "boolean" ||
     (!input.requiresSpeakerMatch && speakerIds.length > 0)) {
-    throw new MeetingKnowledgeInvariantError(
-      "INVALID_BINDING",
-      "canonical evidence speaker filter intent is invalid",
-    );
+    throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+      "canonical evidence speaker filter intent is invalid");
   }
-  return Object.freeze({
-    relativeTimeInterval: interval === null ? null : Object.freeze({ ...interval }),
+  return Object.freeze({ relativeTimeInterval: interval === null
+      ? null : Object.freeze({ ...interval }),
     requiresSpeakerMatch: input.requiresSpeakerMatch,
     speakerIds,
   });
@@ -333,19 +378,14 @@ function canonicalRetrievalValue(value: unknown): unknown {
   );
 }
 
-function freezeRetrievalV2Request(
-  request: FocusedLocatorRetrievalV2RequestSnapshot,
-): FocusedLocatorRetrievalV2RequestSnapshot {
+function freezeRetrievalV2Request(request: FocusedLocatorRetrievalV2RequestSnapshot):
+FocusedLocatorRetrievalV2RequestSnapshot {
   return deepFreeze(structuredClone(request));
 }
 
 function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) {
-    return value;
-  }
-  for (const nested of Object.values(value)) {
-    deepFreeze(nested);
-  }
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) {return value;}
+  for (const nested of Object.values(value)) {deepFreeze(nested);}
   return Object.freeze(value);
 }
 
@@ -355,10 +395,8 @@ function validateRetrievalV2Request(
   try {
     validateRetrievalV2RequestValue(request);
   } catch {
-    throw new MeetingKnowledgeInvariantError(
-      "INVALID_BINDING",
-      "persisted Retrieval V2 request is outside the consumer contract",
-    );
+    throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+      "persisted Retrieval V2 request is outside the consumer contract");
   }
   return freezeRetrievalV2Request(request!);
 }
@@ -384,10 +422,8 @@ function validateRetrievalV2ProviderBinding(value: unknown): void {
     "capabilityFingerprint", "contractVersion", "indexProfileDigest", "profileId",
     "rankingPolicy", "requiredProviderLanes", "serviceRevision",
   ]);
-  if (
-    binding.contractVersion !== "context-retrieval.v2" ||
-    binding.rankingPolicy !== "weighted_rrf_canonical_preferences.v1"
-  ) {
+  if (binding.contractVersion !== "context-retrieval.v2" ||
+    binding.rankingPolicy !== "weighted_rrf_canonical_preferences.v1") {
     throw new TypeError("unsupported provider policy");
   }
   retrievalHash(binding.capabilityFingerprint);
@@ -404,19 +440,13 @@ function validateRetrievalV2Budgets(value: unknown): void {
   ]);
   const candidateLimit = retrievalInteger(budgets.candidateLimit, 1, 1_000);
   const resultLimit = retrievalInteger(budgets.resultLimit, 1, 50);
-  if (
-    resultLimit > candidateLimit ||
-    retrievalInteger(budgets.neighborRadius, 0, 0) !== 0
-  ) {
+  if (resultLimit > candidateLimit ||
+    retrievalInteger(budgets.neighborRadius, 0, 0) !== 0) {
     throw new TypeError("invalid retrieval result bounds");
   }
   retrievalInteger(budgets.deadlineMs, 1, 2_000);
   retrievalInteger(budgets.responseByteLimit, 16_384, 1_048_576);
-  retrievalInteger(
-    budgets.evidenceByteLimit,
-    1,
-    retrievalV2ConsumerEvidenceByteLimit,
-  );
+  retrievalInteger(budgets.evidenceByteLimit, 1, retrievalV2ConsumerEvidenceByteLimit);
 }
 
 function validateRetrievalV2Filters(value: unknown): void {
@@ -433,26 +463,20 @@ function validateRetrievalV2Filters(value: unknown): void {
   const tagsAny = retrievalOpaqueArray(filters.tagsAny);
   const tagsNone = retrievalOpaqueArray(filters.tagsNone);
   void actorKeys; void documentKeys; void kinds; void tagsAny;
-  if (filters.category !== null) {
-    retrievalOpaque(filters.category);
-  }
+  if (filters.category !== null) {retrievalOpaque(filters.category);}
   const sourceGenerations = retrievalArray(filters.sourceGenerations, 1, 100)
     .map((entry) => {
       const pair = exactRetrievalObject(entry, ["projectionGeneration", "sourceKey"]);
-      return {
-        projectionGeneration: retrievalOpaque(pair.projectionGeneration),
-        sourceKey: retrievalOpaque(pair.sourceKey),
-      };
+      return { projectionGeneration: retrievalOpaque(pair.projectionGeneration),
+        sourceKey: retrievalOpaque(pair.sourceKey) };
     });
   retrievalSortedUnique(sourceGenerations.map(({ sourceKey }) => sourceKey));
   if (sourceGenerations.some((entry, index) => index > 0 &&
     compareRetrievalV2Utf8(sourceGenerations[index - 1]!.sourceKey, entry.sourceKey) >= 0)) {
     throw new TypeError("source generations are not ordered");
   }
-  retrievalNoOverlap(
-    sourceGenerations.map(({ sourceKey }) => sourceKey),
-    excludedSourceKeys,
-  );
+  retrievalNoOverlap(sourceGenerations.map(({ sourceKey }) => sourceKey),
+    excludedSourceKeys);
   retrievalNoOverlap(tagsAll, tagsNone);
   const absolute = retrievalTimeInterval(filters.timeInterval);
   const relative = retrievalRelativeInterval(filters.relativeTimeInterval);

@@ -161,10 +161,11 @@ export async function withHistoricalPostgresTransaction<T>(
   signal: AbortSignal | undefined,
   operation: (client: PoolClient) => Promise<T>,
   cancellation?: HistoricalPostgresCancellationPort,
+  begin = "BEGIN",
 ): Promise<T> {
   return withHistoricalPostgresClient(pool, signal, async (client) => {
     signal?.throwIfAborted();
-    await client.query("BEGIN");
+    await client.query(begin);
     try {
       const result = await operation(client);
       signal?.throwIfAborted();

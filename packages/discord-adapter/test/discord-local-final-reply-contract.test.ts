@@ -1,91 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  DiscordAnswerDeliveryAdapter,
-  DiscordAnswerPayloadCodec,
-  DiscordHistoricalAuthorizationAdapter,
-  DiscordLocalFinalReplyHandler,
-  DiscordQuestionAuthorizationAdapter,
-  DiscordQuestionPrincipalCodec,
-  createDiscordOneAttemptAnswerRest,
-} from "@discord-meeting/discord-adapter";
+import { DiscordAnswerDeliveryAdapter, DiscordAnswerPayloadCodec, DiscordHistoricalAuthorizationAdapter,
+  DiscordLocalFinalReplyHandler, DiscordQuestionAuthorizationAdapter, DiscordQuestionPrincipalCodec,
+  createDiscordOneAttemptAnswerRest } from "@discord-meeting/discord-adapter";
 import { EventEmitter } from "node:events";
-import type { AnswerPublicationBinding } from "@discord-meeting/meeting-core/publishing";
 import { ChannelType, PermissionFlagsBits, type Client, type REST } from "discord.js";
-import {
-  BoundedDiscordAuthorizationQueue,
-} from "../src/discord-question-authorization.js";
-
-const botId = "11111111111111111";
-const containerId = "22222222222222222";
-const questionId = "33333333333333333";
-const guildId = "66666666666666666";
-
-function directDeliveryChannelMetadata() {
-  return {
-    guild_id: guildId,
-    id: containerId,
-    name: "meeting-results",
-    parent_id: "77777777777777770",
-    permission_overwrites: [],
-    type: ChannelType.GuildText,
-  };
-}
-
-function authoredAnswerMessage(input: {
-  readonly embeds: readonly unknown[];
-  readonly id: string;
-  readonly overrides?: Readonly<Record<string, unknown>>;
-}) {
-  return {
-    application_id: botId,
-    attachments: [],
-    author: { id: botId },
-    channel_id: containerId,
-    components: [],
-    content: "",
-    embeds: input.embeds,
-    guild_id: guildId,
-    id: input.id,
-    mention_everyone: false,
-    mention_roles: [],
-    mentions: [],
-    message_reference: { channel_id: containerId, message_id: questionId, type: 0 },
-    pinned: false,
-    sticker_items: [],
-    tts: false,
-    type: 19,
-    ...input.overrides,
-  };
-}
-
-function binding(): AnswerPublicationBinding {
-  return {
-    authorizationDigest: "a".repeat(64),
-    authorizationPolicyVersion: "discord.participant-current-results.v1",
-    authorizationPrincipalRef: "opaque",
-    botApplicationIdentity: botId,
-    canonicalEvidenceHash: "b".repeat(64),
-    deliveryContainerId: containerId,
-    expectedLocale: "en",
-    finalProjectionEpoch: "epoch-1",
-    finalProjectionReceipt:
-      `discord:v2:channel:${containerId}:message:44444444444444444`,
-    humanActorIds: ["77777777777777777"],
-    meetingId: "meeting-1",
-    meetingRevision: 4,
-    memoryGeneration: `focused-memory:v1:${"b".repeat(64)}`,
-    policyVersion: "discord.participant-current-results.v1",
-    projectionTargetContainerId: containerId,
-    questionHash: "c".repeat(64),
-    questionId,
-    requesterSubject: "d".repeat(64),
-    roomId: "55555555555555555",
-    scopeId: "66666666666666666",
-    transcriptId: "transcript-1",
-    transcriptVersion: 1,
-  };
-}
+import { BoundedDiscordAuthorizationQueue } from "../src/discord-question-authorization.js";
+import { authoredAnswerMessage, binding, botId, containerId, deletedMessage,
+  directDeliveryChannelMetadata, guildId, ingressMessage, questionId } from "./discord-local-final-reply-contract.fixture.js";
 
 describe("Discord Local Final Reply contracts", () => {
   it("isolates answer delivery in a REST client with automatic retries disabled", () => {
@@ -205,7 +127,9 @@ describe("Discord private-thread authorization", () => {
     };
     const thread = {
       id: threadId,
-      members: { fetch: vi.fn().mockRejectedValue(new Error("Unknown Member")) },
+      members: { fetch: vi.fn().mockRejectedValue(
+        Object.assign(new Error("Unknown Member"), { code: 10_007 }),
+      ) },
       permissionsFor: () => permissions,
       type: ChannelType.PrivateThread,
     };
@@ -550,6 +474,164 @@ describe("Discord answer effect transport", () => {
 });
 
 describe("Discord Local Final Reply ingress", () => {
+  it("serializes delete/edit tombstones before a late create for the same question",
+    async () => {
+      const order: string[] = [];
+      const client = new EventEmitter();
+      const handler = new DiscordLocalFinalReplyHandler({
+        admission: { execute: vi.fn(async () => {
+          order.push("create");
+          return { jobId: questionId, status: "accepted" as const };
+        }) },
+        admissions: {
+          recordQuestionMutation: vi.fn(async ({ kind }: { readonly kind: string }) => {
+            order.push(kind);
+          }),
+          withdrawProjection: vi.fn().mockResolvedValue([]),
+        },
+        client: client as unknown as Client,
+        jobs: {
+          cancelQuestion: vi.fn(async () => {order.push("cancel");}),
+          hasActiveQuestion: vi.fn().mockResolvedValue(false),
+        },
+        options: { principalTtlSeconds: 900 },
+        principals: new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7)),
+        publication: { cancelBeforeRequest: vi.fn().mockResolvedValue(false) },
+        scopes: { resultsContainerForGuild: () => Promise.resolve(containerId) },
+      });
+      const create = {
+        author: { bot: false, id: "77777777777777777" },
+        channel: { isThread: () => false }, channelId: containerId,
+        content: "What changed?", guildId, id: questionId,
+        reference: { channelId: containerId, messageId: "44444444444444444" },
+        webhookId: null,
+      };
+      handler.start();
+      client.emit("messageDelete", { ...create, author: undefined });
+      client.emit("messageCreate", create);
+      client.emit("messageUpdate", create, create);
+      client.emit("messageCreate", create);
+      await handler.settle();
+
+      expect(order).toEqual([
+        "delete", "cancel", "create",
+        "edit", "cancel", "create",
+      ]);
+      handler.close();
+    });
+
+  it("reconciles a missed delete for a terminal delivered answer after restart",
+    async () => {
+      const codec = new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7));
+      const recordQuestionMutation = vi.fn().mockImplementation(() => Promise.resolve());
+      const cancelQuestion = vi.fn().mockImplementation(() => Promise.resolve());
+      const listActiveQuestionsForReconciliation = vi.fn()
+        .mockResolvedValueOnce([{
+          authorizationPrincipalRef: null,
+          botApplicationIdentity: null,
+          deliveryContainerId: containerId,
+          finalProjectionReceipt:
+            `discord:v2:channel:${containerId}:message:44444444444444444`,
+          questionHash: codec.questionHash("What changed?"), questionId,
+          requesterSubject: codec.keyedSubject("77777777777777777", guildId),
+          scopeId: guildId,
+        }]);
+      const client = Object.assign(new EventEmitter(), {
+        channels: { fetch: vi.fn().mockRejectedValue({ code: 10_008, status: 404 }) },
+      });
+      const handler = new DiscordLocalFinalReplyHandler({
+        admission: { execute: vi.fn() },
+        admissions: { recordQuestionMutation,
+          withdrawProjection: vi.fn().mockResolvedValue([]) },
+        client: client as unknown as Client,
+        jobs: { cancelQuestion, hasActiveQuestion: vi.fn().mockResolvedValue(false),
+          listActiveQuestionsForReconciliation },
+        nowMilliseconds: () => 1_800_000_000_000,
+        options: { principalTtlSeconds: 900 }, principals: codec,
+        publication: { cancelBeforeRequest: vi.fn().mockResolvedValue(true) },
+        scopes: { resultsContainerForGuild: () => Promise.resolve(containerId) },
+      });
+      handler.start();
+      await handler.settle();
+
+      expect(recordQuestionMutation).toHaveBeenCalledWith({ kind: "delete",
+        questionId, retentionSeconds: 86_400 });
+      expect(cancelQuestion).toHaveBeenCalledWith(questionId);
+      handler.close();
+    });
+
+  it("drains more than 400 reconciliation rows through bounded cursor pages",
+    async () => {
+      const codec = new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7)); const questions = Array.from({ length: 401 }, (_, index) => {
+        const id = String(77_000_000_000_000_000n + BigInt(index));
+        return {
+          authorizationPrincipalRef: null,
+          botApplicationIdentity: null,
+          deliveryContainerId: containerId,
+          finalProjectionReceipt:
+            `discord:v2:channel:${containerId}:message:44444444444444444`,
+          questionHash: codec.questionHash(`Question ${index}`),
+          questionId: id,
+          requesterSubject: codec.keyedSubject("77777777777777777", guildId),
+          scopeId: guildId,
+        };
+      });
+      const listActiveQuestionsForReconciliation = vi.fn(async ({
+        afterQuestionId, maximumRows,
+      }: { readonly afterQuestionId: string | null; readonly maximumRows: number }) => {
+        const start = afterQuestionId === null
+          ? 0 : questions.findIndex(({ questionId: id }) => id === afterQuestionId) + 1;
+        return questions.slice(start, start + maximumRows);
+      });
+      let durableCursor: string | null = null; const loadQuestionReconciliationCursor = vi.fn(async () => durableCursor);
+      const saveQuestionReconciliationCursor = vi.fn(async ({
+        expectedAfterQuestionId, nextAfterQuestionId,
+      }: {
+        readonly expectedAfterQuestionId: string | null;
+        readonly nextAfterQuestionId: string | null;
+      }) => {
+        if (durableCursor !== expectedAfterQuestionId) {return false;}
+        durableCursor = nextAfterQuestionId;
+        return true;
+      });
+      const cancelQuestion = vi.fn().mockImplementation(() => Promise.resolve()); const client = Object.assign(new EventEmitter(), {
+        channels: { fetch: vi.fn().mockRejectedValue({ code: 10_008, status: 404 }) },
+      });
+      const handler = new DiscordLocalFinalReplyHandler({
+        admission: { execute: vi.fn() },
+        admissions: { recordQuestionMutation: vi.fn().mockImplementation(
+          () => Promise.resolve()),
+          withdrawProjection: vi.fn().mockResolvedValue([]) },
+        client: client as unknown as Client,
+        jobs: { cancelQuestion, hasActiveQuestion: vi.fn().mockResolvedValue(false),
+          listActiveQuestionsForReconciliation, loadQuestionReconciliationCursor,
+          saveQuestionReconciliationCursor },
+        options: { principalTtlSeconds: 900 }, principals: codec,
+        publication: { cancelBeforeRequest: vi.fn().mockResolvedValue(true) },
+        scopes: { resultsContainerForGuild: () => Promise.resolve(containerId) },
+      });
+
+      handler.start(); await handler.settle();
+      for (let invocation = 1; invocation < 5; invocation += 1) {
+        await handler.reconcilePending();
+      }
+
+      expect(listActiveQuestionsForReconciliation).toHaveBeenCalledTimes(5);
+      expect(listActiveQuestionsForReconciliation.mock.calls.map(([input]) =>
+        input.afterQuestionId)).toEqual([
+          null, questions[99]!.questionId, questions[199]!.questionId,
+          questions[299]!.questionId, questions[399]!.questionId,
+        ]);
+      expect(cancelQuestion).toHaveBeenCalledTimes(401);
+      expect(loadQuestionReconciliationCursor).toHaveBeenCalledTimes(5);
+      expect(saveQuestionReconciliationCursor.mock.calls.map(([input]) =>
+        input.nextAfterQuestionId)).toEqual([
+          questions[99]!.questionId, questions[199]!.questionId,
+          questions[299]!.questionId, questions[399]!.questionId, null,
+        ]);
+      expect(durableCursor).toBeNull(); handler.close();
+    });
+
   it("admits one human create reply only in the installed results container", async () => {
     const execute = vi.fn().mockResolvedValue({
       jobId: questionId,
@@ -576,19 +658,9 @@ describe("Discord Local Final Reply ingress", () => {
       },
     });
     handler.start();
-    client.emit("messageCreate", {
-      author: { bot: false, id: "77777777777777777" },
-      channel: { isThread: () => false },
-      channelId: containerId,
+    client.emit("messageCreate", ingressMessage({
       content: "  When is the release?  ",
-      guildId: "66666666666666666",
-      id: questionId,
-      reference: {
-        channelId: containerId,
-        messageId: "44444444444444444",
-      },
-      webhookId: null,
-    });
+    }));
     await vi.waitFor(() => {
       expect(execute).toHaveBeenCalledTimes(1);
     });
@@ -603,23 +675,18 @@ describe("Discord Local Final Reply ingress", () => {
       scopeId: "66666666666666666",
     });
 
-    client.emit("messageCreate", {
-      author: { bot: true, id: botId },
-      channel: { isThread: () => false },
-      channelId: containerId,
-      content: "Bot question?",
-      guildId: "66666666666666666",
-      id: "99999999999999999",
-      reference: { messageId: "44444444444444444" },
-      webhookId: null,
-    });
+    client.emit("messageCreate", ingressMessage({ author: { bot: true, id: botId },
+      content: "Bot question?", id: "99999999999999999",
+      reference: { messageId: "44444444444444444" } }));
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
     expect(execute).toHaveBeenCalledTimes(1);
     handler.close();
   });
+});
 
+describe("Discord Local Final Reply canonical projection mutations", () => {
   it("admits and withdraws an exact canonical thread projection under its results parent", async () => {
     const threadId = "99999999999999991";
     const projectionMessageId = "44444444444444444";
@@ -645,16 +712,9 @@ describe("Discord Local Final Reply ingress", () => {
     });
     const thread = { id: threadId, isThread: () => true, parentId: containerId };
     handler.start();
-    client.emit("messageCreate", {
-      author: { bot: false, id: "77777777777777777" },
-      channel: thread,
-      channelId: threadId,
+    client.emit("messageCreate", ingressMessage({ channel: thread, channelId: threadId,
       content: "Where is the decision?",
-      guildId: "66666666666666666",
-      id: questionId,
-      reference: { channelId: threadId, messageId: projectionMessageId },
-      webhookId: null,
-    });
+      reference: { channelId: threadId, messageId: projectionMessageId } }));
     await vi.waitFor(() => {
       expect(execute).toHaveBeenCalledTimes(1);
     });
@@ -666,12 +726,8 @@ describe("Discord Local Final Reply ingress", () => {
       schemaVersion: 2,
     });
 
-    client.emit("messageDelete", {
-      channel: thread,
-      channelId: threadId,
-      guildId: "66666666666666666",
-      id: projectionMessageId,
-    });
+    client.emit("messageDelete", deletedMessage({ channel: thread, channelId: threadId,
+      id: projectionMessageId }));
     await vi.waitFor(() => {
       expect(withdrawProjection).toHaveBeenCalledTimes(1);
     });
@@ -680,16 +736,10 @@ describe("Discord Local Final Reply ingress", () => {
         `discord:v2:thread:${threadId}:message:${projectionMessageId}`,
     });
 
-    client.emit("messageCreate", {
-      author: { bot: false, id: "77777777777777777" },
-      channel: { ...thread, parentId: "99999999999999992" },
-      channelId: threadId,
-      content: "Wrong parent?",
-      guildId: "66666666666666666",
-      id: "33333333333333334",
-      reference: { channelId: threadId, messageId: projectionMessageId },
-      webhookId: null,
-    });
+    client.emit("messageCreate", ingressMessage({
+      channel: { ...thread, parentId: "99999999999999992" }, channelId: threadId,
+      content: "Wrong parent?", id: "33333333333333334",
+      reference: { channelId: threadId, messageId: projectionMessageId } }));
     await new Promise<void>((resolve) => {
       setImmediate(() => {
         resolve();
@@ -722,13 +772,8 @@ describe("Discord Local Final Reply ingress", () => {
       },
     });
     handler.start();
-    client.emit("messageDelete", {
-      author: { id: "77777777777777777" },
-      channel: { isThread: () => false },
-      channelId: containerId,
-      guildId: "66666666666666666",
-      id: "44444444444444443",
-    });
+    client.emit("messageDelete", deletedMessage({
+      author: { id: "77777777777777777" }, id: "44444444444444443" }));
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
@@ -736,12 +781,7 @@ describe("Discord Local Final Reply ingress", () => {
 
     // Partial delete events have no author. Keep their race-safe DB tombstone
     // path; the PostgreSQL adapter bounds unmatched observations.
-    client.emit("messageDelete", {
-      channel: { isThread: () => false },
-      channelId: containerId,
-      guildId: "66666666666666666",
-      id: "44444444444444444",
-    });
+    client.emit("messageDelete", deletedMessage());
 
     await vi.waitFor(() => {
       expect(cancelQuestion).toHaveBeenCalledWith(questionId);
@@ -761,10 +801,7 @@ describe("Discord Local Final Reply ingress", () => {
 describe("Discord Local Final Reply synthetic human E2E ingress", () => {
   it("admits only an explicitly allowlisted bot and still rejects webhooks", async () => {
     const syntheticHumanId = "77777777777777777";
-    const execute = vi.fn().mockResolvedValue({
-      jobId: questionId,
-      status: "accepted",
-    });
+    const execute = vi.fn().mockResolvedValue({ jobId: questionId, status: "accepted" });
     const client = new EventEmitter();
     const handler = new DiscordLocalFinalReplyHandler({
       admission: { execute },
@@ -774,26 +811,16 @@ describe("Discord Local Final Reply synthetic human E2E ingress", () => {
         cancelQuestion: vi.fn().mockImplementation(() => Promise.resolve()),
         hasActiveQuestion: vi.fn().mockResolvedValue(false),
       },
-      options: {
-        e2eSyntheticHumanAuthorIds: [syntheticHumanId],
-        principalTtlSeconds: 900,
-      },
+      options: { e2eSyntheticHumanAuthorIds: [syntheticHumanId], principalTtlSeconds: 900 },
       principals: new DiscordQuestionPrincipalCodec(Buffer.alloc(32, 7)),
       publication: { cancelBeforeRequest: vi.fn().mockResolvedValue(false) },
       scopes: { resultsContainerForGuild: () => Promise.resolve(containerId) },
     });
     handler.start();
     for (const authorId of ["88888888888888888", syntheticHumanId]) {
-      client.emit("messageCreate", {
-        author: { bot: true, id: authorId },
-        channel: { isThread: () => false },
-        channelId: containerId,
-        content: "What was decided?",
-        guildId: "66666666666666666",
-        id: authorId,
-        reference: { messageId: "44444444444444444" },
-        webhookId: null,
-      });
+      client.emit("messageCreate", ingressMessage({
+        author: { bot: true, id: authorId }, content: "What was decided?", id: authorId,
+        reference: { messageId: "44444444444444444" } }));
     }
     await vi.waitFor(() => {
       expect(execute).toHaveBeenCalledTimes(1);
@@ -802,16 +829,10 @@ describe("Discord Local Final Reply synthetic human E2E ingress", () => {
       questionId: syntheticHumanId,
       questionText: "What was decided?",
     });
-    client.emit("messageCreate", {
-      author: { bot: true, id: syntheticHumanId },
-      channel: { isThread: () => false },
-      channelId: containerId,
-      content: "Webhook question?",
-      guildId: "66666666666666666",
-      id: "99999999999999998",
-      reference: { messageId: "44444444444444444" },
-      webhookId: "99999999999999997",
-    });
+    client.emit("messageCreate", ingressMessage({
+      author: { bot: true, id: syntheticHumanId }, content: "Webhook question?",
+      id: "99999999999999998", reference: { messageId: "44444444444444444" },
+      webhookId: "99999999999999997" }));
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });

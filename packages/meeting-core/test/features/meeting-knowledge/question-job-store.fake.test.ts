@@ -61,7 +61,22 @@ export class QuestionJobStoreFake implements QuestionJobStore {
     input: Parameters<QuestionJobStore["persistGroundingPlan"]>[0],
   ): Promise<boolean> {
     this.plans.push(input);
-    return Promise.resolve(this.groundingFenceResult);
+    if (!this.groundingFenceResult) {
+      return Promise.resolve(false);
+    }
+    if (!input.attemptAlreadyReserved) {
+      if (!this.providerReservationResult) {
+        return Promise.resolve(false);
+      }
+      this.providerReservations.push({
+        attemptId: input.attemptId,
+        generation: input.generation,
+        jobId: input.jobId,
+        leaseSeconds: input.leaseSeconds,
+        maximumProviderAttempts: input.maximumProviderAttempts,
+      });
+    }
+    return Promise.resolve(true);
   }
 
   public settle(input: Parameters<QuestionJobStore["settle"]>[0]): Promise<boolean> {

@@ -106,6 +106,10 @@ export class PostgresQuestionAdmissionCommit
         return { status: "stale" };
       }
       await this.lockQuestion(client, binding.questionId);
+      if (await this.hasActiveQuestionTombstone(client, binding.questionId)) {
+        await client.query("ROLLBACK");
+        return { status: "stale" };
+      }
       await lockMeetingKnowledgeProjection(client, binding.finalProjectionReceipt);
       await lockMeetingKnowledgeSource(client, binding.meetingId);
       const existing = await this.findQuestion(client, binding.questionId);
@@ -155,13 +159,14 @@ export class PostgresQuestionAdmissionCommit
         `
           INSERT INTO meeting_knowledge.question_jobs (
             question_id, requester_subject, question_hash, scope_id,
-            final_projection_receipt, authorization_principal_ref,
+            final_projection_receipt, delivery_container_id,
+            authorization_principal_ref,
             authorization_digest, locale, question_text, binding, binding_hash,
             source_meeting_ids, policy_epoch, expires_at
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11,
-            ARRAY[$12]::text[], $13,
-            transaction_timestamp() + make_interval(secs => $14)
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12,
+            ARRAY[$13]::text[], $14,
+            transaction_timestamp() + make_interval(secs => $15)
           )
         `,
         [
@@ -170,6 +175,7 @@ export class PostgresQuestionAdmissionCommit
           binding.questionHash,
           binding.scopeId,
           binding.finalProjectionReceipt,
+          binding.deliveryContainerId,
           binding.authorizationPrincipalRef,
           binding.authorizationDigest,
           binding.expectedLocale,
@@ -203,6 +209,54 @@ export class PostgresQuestionAdmissionCommit
     readonly finalProjectionReceipt: string;
   }): Promise<readonly string[]> {
     return this.projectionWithdrawals.withdraw(input);
+  }
+
+  public async recordQuestionMutation(
+    input: Parameters<NonNullable<QuestionAdmissionCommitPort[
+      "recordQuestionMutation"
+    ]>>[0],
+  ): Promise<void> {
+    if (!/^[0-9]{17,20}$/u.test(input.questionId) ||
+      !Number.isSafeInteger(input.retentionSeconds) ||
+      input.retentionSeconds < 3_600 || input.retentionSeconds > 604_800) {
+      throw new RangeError("question mutation tombstone is outside bounded policy");
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await this.lockQuestion(client, input.questionId);
+      await client.query(
+        `INSERT INTO meeting_knowledge.question_message_tombstones
+           (question_id, mutation_kind, expires_at)
+         VALUES ($1, $2, transaction_timestamp() + make_interval(secs => $3))
+         ON CONFLICT (question_id) DO UPDATE
+         SET mutation_kind = CASE
+               WHEN question_message_tombstones.mutation_kind = 'delete'
+                 THEN 'delete'
+               ELSE EXCLUDED.mutation_kind
+             END,
+             observed_at = transaction_timestamp(),
+             expires_at = GREATEST(
+               question_message_tombstones.expires_at, EXCLUDED.expires_at
+             )`,
+        [input.questionId, input.kind, input.retentionSeconds],
+      );
+      await client.query(
+        `DELETE FROM meeting_knowledge.question_message_tombstones
+         WHERE expires_at <= transaction_timestamp()
+           AND question_id IN (
+             SELECT question_id
+             FROM meeting_knowledge.question_message_tombstones
+             WHERE expires_at <= transaction_timestamp()
+             ORDER BY expires_at, question_id
+             LIMIT 100
+           )`,
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await rollback(client);
+      throw error;
+    } finally {client.release();}
   }
 
   private async findQuestion(
@@ -246,6 +300,19 @@ export class PostgresQuestionAdmissionCommit
         WHERE final_projection_receipt = $1
       `,
       [receipt],
+    );
+    return result.rowCount === 1;
+  }
+
+  private async hasActiveQuestionTombstone(
+    client: PoolClient,
+    questionId: string,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `SELECT 1
+       FROM meeting_knowledge.question_message_tombstones
+       WHERE question_id = $1 AND expires_at > transaction_timestamp()`,
+      [questionId],
     );
     return result.rowCount === 1;
   }

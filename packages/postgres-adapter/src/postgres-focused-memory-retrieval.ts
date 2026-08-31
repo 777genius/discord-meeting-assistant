@@ -24,6 +24,7 @@ const ignoredQueryTerms = new Set([
   "after",
   "answer",
   "could",
+  "current",
   "did",
   "does",
   "from",
@@ -166,12 +167,12 @@ function referenceFor(
   responseDigest: string,
 ): FocusedMemoryReference {
   const { turn } = matched;
-  const fingerprint = input.retrievalBinding?.profileFingerprint ??
+  const identity = input.retrievalBinding?.localCurrentIdentity;
+  const fingerprint = identity?.profileFingerprint ??
     createHash("sha256").update("canonical-local-unbound", "utf8").digest("hex");
   return Object.freeze({
     meetingId: input.meetingId,
     retrievalAudit: Object.freeze({
-      capabilityFingerprint: fingerprint,
       contributions: Object.freeze([Object.freeze({
         contributionScorePicos: matched.matchedTerms * 1_000_000,
         providerLaneId: "canonical_local_exact_lexical",
@@ -181,9 +182,13 @@ function referenceFor(
         rawScoreValue: matched.matchedTerms,
       })]),
       fusedScore: matched.matchedTerms,
+      laneIdentity: Object.freeze({
+        algorithmId: "canonical_local_exact_lexical_v1" as const,
+        lane: "local_current" as const,
+        profileFingerprint: fingerprint,
+        profileId: "meeting-knowledge.local-current.v2" as const,
+      }),
       locator: `canonical-turn:${turn.turnId}`,
-      profileId: input.retrievalBinding?.retrievalPath ??
-        "canonical_local_exact_lexical_v1",
       providerRank,
       requestDigest,
       responseDigest,
@@ -290,11 +295,12 @@ export class PostgresFocusedMemoryRetrieval
       if (selected.length === 0 || selected.length >= canonicalHumanTurns.length) {
         return { schemaVersion: 1, status: "low_coverage" };
       }
-      const requestDigest = input.retrievalBinding?.retrievalPath ===
-          "infinity_locator_v2"
-        ? digestJson(input.retrievalBinding.request)
-        : digestJson({ question: input.question,
-            retrievalBinding: input.retrievalBinding ?? null });
+      const requestDigest = digestJson({
+        hardFilters: input.hardFilters ?? null,
+        laneIdentity: input.retrievalBinding?.localCurrentIdentity ?? null,
+        originalQuestion: input.retrievalBinding?.originalQuestion ?? input.question,
+        schemaVersion: 1,
+      });
       return Object.freeze({
         authorityGeneration: authority.binding.memoryGeneration,
         candidates: Object.freeze(selected.map((turn, index) =>
@@ -322,5 +328,14 @@ export class PostgresFocusedMemoryRetrieval
 }
 
 function digestJson(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
+  return createHash("sha256").update(JSON.stringify(canonicalValue(value)), "utf8")
+    .digest("hex");
+}
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) {return value.map(canonicalValue);}
+  if (typeof value !== "object" || value === null) {return value;}
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .toSorted(([left], [right]) => compareRetrievalV2Utf8(left, right))
+    .map(([key, nested]) => [key, canonicalValue(nested)]));
 }

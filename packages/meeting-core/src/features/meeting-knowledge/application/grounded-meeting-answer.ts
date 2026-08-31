@@ -11,6 +11,7 @@ import type {
 import type { GroundingSafetyLimits } from "../domain/grounding-plan.js";
 
 export type GroundedMeetingAnswerCheckpoint =
+  | "authorization_unavailable"
   | "continue"
   | "stale_authorization"
   | "stale_binding"

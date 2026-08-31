@@ -2,6 +2,7 @@ import { requiresExhaustiveCoverage } from "../domain/question-scope.js";
 import { QuestionBinding, type QuestionBindingSnapshot } from
   "../domain/question-job.js";
 import {
+  authorizationObservationUnavailable,
   authorityMatchesBinding,
   authorizedForJob,
 } from "./final-reply-checks.js";
@@ -14,13 +15,14 @@ import {
 import {
   nextProviderAttemptId,
   providerAttemptAvailable,
-  reserveProviderAttempt,
 } from "./provider-attempt-accounting.js";
 import {
   fixedOutcomeForFocusedRetrieval,
   mergeFocusedHydrationReferences,
   retrieveFocusedMemory,
 } from "./ports/focused-memory-contract.js";
+import { groundingPlanRetrievalAuditsBindInput, retrievalAuditsBindInput } from
+  "./ports/focused-retrieval-provenance.js";
 import {
   PublishFinalReply,
   type FinalReplyJobResult,
@@ -31,6 +33,7 @@ import {
 } from "./select-focused-evidence.js";
 import { focusedMemoryRequest, isComposedLocalBinding,
   prepareFocusedEvidence } from "./process-final-reply-retrieval.js";
+import { exactQuestionObservation } from "./ports/final-reply.js";
 import type {
   AnswerPublicationPort,
   CurrentFinalReplyBinding,
@@ -152,6 +155,31 @@ export class ProcessFinalReplyJob {
     ) {
       return this.publisher.settle(lease, "stale_binding");
     }
+    if (lease.groundingPlan.mode === "focused_retrieval" &&
+      !await groundingPlanRetrievalAuditsBindInput(
+        lease.groundingPlan.evidence.map(({
+          retrievalAudit, source, turnHash, turnId,
+        }) =>
+          Object.freeze({
+            ...(source?.historicalSource === undefined ? {} : {
+              historicalSource: source.historicalSource,
+            }),
+            meetingId: source?.meetingId ?? binding.meetingId,
+            ...(source?.sourceEndCodePoint === undefined ? {} : {
+              sourceEndCodePoint: source.sourceEndCodePoint,
+              sourceStartCodePoint: source.sourceStartCodePoint,
+            }),
+            ...(retrievalAudit === undefined ? {} : { retrievalAudit }),
+            transcriptId: source?.transcriptId ?? binding.transcriptId,
+            transcriptVersion: source?.transcriptVersion ?? binding.transcriptVersion,
+            turnHash,
+            turnId,
+          })),
+        binding.retrievalBinding,
+        lease.questionText,
+      )) {
+      return this.publisher.settle(lease, "stale_binding");
+    }
     if (
       lease.groundingPlan.mode === "exhaustive_coverage" &&
       (
@@ -184,9 +212,10 @@ export class ProcessFinalReplyJob {
     binding: QuestionBindingSnapshot,
   ): Promise<GroundingPreparation> {
     const beforeRetrieval = await this.observe(lease, "before_retrieval");
-    if (beforeRetrieval.status !== "authorized") {
-      return this.settled(await this.publisher.settle(lease, "stale_authorization"));
-    }
+    const retrievalAuthorization = await this.authorizationFailure(
+      lease, beforeRetrieval, beforeRetrieval.status === "authorized",
+    );
+    if (retrievalAuthorization !== null) {return retrievalAuthorization;}
     const current = await this.input.evidence.recheckCurrentBinding(binding);
     if (
       current.status !== "current" ||
@@ -211,10 +240,7 @@ export class ProcessFinalReplyJob {
         fixedOutcomeForFocusedRetrieval(retrieval),
       ));
     }
-    if (
-      retrieval.authorityGeneration !== binding.memoryGeneration ||
-      retrieval.candidates.length === 0
-    ) {
+    if (!focusedRetrievalMatchesBinding(retrieval, binding)) {
       return this.settled(await this.publisher.publishFixed(
         lease,
         current.binding,
@@ -222,9 +248,10 @@ export class ProcessFinalReplyJob {
       ));
     }
     const beforeHydration = await this.observe(lease, "before_hydration");
-    if (!authorizedForJob(beforeHydration, current.binding, binding)) {
-      return this.settled(await this.publisher.settle(lease, "stale_authorization"));
-    }
+    const hydrationAuthorization = await this.authorizationFailure(
+      lease, beforeHydration, authorizedForJob(beforeHydration, current.binding, binding),
+    );
+    if (hydrationAuthorization !== null) {return hydrationAuthorization;}
     const hydrationReferences = mergeFocusedHydrationReferences(
       retrieval.candidates,
     );
@@ -244,7 +271,12 @@ export class ProcessFinalReplyJob {
     const hydrationSurvivors = alignFocusedHydrationSurvivors(
       binding, hydrationReferences, hydrated.turns,
     );
-    if (!hasHydrationSurvivors(hydrationSurvivors)) {
+    if (!hasHydrationSurvivors(hydrationSurvivors) ||
+      !await retrievalAuditsBindInput(
+        hydrationSurvivors.references,
+        binding.retrievalBinding,
+        lease.questionText,
+      )) {
       return this.settled(await this.publisher.publishFixed(
         lease,
         current.binding,
@@ -259,23 +291,11 @@ export class ProcessFinalReplyJob {
       ));
     }
     const beforeSelection = await this.observe(lease, "before_generation");
-    if (!authorizedForJob(beforeSelection, current.binding, binding)) {
-      return this.settled(
-        await this.publisher.settle(lease, "stale_authorization"),
-      );
-    }
+    const selectionAuthorization = await this.authorizationFailure(
+      lease, beforeSelection, authorizedForJob(beforeSelection, current.binding, binding),
+    );
+    if (selectionAuthorization !== null) {return selectionAuthorization;}
     const providerAttemptId = nextProviderAttemptId(lease);
-    if (!await reserveProviderAttempt(
-      this.input.jobs,
-      lease,
-      this.input.policy,
-      providerAttemptId,
-    )) {
-      return this.settled({
-        jobId: lease.jobId,
-        status: "stale_generation",
-      });
-    }
     try {
       const prepared = await prepareFocusedEvidence({
         authorityGeneration: retrieval.authorityGeneration,
@@ -288,7 +308,7 @@ export class ProcessFinalReplyJob {
         turns: hydrationSurvivors.turns,
       });
       if (prepared.status === "prepared") {
-        return { ...prepared, providerAttemptId };
+        return prepared;
       }
       const result = prepared.status === "stale_binding"
         ? await this.publisher.settle(lease, "stale_binding")
@@ -321,6 +341,9 @@ export class ProcessFinalReplyJob {
     if (prepared.status === "prepared") {
       return prepared;
     }
+    if (prepared.status === "deferred") {
+      return this.deferred(lease);
+    }
     const result = prepared.publication === "settle"
       ? await this.publisher.settle(lease, prepared.outcome)
       : await this.publisher.publishFixed(lease, authority, prepared.outcome);
@@ -335,6 +358,7 @@ export class ProcessFinalReplyJob {
       authorizationPrincipalRef: lease.binding.authorizationPrincipalRef,
       checkpoint,
       expectedContainerId: lease.binding.projectionTargetContainerId,
+      expectedQuestion: exactQuestionObservation(lease.binding),
       expectedScopeId: lease.binding.scopeId,
       questionId: lease.binding.questionId,
     });
@@ -343,6 +367,32 @@ export class ProcessFinalReplyJob {
   private settled(result: FinalReplyJobResult): GroundingPreparation {
     return { result, status: "settled" };
   }
+
+  private async authorizationFailure(
+    lease: QuestionJobLease,
+    observation: QuestionAuthorizationObservation,
+    authorized: boolean,
+  ): Promise<GroundingPreparation | null> {
+    if (authorizationObservationUnavailable(observation)) {
+      return this.deferred(lease);
+    }
+    return authorized ? null : this.settled(
+      await this.publisher.settle(lease, "stale_authorization"),
+    );
+  }
+
+  private deferred(lease: QuestionJobLease): GroundingPreparation {
+    return this.settled({ jobId: lease.jobId, status: "deferred" });
+  }
+}
+
+function focusedRetrievalMatchesBinding(
+  retrieval: Extract<Awaited<ReturnType<FocusedMemoryRetrievalPort["retrieve"]>>,
+    { readonly status: "current" }>,
+  binding: QuestionBindingSnapshot,
+): boolean {
+  return retrieval.authorityGeneration === binding.memoryGeneration &&
+    retrieval.candidates.length > 0;
 }
 
 function hasHydrationSurvivors(

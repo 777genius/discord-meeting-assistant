@@ -7,7 +7,7 @@ import type {
   FocusedMemoryReference,
   RehydratedEvidenceTurn,
 } from "../domain/grounding-plan.js";
-import { decodeFocusedLocatorCandidate } from
+import { decodeFocusedLocatorCandidate, historicalRetrievalAuditsBindRequest } from
   "./ports/focused-retrieval-provenance.js";
 import {
   buildHistoricalRoomTopology,
@@ -15,6 +15,7 @@ import {
 } from "./historical-index-plan.js";
 import type {
   FocusedHistoricalEvidenceV2Result,
+  FocusedHistoricalEvidenceV2UnavailableReason,
   FocusedLocatorRetrievalV2Candidate,
   FocusedLocatorRetrievalV2Port,
   FocusedLocatorRetrievalV2RequestSnapshot,
@@ -26,7 +27,8 @@ import type {
 } from "./ports/historical-memory.js";
 import type {
   HistoricalEvidenceAuthority,
-  HistoricalSyncStore,
+  HistoricalRoomAuthoritySnapshotEntryV1,
+  HistoricalRoomAuthoritySnapshotPort,
 } from "./ports/historical-state.js";
 import type {
   CanonicalEvidenceTurnHashPort,
@@ -41,20 +43,47 @@ interface HistoricalLocatorRetrievalV2Input {
   readonly scopeId: string;
   readonly signal?: AbortSignal;
 }
-type HistoricalCandidateRecord = Awaited<
-  ReturnType<HistoricalSyncStore["findCurrentCandidates"]>
->[number];
+type HistoricalCandidateRecord = HistoricalRoomAuthoritySnapshotEntryV1 & {
+  readonly ordinal: number;
+};
+type HydratedHistoricalEvidence = {
+  readonly authorityGeneration: string;
+  readonly references: readonly FocusedMemoryReference[];
+  readonly status: "current";
+  readonly turns: readonly RehydratedEvidenceTurn[];
+} | {
+  readonly authorityGeneration: string;
+  readonly status: "empty";
+} | {
+  readonly reason: FocusedHistoricalEvidenceV2UnavailableReason;
+  readonly status: "unavailable";
+};
+type RehydratedLocators = {
+  readonly references: readonly FocusedMemoryReference[];
+  readonly status: "current";
+  readonly turns: readonly RehydratedEvidenceTurn[];
+} | {
+  readonly reason: FocusedHistoricalEvidenceV2UnavailableReason;
+  readonly status: "unavailable";
+};
+type AdmittedHistoricalCandidates = {
+  readonly candidates: readonly FocusedLocatorRetrievalV2Candidate[];
+  readonly status: "current";
+} | Extract<HydratedHistoricalEvidence, { readonly status: "unavailable" }>;
 
 export class HistoricalFocusedLocatorRetrievalV2 {
   public constructor(private readonly dependencies: {
-    readonly authority: HistoricalEvidenceAuthority;
     readonly authorization: HistoricalAuthorizationPort;
+    /** Ignored; retained only for source-compatible test construction. */
+    readonly authority?: HistoricalEvidenceAuthority;
     /** Maps one canonical actor to every retained opaque retrieval key. */
     readonly actorKeysForSpeaker?: (speakerId: string) => readonly string[];
     readonly ids: HistoricalOpaqueIdPort;
     readonly retrieval: FocusedLocatorRetrievalV2Port;
     readonly servingAuthorized?: () => boolean;
-    readonly store: HistoricalSyncStore;
+    readonly snapshot?: HistoricalRoomAuthoritySnapshotPort;
+    /** Test fixtures may retain the old property name. */
+    readonly store?: HistoricalRoomAuthoritySnapshotPort;
     readonly turnHashes: CanonicalEvidenceTurnHashPort;
   }, private readonly profile: TwoHourHistoricalRetrievalProfileV1 =
     DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE) {}
@@ -62,9 +91,9 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   public async retrieve(input: HistoricalLocatorRetrievalV2Input):
   Promise<FocusedMemoryRetrievalResult> {
     const hydrated = await this.retrieveHydrated(input);
-    return hydrated === null ? unavailable() : Object.freeze({
+    return hydrated.status === "unavailable" ? unavailable() : Object.freeze({
       authorityGeneration: hydrated.authorityGeneration,
-      candidates: hydrated.references,
+      candidates: hydrated.status === "empty" ? Object.freeze([]) : hydrated.references,
       schemaVersion: 1,
       status: "current",
     });
@@ -74,8 +103,11 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     input: HistoricalLocatorRetrievalV2Input,
   ): Promise<FocusedHistoricalEvidenceV2Result> {
     const hydrated = await this.retrieveHydrated(input);
-    return hydrated === null
-      ? Object.freeze({ status: "unavailable" })
+    return hydrated.status === "unavailable"
+      ? Object.freeze({ reason: hydrated.reason, status: "unavailable" })
+      : hydrated.status === "empty"
+        ? Object.freeze({ authorityGeneration: hydrated.authorityGeneration,
+            status: "empty" })
       : Object.freeze({
           authorityGeneration: hydrated.authorityGeneration,
           status: "current",
@@ -83,20 +115,18 @@ export class HistoricalFocusedLocatorRetrievalV2 {
         });
   }
 
-  private async retrieveHydrated(input: HistoricalLocatorRetrievalV2Input): Promise<{
-    readonly authorityGeneration: string;
-    readonly references: readonly FocusedMemoryReference[];
-    readonly turns: readonly RehydratedEvidenceTurn[];
-  } | null> {
+  private async retrieveHydrated(
+    input: HistoricalLocatorRetrievalV2Input,
+  ): Promise<HydratedHistoricalEvidence> {
     input.signal?.throwIfAborted();
     if (this.dependencies.servingAuthorized?.() === false) {
-      return null;
+      return rejected("serving_not_authorized");
     }
     const topology = buildHistoricalRoomTopology(input.scopeId, input.roomId,
       this.dependencies.ids);
     if (input.request.scope.memoryScopeId !== topology.roomScopeExternalRef ||
       input.request.scope.spaceId !== topology.spaceSlug) {
-      return null;
+      return rejected("scope_not_bound");
     }
     const authorizationRequest = {
       authorizationPrincipalRef: input.authorizationPrincipalRef,
@@ -106,33 +136,30 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     };
     const before = await this.dependencies.authorization.authorize(authorizationRequest);
     if (!before.authorized) {
-      return null;
+      return rejected("authorization_denied");
     }
-    input.signal?.throwIfAborted();
-    if (this.dependencies.servingAuthorized?.() === false) {
-      return null;
-    }
-    const remote = await this.dependencies.retrieval.retrieve(
-      input.request,
-      input.signal === undefined ? {} : { signal: input.signal },
-    );
-    if (remote.status !== "available" || remote.candidates.length < 1 ||
-      remote.candidates.length > input.request.budgets.resultLimit) {
-      return null;
-    }
-    const candidates = remote.candidates
-      .map(decodeFocusedLocatorCandidate)
-      .filter(isLocatorCandidate);
-    if (candidates.length < 1) {
-      return null;
-    }
+    const admittedCandidates = await this.retrieveCandidates(input);
+    if (admittedCandidates.status === "unavailable") {return admittedCandidates;}
+    const candidates = admittedCandidates.candidates;
     const hydrated = await this.rehydrateLocators(input, candidates);
-    if (hydrated === null) {
-      return null;
+    if (hydrated.status === "unavailable") {
+      return hydrated;
     }
     const after = await this.dependencies.authorization.authorize(authorizationRequest);
-    if (!sameAuthorization(before, after) || hydrated.references.length < 1) {
-      return null;
+    const hydratedAudits = [...new Map(hydrated.references.map((reference) => [
+      reference.historicalSource!.candidateLocator,
+      Object.freeze({ locator: reference.historicalSource!.candidateLocator,
+        retrievalProvenance: reference.retrievalAudit! }),
+    ])).values()];
+    if (!sameAuthorization(before, after)) {
+      return rejected("authorization_changed");
+    }
+    if (candidates.length > 0 && hydrated.references.length < 1) {
+      return rejected("canonical_evidence_unavailable");
+    }
+    if (hydrated.references.length > 0 &&
+      !await historicalRetrievalAuditsBindRequest(hydratedAudits, input.request)) {
+      return rejected("canonical_provenance_invalid");
     }
     const generationParts = [
       ...input.request.filters.sourceGenerations.flatMap(
@@ -144,36 +171,71 @@ export class HistoricalFocusedLocatorRetrievalV2 {
         turnHash,
       ]),
     ];
-    return Object.freeze({
-      authorityGeneration: `historical-locator-v2:${this.dependencies.ids.keyedId(
+    const authorityGeneration = `historical-locator-v2:${this.dependencies.ids.keyedId(
         "focused-historical-generation",
         generationParts,
-      )}`,
+      )}`;
+    return hydrated.references.length === 0
+      ? Object.freeze({ authorityGeneration, status: "empty" as const })
+      : Object.freeze({
+      authorityGeneration,
       references: hydrated.references,
+      status: "current",
       turns: hydrated.turns,
     });
+  }
+
+  private async retrieveCandidates(
+    input: HistoricalLocatorRetrievalV2Input,
+  ): Promise<AdmittedHistoricalCandidates> {
+    input.signal?.throwIfAborted();
+    if (this.dependencies.servingAuthorized?.() === false) {
+      return rejected("serving_not_authorized");
+    }
+    const remote = await this.dependencies.retrieval.retrieve(
+      input.request, input.signal === undefined ? {} : { signal: input.signal });
+    if (!availableRemoteWithinLimit(remote, input.request.budgets.resultLimit)) {
+      return rejected("provider_result_unavailable");
+    }
+    const candidates = remote.candidates.map(decodeFocusedLocatorCandidate)
+      .filter(isLocatorCandidate);
+    if (remote.candidates.length > 0 && candidates.length < 1) {
+      return rejected("provider_candidate_invalid");
+    }
+    if (candidates.length > 0 &&
+      !await historicalRetrievalAuditsBindRequest(candidates, input.request)) {
+      return rejected("retrieval_provenance_invalid");
+    }
+    return Object.freeze({ candidates: Object.freeze(candidates), status: "current" });
   }
 
   private async rehydrateLocators(
     input: HistoricalLocatorRetrievalV2Input,
     candidates: readonly FocusedLocatorRetrievalV2Candidate[],
-  ): Promise<{
-    readonly references: readonly FocusedMemoryReference[];
-    readonly turns: readonly RehydratedEvidenceTurn[];
-  } | null> {
-    const uniqueLocators = [...new Set(candidates.map(({ locator }) => locator))];
-    const records = await this.dependencies.store.findCurrentCandidates(
-      input.scopeId,
-      input.roomId,
-      uniqueLocators,
-      input.signal === undefined ? {} : { signal: input.signal },
-    );
-    const recordsByLocator = new Map<string, typeof records>();
+  ): Promise<RehydratedLocators> {
+    const snapshotPort = this.dependencies.snapshot ?? this.dependencies.store;
+    if (snapshotPort === undefined) {return rejected("historical_authority_unavailable");}
+    const snapshot = await snapshotPort.loadRoomAuthoritySnapshot({
+      maximumSources: 100,
+      pageSize: 25,
+      roomId: input.roomId,
+      scopeId: input.scopeId,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    if (snapshot.status !== "current") {
+      return rejected("historical_authority_unavailable");
+    }
+    const records = snapshot.entries;
+    const recordsByLocator = new Map<string, readonly HistoricalCandidateRecord[]>();
     for (const record of records) {
-      const locator = record.plan.documents[record.ordinal]?.manifest.candidateLocator;
-      if (locator !== undefined) {
+      for (const document of record.plan.documents) {
+        const locator = document.manifest.candidateLocator;
+        const candidateRecord = Object.freeze({
+          ...record,
+          ordinal: document.manifest.ordinal,
+        });
         recordsByLocator.set(locator, Object.freeze([
-          ...(recordsByLocator.get(locator) ?? []), record,
+          ...(recordsByLocator.get(locator) ?? []), candidateRecord,
         ]));
       }
     }
@@ -192,8 +254,8 @@ export class HistoricalFocusedLocatorRetrievalV2 {
       observedLocators.add(candidate.locator);
       const ownedRecords = recordsByLocator.get(candidate.locator);
       const record = ownedRecords?.length === 1 ? ownedRecords[0] : undefined;
-      const block = record === undefined ? null : await this.rehydrateCandidate(
-        input, record, allowedSources,
+      const block = record === undefined ? null : this.rehydrateCandidate(
+        record, allowedSources,
       );
       if (block === null) {continue;}
       const turnsAfterHardFilters = this.applyCanonicalHardFilters(input, block.turns);
@@ -226,6 +288,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
       })));
       turns.push(...turnsAfterHardFilters.map((turn) => Object.freeze({
         ...turn,
+        retrievalAudit: candidate.retrievalProvenance,
         source: Object.freeze({
           historicalSource: Object.freeze({
             candidateLocator: block.candidateLocator,
@@ -243,6 +306,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     }
     return Object.freeze({
       references: Object.freeze(references),
+      status: "current",
       turns: Object.freeze(turns),
     });
   }
@@ -267,36 +331,23 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     }));
   }
 
-  private async rehydrateCandidate(
-    input: HistoricalLocatorRetrievalV2Input,
+  private rehydrateCandidate(
     record: HistoricalCandidateRecord,
     allowedSources: ReadonlyMap<string, string>,
-  ): Promise<LocallyRehydratedEvidenceBlockV1 | null> {
+  ): LocallyRehydratedEvidenceBlockV1 | null {
     if (allowedSources.get(record.plan.topology.releaseRef) !==
       record.plan.topology.indexGeneration) {
       return null;
     }
+    const meeting = record.acceptedMeeting;
+    if (meeting === null || !admitsHistoricalRetrieval(meeting, this.profile)) {
+      return null;
+    }
     try {
-      const current = await this.dependencies.store.isCurrentGeneration(
-        record.binding,
-        record.plan.topology.indexGeneration,
-        input.signal === undefined ? {} : { signal: input.signal },
-      );
-      if (!current) {return null;}
-      const meeting = await this.dependencies.authority.loadAcceptedFinalMeeting(
-        record.binding,
-        input.signal === undefined ? {} : { signal: input.signal },
-      );
-      if (meeting === null || !admitsHistoricalRetrieval(meeting, this.profile)) {
-        return null;
-      }
       return rehydrateHistoricalBlock(
         meeting, record.plan, record.ordinal, this.dependencies.ids,
       );
-    } catch {
-      input.signal?.throwIfAborted();
-      return null;
-    }
+    } catch {return null;}
   }
 
   public async reauthorizeRoom(input: {
@@ -308,8 +359,21 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   }
 }
 
+function availableRemoteWithinLimit(
+  remote: Awaited<ReturnType<FocusedLocatorRetrievalV2Port["retrieve"]>>,
+  resultLimit: number,
+): remote is Extract<typeof remote, { readonly status: "available" }> {
+  return remote.status === "available" && remote.candidates.length <= resultLimit;
+}
+
 function unavailable(): FocusedMemoryRetrievalResult {
   return Object.freeze({ schemaVersion: 1, status: "unavailable" });
+}
+
+function rejected(
+  reason: FocusedHistoricalEvidenceV2UnavailableReason,
+): Extract<FocusedHistoricalEvidenceV2Result, { readonly status: "unavailable" }> {
+  return Object.freeze({ reason, status: "unavailable" });
 }
 
 function isLocatorCandidate(value: FocusedLocatorRetrievalV2Candidate | null):

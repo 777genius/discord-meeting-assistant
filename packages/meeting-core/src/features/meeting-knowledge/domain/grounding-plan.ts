@@ -42,7 +42,6 @@ export interface FocusedMemoryReference {
 
 /** Consumer-owned, provider-neutral accounting for an upstream ranking decision. */
 export interface FocusedRetrievalAudit {
-  readonly capabilityFingerprint: string;
   readonly contributions: readonly {
     readonly contributionScorePicos: number;
     readonly providerLaneId: string;
@@ -52,8 +51,19 @@ export interface FocusedRetrievalAudit {
     readonly rawScoreValue: number | null;
   }[];
   readonly fusedScore: number;
+  readonly laneIdentity?:
+    | {
+        readonly algorithmId: "canonical_local_exact_lexical_v1";
+        readonly lane: "local_current";
+        readonly profileFingerprint: string;
+        readonly profileId: "meeting-knowledge.local-current.v2";
+      }
+    | {
+        readonly capabilityFingerprint: string;
+        readonly lane: "historical";
+        readonly profileId: string;
+      };
   readonly locator: string;
-  readonly profileId: string;
   readonly providerRank: number;
   readonly requestDigest: string;
   readonly responseDigest: string;

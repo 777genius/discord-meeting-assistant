@@ -72,16 +72,20 @@ export async function waitForHistoricalRows(
   }
   const deadline = Date.now() + timeoutMilliseconds;
   let rows = await historicalRows(pool);
-  while (Date.now() < deadline) {
+  for (;;) {
     signal.throwIfAborted();
     if (rows.filter(predicate).length === expectedCount) {
       return;
+    }
+    const remainingMilliseconds = deadline - Date.now();
+    if (remainingMilliseconds <= 0) {
+      break;
     }
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         signal.removeEventListener("abort", aborted);
         resolve();
-      }, 50);
+      }, Math.min(50, remainingMilliseconds));
       const aborted = () => {
         clearTimeout(timer);
         reject(signal.reason);

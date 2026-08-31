@@ -41,6 +41,7 @@ export class PostgresFinalReplyMaintenance
         ? 0
         : await this.cancelUnservedJobs(client, maximumJobs);
       const expired = await this.expireJobs(client, maximumJobs);
+      await this.deleteExpiredQuestionTombstones(client, maximumJobs);
       await client.query("COMMIT");
       return { cancelled, expired };
     } catch (error) {
@@ -244,6 +245,26 @@ export class PostgresFinalReplyMaintenance
       ],
     );
     return Number(result.rows[0]?.expired ?? "0");
+  }
+
+  private async deleteExpiredQuestionTombstones(
+    client: PoolClient,
+    maximumRows: number,
+  ): Promise<void> {
+    await client.query(
+      `WITH expired AS (
+         SELECT question_id
+         FROM meeting_knowledge.question_message_tombstones
+         WHERE expires_at <= transaction_timestamp()
+         ORDER BY expires_at, question_id
+         FOR UPDATE SKIP LOCKED
+         LIMIT $1
+       )
+       DELETE FROM meeting_knowledge.question_message_tombstones AS tombstone
+       USING expired
+       WHERE tombstone.question_id = expired.question_id`,
+      [maximumRows],
+    );
   }
 }
 

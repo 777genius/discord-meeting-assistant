@@ -1,8 +1,8 @@
 ---
 id: ADR-0050
-status: accepted
+status: superseded
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0064]
 ---
 
 # ADR-0050: Persisted Retrieval V2 serving binding and official SDK custody

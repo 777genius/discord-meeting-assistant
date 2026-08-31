@@ -33,8 +33,17 @@ const bindingInput = {
 };
 
 const retrievalBinding = Object.freeze({
+  canonicalEvidenceFilters: Object.freeze({ relativeTimeInterval: null,
+    requiresSpeakerMatch: false, speakerIds: Object.freeze([]) }),
   cutoverEpoch: "cutover-r1",
+  localCurrentIdentity: Object.freeze({
+    algorithmId: "canonical_local_exact_lexical_v1" as const,
+    profileFingerprint: "f".repeat(64),
+    profileId: "meeting-knowledge.local-current.v2" as const,
+  }),
+  originalQuestion: "What changed?",
   profileFingerprint: "e".repeat(64),
+  provenanceSchemaVersion: 1 as const,
   retrievalPath: "infinity_locator_v1" as const,
 });
 

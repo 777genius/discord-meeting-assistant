@@ -5,9 +5,9 @@ import {
   DISPOSABLE_RETRIEVAL_V2_BINDING,
   type DisposableInfinityHttpService,
 } from "@discord-meeting/infinity-context-adapter/test-support";
-import type {
-  HistoricalAuthorizationPort,
-} from "@discord-meeting/meeting-core/meeting-knowledge";
+import { GroundedMeetingAnswer, type GroundingSafetyLimits,
+  type HistoricalAuthorizationPort } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   EvidenceBackedSummary,
 } from "@discord-meeting/meeting-core/meeting-intelligence";
@@ -46,6 +46,33 @@ export const currentMeetingId = "synthetic-current-meeting";
 export const historicalActorA = "555555555555555551";
 export const historicalActorB = "555555555555555552";
 export const currentActor = "555555555555555553";
+export const currentMixedEvidenceText =
+  "CURRENT-ANCHOR confirms Project Atlas is active.";
+export const historicalMixedEvidenceText =
+  "PINE-GOLF records that Project Atlas deployment was approved for Monday.";
+export const mixedLaneQuestion =
+  "What does CURRENT-ANCHOR confirm about Project Atlas, and which deployment day does PINE-GOLF record?";
+
+export function unavailableHistoryAnswersFixture(limits: GroundingSafetyLimits): {
+  readonly answers: GroundedMeetingAnswer; readonly calls: () => number;
+} {
+  let calls = 0;
+  return {
+    answers: new GroundedMeetingAnswer({
+      generate: async () => {
+        calls += 1;
+        return { answer: { claims: [], locale: "en",
+          status: "insufficient_evidence" }, status: "completed" };
+      },
+      measure: async () => {
+        calls += 1;
+        return { inputTokens: 1, requestBytes: 1,
+          runtimeProfile: "unavailable-history-no-access-fixture" };
+      },
+    }, limits),
+    calls: () => calls,
+  };
+}
 
 export const retainedProductionEmbeddingProfileAttestation = Object.freeze({
   embeddingProfile:
@@ -442,7 +469,9 @@ function historicalTwoHourTurns() {
     const startMs = position * 10_000;
     return {
       endMs: startMs + 10_000,
-      speakerId: position % 2 === 0 ? historicalActorA : historicalActorB,
+      speakerId: position === 719 || position % 2 === 0
+        ? historicalActorA
+        : historicalActorB,
       startMs,
       text: positionalText(position, needle?.marker),
       turnId: `history-turn-${position.toString().padStart(4, "0")}`,
@@ -460,6 +489,9 @@ function historicalTwoHourTurns() {
 
 function positionalText(position: number, marker: string | undefined): string {
   if (marker !== undefined) {
+    if (position === 719) {
+      return historicalMixedEvidenceText;
+    }
     if (position === 360) {
       return `Средняя русская контрольная точка ${marker}; исправленный факт.`;
     }
@@ -485,7 +517,7 @@ function currentMeetingTurns() {
     speakerId: currentActor,
     startMs: position * 10_000,
     text: position === 8
-      ? "CURRENT-ANCHOR confirms Project Atlas is active and connects to PINE-GOLF."
+      ? currentMixedEvidenceText
       : `Current accepted planning detail ${position}.`,
     turnId: `current-turn-${position.toString().padStart(2, "0")}`,
   }));

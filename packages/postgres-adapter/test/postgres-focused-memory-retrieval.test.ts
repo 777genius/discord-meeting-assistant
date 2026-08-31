@@ -128,6 +128,36 @@ function retrievalInput(
   };
 }
 
+describe("PostgreSQL current-meeting query term policy", () => {
+  it("does not let current-meeting query scaffolding saturate the current evidence lane",
+    async () => {
+      const snapshot = twoHourSnapshot(16, (index) => ({
+        endMs: index * 10_000 + 2_000,
+        speakerId: index % 2 === 0 ? "speaker-a" : "speaker-b",
+        startMs: index * 10_000,
+        text: index === 8
+          ? "CURRENT-ANCHOR confirms Project Atlas is active."
+          : `Current accepted planning detail ${index}.`,
+        turnId: `turn-${String(index).padStart(4, "0")}`,
+      }));
+      const { input } = retrievalInput(
+        snapshot,
+        "What does CURRENT-ANCHOR confirm about Project Atlas, and which deployment day does PINE-GOLF record?",
+      );
+
+      const result = await new PostgresFocusedMemoryRetrieval(
+        snapshotPool(snapshot),
+        botId,
+      ).retrieve(input);
+
+      expect(result).toMatchObject({ status: "current" });
+      if (result.status === "current") {
+        expect(result.candidates.map(({ turnId }) => turnId))
+          .toEqual(["turn-0008"]);
+      }
+    });
+});
+
 describe("PostgreSQL focused current-meeting memory", () => {
   it("returns only bounded focused locators for a short current transcript", async () => {
     const snapshot = twoHourSnapshot(16);

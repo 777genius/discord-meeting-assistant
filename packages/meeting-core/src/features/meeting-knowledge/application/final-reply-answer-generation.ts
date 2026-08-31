@@ -1,16 +1,17 @@
 import type { GroundingPlan } from "../domain/grounding-plan.js";
 import type { QuestionBindingSnapshot } from "../domain/question-job.js";
 import {
+  authorizationObservationUnavailable,
   authorizedForJob,
   reauthorizeHistoricalPlan,
 } from "./final-reply-checks.js";
 import { GroundedMeetingAnswer } from "./grounded-meeting-answer.js";
+import { exactQuestionObservation } from "./ports/final-reply.js";
 import {
   completeProviderAttempt,
   failProviderAttempt,
   nextProviderAttemptId,
   providerAttemptAvailable,
-  reserveProviderAttempt,
 } from "./provider-attempt-accounting.js";
 import {
   PublishFinalReply,
@@ -92,15 +93,23 @@ export class FinalReplyAnswerGeneration {
           return "stale_binding";
         }
         const beforeGeneration = await this.observe(lease);
+        if (authorizationObservationUnavailable(beforeGeneration)) {
+          return "authorization_unavailable";
+        }
         if (!authorizedForJob(beforeGeneration, preparation.authority, binding)) {
           return "stale_authorization";
         }
         if (!await this.input.jobs.persistGroundingPlan({
+          attemptAlreadyReserved: preparation.providerAttemptId !== undefined,
+          attemptId: providerAttemptId,
           binding,
           generation: lease.generation,
           jobId: lease.jobId,
+          leaseSeconds: this.input.policy.jobLeaseSeconds,
+          maximumProviderAttempts: this.input.policy.maximumProviderAttempts,
           measurement,
           plan: preparation.plan,
+          question: lease.questionText,
           runtimeProfile: measurement.runtimeProfile,
           sourceMeetingIds: Object.freeze([...new Set([
             binding.meetingId,
@@ -111,17 +120,13 @@ export class FinalReplyAnswerGeneration {
         })) {
           return "stale_generation";
         }
-        return preparation.providerAttemptId !== undefined
-          ? "continue"
-          : await reserveProviderAttempt(
-              this.input.jobs,
-              lease,
-              this.input.policy,
-              providerAttemptId,
-            ) ? "continue" : "stale_generation";
+        return "continue";
       },
     });
     if (generated.status === "stopped") {
+      if (generated.checkpoint === "authorization_unavailable") {
+        return { jobId: lease.jobId, status: "deferred" };
+      }
       return generated.checkpoint === "stale_generation"
         ? { jobId: lease.jobId, status: "stale_generation" }
         : this.input.publisher.settle(
@@ -180,6 +185,7 @@ export class FinalReplyAnswerGeneration {
       authorizationPrincipalRef: lease.binding.authorizationPrincipalRef,
       checkpoint: "before_generation",
       expectedContainerId: lease.binding.projectionTargetContainerId,
+      expectedQuestion: exactQuestionObservation(lease.binding),
       expectedScopeId: lease.binding.scopeId,
       questionId: lease.binding.questionId,
     });

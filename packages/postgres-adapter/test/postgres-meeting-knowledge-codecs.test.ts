@@ -44,11 +44,14 @@ const persistedHistoricalPlan = {
     endMs: 1_000,
     evidenceId: "evidence-000001",
     retrievalAudit: {
-      capabilityFingerprint: "b".repeat(64),
       contributions: [contribution],
       fusedScore: 1,
+      laneIdentity: {
+        capabilityFingerprint: "b".repeat(64),
+        lane: "historical",
+        profileId: "profile-v2",
+      },
       locator: "candidate-1",
-      profileId: "profile-v2",
       providerRank: 1,
       requestDigest: digest(retrievalRequest),
       responseDigest: digest({ contributions: [contribution], fusedScore: 1,
@@ -92,12 +95,11 @@ describe("persisted grounding plan historical provenance", () => {
     expect(() => decodeGroundingPlan(incomplete, binding, questionText)).toThrow();
   });
 
-  it("rejects bounded provenance that is not bound to the persisted request/result", () => {
+  it("decodes bounded provenance for the canonical asynchronous verifier", () => {
     const hostile = structuredClone(persistedHistoricalPlan);
     (hostile.evidence[0].retrievalAudit as { responseDigest: string }).responseDigest =
       "f".repeat(64);
-    expect(() => decodeGroundingPlan(hostile, binding, questionText)).toThrow(
-      "does not bind",
-    );
+    expect(decodeGroundingPlan(hostile, binding, questionText).evidence[0]
+      ?.retrievalAudit?.responseDigest).toBe("f".repeat(64));
   });
 });

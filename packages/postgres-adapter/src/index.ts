@@ -11,6 +11,7 @@ export { PostgresMeetingRepository } from "./postgres-meeting-repository.js";
 export { PostgresHistoricalMemoryStore,
   assertConstructedPostgresHistoricalMemoryStore } from "./postgres-historical-memory-store.js";
 export { PostgresHistoricalEvidenceAuthority,
+  PostgresHistoricalRoomAuthoritySnapshot,
   assertConstructedPostgresHistoricalEvidenceAuthority } from "./postgres-historical-evidence-authority.js";
 export { PostgresExhaustiveCoverageStore } from "./postgres-exhaustive-coverage-store.js";
 export {
