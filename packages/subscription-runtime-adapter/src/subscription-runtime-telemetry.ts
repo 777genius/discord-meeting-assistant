@@ -2,7 +2,7 @@ import type {
   SubscriptionRuntimeTelemetry,
   SubscriptionRuntimeTokenAvailability,
   SubscriptionRuntimeUsage,
-} from "@discord-meeting/subscription-runtime-adapter";
+} from "./subscription-runtime-contract.js";
 
 import {
   arrayValue,

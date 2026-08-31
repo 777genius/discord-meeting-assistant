@@ -19,6 +19,10 @@
       "types": "./src/quality-campaign/production-cli.ts",
       "import": "./dist/quality-campaign/production-cli.js"
     },
+    "./quality-campaign/canonical-chain": {
+      "types": "./src/quality-campaign/production-canonical-question-chain.ts",
+      "import": "./dist/quality-campaign/production-canonical-question-chain.js"
+    },
     "./test-support": "./test/test-support.ts"
   },
   "files": [
@@ -48,12 +52,12 @@
   },
   "dependencies": {
     "@discord-meeting/meeting-core": "workspace:*",
+    "@discord-meeting/postgres-adapter": "workspace:*",
+    "@discord-meeting/subscription-runtime-adapter": "workspace:*",
     "@huggingface/tokenizers": "catalog:",
     "@infinity-context/sdk": "catalog:"
   },
   "devDependencies": {
-    "@discord-meeting/postgres-adapter": "workspace:*",
-    "@discord-meeting/subscription-runtime-adapter": "workspace:*",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
     "pg": "catalog:",

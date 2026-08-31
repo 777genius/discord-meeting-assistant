@@ -1,4 +1,4 @@
-syntax = "proto3";
+syntax = "proto3"; // Owned by the reusable subscription-runtime transport adapter.
 
 package social_monitor.agent_runtime.v1;
 

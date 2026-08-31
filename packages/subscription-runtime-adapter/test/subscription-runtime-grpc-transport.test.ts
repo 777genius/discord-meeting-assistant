@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   fromGrpcTaskResponse,
   toGrpcTaskRequest,
-} from "../src/adapters/outbound/subscription-runtime-grpc-transport.js";
+} from "../src/grpc-transport.js";
 
 const runtimeRequest = buildSubscriptionRuntimeSummaryRequest(
   {

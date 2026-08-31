@@ -21,7 +21,7 @@ import {
   GrpcSubscriptionRuntimeTransport,
   assertGrpcQualifiedGroundedAnswerAdapter,
   createGrpcQualifiedGroundedAnswerAdapter,
-} from "../src/adapters/outbound/subscription-runtime-grpc-transport.js";
+} from "../src/grpc-transport.js";
 
 const servers: Server[] = [];
 const transports: GrpcSubscriptionRuntimeTransport[] = [];

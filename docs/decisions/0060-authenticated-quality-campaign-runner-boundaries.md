@@ -40,6 +40,20 @@ evidence.
   inventories, and holdout retention is non-qualifying.
 - Independent adjudicators and the resolver are pinned by role and public-key
   fingerprint. A resolver receives both complete signed conflicting decisions.
+- The installed runner has one canonical per-question application use case. Its
+  execution packet contains only the question identity, locale, exact text,
+  source classification, and an opaque signed scope/topology reference. Gold
+  evidence locators, claims, speaker/time authority, and abstention authority
+  are admitted only by scoring after a terminal encrypted outcome exists.
+- The production execution adapter composes Meeting Knowledge's single original
+  query and hard filters, the official Infinity Context SDK (100 candidates,
+  10 results, zero neighbors, one SDK attempt), selected-locator-only PostgreSQL
+  rehydration, and the Subscription Runtime grounded-answer mapper. Infinity
+  exclusively owns fusion, deduplication, and reranking; provider scores remain
+  audit provenance and never enter the answer prompt.
+- The reusable Subscription Runtime gRPC transport and protobuf contract belong
+  to `@discord-meeting/subscription-runtime-adapter`. Meeting Platform consumes
+  that adapter and no quality runner may deep-import Meeting Platform source.
 
 ## Consequences
 
@@ -50,3 +64,6 @@ evidence.
   selected by an operator fails closed.
 - Holdout evidence is retained and cleaned under isolated custody but never
   changes main qualification.
+- Provider-capable qualification composition cannot live in excluded test
+  source. Provider-free structural fakes are non-qualifying and must not become
+  a second historical engine.

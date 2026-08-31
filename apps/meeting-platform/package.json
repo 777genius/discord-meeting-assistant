@@ -33,8 +33,6 @@
     "@discord-meeting/speaches-adapter": "workspace:*",
     "@discord-meeting/subscription-runtime-adapter": "workspace:*",
     "@discord-meeting/voicetext-adapter": "workspace:*",
-    "@grpc/grpc-js": "catalog:",
-    "@grpc/proto-loader": "catalog:",
     "bullmq": "catalog:",
     "discord.js": "catalog:",
     "fastify": "catalog:",

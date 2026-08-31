@@ -234,12 +234,6 @@ importers:
       '@discord-meeting/voicetext-adapter':
         specifier: workspace:*
         version: link:../../packages/voicetext-adapter
-      '@grpc/grpc-js':
-        specifier: 'catalog:'
-        version: 1.14.4
-      '@grpc/proto-loader':
-        specifier: 'catalog:'
-        version: 0.8.1
       bullmq:
         specifier: 'catalog:'
         version: 5.81.3(supports-color@7.2.0)
@@ -451,6 +445,12 @@ importers:
       '@discord-meeting/meeting-core':
         specifier: workspace:*
         version: link:../meeting-core
+      '@discord-meeting/postgres-adapter':
+        specifier: workspace:*
+        version: link:../postgres-adapter
+      '@discord-meeting/subscription-runtime-adapter':
+        specifier: workspace:*
+        version: link:../subscription-runtime-adapter
       '@huggingface/tokenizers':
         specifier: 'catalog:'
         version: 0.1.3
@@ -458,12 +458,6 @@ importers:
         specifier: file:../../vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz
         version: file:vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz
     devDependencies:
-      '@discord-meeting/postgres-adapter':
-        specifier: workspace:*
-        version: link:../postgres-adapter
-      '@discord-meeting/subscription-runtime-adapter':
-        specifier: workspace:*
-        version: link:../subscription-runtime-adapter
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
@@ -656,6 +650,12 @@ importers:
       '@discord-meeting/meeting-core':
         specifier: workspace:*
         version: link:../meeting-core
+      '@grpc/grpc-js':
+        specifier: 'catalog:'
+        version: 1.14.4
+      '@grpc/proto-loader':
+        specifier: 'catalog:'
+        version: 0.8.1
       zod:
         specifier: 'catalog:'
         version: 4.4.3

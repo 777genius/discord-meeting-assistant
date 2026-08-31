@@ -1,4 +1,4 @@
-import type { JsonObject } from "@discord-meeting/subscription-runtime-adapter";
+import type { JsonObject } from "./subscription-runtime-contract.js";
 
 export function recordValue(value: unknown, field: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {

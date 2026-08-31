@@ -23,8 +23,12 @@ if (operation === "prepare") {
   manifest.exports["./quality-campaign"].types = "./dist/quality-campaign/index.d.ts";
   manifest.exports["./quality-campaign/cli"].types =
     "./dist/quality-campaign/production-cli.d.ts";
+  manifest.exports["./quality-campaign/canonical-chain"].types =
+    "./dist/quality-campaign/production-canonical-question-chain.d.ts";
   manifest.optionalDependencies = {
     "@discord-meeting/meeting-core": "0.1.0",
+    "@discord-meeting/postgres-adapter": "0.1.0",
+    "@discord-meeting/subscription-runtime-adapter": "0.1.0",
     "@huggingface/tokenizers": "0.1.3",
     "@infinity-context/sdk": "0.2.1",
   };

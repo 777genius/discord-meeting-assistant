@@ -3,7 +3,7 @@ import type {
   SubscriptionRuntimeFailureCode,
   SubscriptionRuntimeHealthResult,
   SubscriptionRuntimeTaskResult,
-} from "@discord-meeting/subscription-runtime-adapter";
+} from "./subscription-runtime-contract.js";
 
 import { arrayValue, booleanValue, enumValue, integerValue, jsonObject, optionalString,
   recordValue, requiredString } from "./grpc-value-readers.js";

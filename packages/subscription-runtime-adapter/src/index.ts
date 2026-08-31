@@ -9,6 +9,13 @@ export {
 } from "./attestation.js";
 export { canonicalJsonSha256 } from "./canonical-json.js";
 export {
+  assertGrpcQualifiedGroundedAnswerAdapter,
+  createGrpcQualifiedGroundedAnswerAdapter,
+  GrpcSubscriptionRuntimeTransport,
+} from "./grpc-transport.js";
+export { fromGrpcTaskResponse, toGrpcTaskRequest } from
+  "./subscription-runtime-grpc-mapping.js";
+export {
   buildSubscriptionRuntimeConversationRequest,
   type SubscriptionRuntimeConversationRequest,
   type SubscriptionRuntimeConversationRequestOptions,

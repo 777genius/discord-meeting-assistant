@@ -24,7 +24,7 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=dependencies /app/apps/subscription-runtime-sidecar/node_modules ./apps/subscription-runtime-sidecar/node_modules
 COPY --from=dependencies /app/packages/subscription-runtime-adapter/node_modules ./packages/subscription-runtime-adapter/node_modules
 COPY apps/subscription-runtime-sidecar ./apps/subscription-runtime-sidecar
-COPY apps/meeting-platform/proto/agent_runtime.proto ./apps/meeting-platform/proto/agent_runtime.proto
+COPY packages/subscription-runtime-adapter/proto/agent_runtime.proto ./packages/subscription-runtime-adapter/proto/agent_runtime.proto
 COPY --chown=10001:10001 infra/subscription-runtime/audited-*.mjs /opt/subscription-runtime/
 COPY packages/subscription-runtime-adapter ./packages/subscription-runtime-adapter
 COPY packages/meeting-core ./packages/meeting-core
