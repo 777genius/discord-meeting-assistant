@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
   },
+  "files": ["dist", "package.json"],
   "scripts": {
+    "build": "tsc --project tsconfig.build.json --pretty false",
     "check": "pnpm run typecheck && pnpm run test",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"

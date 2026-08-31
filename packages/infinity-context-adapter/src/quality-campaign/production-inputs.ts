@@ -22,6 +22,7 @@ export interface ProductionOperatorConfiguration {
   readonly cleanupPlanPath: string;
   readonly concurrency: number;
   readonly deletionAuthorityPath: string;
+  readonly executionCorpusPath: string;
   readonly holdoutAuthorityPath: string;
   readonly holdoutCleanupPlanPath: string;
   readonly holdoutInputPath: string;
@@ -53,7 +54,7 @@ Promise<ProductionOperatorConfiguration> {
   const keys = ["absenceAuthorityPath", "adjudicationAuthorityPaths", "admissionAuthorityPath",
     "authorityPolicyPath",
     "authoritativeEvidenceInventoryPath", "checkpointRoot", "cleanupPlanPath", "concurrency",
-    "deletionAuthorityPath", "holdoutAuthorityPath", "holdoutCleanupPlanPath",
+    "deletionAuthorityPath", "executionCorpusPath", "holdoutAuthorityPath", "holdoutCleanupPlanPath",
     "holdoutInputPath", "holdoutJournalRoot", "journalRoot", "mainManifestPath",
     "releaseAuthorityPublicKeyPath", "releaseRootPath", "repetitionAuthorityPath",
     "reviewerAuthorityPaths",

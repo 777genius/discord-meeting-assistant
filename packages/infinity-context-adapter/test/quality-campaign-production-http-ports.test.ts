@@ -110,13 +110,21 @@ async function httpFixture() {
   await writeFile(keyPath, Buffer.alloc(32, 1).toString("base64"));
   await writeFile(holdoutKeyPath, Buffer.alloc(32, 2).toString("base64"));
   const authority = (name: string) => ({ keyId: name, publicKeyPath: publicKeyPaths[name]! });
+  const canonicalExecution = { answerExecutionBindingPath: keyPath,
+    answerJournalRoot: join(root, "answer-journal"), artifactKeyId: "artifact-key",
+    artifactKeyPath: keyPath, artifactRoot: join(root, "canonical-artifacts"),
+    expectedRuntimeLauncherSha256: sha256("launcher"), infinityBaseUrl: endpoint,
+    infinityCapabilityPath: keyPath, infinityTokenPath: tokenPath, postgresUrlPath: tokenPath,
+    requestTimeoutMs: 100, retrievalJournalRoot: join(root, "retrieval-journal"),
+    runtimeAddress: "127.0.0.1:1", runtimeTokenPath: tokenPath,
+    topologyAuthority: authority("provider"), topologyKeyPath: keyPath, topologyPath: keyPath };
   const connectionsPath = join(root, "connections.json");
   await writeFile(connectionsPath, JSON.stringify({ absenceAuthority: authority("absence"),
     absenceEndpoint: `${endpoint}/absence`, adjudicators: [authority("provider"),
       authority("holdout"), authority("evidence")].map((item) => ({ ...item, endpoint })),
     answerEndpoint: endpoint, artifactCustody: { envelopeRoot: root,
       keyCustodySha256: sha256("custody"), keyId: "artifact-key", keyPath },
-    capabilityEndpoint: endpoint, credentialPath: tokenPath,
+    canonicalExecution, capabilityEndpoint: endpoint, credentialPath: tokenPath,
     deletionAuthority: authority("deletion"), deletionEndpoint: `${endpoint}/deletion`,
     evidenceAuthority: authority("evidence"), evidenceEndpoint: endpoint,
     evidenceKeyId: "evidence-key", evidenceKeyPath: keyPath,
@@ -126,7 +134,7 @@ async function httpFixture() {
     holdoutProviderResultAuthority: authority("holdout"), holdoutRetrievalEndpoint: endpoint,
     providerResultAuthority: authority("provider"), rawOutcomeEndpoint: endpoint,
     releaseObservationEndpoint: endpoint, retrievalEndpoint: endpoint,
-    schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v3" }));
+    schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v4" }));
   const answerAttempt = attemptIdentity({ callKind: "answer", callOrdinal: 0,
     campaignRootSha256: sha256("campaign"), questionDigestSha256: sha256("question"),
     questionId: "question-1", releaseRootSha256: sha256("release"), repetition: 1,

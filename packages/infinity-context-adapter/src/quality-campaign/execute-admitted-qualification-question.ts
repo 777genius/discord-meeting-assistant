@@ -80,6 +80,33 @@ export interface QualificationQuestionOutcomePort {
   record(attemptId: string, outcome: QualificationQuestionOutcome): Promise<void>;
 }
 
+/** Scheduler-facing application boundary. Concrete SDK/database/runtime selection stays in composition. */
+export interface QualificationQuestionExecutorPort {
+  execute(input: QualificationExecutionPacket, options: QualificationQuestionExecutionContext):
+    Promise<QualificationQuestionOutcome>;
+}
+
+/** Creates one isolated provider-effect slice for one stable campaign attempt. */
+export interface QualificationQuestionExecutorFactoryPort {
+  create(input: { readonly attemptId: string; readonly campaignRootSha256: string;
+    readonly answerProcessIdentitySha256: string; readonly infinityCapabilitySha256: string;
+    readonly mapperSha256: string;
+    readonly questionId: string; readonly repetition: 1 | 2 | 3;
+    readonly releaseRootSha256: string;
+    readonly reservation: QualificationExternalEffectReservationPort;
+    readonly spendReservationSha256: string; readonly tokenizerSha256: string }):
+    Promise<QualificationQuestionExecutorPort>;
+  recover(input: { readonly attemptId: string; readonly campaignRootSha256: string;
+    readonly questionId: string; readonly repetition: 1 | 2 | 3 }):
+    Promise<QualificationQuestionOutcome | "outcome_unknown" | null>;
+}
+
+export interface QualificationExternalEffectReservationPort {
+  reserve(input: { readonly effectKind: "answer" | "capability" | "retrieval";
+    readonly payloadSha256: string; readonly requestedEncryptedBytes: number;
+    readonly requestedTokens: number }): Promise<void>;
+}
+
 /**
  * Consumer-owned application use case for exactly one admitted question.
  * Gold packets are deliberately absent from this module and cannot enter execute.
@@ -205,4 +232,30 @@ function freezeOutcome(input: QualificationQuestionOutcome): QualificationQuesti
       Object.freeze(input.retrievalCandidates.map((candidate) => Object.freeze({ ...candidate,
         contributions: Object.freeze(candidate.contributions.map((item) => Object.freeze({ ...item }))) }))),
     selectedTurns: Object.freeze(input.selectedTurns.map((turn) => Object.freeze({ ...turn }))) });
+}
+
+/** Authenticated persistence decoder used only when resuming a durable canonical attempt. */
+export function decodeQualificationQuestionOutcome(value: unknown): QualificationQuestionOutcome {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("persisted qualification outcome is invalid");
+  }
+  const record = value as Record<string, unknown>;
+  const required = ["citations", "claims", "rawRetrievalResponseSha256",
+    "retrievalCandidates", "selectedTurns", "status"];
+  const allowed = new Set([...required, "reason"]);
+  if (required.some((key) => !Object.hasOwn(record, key)) ||
+    Object.keys(record).some((key) => !allowed.has(key)) ||
+    !Array.isArray(record.citations) || !record.citations.every((item) => typeof item === "string") ||
+    !Array.isArray(record.claims) || !record.claims.every((item) => typeof item === "string") ||
+    !Array.isArray(record.retrievalCandidates) || !Array.isArray(record.selectedTurns) ||
+    !["abstained", "answered", "failed"].includes(String(record.status)) ||
+    !(record.rawRetrievalResponseSha256 === null || typeof record.rawRetrievalResponseSha256 ===
+      "string" && /^[a-f0-9]{64}$/u.test(record.rawRetrievalResponseSha256)) ||
+    !(record.reason === undefined || typeof record.reason === "string")) {
+    throw new Error("persisted qualification outcome is invalid");
+  }
+  const outcome = record as unknown as QualificationQuestionOutcome;
+  assertOrderedCandidates(outcome.retrievalCandidates);
+  assertEvidenceBytes(outcome.selectedTurns);
+  return freezeOutcome(outcome);
 }

@@ -77,21 +77,16 @@ describe("installed production quality-campaign CLI", () => {
 
     fixture.clock.crashAfter = null;
     expect(await fixture.cli("execute", "execute-status.json")).toBe(20);
-    expect(fixture.mainCalls).toHaveLength(3 * 240 * 3);
+    expect(fixture.mainCalls).toHaveLength(3 * 240);
     expect(new Set(fixture.mainCalls.map(({ attemptId }) => attemptId))).toHaveLength(
       fixture.mainCalls.length);
     expect(fixture.maximumProviderConcurrency).toBeGreaterThan(1);
     expect(fixture.maximumProviderConcurrency).toBeLessThanOrEqual(8);
     for (const call of fixture.mainCalls) {
-      expect(call.request.release).toEqual(fixture.release);
-      expect(call.request.providerInputContract).toEqual(QUALIFICATION_PROVIDER_INPUT_CONTRACT);
-      expect(call.request.qualificationExecutionBinding).toEqual(
-        qualificationExecutionBinding(fixture.release));
-      expect((call.request.campaignDeadlineEpochMs as number) - fixture.startedAt)
-        .toBe(72 * 60 * 60 * 1_000);
+      expect(call.attemptId).toMatch(/^sqv4-[a-f0-9]{64}$/u);
       expect(call.request.spendReservationSha256).toMatch(/^[a-f0-9]{64}$/u);
     }
-    expect(fixture.mainCalls.length - callsBeforeRestart).toBeLessThan(3 * 240 * 3);
+    expect(fixture.mainCalls.length - callsBeforeRestart).toBeLessThan(3 * 240);
 
     expect(await fixture.cli("adjudicate", "adjudicate-status.json")).toBe(20);
     expect(fixture.reviewCalls.first).toBe(720);
@@ -403,12 +398,19 @@ async function createFixture() {
     spendAuthorityPath: authorityPaths.spend, spendReservationPath: holdoutSpendPath,
     tuningEvidenceDigestsPath: holdoutTuningPath }));
   const configPath = join(root, "operator.json");
+  const executionCorpusPath = join(root, "execution-corpus.json");
+  await writeFile(executionCorpusPath, canonicalJson(custody.signed({ campaignRootSha256:
+    admitted.rootBindingSha256, packets: allQuestions.map((question) => ({ locale:
+      question.locale, questionId: question.questionId,
+      questionText: `Structural question ${question.questionId}?`,
+      scopeTopologyReference: `scope:${question.questionId}`, source: question.source })),
+    schemaVersion: "meeting_knowledge.quality_execution_corpus.v1" })));
   await writeFile(configPath, canonicalJson({ absenceAuthorityPath: authorityPaths.absence,
     adjudicationAuthorityPaths: [authorityPaths.judge1, authorityPaths.judge2,
       authorityPaths.resolver], admissionAuthorityPath: authorityPaths.custody,
     authoritativeEvidenceInventoryPath: custodyInventoryPath, authorityPolicyPath,
     checkpointRoot: join(root, "checkpoints"), cleanupPlanPath, concurrency: 8,
-    deletionAuthorityPath: authorityPaths.deletion,
+    deletionAuthorityPath: authorityPaths.deletion, executionCorpusPath,
     holdoutAuthorityPath: authorityPaths.holdoutAuthority, holdoutCleanupPlanPath, holdoutInputPath,
     holdoutJournalRoot: join(root, "holdout-journal"), journalRoot: join(root, "journal"),
     mainManifestPath: manifestPath, releaseAuthorityPublicKeyPath: releasePublicKeyPath,
@@ -511,6 +513,8 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
   const requestBytesByAttempt = new Map<string, Uint8Array>();
   const resultBytesByAttempt = new Map<string, Uint8Array>();
   const signedResultByAttempt = new Map<string, unknown>();
+  const canonicalOutcomes = new Map<string, Awaited<ReturnType<
+    QualityCampaignProductionPorts["mainExecutorFactory"]["recover"]>>>();
   let activeProviderCalls = 0; let maximumProviderConcurrency = 0;
   let ambiguousNext = false;
   const exchange = (collection: ProviderCall[], resultSigner: ReturnType<typeof signer>) =>
@@ -876,6 +880,53 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         questionReviewReceipts: [{}, {}], repetitionEvidence: [] };})() },
     holdoutProvider: { answer: holdoutExchange, capability: holdoutExchange,
       resultAuthority: input.holdoutProvider, retrieval: holdoutExchange },
+    mainExecutorFactory: { create: async (binding) => ({ execute: async (packet) => {
+      activeProviderCalls += 1;
+      maximumProviderConcurrency = Math.max(maximumProviderConcurrency, activeProviderCalls);
+      try {
+        await new Promise<void>((resolve) => {setImmediate(resolve);});
+        if (ambiguousNext) {
+          ambiguousNext = false; canonicalOutcomes.set(binding.attemptId, "outcome_unknown");
+          throw new Error("grounded answer external effect is unknown and terminal");
+        }
+        const question = input.questions.find(({ questionId }) => questionId === packet.questionId)!;
+        const request = { campaignDeadlineEpochMs: 72 * 60 * 60 * 1_000,
+          campaignRootSha256: binding.campaignRootSha256,
+          providerInputContract: QUALIFICATION_PROVIDER_INPUT_CONTRACT,
+          qualificationExecutionBinding: qualificationExecutionBinding(input.release),
+          questionDigestSha256: question.questionDigestSha256, questionId: packet.questionId,
+          release: input.release, releaseRootSha256: binding.releaseRootSha256,
+          repetition: binding.repetition,
+          spendReservationSha256: binding.spendReservationSha256 };
+        for (const callKind of ["capability", "retrieval", "answer"] as const) {
+          const identity = attemptIdentity({ callKind, callOrdinal: 0,
+            campaignRootSha256: binding.campaignRootSha256,
+            questionDigestSha256: question.questionDigestSha256, questionId: packet.questionId,
+            releaseRootSha256: binding.releaseRootSha256, repetition: binding.repetition,
+            spendReservationSha256: binding.spendReservationSha256 });
+          const requestBytes = Buffer.from(canonicalJson({ ...request, callKind }));
+          const resultBytes = Buffer.from(canonicalJson({ callKind, questionId: packet.questionId,
+            schemaVersion: "meeting_knowledge.canonical_structural_result.v1" }));
+          await binding.reservation.reserve({ effectKind: callKind,
+            payloadSha256: sha256(requestBytes), requestedEncryptedBytes: 16_000,
+            requestedTokens: callKind === "answer" ? 2_048 : 1 });
+          requestBytesByAttempt.set(identity.attemptId, requestBytes);
+          resultBytesByAttempt.set(identity.attemptId, resultBytes);
+          attemptRequests.set(identity.attemptId, request);
+          signedResultByAttempt.set(identity.attemptId, input.provider.signed({ ...identity,
+            providerAccounting: qualificationProviderAccountingFixture(input.release, callKind),
+            requestDigestSha256: sha256(requestBytes), resultDigestSha256: sha256(resultBytes),
+            schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
+            state: "terminal_success" }));
+        }
+        mainCalls.push({ attemptId: binding.attemptId, questionId: packet.questionId, request });
+        const outcome = { citations: [], claims: [], rawRetrievalResponseSha256: "a".repeat(64),
+          reason: "zero_admissible_evidence", retrievalCandidates: [], selectedTurns: [],
+          status: "abstained" as const };
+        canonicalOutcomes.set(binding.attemptId, outcome);
+        return outcome;
+      } finally {activeProviderCalls -= 1;}
+    } }), recover: async ({ attemptId }) => canonicalOutcomes.get(attemptId) ?? null },
     mainProvider: { answer: mainExchange, capability: mainExchange,
       resultAuthority: input.provider, retrieval: mainExchange },
     release: { observe: async () => input.release }, review: {

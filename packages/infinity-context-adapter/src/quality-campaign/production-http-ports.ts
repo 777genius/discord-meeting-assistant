@@ -5,6 +5,9 @@ import { digest, exactRecord, safeId } from "./canonical.js";
 import { assertAttemptIdentity, attemptIdentity, type AttemptIdentity,
   type ProviderExchangePort } from "./execution.js";
 import { createLocalEvidenceCustody } from "./production-evidence-custody.js";
+import { createProductionCanonicalExecutorFactory,
+  type ProductionCanonicalExecutionConnectionConfiguration } from
+  "./production-canonical-executor-factory.js";
 import type { QualityCampaignRelease } from "./release.js";
 import type { CampaignCallContext, CampaignProviderPorts,
   CampaignReviewEvidence, QualityCampaignProductionPorts } from "./production-ports.js";
@@ -17,6 +20,7 @@ interface HttpConnectionConfiguration {
   readonly artifactCustody: { readonly envelopeRoot: string; readonly keyCustodySha256: string;
     readonly keyId: string; readonly keyPath: string };
   readonly capabilityEndpoint: string;
+  readonly canonicalExecution: ProductionCanonicalExecutionConnectionConfiguration;
   readonly credentialPath: string;
   readonly deletionAuthority: HttpAuthority;
   readonly deletionEndpoint: string;
@@ -36,7 +40,7 @@ interface HttpConnectionConfiguration {
   readonly rawOutcomeEndpoint: string;
   readonly releaseObservationEndpoint: string;
   readonly retrievalEndpoint: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v3";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v4";
 }
 interface HttpAuthority { readonly keyId: string; readonly publicKeyPath: string }
 interface HttpReviewer extends HttpAuthority { readonly endpoint: string }
@@ -72,6 +76,8 @@ Promise<QualityCampaignProductionPorts> {
   const evidenceCustody = Object.freeze({ open: async (input: Parameters<
     typeof mainEvidenceCustody.open>[0]) => input.kind === "main" ?
       await mainEvidenceCustody.open(input) : await holdoutEvidenceCustody.open(input) });
+  let canonicalFactory: Promise<Awaited<ReturnType<
+    typeof createProductionCanonicalExecutorFactory>>> | undefined;
   return Object.freeze({
     absence: { authorityId: config.absenceAuthority.keyId,
       observe: async (input: AbsenceInput) => await requestJson(config.absenceEndpoint, token,
@@ -105,6 +111,15 @@ Promise<QualityCampaignProductionPorts> {
     evidenceCustody,
     holdoutProvider: provider(config.holdoutCapabilityEndpoint,
       config.holdoutRetrievalEndpoint, config.holdoutAnswerEndpoint, holdoutResultAuthority),
+    mainExecutorFactory: { create: async (input: Parameters<QualityCampaignProductionPorts[
+      "mainExecutorFactory"]["create"]>[0]) => {
+      canonicalFactory ??= createProductionCanonicalExecutorFactory(config.canonicalExecution);
+      return await (await canonicalFactory).create(input);
+    }, recover: async (input: Parameters<QualityCampaignProductionPorts[
+      "mainExecutorFactory"]["recover"]>[0]) => {
+      canonicalFactory ??= createProductionCanonicalExecutorFactory(config.canonicalExecution);
+      return await (await canonicalFactory).recover(input);
+    } },
     mainProvider: provider(config.capabilityEndpoint, config.retrievalEndpoint,
       config.answerEndpoint, mainResultAuthority),
     release: { observe: async (callContext: CampaignCallContext) => await requestJson(
@@ -175,7 +190,7 @@ async function requestJson(endpoint: string, token: string, body: unknown,
 async function load(path: string): Promise<HttpConnectionConfiguration> {
   const keys = ["absenceAuthority", "absenceEndpoint", "adjudicators", "answerEndpoint",
     "artifactCustody",
-    "capabilityEndpoint", "credentialPath", "deletionAuthority", "deletionEndpoint",
+    "canonicalExecution", "capabilityEndpoint", "credentialPath", "deletionAuthority", "deletionEndpoint",
     "evidenceAuthority", "evidenceEndpoint", "evidenceKeyId", "evidenceKeyPath",
     "holdoutAnswerEndpoint", "holdoutCapabilityEndpoint", "holdoutEvidenceAuthority",
     "holdoutEvidenceEndpoint", "holdoutEvidenceKeyId", "holdoutEvidenceKeyPath",
@@ -184,11 +199,12 @@ async function load(path: string): Promise<HttpConnectionConfiguration> {
     "retrievalEndpoint", "schemaVersion"];
   const record = exactRecord(JSON.parse(await readFile(absolute(path), "utf8")) as unknown,
     keys, "production connection configuration");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_http_connections.v3" ||
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_http_connections.v4" ||
     !Array.isArray(record.adjudicators) || record.adjudicators.length !== 3) {
     throw new Error("production connection configuration is invalid");
   }
   const typed = record as unknown as HttpConnectionConfiguration;
+  decodeCanonicalExecutionConfiguration(typed.canonicalExecution);
   const artifactCustody = exactRecord(typed.artifactCustody,
     ["envelopeRoot", "keyCustodySha256", "keyId", "keyPath"], "artifact custody");
   absolute(String(artifactCustody.envelopeRoot)); absolute(String(artifactCustody.keyPath));
@@ -200,6 +216,29 @@ async function load(path: string): Promise<HttpConnectionConfiguration> {
     throw new Error("deletion and absence authorities, endpoints, and keys must be distinct");
   }
   return typed;
+}
+
+function decodeCanonicalExecutionConfiguration(value:
+  ProductionCanonicalExecutionConnectionConfiguration): void {
+  const keys = ["answerExecutionBindingPath", "answerJournalRoot", "artifactKeyId",
+    "artifactKeyPath", "artifactRoot", "expectedRuntimeLauncherSha256", "infinityBaseUrl",
+    "infinityCapabilityPath", "infinityTokenPath", "postgresUrlPath", "requestTimeoutMs",
+    "retrievalJournalRoot", "runtimeAddress", "runtimeTokenPath", "topologyAuthority",
+    "topologyKeyPath", "topologyPath"];
+  const record = exactRecord(value, keys, "canonical execution connection configuration");
+  const topologyAuthority = exactRecord(record.topologyAuthority, ["keyId", "publicKeyPath"],
+    "scope topology authority");
+  absolute(String(topologyAuthority.publicKeyPath));
+  for (const [key, item] of Object.entries(record)) {
+    if ((key.endsWith("Path") || key.endsWith("Root")) && typeof item === "string") {
+      absolute(item);
+    }
+  }
+  digest(record.expectedRuntimeLauncherSha256, "expected runtime launcher");
+  if (!Number.isSafeInteger(record.requestTimeoutMs) || Number(record.requestTimeoutMs) < 1 ||
+    Number(record.requestTimeoutMs) > 2_000) {
+    throw new Error("canonical execution request timeout is invalid");
+  }
 }
 
 async function authority(value: HttpAuthority) {

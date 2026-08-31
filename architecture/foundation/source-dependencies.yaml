@@ -317,6 +317,8 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-question-chain.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-execution-evidence.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-executor-factory.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-scheduler.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-execution-corpus-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-gold-corpus-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
@@ -337,6 +339,8 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-question-chain.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-execution-evidence.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-executor-factory.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-scheduler.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-execution-corpus-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-gold-corpus-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
@@ -349,6 +353,8 @@ boundaries:
         - "@discord-meeting/meeting-core"
         - "@discord-meeting/postgres-adapter"
         - "@discord-meeting/subscription-runtime-adapter"
+        - "@infinity-context/sdk"
+        - pg
       builtins:
         - node:crypto
         - node:fs/promises

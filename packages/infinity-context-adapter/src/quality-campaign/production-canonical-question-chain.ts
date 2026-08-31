@@ -26,6 +26,7 @@ import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval
 import type {
   QualificationCanonicalTurn,
   QualificationQuestionExecutionContext,
+  QualificationExternalEffectReservationPort,
   QualificationQuestionOutcome,
   QualificationExecutionPacket,
   QualificationQuestionAnswerPort,
@@ -75,6 +76,7 @@ export function createProductionCanonicalQuestionChain(input: {
   readonly journal: QualificationCreateOnlyJournalPort;
   readonly preparer: PrepareFocusedLocatorRetrievalV2Request;
   readonly retrieval: InfinityContextRetrievalV2Adapter;
+  readonly spend: QualificationExternalEffectReservationPort;
   readonly store: PostgresHistoricalMemoryStore;
   readonly topology: QualificationScopeTopologyPort;
 }): { readonly answer: QualificationQuestionAnswerPort;
@@ -107,7 +109,12 @@ export function createProductionCanonicalQuestionChain(input: {
       }
       assertCanonicalRequest(prepared, packet.questionText);
       const attemptId = options.attemptId;
-      const payloadSha256 = sha256Json(prepared);
+      const payloadSha256 = sha256Json({ effectKind: "retrieval", request: prepared });
+      await input.spend.reserve({ effectKind: "capability",
+        payloadSha256: sha256Json({ effectKind: "capability", request: prepared }),
+        requestedEncryptedBytes: 16_000, requestedTokens: 1 });
+      await input.spend.reserve({ effectKind: "retrieval", payloadSha256,
+        requestedEncryptedBytes: 16_000, requestedTokens: 1 });
       await input.journal.reserve({ attemptId, payloadSha256, phase: "retrieval" });
       let result;
       try {result = await input.retrieval.retrieve(prepared, options);}
@@ -222,7 +229,9 @@ export function createProductionCanonicalQuestionChain(input: {
         input.audit.seal({ attemptId, kind: "answer_repair_model_surface",
           plaintext: utf8(prepared.modelInputs.repair) }),
       ]);
-      const payloadSha256 = sha256Json(prepared.request);
+      const payloadSha256 = sha256Json({ effectKind: "answer", request: prepared.request });
+      await input.spend.reserve({ effectKind: "answer", payloadSha256,
+        requestedEncryptedBytes: 16_000, requestedTokens: 2_048 });
       await input.journal.reserve({ attemptId, payloadSha256, phase: "answer" });
       const generated = await input.answer.generate(groundedRequest, options);
       const observation = input.answer.takeQualificationObservation(attemptId);

@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { createProductionCanonicalExecutionEvidence } from
+import { createProductionCanonicalExecutionEvidence, recoverProductionCanonicalOutcome } from
   "../src/quality-campaign/production-canonical-execution-evidence.js";
 
 const attemptId = `sqv4-${"1".repeat(64)}`;
@@ -33,6 +33,22 @@ describe("canonical execution evidence durability", () => {
     await expect(reopened.journal.reserve({ attemptId, payloadSha256: "3".repeat(64),
       phase: "answer" })).rejects.toThrow("cannot be retried");
   });
+
+  it("recovers an authenticated normalized outcome without reopening either provider effect",
+    async () => {
+      const fixture = await evidenceFixture();
+      const outcome = { citations: [], claims: [], rawRetrievalResponseSha256: "4".repeat(64),
+        reason: "zero_admissible_evidence", retrievalCandidates: [], selectedTurns: [],
+        status: "abstained" as const };
+      await fixture.evidence.audit.seal({ attemptId, kind: "answer_normalized_outcome",
+        plaintext: new TextEncoder().encode(JSON.stringify(outcome)) });
+      await expect(recoverProductionCanonicalOutcome({ answerJournalRoot:
+        fixture.input.answerJournalRoot, artifactKey: fixture.input.artifactKey,
+        artifactRoot: fixture.input.artifactRoot, attemptId, questionId: fixture.input.questionId,
+        repetition: fixture.input.repetition, retrievalJournalRoot:
+        fixture.input.retrievalJournalRoot, rootBindingSha256 }))
+        .resolves.toEqual(outcome);
+    });
 });
 
 async function evidenceFixture() {

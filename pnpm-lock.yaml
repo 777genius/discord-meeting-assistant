@@ -457,6 +457,9 @@ importers:
       '@infinity-context/sdk':
         specifier: file:../../vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz
         version: file:vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz
+      pg:
+        specifier: 'catalog:'
+        version: 8.22.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -464,9 +467,6 @@ importers:
       '@types/pg':
         specifier: 'catalog:'
         version: 8.20.1
-      pg:
-        specifier: 'catalog:'
-        version: 8.22.0
       tsx:
         specifier: 'catalog:'
         version: 4.23.1

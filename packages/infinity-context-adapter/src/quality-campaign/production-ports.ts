@@ -3,6 +3,8 @@ import type { ProviderExchangePort } from "./execution.js";
 import type { QualityCampaignRelease } from "./release.js";
 import type { ArtifactCustodyPort } from "./retention.js";
 import type { ExactCampaignEvidence } from "./production-evidence.js";
+import type { QualificationQuestionExecutorFactoryPort } from
+  "./execute-admitted-qualification-question.js";
 import type { PROTECTED_SOURCE_KINDS } from "./cleanup-evidence.js";
 
 export interface CampaignCallContext {
@@ -97,6 +99,7 @@ export interface QualityCampaignProductionPorts {
   readonly evidence: CampaignExactEvidencePort;
   readonly evidenceCustody: CampaignEvidenceCustodyPort;
   readonly holdoutProvider: CampaignProviderPorts;
+  readonly mainExecutorFactory: QualificationQuestionExecutorFactoryPort;
   readonly mainProvider: CampaignProviderPorts;
   readonly release: ObservedProductionReleasePort;
   readonly review: CampaignReviewPorts;

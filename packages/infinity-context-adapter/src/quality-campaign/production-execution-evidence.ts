@@ -1,9 +1,7 @@
 import type { CampaignQuestion } from "./admission.js";
-import { sha256 } from "./canonical.js";
+import { canonicalJson, sha256 } from "./canonical.js";
 import { attemptIdentity } from "./execution.js";
-import { bindExactExecutionEvidence } from "./production-evidence.js";
 import type { QualityCampaignProductionPorts } from "./production-ports.js";
-import { loadScheduledExactOutcomes } from "./production-scheduler.js";
 import type { QualityCampaignAuthorityPolicy, QualityCampaignRelease } from "./release.js";
 
 interface ExecutionEvidenceInput {
@@ -24,20 +22,39 @@ export async function loadHoldoutExecutionEvidence(input: ExecutionEvidenceInput
 
 async function loadExecutionEvidence(input: ExecutionEvidenceInput, kind: "holdout" | "main") {
   const attemptIds = answerAttemptIds(input);
-  const executions = await loadScheduledExactOutcomes({ campaignDeadlineEpochMs:
-    input.deadlineEpochMs, campaignRootSha256: input.campaignRootSha256,
-    journalRoot: input.journalRoot, policy: input.policy,
-    questions: input.questions, releaseRootSha256: input.releaseRootSha256,
-    release: input.release,
-    ...(kind === "holdout" ? { resultAuthorityRole: "holdout_provider_result" as const } : {}),
-    spendReservationSha256ByRepetition: input.spendReservationSha256ByRepetition });
   return await withEvidenceContext(input.deadlineEpochMs, async (context) => {
     const delivery = await input.ports.evidence[kind]({ attemptIds, campaignRootSha256:
-      input.campaignRootSha256, context, executionChainSha256: sha256(executions) });
+      input.campaignRootSha256, context, executionChainSha256: sha256({ attemptIds,
+        campaignRootSha256: input.campaignRootSha256,
+        schemaVersion: "meeting_knowledge.canonical_quality_execution_set.v1" }) });
     const evidence = await input.ports.evidenceCustody.open({ attemptIds, campaignRootSha256:
       input.campaignRootSha256, delivery, kind, releaseRootSha256: input.releaseRootSha256 });
-    return bindExactExecutionEvidence(evidence, executions);
+    assertExternalExecutionEvidence(input, attemptIds, evidence);
+    return evidence;
   });
+}
+
+function assertExternalExecutionEvidence(input: ExecutionEvidenceInput,
+  attemptIds: readonly string[], evidence: Awaited<ReturnType<
+    QualityCampaignProductionPorts["evidenceCustody"]["open"]>>): void {
+  const expected = new Map(([1, 2, 3] as const).flatMap((repetition) =>
+    input.questions.map((question) => {
+      const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+        campaignRootSha256: input.campaignRootSha256,
+        questionDigestSha256: question.questionDigestSha256, questionId: question.questionId,
+        releaseRootSha256: input.releaseRootSha256, repetition,
+        spendReservationSha256: input.spendReservationSha256ByRepetition[repetition] });
+      return [identity.attemptId, identity] as const;
+    })));
+  if (expected.size !== attemptIds.length || evidence.outcomes.length !== attemptIds.length ||
+    new Set(evidence.outcomes.map(({ attemptId }) => attemptId)).size !== evidence.outcomes.length ||
+    evidence.outcomes.some((outcome) => {
+      const identity = expected.get(outcome.attemptId);
+      return identity === undefined || canonicalJson(identity) !== canonicalJson(outcome.identity) ||
+        outcome.campaignRootSha256 !== input.campaignRootSha256;
+    })) {
+    throw new Error("externally authenticated evidence differs from the canonical execution set");
+  }
 }
 
 function answerAttemptIds(input: ExecutionEvidenceInput): readonly string[] {

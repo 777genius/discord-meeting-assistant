@@ -33,6 +33,7 @@ if (operation === "prepare") {
     "@discord-meeting/subscription-runtime-adapter": "0.1.0",
     "@huggingface/tokenizers": "0.1.3",
     "@infinity-context/sdk": "0.2.1",
+    "pg": "8.22.0",
   };
   const packed = JSON.stringify(manifest);
   if (packed.includes("workspace:") || packed.includes("catalog:")) {

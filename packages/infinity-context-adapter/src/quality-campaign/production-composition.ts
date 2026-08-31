@@ -23,6 +23,7 @@ import { loadCanonicalCustody, loadProductionAuthority, loadProductionAuthorityP
   type ProductionOperatorConfiguration } from "./production-inputs.js";
 import type { QualityCampaignProductionPorts } from "./production-ports.js";
 import { executeProductionMain } from "./production-main-execution.js";
+import { loadProductionExecutionCorpus } from "./production-execution-corpus-custody.js";
 
 export type ProductionCampaignCommand = "adjudicate" | "cleanup-absence" | "execute" |
   "adjudicate-resume" | "final-admission" | "holdout-adjudicate" | "holdout-cleanup" | "holdout-execute" |
@@ -55,6 +56,9 @@ Promise<ProductionCompositionResult> {
     manifestPath: config.mainManifestPath, nowEpochMs: input.ports.clock.nowEpochMs(),
     releaseRootSha256: verifiedRelease.releaseRootSha256,
     reviewerAuthorityKeyIds: [reviewerAuthorities[0].keyId, reviewerAuthorities[1].keyId] });
+  const executionPackets = await loadProductionExecutionCorpus({ authority: custodyAuthority,
+    campaignRootSha256: admitted.rootBindingSha256, expectedQuestionCount: admitted.questions.length,
+    executionPacketPath: config.executionCorpusPath });
   const custody = await loadCanonicalCustody({ authority: custodyAuthority,
     mainInputRootSha256: admitted.rootBindingSha256,
     path: config.authoritativeEvidenceInventoryPath, questions: admitted.questions,
@@ -77,9 +81,11 @@ Promise<ProductionCompositionResult> {
   if (input.command === "execute" || input.command === "resume") {
     const scheduled = await executeProductionMain({ campaignRootSha256:
       admitted.rootBindingSha256, clock: input.ports.clock, concurrency: config.concurrency,
-      deadlineEpochMs: deadline.campaignDeadlineEpochMs, journalRoot: config.journalRoot,
-      policy, ports: input.ports.mainProvider, questions: admitted.questions,
-      release: pinnedRelease, reservations, spendDocuments });
+      deadlineEpochMs: deadline.campaignDeadlineEpochMs, executionPackets,
+      executorFactory: input.ports.mainExecutorFactory, journalRoot: config.journalRoot,
+      policy, questions: admitted.questions,
+      release: verifiedRelease.release, releaseRootSha256: verifiedRelease.releaseRootSha256,
+      reservations });
     const receipt = createOperatorSafeReceipt(admitted.rootBindingSha256, {
       completedOutcomes: scheduled.completedOutcomes, deadlineEpochMs: deadline.campaignDeadlineEpochMs,
       maximumObservedConcurrency: scheduled.maximumObservedConcurrency,

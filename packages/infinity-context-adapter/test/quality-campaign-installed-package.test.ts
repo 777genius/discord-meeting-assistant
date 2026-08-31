@@ -248,18 +248,28 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
       mainKeyNamespace: "main:packed", protectedEvidence, releaseRootSha256, schemaVersion:
       "meeting_knowledge.semantic_quality_authoritative_custody.v2", tuningEvidenceDigests:
       [d("tuning")] })));
-  const tokenPath = join(root, "token"); await writeFile(tokenPath, "local-token");
+  const tokenPath = join(root, "token"); await writeFile(tokenPath, "local-test-token-123");
   const evidenceKeyPath = join(root, "evidence.key"); const holdoutEvidenceKeyPath = join(root,
     "holdout-evidence.key"); await writeFile(evidenceKeyPath, Buffer.alloc(32, 1).toString("base64"));
   await writeFile(holdoutEvidenceKeyPath, Buffer.alloc(32, 2).toString("base64"));
   const endpoint = `${base}/unused`; const providerEndpoint = `${base}/provider`;
+  const canonicalExecution = { answerExecutionBindingPath: releaseRootPath,
+    answerJournalRoot: join(root, "canonical-answer-journal"), artifactKeyId: "retention-key",
+    artifactKeyPath: evidenceKeyPath, artifactRoot: join(root, "canonical-artifacts"),
+    expectedRuntimeLauncherSha256: (release as QualityCampaignRelease).answerProcessIdentitySha256,
+    infinityBaseUrl: base, infinityCapabilityPath: releaseRootPath, infinityTokenPath: tokenPath,
+    postgresUrlPath: tokenPath, requestTimeoutMs: 100,
+    retrievalJournalRoot: join(root, "canonical-retrieval-journal"),
+    runtimeAddress: "127.0.0.1:1", runtimeTokenPath: tokenPath,
+    topologyAuthority: publicHttp(authorities["main-result"]!, root),
+    topologyKeyPath: evidenceKeyPath, topologyPath: releaseRootPath };
   const connectionsPath = join(root, "connections.json");
   await writeFile(connectionsPath, canonicalJson({ absenceAuthority: publicHttp(authorities.absence!, root),
     absenceEndpoint: `${base}/absence`, adjudicators: ["judge1", "judge2", "resolver"].map((name) => ({
       ...publicHttp(authorities[name]!, root), endpoint })), answerEndpoint: providerEndpoint,
     artifactCustody: { envelopeRoot: root, keyCustodySha256:
       fingerprint(authorities.custody!.publicKeyPem), keyId: "retention-key",
-      keyPath: evidenceKeyPath }, capabilityEndpoint: providerEndpoint,
+      keyPath: evidenceKeyPath }, canonicalExecution, capabilityEndpoint: providerEndpoint,
     credentialPath: tokenPath, deletionAuthority: publicHttp(authorities.deletion!, root),
     deletionEndpoint: `${base}/deletion`, evidenceAuthority: publicHttp(authorities.evidence!, root),
     evidenceEndpoint: endpoint, evidenceKeyId: "main-key", evidenceKeyPath,
@@ -270,14 +280,21 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     holdoutRetrievalEndpoint: endpoint,
     providerResultAuthority: publicHttp(authorities["main-result"]!, root),
     rawOutcomeEndpoint: `${base}/review`, releaseObservationEndpoint: `${base}/release`, retrievalEndpoint:
-    providerEndpoint, schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v3" }));
+    providerEndpoint, schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v4" }));
   const unused = join(root, "unused.json"); const configPath = join(root, "operator.json");
+  const executionCorpusPath = join(root, "execution-corpus.json");
+  await writeFile(executionCorpusPath, canonicalJson(custody.signed({ campaignRootSha256:
+    mainRootSha256, packets: questions.map((question) => ({ locale: question.locale,
+      questionId: question.questionId, questionText: `Packed question ${question.questionId}?`,
+      scopeTopologyReference: `scope:${question.questionId}`, source: question.source })),
+    schemaVersion: "meeting_knowledge.quality_execution_corpus.v1" })));
   await writeFile(configPath, canonicalJson({ absenceAuthorityPath: authorityPaths.absence,
     adjudicationAuthorityPaths: [authorityPaths.judge1, authorityPaths.judge2,
       authorityPaths.resolver], admissionAuthorityPath: authorityPaths.custody,
     authoritativeEvidenceInventoryPath: custodyPath, authorityPolicyPath,
     checkpointRoot: join(root, "checkpoints"),
     cleanupPlanPath: unused, concurrency: 2, deletionAuthorityPath: authorityPaths.deletion,
+    executionCorpusPath,
     holdoutAuthorityPath: authorityPaths.holdout,
     holdoutCleanupPlanPath: unused, holdoutInputPath: unused, holdoutJournalRoot: join(root,
       "holdout-journal"), journalRoot: join(root, "journal"), mainManifestPath:

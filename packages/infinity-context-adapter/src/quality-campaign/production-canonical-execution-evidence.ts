@@ -6,6 +6,8 @@ import { SemanticQualityV4EncryptedArtifactStore,
   type SemanticQualityV4ArtifactKind } from "./canonical-execution-evidence-store.js";
 import type { QualificationCreateOnlyJournalPort, QualificationEncryptedAuditPort } from
   "./production-canonical-question-chain.js";
+import { decodeQualificationQuestionOutcome, type QualificationQuestionOutcome } from
+  "./execute-admitted-qualification-question.js";
 
 type Phase = "answer" | "retrieval";
 
@@ -44,12 +46,51 @@ export function createProductionCanonicalExecutionEvidence(input: {
     seal: async ({ attemptId, kind, plaintext }: Parameters<
       QualificationEncryptedAuditPort["seal"]>[0]) => {
       assertAttempt(attemptId, input.attemptId);
-      await artifacts.sealCreateOnly({ artifactKind: kind as SemanticQualityV4ArtifactKind,
+      const receipt = await artifacts.sealCreateOnly({ artifactKind: kind as SemanticQualityV4ArtifactKind,
         attemptId, key: input.artifactKey, keyId: input.artifactKeyId, plaintext,
         rootBindingSha256: input.rootBindingSha256 });
+      if (kind === "answer_normalized_outcome") {
+        const outcomeDirectory = join(resolve(input.artifactRoot), "outcomes");
+        await ensureDirectory(outcomeDirectory);
+        await writeCreateOnly(join(outcomeDirectory, `${attemptId}.json`), canonicalJson({
+          attemptId, envelopeSha256: receipt.envelopeSha256,
+          plaintextSha256: receipt.plaintextSha256, rootBindingSha256: input.rootBindingSha256,
+          schemaVersion: "meeting_knowledge.canonical_quality_outcome_pointer.v1" }));
+      }
     },
   });
   return Object.freeze({ audit, journal });
+}
+
+export async function recoverProductionCanonicalOutcome(input: {
+  readonly answerJournalRoot: string; readonly artifactKey: Uint8Array;
+  readonly artifactRoot: string; readonly attemptId: string; readonly questionId: string;
+  readonly repetition: 1 | 2 | 3; readonly retrievalJournalRoot: string;
+  readonly rootBindingSha256: string;
+}): Promise<QualificationQuestionOutcome | "outcome_unknown" | null> {
+  assertBinding(input);
+  const pointerPath = join(resolve(input.artifactRoot), "outcomes", `${input.attemptId}.json`);
+  try {
+    const pointer = JSON.parse(await readFile(pointerPath, "utf8")) as Record<string, unknown>;
+    if (pointer.attemptId !== input.attemptId ||
+      pointer.rootBindingSha256 !== input.rootBindingSha256 ||
+      pointer.schemaVersion !== "meeting_knowledge.canonical_quality_outcome_pointer.v1" ||
+      typeof pointer.envelopeSha256 !== "string") {
+      throw new Error("canonical normalized outcome pointer is invalid");
+    }
+    const artifacts = new SemanticQualityV4EncryptedArtifactStore(input.artifactRoot);
+    const plaintext = await artifacts.open({ envelopeSha256: pointer.envelopeSha256,
+      key: input.artifactKey });
+    return decodeQualificationQuestionOutcome(JSON.parse(Buffer.from(plaintext).toString("utf8")));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {throw error;}
+  }
+  for (const root of [input.answerJournalRoot, input.retrievalJournalRoot]) {
+    if (await exists(join(resolve(root), input.attemptId, "provider_reserved.json"))) {
+      return "outcome_unknown";
+    }
+  }
+  return null;
 }
 
 class CanonicalPhaseJournal {

@@ -64,6 +64,7 @@ async function appendDurableClaim(path: string, line: string): Promise<void> {
 async function readBudgetClaims(path: string, spendReservationSha256: string,
   campaignRootSha256: string): Promise<readonly BudgetClaim[]> {
   const text = await readCompleteLedger(path);
+  if (text === "") {return Object.freeze([]);}
   return Object.freeze(text.slice(0, -1).split("\n").map((line) => {
     let value: unknown;
     try {value = JSON.parse(line) as unknown;} catch {throw new Error("budget claim is not JSON");}
@@ -87,7 +88,12 @@ async function readBudgetClaims(path: string, spendReservationSha256: string,
 
 async function readCompleteLedger(path: string): Promise<string> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const text = (await readFile(path)).toString("utf8");
+    let text: string;
+    try {text = (await readFile(path)).toString("utf8");}
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {return "";}
+      throw error;
+    }
     if (text.endsWith("\n")) {return text;}
     await new Promise<void>((resolve) => {setImmediate(resolve);});
   }
