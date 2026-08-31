@@ -25,6 +25,8 @@ import { assertConstructedHmacHistoricalOpaqueIds,
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
 import type {
   QualificationCanonicalTurn,
+  QualificationQuestionExecutionContext,
+  QualificationQuestionOutcome,
   QualificationExecutionPacket,
   QualificationQuestionAnswerPort,
   QualificationQuestionEvidencePort,
@@ -94,7 +96,8 @@ export function createProductionCanonicalQuestionChain(input: {
     readonly turns: readonly QualificationCanonicalTurn[] }>();
 
   const retrieval: QualificationQuestionRetrievalPort = Object.freeze({
-    retrieve: async (packet, options) => {
+    retrieve: async (packet: QualificationExecutionPacket,
+      options: QualificationQuestionExecutionContext) => {
       const topology = await input.topology.resolve(packet.scopeTopologyReference,
         packet.questionId);
       const prepared = await input.preparer.prepare({ ...topology, question: packet.questionText,
@@ -141,7 +144,8 @@ export function createProductionCanonicalQuestionChain(input: {
   });
 
   const evidence: QualificationQuestionEvidencePort = Object.freeze({
-    rehydrate: async (request, options) => {
+    rehydrate: async (request: Parameters<QualificationQuestionEvidencePort["rehydrate"]>[0],
+      options: QualificationQuestionExecutionContext) => {
       const execution = state.get(options.attemptId);
       if (execution === undefined || execution.packet.scopeTopologyReference !==
         request.scopeTopologyReference || new Set(request.locatorIds).size !==
@@ -197,7 +201,8 @@ export function createProductionCanonicalQuestionChain(input: {
   });
 
   const answer: QualificationQuestionAnswerPort = Object.freeze({
-    generate: async (request, options) => {
+    generate: async (request: Parameters<QualificationQuestionAnswerPort["generate"]>[0],
+      options: QualificationQuestionExecutionContext) => {
       const execution = state.get(options.attemptId);
       if (execution === undefined || execution.binding === null ||
         JSON.stringify(execution.turns) !== JSON.stringify(request.evidence)) {
@@ -249,7 +254,7 @@ export function createProductionCanonicalQuestionChain(input: {
     },
   });
   const outcome: QualificationQuestionOutcomePort = Object.freeze({
-    record: async (attemptId, value) => {
+    record: async (attemptId: string, value: QualificationQuestionOutcome) => {
       await input.audit.seal({ attemptId, kind: "answer_normalized_outcome",
         plaintext: utf8Json(value) });
       state.delete(attemptId);

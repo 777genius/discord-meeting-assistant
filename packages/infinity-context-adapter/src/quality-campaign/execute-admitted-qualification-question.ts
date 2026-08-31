@@ -16,13 +16,13 @@ export interface QualificationRetrievalContribution {
   readonly providerLaneId: string;
   readonly providerRank: number;
   readonly queryId: string;
-  readonly rawScoreKind: string;
-  readonly rawScoreValue: string;
+  readonly rawScoreKind: string | null;
+  readonly rawScoreValue: number | null;
 }
 
 export interface QualificationRetrievalCandidate {
   readonly contributions: readonly QualificationRetrievalContribution[];
-  readonly fusedScore: string;
+  readonly fusedScore: number;
   readonly locatorId: string;
   readonly providerRank: number;
 }

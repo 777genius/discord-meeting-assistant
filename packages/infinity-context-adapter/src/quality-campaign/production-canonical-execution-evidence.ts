@@ -29,17 +29,20 @@ export function createProductionCanonicalExecutionEvidence(input: {
   });
   const artifacts = new SemanticQualityV4EncryptedArtifactStore(input.artifactRoot);
   const journal: QualificationCreateOnlyJournalPort = Object.freeze({
-    reserve: async ({ attemptId, payloadSha256, phase }) => {
+    reserve: async ({ attemptId, payloadSha256, phase }: Parameters<
+      QualificationCreateOnlyJournalPort["reserve"]>[0]) => {
       assertAttempt(attemptId, input.attemptId);
       await journals[phase].reserve(payloadSha256);
     },
-    terminal: async ({ attemptId, payloadSha256, phase, state }) => {
+    terminal: async ({ attemptId, payloadSha256, phase, state }: Parameters<
+      QualificationCreateOnlyJournalPort["terminal"]>[0]) => {
       assertAttempt(attemptId, input.attemptId);
       await journals[phase].terminal(payloadSha256, state);
     },
   });
   const audit: QualificationEncryptedAuditPort = Object.freeze({
-    seal: async ({ attemptId, kind, plaintext }) => {
+    seal: async ({ attemptId, kind, plaintext }: Parameters<
+      QualificationEncryptedAuditPort["seal"]>[0]) => {
       assertAttempt(attemptId, input.attemptId);
       await artifacts.sealCreateOnly({ artifactKind: kind as SemanticQualityV4ArtifactKind,
         attemptId, key: input.artifactKey, keyId: input.artifactKeyId, plaintext,
