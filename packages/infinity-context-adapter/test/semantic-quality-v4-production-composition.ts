@@ -25,6 +25,8 @@ import { createSemanticQualityV4ProductionPorts,
   "./semantic-quality-v4-production-ports.js";
 import { createSemanticQualityV4RealRunAuthorities, loadRealSemanticQualityV4Corpus } from
   "./semantic-quality-v4-private-corpus.js";
+import { decodeHumanSemanticQualityV4CorpusConfiguration } from
+  "./semantic-quality-v4-human-corpus.js";
 import { semanticQualityV4LocatorAuthoritySha256,
   semanticQualityV4ThresholdProfileSha256, semanticQualityV4TurnToBlockMappingSha256,
   type SemanticQualityV4ReleaseBinding, type SemanticQualityV4SpendReservation } from
@@ -61,7 +63,7 @@ type QualificationRuntimeModule = {
     .SubscriptionRuntimeGroundedAnswerAdapter;
 };
 
-interface OperatorConfiguration {
+interface OperatorCommonConfiguration {
   readonly adjudicationDirectory: string;
   readonly artifactKeyId: string;
   readonly artifactKeyPath: string;
@@ -76,9 +78,6 @@ interface OperatorConfiguration {
   readonly exchangeObservationReceiptDirectory: string;
   readonly journalRoot: string;
   readonly postgresUrlPath: string;
-  readonly privateQuestionPath: string;
-  readonly privateRubricPath: string;
-  readonly privateTranscriptPath: string;
   readonly questionReviewReceiptsPath: string;
   readonly runtimeAddress: string;
   readonly runtimeServiceAttestationReceiptPath: string;
@@ -88,12 +87,17 @@ interface OperatorConfiguration {
   readonly trustAnchorPath: string;
   readonly workflowRoot: string;
 }
+type OperatorConfiguration = OperatorCommonConfiguration & (
+  { readonly privateHumanCorpusManifestPath: string } |
+  { readonly privateQuestionPath: string; readonly privateRubricPath: string;
+    readonly privateTranscriptPath: string }
+);
 /** The sole executable real-call composition; operator data is credentials, paths and receipts. */
 export async function runSemanticQualityV4QualificationProductionComposition(
   configurationPath: string,
   phase: "execute" | "legacy_complete" = "legacy_complete",
 ) {
-  const config = decodeOperatorConfiguration(readJson(configurationPath));
+  const config = decodeSemanticQualityV4OperatorConfiguration(readJson(configurationPath));
   const trustAnchor = verifySemanticQualityV4ReleaseTrustAnchor(readJson(config.trustAnchorPath),
     readExternalReleaseRoot());
   const pinnedKeys = trustAnchor.reviewerKeys;
@@ -112,9 +116,12 @@ export async function runSemanticQualityV4QualificationProductionComposition(
   const preparer = new PrepareFocusedLocatorRetrievalV2Request({
     ids, providerBinding, snapshot,
   });
-  const realCorpus = loadRealSemanticQualityV4Corpus({ pinnedReviewerKeys: pinnedKeys,
-    questionPath: config.privateQuestionPath, reviewReceipts: questionReviewReceipts,
-    rubricPath: config.privateRubricPath, transcriptPath: config.privateTranscriptPath });
+  const privateCorpusInput = "privateHumanCorpusManifestPath" in config ?
+    decodeHumanSemanticQualityV4CorpusConfiguration(readJson(config.privateHumanCorpusManifestPath)) :
+    { questionPath: config.privateQuestionPath, rubricPath: config.privateRubricPath,
+      transcriptPath: config.privateTranscriptPath };
+  const realCorpus = loadRealSemanticQualityV4Corpus({ ...privateCorpusInput,
+    pinnedReviewerKeys: pinnedKeys, reviewReceipts: questionReviewReceipts });
   const automatedCorpus = frozenSemanticQualityCorpusV4();
   const [automatedPlans, realPlans] = await Promise.all([
     store.listCurrentRoomPlans(topology.automated.scopeId, topology.automated.roomId, 102),
@@ -149,7 +156,8 @@ export async function runSemanticQualityV4QualificationProductionComposition(
   const verifierModuleSetSha256 = canonicalSha256([
     import.meta.url, runtimeModuleUrl.href, promptMapperUrl.href, tokenizerConfigurationUrl.href,
     sdkRuntimeUrl, new URL("../src/infinity-context-retrieval-v2.ts", import.meta.url).href,
-    ...["semantic-quality-v4-evidence-store.ts", "semantic-quality-v4-production-ports.ts",
+    ...["semantic-quality-v4-evidence-store.ts", "semantic-quality-v4-human-corpus.ts",
+      "semantic-quality-v4-private-corpus.ts", "semantic-quality-v4-production-ports.ts",
       "semantic-quality-v4-qualification.ts", "semantic-quality-v4-real-run.ts",
       "semantic-quality-v4-trusted-receipts.ts"].map((file) => new URL(file, import.meta.url).href),
   ].map((url) => ({ sha256: hashModuleUrl(url), url: normalizedModuleIdentity(url) })));
@@ -517,16 +525,19 @@ function exact(value: unknown, keys: readonly string[]) {if (value === null || t
   Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype ||
   canonicalSha256(Object.keys(value).toSorted()) !== canonicalSha256([...keys].toSorted()))
   {throw new Error("qualification configuration shape is invalid");} return value as Record<string, unknown>;}
-function decodeOperatorConfiguration(value: unknown): OperatorConfiguration {const keys = [
+export function decodeSemanticQualityV4OperatorConfiguration(value: unknown): OperatorConfiguration {const keys = [
   "adjudicationDirectory", "artifactKeyId", "artifactKeyPath", "artifactRoot",
   "campaignReceiptDirectory", "campaignRunId", "infinityBaseUrl", "infinityCapabilityPath",
   "infinityServiceAttestationReceiptPath", "infinityTokenPath",
   "exchangeObservationReceiptDirectory", "executionObservationReceiptPath", "journalRoot",
-  "postgresUrlPath", "privateQuestionPath",
-  "privateRubricPath", "privateTranscriptPath", "questionReviewReceiptsPath",
+  "postgresUrlPath", "questionReviewReceiptsPath",
   "runtimeAddress", "runtimeServiceAttestationReceiptPath", "runtimeTokenPath", "topologyKeyPath",
   "topologyPath", "trustAnchorPath", "workflowRoot"];
-  const record = exact(value, keys); if (Object.values(record).some((item) => typeof item !== "string" || item.length < 1))
+  const privateKeys = value !== null && typeof value === "object" &&
+    Object.hasOwn(value, "privateHumanCorpusManifestPath") ? ["privateHumanCorpusManifestPath"] :
+    ["privateQuestionPath", "privateRubricPath", "privateTranscriptPath"];
+  const record = exact(value, [...keys, ...privateKeys]);
+  if (Object.values(record).some((item) => typeof item !== "string" || item.length < 1))
   {throw new Error("qualification operator configuration is invalid");} return record as unknown as OperatorConfiguration;}
 function decodeTopology(value: unknown): QualificationTopology {const record = exact(value, ["automated", "real"]);
   const scope = (item: unknown) => exact(item, ["currentMeetingId", "roomId", "scopeId"]) as unknown as QualificationScope;

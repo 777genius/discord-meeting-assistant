@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { decodeHumanSemanticQualityV4Corpus } from
+import { decodeHumanSemanticQualityV4Corpus, decodeHumanSemanticQualityV4CorpusConfiguration } from
   "./semantic-quality-v4-human-corpus.js";
 import { canonicalIntegerJson } from "./semantic-quality-v4-manifest.js";
 import { loadRealSemanticQualityV4Corpus,
@@ -20,6 +20,41 @@ const bindingPaths = Object.freeze({
   dataset: "private/synthetic-dataset.json",
   identity: "private/synthetic-identity.json",
   source: "private/synthetic-source.json",
+});
+
+describe("human corpus operator configuration", () => {
+  const configuration = () => ({
+    approvedCommit, bindingPaths, datasetPath: "/private/dataset.json",
+    goldPath: "/private/gold.json", identityPath: "/private/identity.json", meetingId,
+    pinnedSha256: buildFixture().input.pinnedSha256,
+    profile: "human_corpus_v1", sourcePath: "/private/source.json",
+  });
+
+  it("selects a frozen explicit profile and four pinned inputs", () => {
+    const input = configuration();
+    const decoded = decodeHumanSemanticQualityV4CorpusConfiguration(input);
+    expect(decoded).toEqual(input);
+    expect(Object.isFrozen(decoded)).toBe(true);
+    expect(Object.isFrozen(decoded.pinnedSha256)).toBe(true);
+  });
+
+  it("rejects missing pins, wrong profile, and invalid private paths", () => {
+    const input = configuration();
+    for (const malformed of [
+      { ...input, pinnedSha256: { source: input.pinnedSha256.source } },
+      { ...input, profile: "legacy_private_v1" },
+      { ...input, sourcePath: "relative/source.json" },
+      { ...input, approvedCommit: "not-a-commit" },
+    ]) {expect(() => decodeHumanSemanticQualityV4CorpusConfiguration(malformed)).toThrow();}
+  });
+
+  it("cannot inject review authority or legacy file selection through a corpus manifest", () => {
+    const input = configuration();
+    for (const field of ["reviewReceipts", "pinnedReviewerKeys", "transcriptPath"]) {
+      expect(() => decodeHumanSemanticQualityV4CorpusConfiguration({ ...input,
+        [field]: "SYNTHETIC_PRIVATE_UNTRUSTED_VALUE" })).toThrow();
+    }
+  });
 });
 
 describe("semantic quality V4 human corpus decoder", () => {

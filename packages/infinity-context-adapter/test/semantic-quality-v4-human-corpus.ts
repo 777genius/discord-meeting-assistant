@@ -36,6 +36,41 @@ type DecodedHumanCorpus = Omit<RealSemanticQualityV4Corpus, "reviewReceipts"> & 
   readonly bindings: Readonly<Record<string, string>>;
 };
 
+/** File/pin selection only. Review keys and receipts always come from release custody. */
+export function decodeHumanSemanticQualityV4CorpusConfiguration(value: unknown):
+  Omit<HumanSemanticQualityV4CorpusInput, "pinnedReviewerKeys" | "reviewReceipts"> {
+  const record = exactRecord(value, ["approvedCommit", "bindingPaths", "datasetPath",
+    "goldPath", "identityPath", "meetingId", "pinnedSha256", "profile", "sourcePath"]);
+  const paths = exactRecord(record.bindingPaths, ["dataset", "identity", "source"]);
+  const pins = exactRecord(record.pinnedSha256, ["dataset", "gold", "identity", "source"]);
+  if (record.profile !== "human_corpus_v1" ||
+    typeof record.approvedCommit !== "string" || typeof record.meetingId !== "string" ||
+    Object.values(paths).some((path) => typeof path !== "string") ||
+    Object.values(pins).some((pin) => typeof pin !== "string")) {
+    throw new Error("semantic quality V4 human corpus configuration is invalid");
+  }
+  const config = {
+    approvedCommit: record.approvedCommit,
+    bindingPaths: Object.freeze(paths as Record<"dataset" | "identity" | "source", string>),
+    datasetPath: privateAbsolutePath(record.datasetPath),
+    goldPath: privateAbsolutePath(record.goldPath),
+    identityPath: privateAbsolutePath(record.identityPath),
+    meetingId: record.meetingId,
+    pinnedSha256: Object.freeze(pins as Record<"dataset" | "gold" | "identity" | "source", string>),
+    profile: "human_corpus_v1" as const,
+    sourcePath: privateAbsolutePath(record.sourcePath),
+  };
+  validatePins(config);
+  return Object.freeze(config);
+}
+
+function privateAbsolutePath(value: unknown): string {
+  if (typeof value !== "string" || !value.startsWith("/") || value.includes("\0")) {
+    throw new Error("semantic quality V4 human corpus configuration path is invalid");
+  }
+  return value;
+}
+
 interface IdentityEntry {
   readonly displayName: string;
   readonly speakerId: string;
