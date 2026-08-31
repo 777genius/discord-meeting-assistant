@@ -88,6 +88,7 @@ interface PrivateQuestionRecord {
 
 const digestPattern = /^[a-f0-9]{64}$/u;
 const safeIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const safeTurnIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:|-]{0,127}$/u;
 const safeCategoryPattern = /^[a-z][a-z0-9_]{0,63}$/u;
 
 /**
@@ -248,7 +249,7 @@ export function mapRealGoldTurnsToProductionLocators(input: {
 } {
   const mapping = new Map<string, string>();
   for (const item of input.mapping) {
-    if (!safeIdPattern.test(item.turnId) || !safeIdPattern.test(item.sourceLocatorId) ||
+    if (!safeTurnIdPattern.test(item.turnId) || !safeIdPattern.test(item.sourceLocatorId) ||
       mapping.has(item.turnId)) {
       throw new Error("semantic quality V4 gold block mapping is invalid");
     }
@@ -354,7 +355,7 @@ function exactTurnMapping(turnIds: readonly string[], values: readonly {
 }[]): ReadonlyMap<string, string> {
   const mapping = new Map<string, string>();
   for (const value of values) {
-    if (!safeIdPattern.test(value.turnId) || !safeIdPattern.test(value.sourceLocatorId) ||
+    if (!safeTurnIdPattern.test(value.turnId) || !safeIdPattern.test(value.sourceLocatorId) ||
       mapping.has(value.turnId)) {
       throw new Error("semantic quality V4 production block mapping is invalid");
     }
@@ -402,7 +403,7 @@ function decodeTranscript(value: unknown) {
   }
   const turns = transcript.turns.map((candidate): RealSemanticQualityV4Turn => {
     const turn = exactRecord(candidate, ["endMs", "speakerId", "startMs", "text", "turnId"]);
-    if (typeof turn.turnId !== "string" || !safeIdPattern.test(turn.turnId) ||
+    if (typeof turn.turnId !== "string" || !safeTurnIdPattern.test(turn.turnId) ||
       typeof turn.speakerId !== "string" || !safeIdPattern.test(turn.speakerId) ||
       typeof turn.text !== "string" || turn.text.trim() === "" ||
       !validInterval(turn.startMs, turn.endMs)) {
@@ -466,7 +467,7 @@ function decodeQuestion(value: unknown): PrivateQuestionRecord {
   }
   return Object.freeze({
     category: record.category,
-    evidenceTurnIds: Object.freeze(decodeStringArray(record.evidenceTurnIds, safeIdPattern)),
+    evidenceTurnIds: Object.freeze(decodeStringArray(record.evidenceTurnIds, safeTurnIdPattern)),
     expectedAnswer: record.expectedAnswer,
     id: record.id,
     kind,

@@ -8,7 +8,10 @@ import { describe, expect, it } from "vitest";
 import { decodeHumanSemanticQualityV4Corpus } from
   "./semantic-quality-v4-human-corpus.js";
 import { canonicalIntegerJson } from "./semantic-quality-v4-manifest.js";
-import { loadRealSemanticQualityV4Corpus } from "./semantic-quality-v4-private-corpus.js";
+import { loadRealSemanticQualityV4Corpus,
+  mapRealGoldTurnsToProductionLocators,
+  createSemanticQualityV4RealRunAuthorities } from "./semantic-quality-v4-private-corpus.js";
+import { frozenSemanticQualityCorpusV4 } from "./semantic-quality-v4-corpus.js";
 import { semanticQualityV4ReceiptSigningBytes } from "./semantic-quality-v4-trusted-receipts.js";
 
 const meetingId = "synthetic-human-meeting";
@@ -88,14 +91,14 @@ function buildFixture() {
       speakerId: botId,
       startMs: index * 1000,
       text: `SYNTHETIC_PRIVATE_BOT_TEXT_${index}`,
-      turnId: `bot-turn-${index}`,
+      turnId: `synthetic-transcript|bot|turn:${index}`,
     })),
     ...Array.from({ length: 1769 }, (_, index) => ({
       endMs: (index + 10) * 1000 + 900,
       speakerId: humanSpeakerIds[index % humanSpeakerIds.length]!,
       startMs: (index + 10) * 1000,
       text: `SYNTHETIC_PRIVATE_TEXT_${index}`,
-      turnId: `human-turn-${index}`,
+      turnId: `synthetic-transcript|human:${index % 6}|turn:${index}`,
     })),
   ];
   const source = {
@@ -303,6 +306,27 @@ function refreshBindings(fixture: ReturnType<typeof buildFixture>) {
 }
 
 describe("human corpus structural authority", () => {
+  it("preserves opaque producer-delimited turn IDs through production-locator mapping", () => {
+    const fixture = buildFixture();
+    const decoded = decodeHumanSemanticQualityV4Corpus(fixture.input);
+    const mapping = decoded.turns.map(({ turnId }, index) => ({
+      turnId, sourceLocatorId: `synthetic-locator-${index}` }));
+    const result = mapRealGoldTurnsToProductionLocators({
+      corpus: { ...decoded, reviewReceipts: [] }, mapping });
+    expect(decoded.turns[0]!.turnId).toBe("synthetic-transcript|human:0|turn:0");
+    expect(result.questions[0]!.evidenceTurnIds).toEqual([decoded.turns[0]!.turnId]);
+    expect(result.questions[0]!.goldLocatorRelevance).toEqual([
+      { locatorId: "synthetic-locator-0", relevance: 3 }]);
+    const automated = frozenSemanticQualityCorpusV4();
+    const authorities = createSemanticQualityV4RealRunAuthorities({
+      automatedCorpus: automated,
+      automatedMapping: [...automated.primaryMeeting.humanTurns, ...automated.auxiliaryTurns]
+        .map(({ turnId }, index) => ({ turnId, sourceLocatorId: `automated-locator-${index}` })),
+      forbiddenLocatorIds: [], realCorpus: { ...decoded, reviewReceipts: [] }, realMapping: mapping,
+    });
+    expect(authorities.real.questions[0]!.goldTurnIds).toEqual([decoded.turns[0]!.turnId]);
+  });
+
   it("uses the public loader and requires two exact identity-bound independent reviews", () => {
     const fixture = buildFixture();
     const decoded = decodeHumanSemanticQualityV4Corpus(fixture.input);

@@ -67,6 +67,8 @@ interface GoldCase {
 const digestPattern = /^[a-f0-9]{64}$/u;
 const commitPattern = /^[a-f0-9]{40}$/u;
 const safeIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+// Canonical transcript IDs include a producer-delimited opaque composite key.
+const safeTurnIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:|-]{0,127}$/u;
 const safeCategoryPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 export function decodeHumanSemanticQualityV4Corpus(input: {
@@ -252,7 +254,7 @@ function decodeSource(value: unknown, meetingId: string) {
   }
   const turns = transcript.turns.map((candidate): RealSemanticQualityV4Turn => {
     const turn = exactRecord(candidate, ["endMs", "speakerId", "startMs", "text", "turnId"]);
-    if (typeof turn.turnId !== "string" || !safeIdPattern.test(turn.turnId) ||
+    if (typeof turn.turnId !== "string" || !safeTurnIdPattern.test(turn.turnId) ||
       typeof turn.speakerId !== "string" || !safeIdPattern.test(turn.speakerId) ||
       typeof turn.text !== "string" || turn.text.trim() === "" ||
       !validInterval(turn.startMs, turn.endMs)) {
@@ -604,7 +606,7 @@ function decodeGold(value: unknown, authority: {
 function decodeLocator(value: unknown,
   turnsById: ReadonlyMap<string, RealSemanticQualityV4Turn>): Locator {
   const item = exactRecord(value, ["endMs", "speakerId", "startMs", "turnId"]);
-  if (typeof item.turnId !== "string" || !safeIdPattern.test(item.turnId) ||
+  if (typeof item.turnId !== "string" || !safeTurnIdPattern.test(item.turnId) ||
     typeof item.speakerId !== "string" || !safeIdPattern.test(item.speakerId) ||
     !validInterval(item.startMs, item.endMs)) {
     throw new Error("semantic quality V4 human evidence locator is invalid");
