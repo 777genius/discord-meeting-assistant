@@ -1,4 +1,4 @@
-import { MAIN_CARDINALITY, type CampaignQuestion } from "./campaign-admission-policy.js";
+import type { CampaignQuestion } from "./campaign-admission-policy.js";
 import { canonicalJson, digest, exactRecord, sha256 } from "./canonical.js";
 import { DurableAttemptJournal } from "./attempt-journal.js";
 import { attemptIdentity, executeReservedExchange } from "./execution.js";
@@ -29,29 +29,6 @@ export interface ScheduledCampaignResult {
   readonly maximumObservedConcurrency: number;
   readonly outcomeUnknown: boolean;
   readonly terminalAttemptIds: readonly string[];
-}
-
-export async function executeMainCampaignSchedule(input: {
-  readonly binding: Omit<FrozenExecutionBinding, "provider" | "spendReservation" |
-    "spendReservationSha256">;
-  readonly clock: CampaignClockPort; readonly concurrency: number;
-  readonly deadlineEpochMs: number; readonly journalRoot: string;
-  readonly ports: CampaignProviderPorts; readonly questions: readonly CampaignQuestion[];
-  readonly spendByRepetition: Readonly<Record<1 | 2 | 3, {
-    readonly provider: string; readonly reservation: unknown;
-    readonly reservationSha256: string }>>;
-}): Promise<ScheduledCampaignResult> {
-  if (input.questions.length !== MAIN_CARDINALITY.perRepetition) {
-    throw new Error("production schedule requires exactly 240 questions");
-  }
-  return await executeSchedule({ bindingFor: (repetition) => ({ ...input.binding,
-    provider: input.spendByRepetition[repetition].provider,
-    spendReservation: input.spendByRepetition[repetition].reservation,
-    spendReservationSha256: input.spendByRepetition[repetition].reservationSha256 }),
-  clock: input.clock, concurrency: input.concurrency, deadlineEpochMs: input.deadlineEpochMs,
-    jobs: ([1, 2, 3] as const).flatMap((repetition) => input.questions.map((question,
-      questionIndex) => ({ question, questionIndex, repetition }))),
-  journalRoot: input.journalRoot, ports: input.ports });
 }
 
 export async function executeHoldoutSchedule(input: {

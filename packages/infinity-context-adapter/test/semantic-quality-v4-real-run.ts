@@ -11,9 +11,6 @@ import type { RationalMetric, SemanticQualityV4ScoringAuthority } from
   "./semantic-quality-v4-evaluation.js";
 import { evaluateSemanticQualityV4Reports } from "./semantic-quality-v4-reports.js";
 import { canonicalIntegerJson, canonicalSha256 } from "./semantic-quality-v4-manifest.js";
-import { assertSemanticQualityV4ProductionAnswerPort,
-  assertSemanticQualityV4ProductionRetrievalPorts } from
-  "./semantic-quality-v4-production-ports.js";
 import { evaluateSemanticQualityV4CampaignAdmission, sealSemanticQualityV4RunManifest,
   semanticQualityV4RootBindingSha256, type SemanticQualityV4ReleaseBinding,
   type SemanticQualityV4SealedRunManifest, type SemanticQualityV4SpendReservation } from
@@ -30,7 +27,8 @@ export interface SemanticQualityV4SealedCampaignRequest {
   readonly sealedRequestSha256: string;
 }
 
-export interface SemanticQualityV4ProductionPortSet {
+/** Provider-free legacy structural harness; never qualifying and never used by the installed CLI. */
+export interface SemanticQualityV4StructuralPortSet {
   readonly createAnswer: (input: {
     readonly artifactEncryption: { readonly key: Uint8Array; readonly keyId: string };
     readonly artifactStore: SemanticQualityV4EncryptedArtifactStore;
@@ -87,7 +85,6 @@ export async function executeSemanticQualityV4RawCampaign(input: {
       artifactReceipts.push(receipt);
     const ports = input.productionPorts(repetition, { artifactEncryption: input.artifactEncryption,
       artifactStore, recordArtifactReceipt });
-    assertSemanticQualityV4ProductionRetrievalPorts(ports);
     const retrievalOutcomes = await runSemanticQualityV4RetrievalPhase({
       canonicalQuestions: input.questions, evidence: ports.evidence,
       questions: input.questions, retrieval: ports.retrieval });
@@ -102,7 +99,6 @@ export async function executeSemanticQualityV4RawCampaign(input: {
     assertReservationMatches(spendReservation, requestedReservation);
     const answer = await ports.createAnswer({ artifactEncryption: input.artifactEncryption,
       artifactStore, recordArtifactReceipt });
-    assertSemanticQualityV4ProductionAnswerPort(answer);
     const outcomes = await runSemanticQualityV4RawAnswerPhase({ answer, retrievalOutcomes });
     for (const outcome of outcomes) {
       for (const [artifactKind, value] of [["evidence", outcome.locallyRehydratedEvidence],
@@ -143,7 +139,7 @@ export async function runSemanticQualityV4RealCampaign(input: {
     readonly artifactEncryption: { readonly key: Uint8Array; readonly keyId: string };
     readonly artifactStore: SemanticQualityV4EncryptedArtifactStore;
     readonly recordArtifactReceipt: (receipt: SemanticQualityV4ArtifactReceipt) => void;
-  }) => SemanticQualityV4ProductionPortSet;
+  }) => SemanticQualityV4StructuralPortSet;
   readonly questionReviewReceipts: readonly unknown[];
   readonly questions: readonly SemanticQualityV4RunQuestion[];
   readonly request: unknown;
@@ -176,7 +172,6 @@ export async function runSemanticQualityV4RealCampaign(input: {
     const retrievalOutcomes = await runSemanticQualityV4RetrievalPhase({
       canonicalQuestions: input.questions, evidence: ports.evidence,
       questions: input.questions, retrieval: ports.retrieval });
-    assertSemanticQualityV4ProductionRetrievalPorts(ports);
     assertRetrievalOnlyAdmission(retrievalOutcomes, input.authorities, request.rootBinding);
     const requestedReservation = Object.freeze({ logicalAnswerRequests: 240 as const,
       maximumExecutionsIncludingRepair: 480 as const,
@@ -216,7 +211,6 @@ export async function runSemanticQualityV4RealCampaign(input: {
     });
     const outcomes = await runSemanticQualityV4AnswerPhase({ adjudication, answer,
       retrievalOutcomes });
-    assertSemanticQualityV4ProductionAnswerPort(answer);
     const reports = evaluateSemanticQualityV4Reports({ authorities: input.authorities, outcomes });
     const run = sealSemanticQualityV4RunManifest({
       artifactReceipts, artifactSetSha256: canonicalSha256(artifactReceipts), metricReports: reports,

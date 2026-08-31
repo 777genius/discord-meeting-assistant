@@ -22,13 +22,11 @@ import type { SemanticQualityV4PinnedReviewerKey } from
   "./semantic-quality-v4-trusted-receipts.js";
 import { verifySemanticQualityV4ReleaseTrustAnchor } from
   "./semantic-quality-v4-trusted-receipts.js";
-import { runSemanticQualityV4QualificationProductionComposition } from
-  "./semantic-quality-v4-production-composition.js";
 import { runSemanticQualityV4WorkflowResumeCommand } from
   "./semantic-quality-v4-workflow-command.js";
 
 if (process.argv.includes("--real-execute")) {
-  await runRealExecute();
+  throw new Error("real execution moved to the installed quality-campaign execute command");
 } else if (process.argv.includes("--real-run")) {
   throw new Error("semantic quality V4 real-run was replaced by explicit execute/resume phases");
 } else if (process.argv.includes("--real-adjudicate")) {
@@ -43,13 +41,6 @@ if (process.argv.includes("--real-execute")) {
   runRealPreflight();
 } else {
   await runProviderFreeStructuralGate();
-}
-
-async function runRealExecute(): Promise<void> {
-  const result = await runSemanticQualityV4QualificationProductionComposition(
-    requiredPath("SEMANTIC_QUALITY_V4_OPERATOR_CONFIGURATION_PATH"), "execute");
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  process.exitCode = 20;
 }
 
 async function runResume(command: "adjudicate" | "cleanup" | "retention" | "status") {

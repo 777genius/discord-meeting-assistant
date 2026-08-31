@@ -4,8 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { PrepareFocusedLocatorRetrievalV2Request } from
-  "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
   assertConstructedPostgresHistoricalEvidenceAuthority,
   assertConstructedPostgresHistoricalMemoryStore } from "@discord-meeting/postgres-adapter";
@@ -20,9 +18,6 @@ import {
   assertSemanticQualityV4ProductionJournal,
   semanticQualityV4AttemptId,
 } from "./semantic-quality-v4-evidence-store.js";
-import { assertSemanticQualityV4ProductionAnswerPort,
-  assertSemanticQualityV4ProductionRetrievalPorts, createSemanticQualityV4ProductionPorts } from
-  "./semantic-quality-v4-production-ports.js";
 import { runSemanticQualityV4RealCampaign, sealSemanticQualityV4CampaignRequest } from
   "./semantic-quality-v4-real-run.js";
 import { assertSemanticQualityV4ArtifactReceiptCoverage,
@@ -280,13 +275,6 @@ describe("semantic quality V4 exact envelope reconstruction", () => {
 
 describe("semantic quality V4 production admission", () => {
   it("rejects fake production ports and an unsealed real campaign before effects", async () => {
-    expect(() =>{  assertSemanticQualityV4ProductionRetrievalPorts({
-      evidence: { rehydrate: async () => ({ turns: [] }) },
-      retrieval: { retrieve: async () => {throw new Error("must not execute");} },
-    }); }).toThrow(/exact production retrieval ports/u);
-    expect(() =>{  assertSemanticQualityV4ProductionAnswerPort({
-      answer: async () => {throw new Error("must not execute");},
-    }); }).toThrow(/exact production answer port/u);
     let composed = false;
     await expect(runSemanticQualityV4RealCampaign({
       productionPorts: () => {composed = true; throw new Error("must not compose");},
@@ -330,22 +318,7 @@ describe("semantic quality V4 production admission", () => {
       .rejects.toThrow(/unsealed or drifted/u);
   });
 
-  it("rejects inner test transports and structural PostgreSQL authorities", () => {
-    class ConcreteQualificationPostgresAuthority {
-      public async rehydrate() {return [];}
-      public answerBinding() {throw new Error("spoof");}
-    }
-    const common = { localPostgresAuthority: new ConcreteQualificationPostgresAuthority(),
-      preparer: new PrepareFocusedLocatorRetrievalV2Request({} as never),
-      questionContext: () => ({ currentMeetingId: "current", roomId: "room", scopeId: "scope" }),
-      repetition: 1 as const, rootBindingSha256: canonicalSha256({ root: "production" }) };
-    expect(() => createSemanticQualityV4ProductionPorts({ ...common,
-      retrievalConfig: { baseUrl: "http://127.0.0.1:1", operationTimeoutMs: 1,
-        requestTimeoutMs: 1, transport: {} as never } } as never)).toThrow(/forbids an injected/u);
-    expect(() => createSemanticQualityV4ProductionPorts({ ...common,
-      retrievalConfig: { baseUrl: "http://127.0.0.1:1", operationTimeoutMs: 1,
-        requestTimeoutMs: 1 } } as never)).toThrow(/concrete PostgreSQL/u);
-    expect(common.localPostgresAuthority.constructor.name).toBe("ConcreteQualificationPostgresAuthority");
+  it("rejects structural PostgreSQL authority prototype spoofs", () => {
     assertPostgresPrototypeSpoofsRejected();
   });
 });
