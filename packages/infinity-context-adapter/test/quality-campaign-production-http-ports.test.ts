@@ -122,9 +122,9 @@ async function httpFixture() {
   await writeFile(connectionsPath, JSON.stringify({ absenceAuthority: authority("absence"),
     absenceEndpoint: `${endpoint}/absence`, adjudicators: [authority("provider"),
       authority("holdout"), authority("evidence")].map((item) => ({ ...item, endpoint })),
-    answerEndpoint: endpoint, artifactCustody: { envelopeRoot: root,
+    artifactCustody: { envelopeRoot: root,
       keyCustodySha256: sha256("custody"), keyId: "artifact-key", keyPath },
-    canonicalExecution, capabilityEndpoint: endpoint, credentialPath: tokenPath,
+    canonicalExecution, credentialPath: tokenPath,
     deletionAuthority: authority("deletion"), deletionEndpoint: `${endpoint}/deletion`,
     evidenceAuthority: authority("evidence"), evidenceEndpoint: endpoint,
     evidenceKeyId: "evidence-key", evidenceKeyPath: keyPath,
@@ -133,8 +133,8 @@ async function httpFixture() {
     holdoutEvidenceKeyId: "holdout-evidence-key", holdoutEvidenceKeyPath: holdoutKeyPath,
     holdoutProviderResultAuthority: authority("holdout"), holdoutRetrievalEndpoint: endpoint,
     providerResultAuthority: authority("provider"), rawOutcomeEndpoint: endpoint,
-    releaseObservationEndpoint: endpoint, retrievalEndpoint: endpoint,
-    schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v4" }));
+    releaseObservationEndpoint: endpoint,
+    schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v5" }));
   const answerAttempt = attemptIdentity({ callKind: "answer", callOrdinal: 0,
     campaignRootSha256: sha256("campaign"), questionDigestSha256: sha256("question"),
     questionId: "question-1", releaseRootSha256: sha256("release"), repetition: 1,

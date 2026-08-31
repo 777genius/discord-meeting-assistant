@@ -124,7 +124,7 @@ Promise<ProductionCompositionResult> {
       verifiedRelease.release.artifactKeyCustodySha256, campaignRootSha256:
       admitted.rootBindingSha256, custody: input.ports.artifactCustody,
     effectVerificationEpochMs: input.ports.clock.nowEpochMs(), evidence,
-    providerResultAuthority: input.ports.mainProvider.resultAuthority,
+    providerResultAuthority: input.ports.mainResultAuthority,
     release: verifiedRelease.release,
     questions: admitted.questions, releaseRootSha256: verifiedRelease.releaseRootSha256,
     releaseDocumentSha256: sha256(pinnedRelease.document), spendReservations: reservations,
@@ -148,7 +148,7 @@ Promise<ProductionCompositionResult> {
       verifiedRelease.release.artifactKeyCustodySha256, campaignRootSha256:
       admitted.rootBindingSha256, custody: input.ports.artifactCustody,
     effectVerificationEpochMs: input.ports.clock.nowEpochMs(), evidence,
-    providerResultAuthority: input.ports.mainProvider.resultAuthority,
+    providerResultAuthority: input.ports.mainResultAuthority,
     release: verifiedRelease.release,
     questions: admitted.questions, releaseRootSha256: verifiedRelease.releaseRootSha256,
     releaseDocumentSha256: sha256(pinnedRelease.document), spendReservations: reservations,

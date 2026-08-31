@@ -100,7 +100,7 @@ export interface QualityCampaignProductionPorts {
   readonly evidenceCustody: CampaignEvidenceCustodyPort;
   readonly holdoutProvider: CampaignProviderPorts;
   readonly mainExecutorFactory: QualificationQuestionExecutorFactoryPort;
-  readonly mainProvider: CampaignProviderPorts;
+  readonly mainResultAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly release: ObservedProductionReleasePort;
   readonly review: CampaignReviewPorts;
 }

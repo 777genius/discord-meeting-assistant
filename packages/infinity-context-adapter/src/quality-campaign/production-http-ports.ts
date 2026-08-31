@@ -16,10 +16,8 @@ interface HttpConnectionConfiguration {
   readonly absenceAuthority: HttpAuthority;
   readonly absenceEndpoint: string;
   readonly adjudicators: readonly [HttpReviewer, HttpReviewer, HttpReviewer];
-  readonly answerEndpoint: string;
   readonly artifactCustody: { readonly envelopeRoot: string; readonly keyCustodySha256: string;
     readonly keyId: string; readonly keyPath: string };
-  readonly capabilityEndpoint: string;
   readonly canonicalExecution: ProductionCanonicalExecutionConnectionConfiguration;
   readonly credentialPath: string;
   readonly deletionAuthority: HttpAuthority;
@@ -39,8 +37,7 @@ interface HttpConnectionConfiguration {
   readonly providerResultAuthority: HttpAuthority;
   readonly rawOutcomeEndpoint: string;
   readonly releaseObservationEndpoint: string;
-  readonly retrievalEndpoint: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v4";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v5";
 }
 interface HttpAuthority { readonly keyId: string; readonly publicKeyPath: string }
 interface HttpReviewer extends HttpAuthority { readonly endpoint: string }
@@ -120,8 +117,7 @@ Promise<QualityCampaignProductionPorts> {
       canonicalFactory ??= createProductionCanonicalExecutorFactory(config.canonicalExecution);
       return await (await canonicalFactory).recover(input);
     } },
-    mainProvider: provider(config.capabilityEndpoint, config.retrievalEndpoint,
-      config.answerEndpoint, mainResultAuthority),
+    mainResultAuthority,
     release: { observe: async (callContext: CampaignCallContext) => await requestJson(
       config.releaseObservationEndpoint, token, {}, callContext) as QualityCampaignRelease },
     review: {
@@ -188,18 +184,18 @@ async function requestJson(endpoint: string, token: string, body: unknown,
 }
 
 async function load(path: string): Promise<HttpConnectionConfiguration> {
-  const keys = ["absenceAuthority", "absenceEndpoint", "adjudicators", "answerEndpoint",
+  const keys = ["absenceAuthority", "absenceEndpoint", "adjudicators",
     "artifactCustody",
-    "canonicalExecution", "capabilityEndpoint", "credentialPath", "deletionAuthority", "deletionEndpoint",
+    "canonicalExecution", "credentialPath", "deletionAuthority", "deletionEndpoint",
     "evidenceAuthority", "evidenceEndpoint", "evidenceKeyId", "evidenceKeyPath",
     "holdoutAnswerEndpoint", "holdoutCapabilityEndpoint", "holdoutEvidenceAuthority",
     "holdoutEvidenceEndpoint", "holdoutEvidenceKeyId", "holdoutEvidenceKeyPath",
     "holdoutProviderResultAuthority", "holdoutRetrievalEndpoint",
     "providerResultAuthority", "rawOutcomeEndpoint", "releaseObservationEndpoint",
-    "retrievalEndpoint", "schemaVersion"];
+    "schemaVersion"];
   const record = exactRecord(JSON.parse(await readFile(absolute(path), "utf8")) as unknown,
     keys, "production connection configuration");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_http_connections.v4" ||
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_http_connections.v5" ||
     !Array.isArray(record.adjudicators) || record.adjudicators.length !== 3) {
     throw new Error("production connection configuration is invalid");
   }

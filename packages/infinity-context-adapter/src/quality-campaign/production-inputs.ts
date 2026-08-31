@@ -242,8 +242,8 @@ function assertHoldoutIsolation(value: { readonly authorization: HoldoutAuthoriz
   const { admitted, custody, nowEpochMs, ports } = value.input;
   if (!Number.isSafeInteger(nowEpochMs) || value.authorization.holdoutRootSha256 === admitted.rootBindingSha256 ||
     value.authorization.keyNamespace === custody.mainKeyNamespace ||
-    ports.holdoutProvider.resultAuthority.keyId === ports.mainProvider.resultAuthority.keyId ||
-    ports.holdoutProvider.resultAuthority.publicKeyPem === ports.mainProvider.resultAuthority.publicKeyPem ||
+    ports.holdoutProvider.resultAuthority.keyId === ports.mainResultAuthority.keyId ||
+    ports.holdoutProvider.resultAuthority.publicKeyPem === ports.mainResultAuthority.publicKeyPem ||
     value.tuningEvidenceDigests.some((item) => custody.tuningEvidenceDigests.includes(item)) ||
     value.holdoutLocatorDigests.some((item) => custody.loadedLocatorDigests.includes(item)) ||
     value.questions.some(({ questionDigestSha256 }) => custody.loadedQuestionDigests

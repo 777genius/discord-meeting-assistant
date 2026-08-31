@@ -927,8 +927,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         return outcome;
       } finally {activeProviderCalls -= 1;}
     } }), recover: async ({ attemptId }) => canonicalOutcomes.get(attemptId) ?? null },
-    mainProvider: { answer: mainExchange, capability: mainExchange,
-      resultAuthority: input.provider, retrieval: mainExchange },
+    mainResultAuthority: input.provider,
     release: { observe: async () => input.release }, review: {
       receipts: async (attemptId) => {const evidence = adjudicationFor(attemptId);
         reviewCalls.first += 1; reviewCalls.second += 1;

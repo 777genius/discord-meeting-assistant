@@ -47,9 +47,9 @@ describe("packed production quality-campaign entrypoint", () => {
     expect(await readFile(statusPath, "utf8")).toMatch(/"status":"paused"/u);
     const executeStatusPath = join(root, "execute-status.json");
     await expect(execute(installed.bin, ["execute", fixture.phasePath, executeStatusPath], {
-      timeout: 60_000 })).rejects.toMatchObject({ code: 21, stderr: "" });
-    expect(fixture.providerRequests()).toBeGreaterThanOrEqual(2);
-    expect(await readFile(executeStatusPath, "utf8")).toMatch(/"status":"outcome_unknown"/u);
+      timeout: 60_000 })).rejects.toMatchObject({ code: 1, stderr: "" });
+    expect(fixture.providerRequests()).toBe(0);
+    await expect(readFile(executeStatusPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   }, 120_000);
 
   it("ships the exact fail-closed HTTP review-evidence adapter contract", async () => {
@@ -266,10 +266,10 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const connectionsPath = join(root, "connections.json");
   await writeFile(connectionsPath, canonicalJson({ absenceAuthority: publicHttp(authorities.absence!, root),
     absenceEndpoint: `${base}/absence`, adjudicators: ["judge1", "judge2", "resolver"].map((name) => ({
-      ...publicHttp(authorities[name]!, root), endpoint })), answerEndpoint: providerEndpoint,
+      ...publicHttp(authorities[name]!, root), endpoint })),
     artifactCustody: { envelopeRoot: root, keyCustodySha256:
       fingerprint(authorities.custody!.publicKeyPem), keyId: "retention-key",
-      keyPath: evidenceKeyPath }, canonicalExecution, capabilityEndpoint: providerEndpoint,
+      keyPath: evidenceKeyPath }, canonicalExecution,
     credentialPath: tokenPath, deletionAuthority: publicHttp(authorities.deletion!, root),
     deletionEndpoint: `${base}/deletion`, evidenceAuthority: publicHttp(authorities.evidence!, root),
     evidenceEndpoint: endpoint, evidenceKeyId: "main-key", evidenceKeyPath,
@@ -279,8 +279,8 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     holdoutProviderResultAuthority: publicHttp(authorities["holdout-result"]!, root),
     holdoutRetrievalEndpoint: endpoint,
     providerResultAuthority: publicHttp(authorities["main-result"]!, root),
-    rawOutcomeEndpoint: `${base}/review`, releaseObservationEndpoint: `${base}/release`, retrievalEndpoint:
-    providerEndpoint, schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v4" }));
+    rawOutcomeEndpoint: `${base}/review`, releaseObservationEndpoint: `${base}/release`,
+    schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v5" }));
   const unused = join(root, "unused.json"); const configPath = join(root, "operator.json");
   const executionCorpusPath = join(root, "execution-corpus.json");
   await writeFile(executionCorpusPath, canonicalJson(custody.signed({ campaignRootSha256:
