@@ -506,10 +506,8 @@ function decodeGold(value: unknown, authority: {
       }
       const evidenceLocators = answer.evidenceLocators.map((locator) =>
         decodeLocator(locator, authority.turnsById));
-      if (!sameLocators(evidenceLocators, datasetCase.evidence)) {
-        throw new Error("semantic quality V4 human dataset and gold evidence disagree");
-      }
       const evidenceIds = new Set(evidenceLocators.map(({ turnId }) => turnId));
+      const claimEvidenceIds = new Set<string>();
       const expectedClaimIds = answer.requiredClaims.map((claimCandidate) => {
         const claim = requiredRecord(claimCandidate, ["claimId", "dimensions",
           "evidenceTurnIds", "normalizedClaim", "speakerTargets"]);
@@ -531,6 +529,7 @@ function decodeGold(value: unknown, authority: {
           claimIds.has(claim.claimId)) {
           throw new Error("semantic quality V4 human required claim is invalid");
         }
+        for (const turnId of claim.evidenceTurnIds as string[]) {claimEvidenceIds.add(turnId);}
         for (const dimension of claim.dimensions as string[]) {
           observedDimensions[dimension] = observedDimensions[dimension]! + 1;
         }
@@ -546,6 +545,12 @@ function decodeGold(value: unknown, authority: {
         requiredClaimCount += 1;
         return claim.claimId;
       });
+      // The independently reviewed atomic rubric may add source-exact evidence
+      // for a required claim. It must retain every original dataset locator and
+      // cannot pad recall gold with an unreferenced extra turn.
+      if (!sameLocators(evidenceLocators, datasetCase.evidence, claimEvidenceIds)) {
+        throw new Error("semantic quality V4 human dataset and gold evidence disagree");
+      }
       for (const forbiddenCandidate of answer.forbiddenClaims) {
         const forbidden = requiredRecord(forbiddenCandidate, ["category", "claimId",
           "normalizedClaim"]);
@@ -635,12 +640,16 @@ function registerForbiddenAssertion(candidate: unknown, claimIds: Set<string>): 
   claimIds.add(assertion.assertionId);
 }
 
-function sameLocators(left: readonly Locator[], right: readonly Locator[]): boolean {
+function sameLocators(left: readonly Locator[], right: readonly Locator[],
+  additionalClaimEvidence: ReadonlySet<string> = new Set()): boolean {
   if (new Set(left.map(({ turnId }) => turnId)).size !== left.length ||
     new Set(right.map(({ turnId }) => turnId)).size !== right.length) {return false;}
-  const ordered = (values: readonly Locator[]) => values.map(normalizeLocator)
-    .toSorted((a, b) => a.turnId.localeCompare(b.turnId));
-  return canonicalIntegerJson(ordered(left)) === canonicalIntegerJson(ordered(right));
+  const supplied = new Map(left.map((locator) => [locator.turnId,
+    canonicalIntegerJson(normalizeLocator(locator))]));
+  const expectedIds = new Set(right.map(({ turnId }) => turnId));
+  return right.every((locator) => supplied.get(locator.turnId) ===
+    canonicalIntegerJson(normalizeLocator(locator))) &&
+    left.every(({ turnId }) => expectedIds.has(turnId) || additionalClaimEvidence.has(turnId));
 }
 
 function freezePrivateJson(value: unknown): unknown {

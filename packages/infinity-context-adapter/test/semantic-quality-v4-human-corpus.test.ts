@@ -433,6 +433,39 @@ describe("human corpus structural authority", () => {
       .toThrow(/answer gold/u);
   });
 
+  it("admits rubric-added evidence only when a required claim references it", () => {
+    const fixture = buildFixture();
+    const { endMs, speakerId, startMs, turnId } = fixture.source.transcript.turns[16]!;
+    const goldCase = fixture.gold.cases[0]!;
+    goldCase.evidenceLocators!.push({ endMs, speakerId, startMs, turnId });
+    expect(() => decodeHumanSemanticQualityV4Corpus(refreshBindings(fixture)))
+      .toThrow(/dataset and gold evidence disagree/u);
+    goldCase.requiredClaims![0]!.evidenceTurnIds.push(turnId);
+    const corpus = decodeHumanSemanticQualityV4Corpus(refreshBindings(fixture));
+    expect(corpus.questions[0]!.evidenceTurnIds).toContain(turnId);
+    expect(corpus.safeCounts.evidenceReferences).toBe(30);
+    expect(corpus.questions[0]!.speakerIds).toEqual([]);
+    expect(corpus.questions[0]!.timeWindow).toBeNull();
+  });
+
+  it("does not replace original dataset evidence with a claim-referenced extra", () => {
+    const fixture = buildFixture();
+    const { endMs, speakerId, startMs, turnId } = fixture.source.transcript.turns[16]!;
+    const goldCase = fixture.gold.cases[0]!;
+    goldCase.evidenceLocators = [{ endMs, speakerId, startMs, turnId }];
+    for (const claim of goldCase.requiredClaims!) {claim.evidenceTurnIds = [turnId];}
+    expect(() => decodeHumanSemanticQualityV4Corpus(refreshBindings(fixture)))
+      .toThrow(/dataset and gold evidence disagree/u);
+  });
+
+  it("keeps abstention distractor membership exact", () => {
+    const fixture = buildFixture();
+    const { endMs, speakerId, startMs, turnId } = fixture.source.transcript.turns[16]!;
+    fixture.gold.cases[29]!.distractorLocators!.push({ endMs, speakerId, startMs, turnId });
+    expect(() => decodeHumanSemanticQualityV4Corpus(refreshBindings(fixture)))
+      .toThrow(/distractor authority disagrees/u);
+  });
+
   it("rejects oversized or invalid JSON without including private text in errors", () => {
     const fixture = buildFixture();
     expect(() => decodeHumanSemanticQualityV4Corpus({ ...fixture.input,
