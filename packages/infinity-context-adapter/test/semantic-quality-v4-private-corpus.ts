@@ -11,6 +11,10 @@ import type {
   V4ScoringQuestion,
 } from "./semantic-quality-v4-evaluation.js";
 import {
+  decodeHumanSemanticQualityV4Corpus,
+  type HumanSemanticQualityV4CorpusInput,
+} from "./semantic-quality-v4-human-corpus.js";
+import {
   requireIndependentSemanticQualityV4Receipts,
   type SemanticQualityV4PinnedReviewerKey,
   type VerifiedSemanticQualityV4Receipt,
@@ -42,24 +46,30 @@ export interface RealSemanticQualityV4Corpus {
   readonly bindings: {
     readonly corpusSha256: string;
     readonly declaredTranscriptSha256: string;
+    readonly goldFileSha256?: string;
+    readonly identityFileSha256?: string;
     readonly inputSha256: string;
     readonly questionFileSha256: string;
     readonly questionSetSha256: string;
     readonly rubricFileSha256: string;
     readonly rubricSha256: string;
+    readonly sourceFileSha256?: string;
     readonly transcriptFileSha256: string;
   };
+  /** Private adjudication data, never generator input or public evidence. */
+  readonly privateGoldAuthority: unknown | null;
+  readonly profile: "human_corpus_v1" | "legacy_private_v1";
   readonly questions: readonly RealSemanticQualityV4Question[];
   readonly reviewReceipts: readonly VerifiedSemanticQualityV4Receipt[];
   readonly safeCounts: {
-    readonly abstention: 3;
-    readonly answerable: 37;
+    readonly abstention: number;
+    readonly answerable: number;
     readonly categories: Readonly<Record<string, number>>;
     readonly evidenceReferences: number;
-    readonly locales: { readonly en: 22; readonly ru: 18 };
-    readonly questions: 40;
-    readonly speakers: 8;
-    readonly turns: 2209;
+    readonly locales: { readonly en: number; readonly ru: number };
+    readonly questions: number;
+    readonly speakers: number;
+    readonly turns: number;
   };
   readonly turns: readonly RealSemanticQualityV4Turn[];
 }
@@ -85,12 +95,36 @@ const safeCategoryPattern = /^[a-z][a-z0-9_]{0,63}$/u;
  * memory for execution and never included in returned bindings, errors, or logs.
  */
 export function loadRealSemanticQualityV4Corpus(input: {
+  readonly profile?: "legacy_private_v1";
   readonly pinnedReviewerKeys: readonly SemanticQualityV4PinnedReviewerKey[];
   readonly questionPath: string;
   readonly reviewReceipts: readonly unknown[];
   readonly rubricPath: string;
   readonly transcriptPath: string;
-}): RealSemanticQualityV4Corpus {
+} | HumanSemanticQualityV4CorpusInput): RealSemanticQualityV4Corpus {
+  if (input.profile === "human_corpus_v1") {
+    const decoded = decodeHumanSemanticQualityV4Corpus({
+      approvedCommit: input.approvedCommit,
+      bindingPaths: input.bindingPaths,
+      datasetBytes: readPrivateFile(input.datasetPath),
+      goldBytes: readPrivateFile(input.goldPath),
+      identityBytes: readPrivateFile(input.identityPath),
+      meetingId: input.meetingId,
+      pinnedSha256: input.pinnedSha256,
+      sourceBytes: readPrivateFile(input.sourcePath),
+    });
+    const reviewReceipts = requireIndependentSemanticQualityV4Receipts({
+      binding: decoded.bindings,
+      minimum: 2,
+      pinnedKeys: input.pinnedReviewerKeys,
+      receipts: input.reviewReceipts,
+      role: "question_rubric_review",
+    });
+    return Object.freeze({ ...decoded, reviewReceipts });
+  }
+  if (input.profile !== undefined && input.profile !== "legacy_private_v1") {
+    throw new Error("semantic quality V4 private corpus profile is invalid");
+  }
   const transcriptBytes = readPrivateFile(input.transcriptPath);
   const questionBytes = readPrivateFile(input.questionPath);
   const rubricBytes = readPrivateFile(input.rubricPath);
@@ -185,6 +219,8 @@ export function loadRealSemanticQualityV4Corpus(input: {
       declaredTranscriptSha256: questionSet.declaredTranscriptSha256,
       inputSha256, questionFileSha256, questionSetSha256, rubricFileSha256,
       rubricSha256, transcriptFileSha256 }),
+    privateGoldAuthority: null,
+    profile: "legacy_private_v1",
     questions: Object.freeze(questions),
     reviewReceipts,
     safeCounts: counts,
