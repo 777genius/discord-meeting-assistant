@@ -1,25 +1,52 @@
 import { execFile } from "node:child_process";
 import { createHash, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { admitAcceptedFinalMeeting, buildHistoricalIndexPlan,
+  createHistoricalReleaseBinding } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { Meeting } from "@discord-meeting/meeting-core/meeting-lifecycle";
+import { FinalTranscript } from "@discord-meeting/meeting-core/transcription";
+import { canonicalJsonSha256 } from "@discord-meeting/subscription-runtime-adapter";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { artifactAttemptIdentity, attemptIdentity,
   type QualityCampaignRelease } from "../src/quality-campaign/index.js";
+import { HmacHistoricalOpaqueIds } from "../src/hmac-historical-ids.js";
+import { retrievalV2CapabilityFingerprint } from "../src/infinity-context-retrieval-v2.js";
+import { recoverProductionCanonicalOutcome } from
+  "../src/quality-campaign/production-canonical-execution-evidence.js";
 import { qualificationProviderAccountingFixture } from
   "./quality-campaign-provider-accounting-fixture.js";
 
-const execute = promisify(execFile); const servers: ReturnType<typeof createServer>[] = [];
+const execute = promisify(execFile);
+const servers: ReturnType<typeof createServer>[] = [];
+const require = createRequire(import.meta.url);
+const subscriptionRequire = createRequire(new URL(
+  "../../subscription-runtime-adapter/package.json", import.meta.url));
+interface TestGrpcServer { addService(service: Record<string, unknown>, implementation: object): void;
+  bindAsync(address: string, credentials: unknown,
+    callback: (error: Error | null, port: number) => void): void;
+  tryShutdown(callback: () => void): void }
+const grpc = subscriptionRequire("@grpc/grpc-js") as {
+  readonly Server: new() => TestGrpcServer;
+  readonly ServerCredentials: { createInsecure(): unknown };
+  loadPackageDefinition(value: unknown): unknown };
+const protoLoader = subscriptionRequire("@grpc/proto-loader") as {
+  loadSync(path: string, options: Record<string, unknown>): unknown };
+const grpcServers: TestGrpcServer[] = [];
 let installed!: Awaited<ReturnType<typeof packAndInstall>>;
 
 beforeAll(async () => {installed = await packAndInstall();}, 180_000);
 afterAll(async () => {await Promise.all(servers.splice(0).map(async (server) => {
   await new Promise<void>((resolve) => {server.close(() => {resolve();});});
+})); await Promise.all(grpcServers.splice(0).map(async (server) => {
+  await new Promise<void>((resolve) => {server.tryShutdown(() => {resolve();});});
 }));});
 
 describe("packed production quality-campaign entrypoint", () => {
@@ -37,7 +64,8 @@ describe("packed production quality-campaign entrypoint", () => {
       cwd: installed.consumerRoot, timeout: 10_000 })).rejects.toMatchObject({ code: 1 });
   });
 
-  it("executes the packed preflight command against local fake HTTP", async () => {
+  it("executes the packed official SDK, selected PostgreSQL evidence and grounded answer chain",
+    async () => {
     const root = await mkdtemp(join(tmpdir(), "quality-packed-command-"));
     const fixture = await createPackedPreflightFixture(root, installed.consumerRoot);
     const statusPath = join(root, "preflight-status.json");
@@ -47,9 +75,19 @@ describe("packed production quality-campaign entrypoint", () => {
     expect(await readFile(statusPath, "utf8")).toMatch(/"status":"paused"/u);
     const executeStatusPath = join(root, "execute-status.json");
     await expect(execute(installed.bin, ["execute", fixture.phasePath, executeStatusPath], {
-      timeout: 60_000 })).rejects.toMatchObject({ code: 1, stderr: "" });
+      timeout: 60_000 })).rejects.toMatchObject({ code: 21, stderr: "" });
     expect(fixture.providerRequests()).toBe(0);
-    await expect(readFile(executeStatusPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(fixture.retrievalRequests()).toBeGreaterThan(0);
+    expect(await readFile(executeStatusPath, "utf8")).toMatch(/"status":"outcome_unknown"/u);
+    const selectedReads = JSON.parse(await readFile(fixture.postgresAuditPath, "utf8")) as string[];
+    expect(selectedReads.length).toBeGreaterThan(0);
+    expect(new Set(selectedReads)).toEqual(new Set([fixture.selectedLocator]));
+    expect(fixture.answerPrompts().some((prompt) => prompt.includes(fixture.selectedText))).toBe(true);
+    expect(fixture.answerPrompts().every((prompt) => !prompt.includes(fixture.unselectedText)))
+      .toBe(true);
+    await expect(recoverProductionCanonicalOutcome(fixture.recovery)).resolves.toMatchObject({
+      citations: [fixture.selectedTurnId], status: "answered",
+    });
   }, 120_000);
 
   it("ships the exact fail-closed HTTP review-evidence adapter contract", async () => {
@@ -87,17 +125,41 @@ describe("packed production quality-campaign entrypoint", () => {
 
 async function packAndInstall() {
   const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const workspaceRoot = dirname(dirname(packageRoot));
   await mkdir(join(packageRoot, "dist", "test"), { recursive: true });
   await writeFile(join(packageRoot, "dist", "test", "stale-generated.test.js"), "stale");
   const packRoot = await mkdtemp(join(tmpdir(), "quality-npm-pack-"));
-  const packed = await execute("npm", ["pack", "--silent", "--json", "--pack-destination", packRoot], {
-    cwd: packageRoot, timeout: 120_000 });
+  await execute(process.execPath, [join(packageRoot, "scripts", "clean-dist.mjs")], {
+    cwd: packageRoot, timeout: 30_000 });
+  const typescriptRoot = dirname(require.resolve("typescript/package.json"));
+  await execute(process.execPath, [join(typescriptRoot, "bin", "tsc"), "--project",
+    join(packageRoot, "tsconfig.build.json"), "--pretty", "false"], { cwd: packageRoot,
+    timeout: 120_000 });
+  await execute(process.execPath, [join(packageRoot, "scripts", "packed-manifest.mjs"), "prepare"],
+    { cwd: packageRoot, timeout: 30_000 });
+  let packed;
+  try {packed = await execute("npm", ["pack", "--ignore-scripts", "--silent", "--json",
+    "--pack-destination", packRoot], { cwd: packageRoot, timeout: 120_000 });}
+  finally {await execute(process.execPath, [join(packageRoot, "scripts", "packed-manifest.mjs"),
+    "restore"], { cwd: packageRoot, timeout: 30_000 });}
   const result = (JSON.parse(packed.stdout) as { readonly filename: string;
     readonly files: readonly { readonly path: string }[] }[])[0]!;
   const archive = join(packRoot, result.filename); const consumerRoot = await mkdtemp(join(tmpdir(),
     "quality-npm-consumer-"));
   await execute("npm", ["install", "--prefix", consumerRoot, "--ignore-scripts", "--omit=optional",
     "--package-lock=false", archive], { timeout: 60_000 });
+  const discordModules = join(consumerRoot, "node_modules", "@discord-meeting");
+  const infinityModules = join(consumerRoot, "node_modules", "@infinity-context");
+  await Promise.all([mkdir(discordModules, { recursive: true }), mkdir(infinityModules,
+    { recursive: true })]);
+  for (const packageName of ["meeting-core", "meeting-routing-core", "postgres-adapter",
+    "subscription-runtime-adapter"] as const) {
+    await symlink(join(workspaceRoot, "packages", packageName), join(discordModules, packageName),
+      "dir");
+  }
+  const sdkRoot = dirname(dirname(require.resolve("@infinity-context/sdk")));
+  await symlink(sdkRoot, join(infinityModules, "sdk"), "dir");
+  await installDisposablePgModule(consumerRoot);
   return { bin: join(consumerRoot, "node_modules", ".bin",
     "discord-meeting-quality-campaign"), consumerRoot,
   files: result.files.map(({ path }) => path) };
@@ -105,14 +167,30 @@ async function packAndInstall() {
 
 async function createPackedPreflightFixture(root: string, consumerRoot: string) {
   let observedProviderRequests = 0; let observedReleaseRequests = 0;
+  let observedRetrievalRequests = 0;
   let release: unknown; let reviewEvidence: unknown = {};
   let providerSigner: ReturnType<typeof localSigner> | undefined;
+  const memory = canonicalMemoryFixture();
+  const capability = sdkQualificationCapability();
+  const retrievalSuccess = sdkRetrievalResponse(memory.selectedLocator, capability);
   const server = createServer((request, response) => {if (request.url === "/release") {
     observedReleaseRequests += 1; response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(release)); return;} if (request.url === "/review") {
     request.resume(); request.on("end", () => {response.writeHead(200,
       { "content-type": "application/json" }); response.end(JSON.stringify(reviewEvidence));});
     return;}
+    if (request.url === "/v1/capabilities") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ context: { retrieval: capability } })); return;
+    }
+    if (request.url === "/v1/context/retrieve") {
+      observedRetrievalRequests += 1; request.resume();
+      request.on("end", () => {
+        if (observedRetrievalRequests > 2) {response.destroy(); return;}
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(retrievalSuccess));
+      }); return;
+    }
     if (request.url === "/provider") {
       const chunks: Uint8Array[] = []; request.on("data", (chunk: Uint8Array) => {chunks.push(chunk);});
       request.on("end", () => {
@@ -175,7 +253,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     artifactKeyCustodySha256: fingerprint(authorities.custody!.publicKeyPem),
     authorityPolicySha256: policyBindingSha256,
     discordCommitSha256: d("discord-commit"), discordImageSha256: d("discord-image"),
-    discordReleaseSha256: d("discord-release"), infinityCapabilitySha256: d("capability"),
+    discordReleaseSha256: d("discord-release"), infinityCapabilitySha256: sha256(capability),
     infinityCommitSha256: d("infinity-commit"), infinityImageSha256: d("infinity-image"),
     infinityProfileSha256: d("profile"), infinityReleaseSha256: d("infinity-release"),
     mapperSha256: d("mapper"), model: "gpt-5.6-sol", policySha256: d("policy"),
@@ -230,14 +308,15 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
         authorities.reviewer2!.keyId] })});process.stdout.write(a.rootBindingSha256)`],
   { cwd: consumerRoot, timeout: 30_000 }); const mainRootSha256 = probe.stdout;
   const spendReservationsPath = join(root, "spend.json");
-  await writeFile(spendReservationsPath, canonicalJson(([1, 2, 3] as const).map((repetition) =>
+  const spendDocuments = ([1, 2, 3] as const).map((repetition) =>
     authorities.spend!.signed({ allowedCallKinds: ["answer", "capability", "retrieval",
       "adjudicator_1", "adjudicator_2", "resolver"], campaignRootSha256: mainRootSha256,
     expiresAtEpochMs: 4_000_000_000_000, maxCalls: 1_440, maxEncryptedBytes: 100_000_000,
     maxCallsByKind: { adjudicator_1: 240, adjudicator_2: 240, answer: 240, capability: 240,
       resolver: 240, retrieval: 240 }, maximumEffectDurationMs: 120_000,
     maxTokens: 10_000_000, model: "gpt-5.6-sol", provider: "local-fake-http",
-    reasoning: "xhigh", releaseRootSha256, repetition, serviceTier: "default" }))));
+    reasoning: "xhigh", releaseRootSha256, repetition, serviceTier: "default" }));
+  await writeFile(spendReservationsPath, canonicalJson(spendDocuments));
   const protectedEvidence = ["original_craig_recording", "final_transcript", "meeting_database",
     "frozen_snapshot", "frozen_signed_root"].map((kind) => ({ artifactId: `custody-${kind}`,
       artifactSha256: d(kind), kind }));
@@ -252,17 +331,44 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const evidenceKeyPath = join(root, "evidence.key"); const holdoutEvidenceKeyPath = join(root,
     "holdout-evidence.key"); await writeFile(evidenceKeyPath, Buffer.alloc(32, 1).toString("base64"));
   await writeFile(holdoutEvidenceKeyPath, Buffer.alloc(32, 2).toString("base64"));
-  const endpoint = `${base}/unused`; const providerEndpoint = `${base}/provider`;
-  const canonicalExecution = { answerExecutionBindingPath: releaseRootPath,
+  const capabilityPath = join(root, "infinity-capability.json");
+  await writeFile(capabilityPath, canonicalJson(capability));
+  const answerExecutionBindingPath = join(root, "answer-execution-binding.json");
+  await writeFile(answerExecutionBindingPath, canonicalJson({ artifactBindingSha256: d("artifact"),
+    campaignRunId: "packed-campaign", endpointIdentitySha256: d("endpoint"),
+    processIdentitySha256: (release as QualityCampaignRelease).answerProcessIdentitySha256,
+    promptMapperSha256: (release as QualityCampaignRelease).mapperSha256,
+    serviceGenerationSha256: d("service-generation"), serviceIdentitySha256: d("service"),
+    stableAttemptId: "packed-stable-attempt",
+    tokenizerSha256: (release as QualityCampaignRelease).tokenizerSha256 }));
+  const topologyKeyPath = join(root, "topology.key");
+  await writeFile(topologyKeyPath, Buffer.alloc(32, 7));
+  const topologyPath = join(root, "topology.json");
+  await writeFile(topologyPath, canonicalJson(authorities["main-result"]!.signed({ entries:
+    questions.map(({ questionId }) => ({ currentMeetingId: memory.binding.meetingId, questionId,
+      reference: `scope:${questionId}`, roomId: memory.binding.roomId,
+      scopeId: memory.binding.scopeId })),
+  schemaVersion: "meeting_knowledge.quality_scope_topology.v1" })));
+  const postgresAuditPath = join(root, "postgres-selected-locators.json");
+  await writeFile(postgresAuditPath, "[]");
+  const postgresFixturePath = join(root, "postgres-fixture.json");
+  await writeFile(postgresFixturePath, canonicalJson({ auditPath: postgresAuditPath,
+    meetingRevision: memory.snapshot.revision, meetingSnapshot: memory.snapshot, row: memory.row }));
+  const postgresUrlPath = join(root, "postgres-url");
+  await writeFile(postgresUrlPath, postgresFixturePath);
+  const runtime = await startPackedGroundedAnswerRuntime(
+    (release as QualityCampaignRelease).answerProcessIdentitySha256);
+  const endpoint = `${base}/unused`;
+  const canonicalExecution = { answerExecutionBindingPath,
     answerJournalRoot: join(root, "canonical-answer-journal"), artifactKeyId: "retention-key",
     artifactKeyPath: evidenceKeyPath, artifactRoot: join(root, "canonical-artifacts"),
     expectedRuntimeLauncherSha256: (release as QualityCampaignRelease).answerProcessIdentitySha256,
-    infinityBaseUrl: base, infinityCapabilityPath: releaseRootPath, infinityTokenPath: tokenPath,
-    postgresUrlPath: tokenPath, requestTimeoutMs: 100,
+    infinityBaseUrl: base, infinityCapabilityPath: capabilityPath, infinityTokenPath: tokenPath,
+    postgresUrlPath, requestTimeoutMs: 100,
     retrievalJournalRoot: join(root, "canonical-retrieval-journal"),
-    runtimeAddress: "127.0.0.1:1", runtimeTokenPath: tokenPath,
+    runtimeAddress: runtime.address, runtimeTokenPath: tokenPath,
     topologyAuthority: publicHttp(authorities["main-result"]!, root),
-    topologyKeyPath: evidenceKeyPath, topologyPath: releaseRootPath };
+    topologyKeyPath, topologyPath };
   const connectionsPath = join(root, "connections.json");
   await writeFile(connectionsPath, canonicalJson({ absenceAuthority: publicHttp(authorities.absence!, root),
     absenceEndpoint: `${base}/absence`, adjudicators: ["judge1", "judge2", "resolver"].map((name) => ({
@@ -306,9 +412,190 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const phasePath = join(root, "phase.json"); await writeFile(phasePath, canonicalJson({ payload:
     { configurationPath: configPath, connectionsPath }, schemaVersion:
     "meeting_knowledge.semantic_quality_production_phase.v1" }));
-  return { connectionsPath, phasePath, releaseRequests: () => observedReleaseRequests,
+  const firstQuestion = questions[0]!;
+  const firstAttempt = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+    campaignRootSha256: mainRootSha256, questionDigestSha256: firstQuestion.questionDigestSha256,
+    questionId: firstQuestion.questionId, releaseRootSha256, repetition: 1,
+    spendReservationSha256: sha256(spendDocuments[0]!) });
+  return { answerPrompts: runtime.prompts, connectionsPath, phasePath, postgresAuditPath,
+    recovery: { answerJournalRoot: canonicalExecution.answerJournalRoot,
+      artifactKey: new Uint8Array(32).fill(1), artifactRoot: canonicalExecution.artifactRoot,
+      attemptId: firstAttempt.attemptId, questionId: firstQuestion.questionId, repetition: 1 as const,
+      retrievalJournalRoot: canonicalExecution.retrievalJournalRoot,
+      rootBindingSha256: mainRootSha256 }, releaseRequests: () => observedReleaseRequests,
     providerRequests: () => observedProviderRequests,
+    retrievalRequests: () => observedRetrievalRequests, selectedLocator: memory.selectedLocator,
+    selectedText: memory.selectedText, selectedTurnId: memory.selectedTurnId,
+    unselectedText: memory.unselectedText,
     setReviewEvidence(value: unknown) {reviewEvidence = value;} };
+}
+
+function canonicalMemoryFixture() {
+  const selectedText = "The launch proposal was approved by the review group.";
+  const unselectedText = "UNSELECTED-OMEGA must never enter the grounded answer prompt.";
+  const meeting = Meeting.record({ actors: [{ actorId: "speaker-a", kind: "human" },
+    { actorId: "speaker-b", kind: "human" }], identityProvenance: {
+    actorObservationState: "consistent", actorSemanticsVersion: 1,
+    producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+    producerRevision: "0123456789abcdef0123456789abcdef01234567", rosterState: "sealed" },
+  lifecycleGeneration: 3, meetingId: "packed-historical-meeting",
+  publicationTargetId: "packed-publication", recording: { manifestLocator:
+    "s3://synthetic/packed-historical-meeting/manifest.json",
+  recordingId: "packed-recording", speakerAudio: [{ audioLocator: "s3://synthetic/a.flac",
+    speakerId: "speaker-a", timelineOffsetMs: 0 }, { audioLocator: "s3://synthetic/b.flac",
+    speakerId: "speaker-b", timelineOffsetMs: 0 }] }, source: { roomId: "packed-room",
+    scopeId: "packed-scope" } });
+  meeting.beginTranscription();
+  const turns = Array.from({ length: 100 }, (_, index) => ({ endMs: index * 10_000 + 2_000,
+    speakerId: index % 2 === 0 ? "speaker-a" : "speaker-b", startMs: index * 10_000,
+    text: index === 0 ? selectedText : index === 99 ? unselectedText :
+      `Synthetic canonical planning turn ${index}.`, turnId: `packed-turn-${index}` }));
+  const transcript = FinalTranscript.create({ recordingId: meeting.recording.recordingId,
+    transcriptId: "packed-transcript", turns, version: 1 });
+  meeting.completeTranscription(transcript);
+  const snapshot = meeting.toSnapshot();
+  const binding = createHistoricalReleaseBinding({ acceptedMeetingRevision: snapshot.revision,
+    desiredGeneration: 1, meetingId: snapshot.meetingId, roomId: snapshot.source!.roomId,
+    scopeId: snapshot.source!.scopeId, transcriptId: transcript.transcriptId,
+    transcriptVersion: transcript.version });
+  const accepted = admitAcceptedFinalMeeting({ actors: snapshot.actors,
+    authoritativeDurationMs: snapshot.recording.authoritativeDurationMs ?? null, binding,
+    identityProvenance: snapshot.identityProvenance,
+    lifecycleGeneration: snapshot.lifecycleGeneration, meetingRevision: snapshot.revision,
+    roomId: snapshot.source!.roomId, scopeId: snapshot.source!.scopeId,
+    transcriptId: transcript.transcriptId, transcriptVersion: transcript.version, turns });
+  if (accepted === null) {throw new Error("packed historical meeting admission failed");}
+  const plan = buildHistoricalIndexPlan(accepted,
+    new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(7)));
+  if (plan.documents.length < 2 || plan.documents[0]!.manifest.turnSources.some(
+    ({ turnId }) => turnId === "packed-turn-99")) {
+    throw new Error("packed historical fixture did not create selected and unselected blocks");
+  }
+  const selectedTurnId = "packed-turn-0";
+  return { binding, plan, row: { accepted_meeting_revision: binding.acceptedMeetingRevision,
+    applied_index_profile_id: "packed-profile", attempt_count: 1,
+    desired_generation: binding.desiredGeneration,
+    evidence_policy_version: binding.evidencePolicyVersion, lease_fence: 1,
+    meeting_id: binding.meetingId, operation: "index", plan,
+    profile_rebuild_requested: false, release_id: binding.releaseId,
+    remote_document_ids: {}, room_id: binding.roomId, schema_version: binding.schemaVersion,
+    scope_id: binding.scopeId, transcript_id: binding.transcriptId,
+    transcript_version: binding.transcriptVersion }, selectedLocator:
+    plan.documents[0]!.manifest.candidateLocator, selectedText, selectedTurnId, snapshot,
+  unselectedText };
+}
+
+function sdkFixture(name: "capability" | "success"): Record<string, unknown> {
+  return JSON.parse(require("node:fs").readFileSync(require.resolve(
+    `@infinity-context/sdk/fixtures/context_retrieval_v2/${name}.json`), "utf8")) as
+    Record<string, unknown>;
+}
+
+function sdkQualificationCapability(): Record<string, unknown> {
+  const capability = sdkFixture("capability");
+  capability.profile_id = `locator-v2-full-${String(capability.index_profile_digest)}`;
+  capability.capability_fingerprint = retrievalV2CapabilityFingerprint(capability);
+  return capability;
+}
+
+function sdkRetrievalResponse(locator: string,
+  capability: Record<string, unknown>): Record<string, unknown> {
+  const fixture = sdkFixture("success");
+  const candidate = (fixture.candidates as Record<string, unknown>[])[0]!;
+  const direct: Record<string, unknown> = structuredClone({ ...candidate, locator, neighbors: [] });
+  Object.assign(direct, { actor_matched_weight_micros: 0, actor_requested_weight_micros: 0,
+    matched_query_ids: ["original-question"], preference_boost_micros: 0,
+    preference_score_micros: 0, rerank_score_picos: direct.base_score_picos,
+    source_matched_weight_micros: 0, source_requested_weight_micros: 0,
+    time_matched_weight_micros: 0, time_requested_weight_micros: 0 });
+  direct.contributions = (direct.contributions as Record<string, unknown>[]).map((value) =>
+    ({ ...value, query_id: "original-question" }));
+  return structuredClone({ ...fixture, capability_fingerprint: capability.capability_fingerprint,
+    profile_id: capability.profile_id, applied_bounds: { candidate_limit: 100,
+    deadline_ms: 1_000, neighbor_radius: 0, response_byte_limit: 16_384, result_limit: 10,
+    returned_neighbors: 0, returned_seeds: 1 }, candidates: [direct] });
+}
+
+async function startPackedGroundedAnswerRuntime(launcherSha256: string) {
+  const definition = protoLoader.loadSync(fileURLToPath(new URL(
+    "../../subscription-runtime-adapter/proto/agent_runtime.proto", import.meta.url)),
+  { defaults: true, enums: String, keepCase: false, longs: String, oneofs: true });
+  const loaded = grpc.loadPackageDefinition(definition) as Record<string, unknown>;
+  const service = (((loaded.social_monitor as Record<string, unknown>).agent_runtime as
+    Record<string, unknown>).v1 as Record<string, unknown>).AgentRuntimeService as
+    { service: Record<string, unknown> };
+  const prompts: string[] = [];
+  const server = new grpc.Server();
+  server.addService(service.service, { runAgentTask: (call: { request: Record<string, unknown> },
+    callback: (error: Error | null, response?: unknown) => void) => {
+    const request = runtimeRequestFromGrpc(call.request);
+    prompts.push(request.task.prompt);
+    const structuredOutput = { claims: [{ evidenceIds: ["evidence-000001"],
+      text: "The launch proposal was approved." }], locale: "en", status: "answered" };
+    callback(null, { executionAttestation: { canonicalRequestSha256:
+      canonicalJsonSha256(request), launcherSha256, model: "gpt-5.6-sol",
+    provider: "AGENT_RUNTIME_PROVIDER_CODEX", purpose: request.context.purpose,
+    reasoningEffort: "medium", requestId: request.runId,
+    runtimeEngine: "subscription-runtime-cli", runtimePackageVersion: "0.1.0-main.27",
+    schemaVersion: 1, selectedOutputKind:
+      "AGENT_RUNTIME_SELECTED_OUTPUT_KIND_STRUCTURED_OUTPUT",
+    selectedOutputSha256: canonicalJsonSha256(structuredOutput) }, schemaVersion: 1,
+    status: "AGENT_RUNTIME_TASK_STATUS_COMPLETED",
+    structuredOutputJson: JSON.stringify(structuredOutput) });
+  } });
+  const port = await new Promise<number>((resolve, reject) => {
+    server.bindAsync("127.0.0.1:0", grpc.ServerCredentials.createInsecure(), (error, value) => {
+      if (error === null) {resolve(value);} else {reject(error);}
+    });
+  });
+  grpcServers.push(server);
+  return { address: `127.0.0.1:${port}`, prompts: () => [...prompts] };
+}
+
+function runtimeRequestFromGrpc(value: Record<string, unknown>) {
+  const controls = JSON.parse(String(value.controlsJson)) as Record<string, unknown>;
+  const metadata = value.metadata as Record<string, string>;
+  return { context: { application: metadata.application!, correlationId:
+    String(value.correlationId), metadata: { locale: metadata.locale!,
+    meetingId: metadata.meetingId!, policyVersion: metadata.policyVersion!,
+    transcriptId: metadata.transcriptId!, transcriptVersion: metadata.transcriptVersion! },
+  purpose: String(value.purpose) }, cwd: String(value.cwd), protocolVersion:
+    Number(value.schemaVersion), runId: String(value.requestId), task: { controls,
+    kind: "structured-prompt" as const, metadata: { executionProfile: metadata.executionProfile!,
+      model: metadata.model!, policyVersion: metadata.policyVersion!,
+      reasoningEffort: metadata.reasoningEffort!, runtimeOutput: metadata.runtimeOutput!,
+      toolsDisabled: metadata.toolsDisabled! }, outputSchemaName: String(controls.outputSchemaName),
+    prompt: String(value.prompt), systemPrompt: String(value.systemPrompt) },
+  timeoutMs: Number(value.timeoutMs) };
+}
+
+async function installDisposablePgModule(consumerRoot: string): Promise<void> {
+  const root = join(consumerRoot, "node_modules", "pg");
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "pg", type: "module",
+    version: "8.22.0", exports: "./index.js" }));
+  await writeFile(join(root, "index.js"), `
+import { readFile, writeFile } from "node:fs/promises";
+let auditWrite = Promise.resolve();
+export class Pool {
+  constructor(options) { this.options = options; this.fixture = null; }
+  async data() { this.fixture ??= JSON.parse(await readFile(this.options.connectionString, "utf8")); return this.fixture; }
+  async query(text, values = []) { return await query(this, text, values); }
+  async connect() { const pool = this; return { processID: 4242, query: async (text, values = []) => await query(pool, text, values), release() {} }; }
+  async end() {}
+}
+export class Client { constructor() { this.processID = 4243; } async connect() {} async end() {} async query() { return { rows: [] }; } }
+async function query(pool, text, values) {
+  const data = await pool.data(); const sql = String(text);
+  if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql.trim())) return { rows: [] };
+  if (sql.includes("SELECT historical.*")) return { rows: values[2] === "" ? [{ ...data.row, meeting_revision: data.meetingRevision, meeting_snapshot: data.meetingSnapshot }] : [] };
+  if (sql.includes("count(*)::float8 AS count")) return { rows: [{ count: 1 }] };
+  if (sql.includes("jsonb_array_elements")) { const locators = values[2]; auditWrite = auditWrite.then(async () => { const prior = JSON.parse(await readFile(data.auditPath, "utf8")); await writeFile(data.auditPath, JSON.stringify([...prior, ...locators])); }); await auditWrite; return { rows: [data.row] }; }
+  if (sql.includes("WHERE release_id = $1")) return { rows: [data.row] };
+  if (sql.includes("FROM meeting_core.meetings")) return { rows: [{ revision: data.meetingRevision, snapshot: data.meetingSnapshot }] };
+  throw new Error("unexpected disposable PostgreSQL query: " + sql.slice(0, 120));
+}
+`);
 }
 
 function packedReviewEvidence(answer: ReturnType<typeof attemptIdentity>) {
