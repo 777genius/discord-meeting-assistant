@@ -39,7 +39,11 @@ describe("installed canonical main scheduler", () => {
         expect(context.attemptId).toBe(binding.attemptId);
         attempts.push(`${binding.repetition}:${packet.questionId}:${context.attemptId}`);
         return { citations: [], claims: [], rawRetrievalResponseSha256: digest("a"),
-          reason: "zero_admissible_evidence", retrievalCandidates: [], selectedTurns: [],
+          reason: "zero_admissible_evidence", retrievalCandidates: [{ contributions: [{
+            contributionScorePicos: 2, providerLaneId: "postgres_keyword", providerRank: 0,
+            queryId: "original-question", rawScoreKind: "ts_rank", rawScoreValue: 0.125 }],
+          fusedScore: 0.75, locatorId: `locator:${packet.questionId}`, providerRank: 0 }],
+        selectedTurns: [],
           status: "abstained" as const };
       },
     }), recover: async () => null };

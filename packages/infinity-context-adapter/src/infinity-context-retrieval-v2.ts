@@ -333,6 +333,7 @@ implements FocusedLocatorRetrievalV2Port {
         status: "available",
       });
     } catch (error) {
+      if (retrievalStarted) {this.captureFailedExchange();}
       if (options.signal?.aborted === true) {
         return unavailable("memory.operation_cancelled", false);
       }
@@ -379,6 +380,12 @@ implements FocusedLocatorRetrievalV2Port {
   }
 
   readonly #qualificationTransport: ExactRetrievalExchangeTransport | null;
+
+  private captureFailedExchange(): void {
+    if (this.#qualificationTransport === null) {return;}
+    try {this.#exactExchange = this.#qualificationTransport.takeRetrievalExchange();}
+    catch {/* No response bytes means the external effect remains unknown. */}
+  }
 
   private captureExchangeBytes(request: RetrieveContextInput, response: unknown): {
     readonly requestBytes: Uint8Array; readonly responseBytes: Uint8Array } {

@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
+
 import type { CampaignQuestion } from "./campaign-admission-policy.js";
-import { sha256 } from "./canonical.js";
 import { attemptIdentity } from "./execution.js";
 import type { VerifiedSpendReservation } from "./execution.js";
 import { DurableAttemptJournal } from "./attempt-journal.js";
@@ -153,9 +154,26 @@ export async function executeCanonicalMainCampaignSchedule(input: {
   const terminalAttemptIds = [...ordered.map(({ attemptId }) => attemptId), ...unknownAttemptIds]
     .toSorted();
   return Object.freeze({ completedOutcomes: terminalAttemptIds.length,
-    executionChainSha256: sha256({ outcomes: ordered, unknownAttemptIds: unknownAttemptIds.toSorted() }),
+    executionChainSha256: exactOutcomeChainSha256({ outcomes: ordered,
+      unknownAttemptIds: unknownAttemptIds.toSorted() }),
     maximumObservedConcurrency, outcomeUnknown,
     terminalAttemptIds: Object.freeze(terminalAttemptIds) });
+}
+
+function exactOutcomeChainSha256(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(stableFiniteValue(value)), "utf8").digest("hex");
+}
+
+function stableFiniteValue(value: unknown): unknown {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {throw new Error("canonical outcome contains a non-finite number");}
+    return value;
+  }
+  if (Array.isArray(value)) {return value.map(stableFiniteValue);}
+  if (value === null || typeof value !== "object") {return value;}
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .toSorted(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, stableFiniteValue(item)]));
 }
 
 function assertScheduleInput(input: Parameters<typeof executeCanonicalMainCampaignSchedule>[0]): void {

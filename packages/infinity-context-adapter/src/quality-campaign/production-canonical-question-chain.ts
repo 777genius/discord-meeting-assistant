@@ -124,7 +124,14 @@ export function createProductionCanonicalQuestionChain(input: {
           state: "outcome_unknown" });
         throw error;
       }
-      const exchange = input.retrieval.takeExactExchange();
+      let exchange;
+      try {exchange = input.retrieval.takeExactExchange();}
+      catch (error) {
+        await input.journal.terminal({ attemptId, payloadSha256: sha256Json({
+          reason: "retrieval_external_effect_unknown" }), phase: "retrieval",
+        state: "outcome_unknown" });
+        throw new Error("retrieval external effect is unknown and terminal", { cause: error });
+      }
       await Promise.all([
         input.audit.seal({ attemptId, kind: "retrieval_request",
           plaintext: exchange.requestBytes }),
