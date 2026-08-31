@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 
 import type {
@@ -372,6 +373,47 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
       retryable: false,
       status: "unavailable",
     });
+  });
+
+  it("retains exact request and response bytes when the official SDK rejects a response",
+    async () => {
+    const hostile = response();
+    Object.assign((hostile.candidates as Record<string, unknown>[])[0]!, {
+      text: "provider text must be rejected",
+    });
+    const exactResponse = JSON.stringify(hostile);
+    const server = createServer((incoming, outgoing) => {
+      incoming.resume();
+      incoming.on("end", () => {
+        outgoing.writeHead(200, { "content-type": "application/json" });
+        outgoing.end(incoming.url === "/v1/capabilities"
+          ? JSON.stringify({ context: { retrieval: capability } })
+          : exactResponse);
+      });
+    });
+    await new Promise<void>((resolve) => {server.listen(0, "127.0.0.1", resolve);});
+    try {
+      const address = server.address();
+      if (address === null || typeof address === "string") {throw new Error("HTTP bind failed");}
+      const concrete = new InfinityContextRetrievalV2Adapter({
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        operationTimeoutMs: 1_000,
+        requestTimeoutMs: 1_000,
+      });
+      await expect(concrete.retrieve(request())).resolves.toEqual({
+        code: "memory.context_retrieval_response_invalid",
+        retryable: false,
+        status: "unavailable",
+      });
+      const exchange = concrete.takeExactExchange();
+      expect(new TextDecoder().decode(exchange.responseBytes)).toBe(exactResponse);
+      expect(JSON.parse(new TextDecoder().decode(exchange.requestBytes))).toMatchObject({
+        bounds: { candidate_limit: 100, neighbor_radius: 0, result_limit: 10 },
+        queries: [{ query: "approved launch decision", query_id: "original-question" }],
+      });
+    } finally {
+      await new Promise<void>((resolve) => {server.close(() => {resolve();});});
+    }
   });
 
   it("fails closed on unsafe numbers and response bounds drift", async () => {
