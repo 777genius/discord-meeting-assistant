@@ -32,8 +32,8 @@ describe("canonical admitted qualification question execution", () => {
         calls.push("infinity");
         return { candidates: [{ contributions: [{ contributionScorePicos: 11,
           providerLaneId: "dense", providerRank: 4, queryId: "original-question",
-          rawScoreKind: "cosine", rawScoreValue: "0.8" }], fusedScore: "0.9",
-          locatorId: "loc-2", providerRank: 2 }, { contributions: [], fusedScore: "0.7",
+          rawScoreKind: "cosine", rawScoreValue: 0.8 }], fusedScore: 0.9,
+          locatorId: "loc-2", providerRank: 2 }, { contributions: [], fusedScore: 0.7,
           locatorId: "loc-1", providerRank: 5 }], rawResponseSha256: "a".repeat(64),
           status: "completed" as const };
       } },
@@ -45,8 +45,8 @@ describe("canonical admitted qualification question execution", () => {
     expect(calls).toEqual(["infinity", "postgres:loc-2,loc-1", "answer:turn-2"]);
     expect(result).toMatchObject({ citations: ["turn-2"], status: "answered" });
     expect(result.retrievalCandidates).toEqual([
-      expect.objectContaining({ fusedScore: "0.9", locatorId: "loc-2", providerRank: 2 }),
-      expect.objectContaining({ fusedScore: "0.7", locatorId: "loc-1", providerRank: 5 }),
+      expect.objectContaining({ fusedScore: 0.9, locatorId: "loc-2", providerRank: 2 }),
+      expect.objectContaining({ fusedScore: 0.7, locatorId: "loc-1", providerRank: 5 }),
     ]);
   });
 
@@ -77,7 +77,7 @@ describe("canonical admitted qualification question execution", () => {
           sourceLocatorId: "loc-2", speakerId: "speaker-1", startMs: 10, text: "Approved.",
           turnHash: "f".repeat(64), turnId: "turn-2" }] }) },
       outcome: { record: async () => undefined },
-      retrieval: { retrieve: async () => ({ candidates: [{ contributions: [], fusedScore: "0.9",
+      retrieval: { retrieve: async () => ({ candidates: [{ contributions: [], fusedScore: 0.9,
         locatorId: "loc-2", providerRank: 2 }], rawResponseSha256: "a".repeat(64),
         status: "completed" as const }) },
     });
