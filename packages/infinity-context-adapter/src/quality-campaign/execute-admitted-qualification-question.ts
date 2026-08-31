@@ -76,6 +76,10 @@ export interface QualificationQuestionExecutionContext {
   readonly signal: AbortSignal;
 }
 
+export interface QualificationQuestionOutcomePort {
+  record(attemptId: string, outcome: QualificationQuestionOutcome): Promise<void>;
+}
+
 /**
  * Consumer-owned application use case for exactly one admitted question.
  * Gold packets are deliberately absent from this module and cannot enter execute.
@@ -84,11 +88,13 @@ export class ExecuteAdmittedQualificationQuestion {
   private readonly ports: {
     readonly answer: QualificationQuestionAnswerPort;
     readonly evidence: QualificationQuestionEvidencePort;
+    readonly outcome: QualificationQuestionOutcomePort;
     readonly retrieval: QualificationQuestionRetrievalPort;
   };
   public constructor(ports: {
     readonly answer: QualificationQuestionAnswerPort;
     readonly evidence: QualificationQuestionEvidencePort;
+    readonly outcome: QualificationQuestionOutcomePort;
     readonly retrieval: QualificationQuestionRetrievalPort;
   }) {this.ports = ports;}
 
@@ -101,8 +107,9 @@ export class ExecuteAdmittedQualificationQuestion {
     options.signal.throwIfAborted();
     const retrieval = await this.ports.retrieval.retrieve(input, options);
     if (retrieval.status === "failed") {
-      return freezeOutcome({ citations: [], claims: [], rawRetrievalResponseSha256: null,
-        reason: retrieval.reason, retrievalCandidates: [], selectedTurns: [], status: "failed" });
+      return await this.complete(options.attemptId, { citations: [], claims: [],
+        rawRetrievalResponseSha256: null, reason: retrieval.reason, retrievalCandidates: [],
+        selectedTurns: [], status: "failed" });
     }
     assertOrderedCandidates(retrieval.candidates);
     const locatorIds = retrieval.candidates.map(({ locatorId }) => locatorId);
@@ -110,7 +117,7 @@ export class ExecuteAdmittedQualificationQuestion {
       questionId: input.questionId, scopeTopologyReference: input.scopeTopologyReference }, options);
     assertSelectedEvidence(locatorIds, evidence.turns);
     if (evidence.turns.length === 0) {
-      return freezeOutcome({ citations: [], claims: [],
+      return await this.complete(options.attemptId, { citations: [], claims: [],
         rawRetrievalResponseSha256: retrieval.rawResponseSha256,
         reason: "zero_admissible_evidence", retrievalCandidates: retrieval.candidates,
         selectedTurns: [], status: "abstained" });
@@ -121,7 +128,7 @@ export class ExecuteAdmittedQualificationQuestion {
       evidence: evidence.turns, locale: input.locale, questionId: input.questionId,
       questionText: input.questionText, transcriptVersion: evidence.transcriptVersion }, options);
     if (answer.status === "failed") {
-      return freezeOutcome({ citations: [], claims: [],
+      return await this.complete(options.attemptId, { citations: [], claims: [],
         rawRetrievalResponseSha256: retrieval.rawResponseSha256, reason: answer.reason,
         retrievalCandidates: retrieval.candidates, selectedTurns: evidence.turns, status: "failed" });
     }
@@ -136,10 +143,18 @@ export class ExecuteAdmittedQualificationQuestion {
       (answer.citations.length !== 0 || answer.claims.length !== 0)) {
       throw new Error("qualification abstention cannot carry claims or citations");
     }
-    return freezeOutcome({ citations: answer.citations, claims: answer.claims,
+    return await this.complete(options.attemptId, { citations: answer.citations,
+      claims: answer.claims,
       rawRetrievalResponseSha256: retrieval.rawResponseSha256,
       retrievalCandidates: retrieval.candidates, selectedTurns: evidence.turns,
       status: answer.status });
+  }
+
+  private async complete(attemptId: string, input: QualificationQuestionOutcome):
+  Promise<QualificationQuestionOutcome> {
+    const outcome = freezeOutcome(input);
+    await this.ports.outcome.record(attemptId, outcome);
+    return outcome;
   }
 }
 

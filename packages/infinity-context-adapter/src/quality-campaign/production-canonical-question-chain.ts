@@ -28,11 +28,14 @@ import type {
   QualificationExecutionPacket,
   QualificationQuestionAnswerPort,
   QualificationQuestionEvidencePort,
+  QualificationQuestionOutcomePort,
   QualificationQuestionRetrievalPort,
 } from "./execute-admitted-qualification-question.js";
 
 export { createProductionCanonicalExecutionEvidence } from
   "./production-canonical-execution-evidence.js";
+export { loadProductionExecutionCorpus } from
+  "./production-execution-corpus-custody.js";
 
 export interface QualificationCreateOnlyJournalPort {
   reserve(input: { readonly attemptId: string; readonly payloadSha256: string;
@@ -74,6 +77,7 @@ export function createProductionCanonicalQuestionChain(input: {
   readonly topology: QualificationScopeTopologyPort;
 }): { readonly answer: QualificationQuestionAnswerPort;
   readonly evidence: QualificationQuestionEvidencePort;
+  readonly outcome: QualificationQuestionOutcomePort;
   readonly retrieval: QualificationQuestionRetrievalPort } {
   if (!(input.preparer instanceof PrepareFocusedLocatorRetrievalV2Request) ||
     !(input.retrieval instanceof InfinityContextRetrievalV2Adapter) ||
@@ -124,7 +128,7 @@ export function createProductionCanonicalQuestionChain(input: {
       if (result.status !== "available") {
         return { reason: result.code, status: "failed" as const };
       }
-      state.set(packet.questionId, { binding: null, packet, topology, turns: [] });
+      state.set(options.attemptId, { binding: null, packet, topology, turns: [] });
       return Object.freeze({ candidates: Object.freeze(result.candidates.map((candidate) =>
         Object.freeze({ contributions: Object.freeze(candidate.retrievalProvenance.contributions
           .map((contribution) => Object.freeze({ ...contribution }))),
@@ -138,7 +142,7 @@ export function createProductionCanonicalQuestionChain(input: {
 
   const evidence: QualificationQuestionEvidencePort = Object.freeze({
     rehydrate: async (request, options) => {
-      const execution = state.get(request.questionId);
+      const execution = state.get(options.attemptId);
       if (execution === undefined || execution.packet.scopeTopologyReference !==
         request.scopeTopologyReference || new Set(request.locatorIds).size !==
           request.locatorIds.length) {
@@ -182,7 +186,7 @@ export function createProductionCanonicalQuestionChain(input: {
       }
       const resolved = binding ?? Object.freeze({ canonicalEvidenceHash: sha256Json([]),
         memoryGeneration: "qualification-empty:v1", transcriptVersion: 0 });
-      state.set(request.questionId, { ...execution, binding: resolved,
+      state.set(options.attemptId, { ...execution, binding: resolved,
         turns: Object.freeze(turns) });
       await input.audit.seal({ attemptId: options.attemptId,
         kind: "selected_canonical_turns", plaintext: utf8Json(turns) });
@@ -194,7 +198,7 @@ export function createProductionCanonicalQuestionChain(input: {
 
   const answer: QualificationQuestionAnswerPort = Object.freeze({
     generate: async (request, options) => {
-      const execution = state.get(request.questionId);
+      const execution = state.get(options.attemptId);
       if (execution === undefined || execution.binding === null ||
         JSON.stringify(execution.turns) !== JSON.stringify(request.evidence)) {
         throw new Error("grounded answer evidence is not the selected PostgreSQL evidence");
@@ -226,11 +230,10 @@ export function createProductionCanonicalQuestionChain(input: {
         outcomeCertain: observation.outcomeCertain,
         runtimeReceiptSha256: observation.runtimeReceiptSha256 }), phase: "answer",
         state: stateValue });
+      state.delete(options.attemptId);
       if (stateValue === "outcome_unknown") {
         throw new Error("grounded answer external effect is unknown and terminal");
       }
-      await input.audit.seal({ attemptId, kind: "answer_normalized_outcome",
-        plaintext: utf8Json(generated) });
       if (generated.status !== "completed") {
         return { reason: generated.code, status: "failed" as const };
       }
@@ -245,7 +248,14 @@ export function createProductionCanonicalQuestionChain(input: {
       status: "answered" as const });
     },
   });
-  return Object.freeze({ answer, evidence, retrieval });
+  const outcome: QualificationQuestionOutcomePort = Object.freeze({
+    record: async (attemptId, value) => {
+      await input.audit.seal({ attemptId, kind: "answer_normalized_outcome",
+        plaintext: utf8Json(value) });
+      state.delete(attemptId);
+    },
+  });
+  return Object.freeze({ answer, evidence, outcome, retrieval });
 }
 
 function assertCanonicalRequest(request: FocusedLocatorRetrievalV2RequestSnapshot,

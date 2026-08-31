@@ -23,6 +23,10 @@
       "types": "./src/quality-campaign/production-canonical-question-chain.ts",
       "import": "./dist/quality-campaign/production-canonical-question-chain.js"
     },
+    "./quality-campaign/gold-custody": {
+      "types": "./src/quality-campaign/production-gold-corpus-custody.ts",
+      "import": "./dist/quality-campaign/production-gold-corpus-custody.js"
+    },
     "./test-support": "./test/test-support.ts"
   },
   "files": [

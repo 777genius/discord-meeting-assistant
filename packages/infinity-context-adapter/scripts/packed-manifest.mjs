@@ -25,6 +25,8 @@ if (operation === "prepare") {
     "./dist/quality-campaign/production-cli.d.ts";
   manifest.exports["./quality-campaign/canonical-chain"].types =
     "./dist/quality-campaign/production-canonical-question-chain.d.ts";
+  manifest.exports["./quality-campaign/gold-custody"].types =
+    "./dist/quality-campaign/production-gold-corpus-custody.d.ts";
   manifest.optionalDependencies = {
     "@discord-meeting/meeting-core": "0.1.0",
     "@discord-meeting/postgres-adapter": "0.1.0",
