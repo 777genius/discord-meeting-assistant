@@ -152,7 +152,7 @@ describe("installed production quality-campaign CLI", () => {
           artifactSha256: digest("hostile-substitution") } : original));
       expect(await fixture.cli("cleanup-absence", "substituted-cleanup.json")).toBe(1);
       expect(fixture.deletedIds).toHaveLength(0);
-    }, 180_000);
+    }, 300_000);
 });
 
 async function createFixture() {

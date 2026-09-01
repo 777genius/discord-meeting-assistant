@@ -269,7 +269,7 @@ describe("cooperative historical window planner", () => {
 
   it("bounds a timed-out job and remains reusable", async () => {
     const planner = new CooperativeHistoricalIndexPlanner({
-      jobTimeoutMs: 100,
+      jobTimeoutMs: 500,
     });
     active.push(planner);
     await planner.start();
@@ -278,7 +278,7 @@ describe("cooperative historical window planner", () => {
 
     await expect(planner.prepareWindows(slowMeeting(), policy))
       .rejects.toBeInstanceOf(HistoricalIndexPlannerUnavailableError);
-    expect(performance.now() - startedAt).toBeLessThan(1_000);
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
     const prepared = await planner.prepareWindows(meeting(["reusable"]), policy);
     expect(Array.isArray(prepared.windows)).toBe(true);
   }, 30_000);

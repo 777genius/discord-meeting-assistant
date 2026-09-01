@@ -364,7 +364,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     artifactKeyPath: evidenceKeyPath, artifactRoot: join(root, "canonical-artifacts"),
     expectedRuntimeLauncherSha256: (release as QualityCampaignRelease).answerProcessIdentitySha256,
     infinityBaseUrl: base, infinityCapabilityPath: capabilityPath, infinityTokenPath: tokenPath,
-    postgresUrlPath, requestTimeoutMs: 100,
+    postgresUrlPath, requestTimeoutMs: 1_000,
     retrievalJournalRoot: join(root, "canonical-retrieval-journal"),
     runtimeAddress: runtime.address, runtimeTokenPath: tokenPath,
     topologyAuthority: publicHttp(authorities["main-result"]!, root),

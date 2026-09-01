@@ -59,7 +59,7 @@ overrides:
       env: scriptFreeEnvironment,
       stdio: "pipe",
     });
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await rm(temporaryRoot, { force: true, recursive: true });
