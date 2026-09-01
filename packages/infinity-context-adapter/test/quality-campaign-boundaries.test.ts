@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { artifactAttemptIdentity, attemptIdentity, CampaignEncryptedArtifactStore, canonicalJson,
-  runQualityCampaignOperatorCli } from "../src/index.js";
+  runQualityCampaignOperatorCli } from "../src/quality-campaign/index.js";
 
 const d = (character: string) => character.repeat(64);
 

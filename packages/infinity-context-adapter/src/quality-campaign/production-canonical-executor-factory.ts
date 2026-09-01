@@ -15,7 +15,7 @@ import { Pool } from "pg";
 
 import { HmacHistoricalOpaqueIds } from "../hmac-historical-ids.js";
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
-import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
+import { digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { verifyExternalSignedValue } from "./execution.js";
 import { ExecuteAdmittedQualificationQuestion,
   type QualificationQuestionExecutorFactoryPort } from
@@ -189,14 +189,15 @@ function decodeExecutionBinding(value: unknown): KnowledgeAnswerQualificationExe
   return Object.freeze(record) as unknown as KnowledgeAnswerQualificationExecutionBinding;
 }
 
-function decodeTopology(value: unknown, keyId: string, publicKeyPem: string): ScopeTopologyDocument {
-  const signed = verifyExternalSignedValue<ScopeTopologyDocument>(value, keyId, publicKeyPem,
+function decodeTopology(document: unknown, keyId: string,
+  publicKeyPem: string): ScopeTopologyDocument {
+  const signed = verifyExternalSignedValue<ScopeTopologyDocument>(document, keyId, publicKeyPem,
     "scope topology");
   const payload = exactRecord(signed.payload, ["entries", "schemaVersion"], "scope topology");
   if (payload.schemaVersion !== "meeting_knowledge.quality_scope_topology.v1" ||
     !Array.isArray(payload.entries)) {throw new Error("scope topology is invalid");}
-  const entries = payload.entries.map((value) => {
-    const entry = exactRecord(value, ["currentMeetingId", "questionId", "reference", "roomId",
+  const entries = payload.entries.map((entryValue) => {
+    const entry = exactRecord(entryValue, ["currentMeetingId", "questionId", "reference", "roomId",
       "scopeId"], "scope topology entry");
     return Object.freeze({ currentMeetingId: safeId(entry.currentMeetingId, "current meeting ID"),
       questionId: safeId(entry.questionId, "topology question ID"),

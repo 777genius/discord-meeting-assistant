@@ -42,8 +42,8 @@ export function validateQualificationGoldPacket(value: unknown): QualificationGo
     !Array.isArray(record.speakerTimeAuthority)) {
     throw new Error("qualification gold packet is invalid");
   }
-  const speakerTimeAuthority = record.speakerTimeAuthority.map((value) => {
-    const authority = exactObject(value, ["endMs", "speakerId", "startMs"],
+  const speakerTimeAuthority = record.speakerTimeAuthority.map((authorityValue) => {
+    const authority = exactObject(authorityValue, ["endMs", "speakerId", "startMs"],
       "speaker/time authority");
     if (!Number.isSafeInteger(authority.startMs) || !Number.isSafeInteger(authority.endMs) ||
       Number(authority.startMs) < 0 || Number(authority.endMs) <= Number(authority.startMs) ||

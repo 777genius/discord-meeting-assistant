@@ -419,6 +419,10 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
     }
   });
 
+});
+
+describe("Infinity Context locator-only Retrieval V2 validation", () => {
+
   it("fails closed on unsafe numbers and response bounds drift", async () => {
     const endpoint = new RetrievalV2Endpoint();
     const candidate = (endpoint.response.candidates as Array<Record<string, unknown>>)[0];

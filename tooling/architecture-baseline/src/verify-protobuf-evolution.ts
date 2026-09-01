@@ -35,7 +35,7 @@ const evidenceUrl = new URL(
   repositoryRoot,
 );
 const baselineImageUrl = new URL(
-  "architecture/contracts/protobuf/meeting-platform-rpc-v0.1.0.binpb",
+  "architecture/contracts/protobuf/meeting-platform-rpc-v0.2.0.binpb",
   repositoryRoot,
 );
 const bufConfigUrl = new URL("buf.yaml", repositoryRoot);

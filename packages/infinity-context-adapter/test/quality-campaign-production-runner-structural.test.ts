@@ -757,7 +757,6 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
     return artifacts;
   });
   const deletedIds: string[] = []; const observedIds: string[] = [];
-  const mainExchange = exchange(mainCalls, input.provider);
   const holdoutExchange = exchange(holdoutCalls, input.holdoutProvider);
   const mainEvidence = (attemptIds: readonly string[], evidenceQuestions = input.questions,
     resultSigner = input.provider) => {

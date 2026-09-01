@@ -27,7 +27,7 @@ describe("canonical admitted qualification question execution", () => {
             speakerId: "speaker-1", startMs: 10, text: "Approved.", turnHash: "f".repeat(64),
             turnId: "turn-2" }] };
       } },
-      outcome: { record: async () => undefined },
+      outcome: { record: async () => {} },
       retrieval: { retrieve: async () => {
         calls.push("infinity");
         return { candidates: [{ contributions: [{ contributionScorePicos: 11,
@@ -57,7 +57,7 @@ describe("canonical admitted qualification question execution", () => {
         answer: { generate: async () => {answerCalls += 1; throw new Error("unreachable");} },
         evidence: { rehydrate: async () => ({ authorityGeneration: "generation-7",
           canonicalEvidenceHash: "e".repeat(64), transcriptVersion: 3, turns: [] }) },
-        outcome: { record: async () => undefined },
+        outcome: { record: async () => {} },
         retrieval: { retrieve: async () => ({ candidates: [], rawResponseSha256: "a".repeat(64),
           status: "completed" as const }) },
       });
@@ -95,7 +95,7 @@ describe("canonical admitted qualification question execution", () => {
         canonicalEvidenceHash: "e".repeat(64), transcriptVersion: 3, turns: [{ endMs: 20,
           sourceLocatorId: "loc-2", speakerId: "speaker-1", startMs: 10, text: "Approved.",
           turnHash: "f".repeat(64), turnId: "turn-2" }] }) },
-      outcome: { record: async () => undefined },
+      outcome: { record: async () => {} },
       retrieval: { retrieve: async () => ({ candidates: [{ contributions: [], fusedScore: 0.9,
         locatorId: "loc-2", providerRank: 2 }], rawResponseSha256: "a".repeat(64),
         status: "completed" as const }) },
@@ -110,7 +110,7 @@ describe("canonical admitted qualification question execution", () => {
       answer: { generate: async () => ({ citations: [], claims: [], status: "abstained" as const }) },
       evidence: { rehydrate: async () => ({ authorityGeneration: "generation-7",
         canonicalEvidenceHash: "e".repeat(64), transcriptVersion: 3, turns: [] }) },
-      outcome: { record: async () => undefined },
+      outcome: { record: async () => {} },
       retrieval: { retrieve: async () => ({ candidates: [], rawResponseSha256: "a".repeat(64),
         status: "completed" as const }) },
     });

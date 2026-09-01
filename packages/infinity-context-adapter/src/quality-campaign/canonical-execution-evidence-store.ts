@@ -3,31 +3,17 @@ import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { canonicalJson as canonicalIntegerJson, sha256 as canonicalSha256 } from "./canonical.js";
+import { decodeArtifactEnvelope, validateSemanticQualityV4ArtifactReceipt,
+  type SemanticQualityV4ArtifactKind,
+  type SemanticQualityV4ArtifactReceipt } from
+  "./canonical-execution-artifact-validation.js";
+
+export { validateSemanticQualityV4ArtifactReceipt } from
+  "./canonical-execution-artifact-validation.js";
+export type { SemanticQualityV4ArtifactKind, SemanticQualityV4ArtifactReceipt } from
+  "./canonical-execution-artifact-validation.js";
 
 export type SemanticQualityV4TerminalState = "failed" | "outcome_unknown" | "succeeded";
-
-export type SemanticQualityV4ArtifactKind = "adjudication" | "answer" | "evidence" |
-  "answer_normalized_outcome" | "answer_original_model_surface" |
-  "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
-  "answer_repair_request" | "answer_repair_response" | "capability_request" |
-  "capability_response" |
-  "original_model_input" | "original_provider_request" | "original_provider_response" |
-  "repair_model_input" | "repair_provider_request" | "repair_provider_response" |
-  "raw_outcome" | "response_runtime" | "retrieval_request" | "retrieval_response" |
-  "selected_canonical_turns";
-
-export interface SemanticQualityV4ArtifactReceipt {
-  readonly algorithm: "A256GCM";
-  readonly artifactKind: SemanticQualityV4ArtifactKind;
-  readonly attemptId: string;
-  readonly envelopeSha256: string;
-  readonly exchangeBindingSha256?: string;
-  readonly plaintextSha256: string;
-  readonly rootBindingSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_artifact_receipt.v1";
-  readonly sizeBytes: number;
-  readonly storeIdentitySha256: string;
-}
 
 export interface SemanticQualityV4DurabilityFaults {
   afterDirectorySync?(path: string): void;
@@ -57,6 +43,8 @@ export interface SemanticQualityV4ProviderCallReservation {
 
 const digestPattern = /^[a-f0-9]{64}$/u;
 const safeQuestionIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const journalStates = new Set<unknown>(["provider_reserved", "failed", "outcome_unknown",
+  "succeeded"]);
 
 export function semanticQualityV4AttemptId(input: {
   readonly questionId: string;
@@ -381,19 +369,26 @@ function decodeJournalEntry(value: unknown): SemanticQualityV4JournalEntry {
     typeof entry.questionId !== "string" || typeof entry.repetition !== "number" ||
     typeof entry.rootBindingSha256 !== "string" ||
     entry.schemaVersion !== "meeting_knowledge.semantic_quality_journal.v2" ||
-    (entry.state !== "provider_reserved" && entry.state !== "failed" &&
-      entry.state !== "outcome_unknown" && entry.state !== "succeeded") ||
+    !isJournalState(entry.state) ||
     Object.keys(value).length !== 8 ||
     semanticQualityV4AttemptId({ questionId: entry.questionId,
       repetition: entry.repetition,
       rootBindingSha256: entry.rootBindingSha256 }) !== entry.attemptId ||
     !digestPattern.test(entry.reservedPayloadSha256) ||
-    (entry.state === "provider_reserved" ? entry.terminalPayloadSha256 !== null :
-      typeof entry.terminalPayloadSha256 !== "string" ||
-      !digestPattern.test(entry.terminalPayloadSha256))) {
+    !hasValidTerminalPayload(entry)) {
     throw new Error("semantic quality V4 journal entry is invalid");
   }
   return entry as SemanticQualityV4JournalEntry;
+}
+
+function isJournalState(value: unknown): value is SemanticQualityV4JournalEntry["state"] {
+  return journalStates.has(value);
+}
+
+function hasValidTerminalPayload(entry: Partial<SemanticQualityV4JournalEntry>): boolean {
+  return entry.state === "provider_reserved" ? entry.terminalPayloadSha256 === null :
+    typeof entry.terminalPayloadSha256 === "string" &&
+      digestPattern.test(entry.terminalPayloadSha256);
 }
 
 async function ensureDurableDirectory(path: string,
@@ -417,81 +412,6 @@ async function syncDirectory(path: string, faults: SemanticQualityV4DurabilityFa
   const directory = await open(path, "r");
   try {await directory.sync();} finally {await directory.close();}
   faults.afterDirectorySync?.(path);
-}
-
-function decodeArtifactEnvelope(value: unknown): {
-  readonly algorithm: "A256GCM"; readonly artifactKind: string; readonly attemptId: string;
-  readonly ciphertextBase64: string; readonly keyId: string; readonly nonceBase64: string;
-  readonly exchangeBindingSha256?: string;
-  readonly plaintextSha256: string; readonly rootBindingSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_artifact_envelope.v1";
-  readonly tagBase64: string;
-} {
-  if (value === null || typeof value !== "object" || Array.isArray(value) ||
-    Object.getPrototypeOf(value) !== Object.prototype) {
-    throw new Error("semantic quality V4 artifact envelope is invalid");
-  }
-  const record = value as Record<string, unknown>;
-  const keys = ["algorithm", "artifactKind", "attemptId", "ciphertextBase64", "keyId",
-    "nonceBase64", "plaintextSha256", "rootBindingSha256", "schemaVersion", "tagBase64",
-    ...(record.exchangeBindingSha256 === undefined ? [] : ["exchangeBindingSha256"])].toSorted();
-  if (canonicalIntegerJson(Object.keys(record).toSorted()) !== canonicalIntegerJson(keys) ||
-    record.algorithm !== "A256GCM" ||
-    record.schemaVersion !== "meeting_knowledge.semantic_quality_artifact_envelope.v1" ||
-    !isArtifactKind(record.artifactKind) || typeof record.attemptId !== "string" ||
-    typeof record.ciphertextBase64 !== "string" || typeof record.keyId !== "string" ||
-    typeof record.nonceBase64 !== "string" || typeof record.tagBase64 !== "string" ||
-    typeof record.plaintextSha256 !== "string" || !digestPattern.test(record.plaintextSha256) ||
-    typeof record.rootBindingSha256 !== "string" || !digestPattern.test(record.rootBindingSha256) ||
-    (record.exchangeBindingSha256 !== undefined &&
-      (typeof record.exchangeBindingSha256 !== "string" ||
-        !digestPattern.test(record.exchangeBindingSha256)))) {
-    throw new Error("semantic quality V4 artifact envelope is invalid");
-  }
-  return record as ReturnType<typeof decodeArtifactEnvelope>;
-}
-
-export function validateSemanticQualityV4ArtifactReceipt(
-  value: unknown,
-): SemanticQualityV4ArtifactReceipt {
-  if (value === null || typeof value !== "object" || Array.isArray(value) ||
-    Object.getPrototypeOf(value) !== Object.prototype) {
-    throw new Error("semantic quality V4 artifact receipt is invalid");
-  }
-  const record = value as Record<string, unknown>;
-  const keys = ["algorithm", "artifactKind", "attemptId", "envelopeSha256", "plaintextSha256",
-    "rootBindingSha256", "schemaVersion", "sizeBytes", "storeIdentitySha256",
-    ...(record.exchangeBindingSha256 === undefined ? [] : ["exchangeBindingSha256"])].toSorted();
-  if (canonicalIntegerJson(Object.keys(record).toSorted()) !== canonicalIntegerJson(keys) ||
-    record.algorithm !== "A256GCM" ||
-    record.schemaVersion !== "meeting_knowledge.semantic_quality_artifact_receipt.v1" ||
-    !isArtifactKind(record.artifactKind) || typeof record.attemptId !== "string" ||
-    !/^sqv4-[a-f0-9]{64}$/u.test(record.attemptId) ||
-    [record.envelopeSha256, record.plaintextSha256, record.rootBindingSha256,
-      record.storeIdentitySha256].some((item) => typeof item !== "string" ||
-      !digestPattern.test(item)) || !Number.isSafeInteger(record.sizeBytes) ||
-    (record.exchangeBindingSha256 !== undefined &&
-      (typeof record.exchangeBindingSha256 !== "string" ||
-        !digestPattern.test(record.exchangeBindingSha256))) ||
-    ((record.sizeBytes as number) < 0 || record.sizeBytes === 0 &&
-      record.artifactKind !== "capability_request")) {
-    throw new Error("semantic quality V4 artifact receipt is invalid");
-  }
-  return record as unknown as SemanticQualityV4ArtifactReceipt;
-}
-
-function isArtifactKind(value: unknown): value is SemanticQualityV4ArtifactKind {
-  return value === "adjudication" || value === "answer" ||
-    value === "answer_normalized_outcome" || value === "answer_original_model_surface" ||
-    value === "answer_original_request" || value === "answer_original_response" ||
-    value === "answer_repair_model_surface" || value === "answer_repair_request" ||
-    value === "answer_repair_response" || value === "capability_request" ||
-    value === "capability_response" || value === "evidence" ||
-    value === "original_model_input" || value === "original_provider_request" ||
-    value === "original_provider_response" || value === "repair_model_input" ||
-    value === "repair_provider_request" || value === "repair_provider_response" ||
-    value === "raw_outcome" || value === "response_runtime" || value === "retrieval_request" ||
-    value === "retrieval_response" || value === "selected_canonical_turns";
 }
 
 async function readOptionalJson(path: string): Promise<unknown> {

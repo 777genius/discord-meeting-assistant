@@ -10,13 +10,19 @@ import {
   CONTEXT_RETRIEVAL_RANKING_POLICY,
   InfinityContextClient,
   InfinityContextError,
-  FetchTransport,
   assertRetrievalCapability,
   retrievalRequestPayload,
   type HttpTransport,
   type RetrieveContextInput,
   type RetrieveContextResponse,
 } from "@infinity-context/sdk";
+
+import { ExactRetrievalExchangeTransport,
+  type InfinityContextRetrievalV2ExactExchange } from
+  "./infinity-context-retrieval-exchange.js";
+
+export type { InfinityContextRetrievalV2ExactExchange } from
+  "./infinity-context-retrieval-exchange.js";
 
 export type InfinityContextRetrievalV2Binding =
   FocusedLocatorRetrievalV2RequestSnapshot["binding"];
@@ -43,13 +49,6 @@ export interface InfinityContextRetrievalV2Observation {
   readonly responseBytes: number;
   readonly responseSha256: string;
   readonly routeLatencyUs: number;
-}
-
-export interface InfinityContextRetrievalV2ExactExchange {
-  readonly capabilityRequestBytes: Uint8Array;
-  readonly capabilityResponseBytes: Uint8Array;
-  readonly requestBytes: Uint8Array;
-  readonly responseBytes: Uint8Array;
 }
 
 function unavailable(code: string, retryable: boolean): FocusedLocatorRetrievalV2Result {
@@ -335,29 +334,7 @@ implements FocusedLocatorRetrievalV2Port {
         status: "available",
       });
     } catch (error) {
-      if (retrievalStarted) {this.captureFailedExchange();}
-      if (options.signal?.aborted === true) {
-        return unavailable("memory.operation_cancelled", false);
-      }
-      if (error instanceof InfinityContextError) {
-        if (error.code === "memory.context_retrieval_capability_mismatch") {
-          return unqualified(error.code);
-        }
-        if (error.code === "memory.request_timeout") {
-          return unavailable("memory.context_retrieval_deadline_exceeded", true);
-        }
-        if (
-          retrievalStarted &&
-          error.code === "memory.context_retrieval_contract_invalid"
-        ) {
-          return unavailable("memory.context_retrieval_response_invalid", false);
-        }
-        return unavailable(error.code, error.retryable);
-      }
-      if (error instanceof DOMException && error.name === "TimeoutError") {
-        return unavailable("memory.context_retrieval_deadline_exceeded", true);
-      }
-      return unavailable("memory.context_retrieval_response_invalid", false);
+      return this.retrievalFailure(error, retrievalStarted, options.signal);
     }
   }
 
@@ -399,57 +376,26 @@ implements FocusedLocatorRetrievalV2Port {
     this.#exactExchange = exchange;
     return exchange;
   }
-}
 
-class ExactRetrievalExchangeTransport implements HttpTransport {
-  readonly #delegate = new FetchTransport();
-  #capabilityExchange: Pick<InfinityContextRetrievalV2ExactExchange,
-    "capabilityRequestBytes" | "capabilityResponseBytes"> | null = null;
-  #exchange: InfinityContextRetrievalV2ExactExchange | null = null;
-
-  public async send(request: Parameters<HttpTransport["send"]>[0]) {
-    const isCapability = request.method === "GET" &&
-      request.url.pathname.endsWith("/capabilities");
-    const isRetrieval = request.method === "POST" &&
-      request.url.pathname.endsWith("/context/retrieve");
-    const requestBytes = isCapability || isRetrieval ? exactHttpBodyBytes(request.body) : null;
-    const response = await this.#delegate.send(request);
-    const responseBytes = isCapability || isRetrieval
-      ? typeof response.body === "string" ? new TextEncoder().encode(response.body)
-        : new Uint8Array(response.body)
-      : null;
-    if (isCapability) {
-      this.#capabilityExchange = Object.freeze({ capabilityRequestBytes: requestBytes!,
-        capabilityResponseBytes: responseBytes! });
-    }
-    if (isRetrieval) {
-      const capability = this.#capabilityExchange;
-      if (capability === null) {
-        throw new Error("Infinity capability exchange preceded retrieval capture");
+  private retrievalFailure(error: unknown, retrievalStarted: boolean,
+    signal: AbortSignal | undefined): FocusedLocatorRetrievalV2Result {
+    if (retrievalStarted) {this.captureFailedExchange();}
+    if (signal?.aborted === true) {return unavailable("memory.operation_cancelled", false);}
+    if (error instanceof InfinityContextError) {
+      if (error.code === "memory.context_retrieval_capability_mismatch") {
+        return unqualified(error.code);
       }
-      this.#exchange = Object.freeze({ ...capability, requestBytes: requestBytes!,
-        responseBytes: responseBytes! });
+      if (error.code === "memory.request_timeout") {
+        return unavailable("memory.context_retrieval_deadline_exceeded", true);
+      }
+      if (retrievalStarted && error.code === "memory.context_retrieval_contract_invalid") {
+        return unavailable("memory.context_retrieval_response_invalid", false);
+      }
+      return unavailable(error.code, error.retryable);
     }
-    return response;
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      return unavailable("memory.context_retrieval_deadline_exceeded", true);
+    }
+    return unavailable("memory.context_retrieval_response_invalid", false);
   }
-
-  public takeRetrievalExchange(): InfinityContextRetrievalV2ExactExchange {
-    const exchange = this.#exchange;
-    this.#exchange = null;
-    this.#capabilityExchange = null;
-    if (exchange === null) {throw new Error("Infinity retrieval HTTP exchange was not captured");}
-    return exchange;
-  }
-}
-
-function exactHttpBodyBytes(body: Parameters<HttpTransport["send"]>[0]["body"]): Uint8Array {
-  if (body === undefined) {return new Uint8Array();}
-  if (body?.kind === "json") {return new TextEncoder().encode(JSON.stringify(body.value));}
-  if (body?.kind === "bytes" && typeof body.value === "string") {
-    return new TextEncoder().encode(body.value);
-  }
-  if (body?.kind === "bytes" && body.value instanceof Uint8Array) {
-    return new Uint8Array(body.value);
-  }
-  throw new Error("Infinity retrieval request body is not exact byte-addressable data");
 }

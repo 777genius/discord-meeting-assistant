@@ -279,6 +279,7 @@ boundaries:
       runtimeReferences: []
   - id: composition.infinity-quality-campaign
     roots:
+      - packages/infinity-context-adapter/src/packed-root.ts
       - packages/infinity-context-adapter/src/quality-campaign/index.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-bootstrap.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cli.ts
@@ -286,6 +287,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-execution-evidence.ts
     entrypoints:
+      - packages/infinity-context-adapter/src/packed-root.ts
       - packages/infinity-context-adapter/src/quality-campaign/index.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-bootstrap.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cli.ts
@@ -307,6 +309,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/attempt-journal.ts
       - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-authentication.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-artifact-validation.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-evidence-store.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
@@ -329,6 +332,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/attempt-journal.ts
       - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-authentication.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-artifact-validation.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-evidence-store.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
@@ -363,10 +367,11 @@ boundaries:
   - id: adapters.infinity-context
     roots:
       - packages/infinity-context-adapter/src
-    entrypoints: []
+    entrypoints:
+      - packages/infinity-context-adapter/src/hmac-historical-ids.ts
+      - packages/infinity-context-adapter/src/infinity-context-retrieval-v2.ts
     allow:
       boundaries:
-        - composition.infinity-quality-campaign
         - core.meeting.knowledge
       packages:
         - "@discord-meeting/meeting-core"
@@ -392,6 +397,8 @@ boundaries:
         - "@discord-meeting/conversation-runtime-contracts"
         - "@discord-meeting/discord-adapter"
         - "@discord-meeting/meeting-core"
+        - "@grpc/grpc-js"
+        - "@grpc/proto-loader"
       builtins:
         - node:crypto
         - node:url

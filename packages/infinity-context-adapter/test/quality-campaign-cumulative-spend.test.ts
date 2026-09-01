@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 
 import { admitCumulativeSpend, attemptIdentity, CALL_KINDS, type CallKind,
-  type DurableSpendClaim, FROZEN_ANSWER_EXECUTION, sha256 } from "../src/index.js";
+  type DurableSpendClaim, FROZEN_ANSWER_EXECUTION, sha256 } from
+  "../src/quality-campaign/index.js";
 
 const campaignRootSha256 = sha256("campaign");
 const releaseRootSha256 = sha256("release");

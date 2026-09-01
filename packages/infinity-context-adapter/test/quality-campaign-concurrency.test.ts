@@ -9,7 +9,7 @@ import { expect, it } from "vitest";
 import { attemptIdentity, canonicalJson, DurableAttemptJournal, executeReservedExchange,
   FROZEN_ANSWER_EXECUTION, publicKeyFingerprintSha256, QUALITY_AUTHORITY_ROLES,
   QualityCampaignAuthorityPolicy, sha256,
-  verifySpendReservation } from "../src/index.js";
+  verifySpendReservation } from "../src/quality-campaign/index.js";
 import { qualificationProviderAccountingFixture } from
   "./quality-campaign-provider-accounting-fixture.js";
 

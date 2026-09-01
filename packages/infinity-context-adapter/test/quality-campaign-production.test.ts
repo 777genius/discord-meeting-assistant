@@ -24,7 +24,7 @@ import {
   type ProtectedCampaignEvidence, type RepetitionQualificationEvidence, type RetainedArtifact,
   type ScheduledExactOutcome,
   type VerifiedSpendReservation,
-} from "../src/index.js";
+} from "../src/quality-campaign/index.js";
 import { qualificationProviderAccountingFixture } from
   "./quality-campaign-provider-accounting-fixture.js";
 

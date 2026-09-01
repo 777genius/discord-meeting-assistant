@@ -26,19 +26,15 @@ import { executeProductionMain } from "./production-main-execution.js";
 import { loadProductionExecutionCorpus } from "./production-execution-corpus-custody.js";
 
 export type ProductionCampaignCommand = "adjudicate" | "cleanup-absence" | "execute" |
-  "adjudicate-resume" | "final-admission" | "holdout-adjudicate" | "holdout-cleanup" | "holdout-execute" |
-  "holdout-resume" | "holdout-status" | "preflight" | "resume" | "retention" | "status" |
-  "verify-bind";
+  "adjudicate-resume" | "final-admission" | "holdout-adjudicate" | "holdout-cleanup" |
+  "holdout-execute" | "holdout-resume" | "holdout-status" | "preflight" | "resume" |
+  "retention" | "status" | "verify-bind";
 
-export interface ProductionCompositionResult {
-  readonly blockerCode: "campaign_incomplete" | "none" | "outcome_unknown";
-  readonly receipt: OperatorSafeReceipt;
-  readonly status: "completed" | "outcome_unknown" | "paused";
-}
-interface ProductionCompositionInput {
-  readonly command: ProductionCampaignCommand; readonly configurationPath: string;
-  readonly ports: QualityCampaignProductionPorts;
-}
+export interface ProductionCompositionResult { readonly blockerCode: "campaign_incomplete" |
+  "none" | "outcome_unknown"; readonly receipt: OperatorSafeReceipt; readonly status: "completed" |
+  "outcome_unknown" | "paused"; }
+interface ProductionCompositionInput { readonly command: ProductionCampaignCommand;
+  readonly configurationPath: string; readonly ports: QualityCampaignProductionPorts; }
 
 // oxlint-disable-next-line max-lines-per-function -- one closed dispatcher preserves one admission path
 export async function runQualityCampaignProductionComposition(input: ProductionCompositionInput):

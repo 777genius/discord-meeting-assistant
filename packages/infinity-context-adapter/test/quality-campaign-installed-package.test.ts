@@ -165,6 +165,31 @@ async function packAndInstall() {
   files: result.files.map(({ path }) => path) };
 }
 
+function packedRelease(authorities: Record<string, ReturnType<typeof localSigner>>,
+  capability: Record<string, unknown>, policyBindingSha256: string): QualityCampaignRelease {
+  const d = (value: string) => digest(value);
+  return { answerImageSha256: d("answer-image"),
+    answerProcessIdentitySha256: d("answer-process"), answerReleaseSha256: d("answer-release"),
+    artifactKeyCustodySha256: fingerprint(authorities.custody!.publicKeyPem),
+    authorityPolicySha256: policyBindingSha256,
+    discordCommitSha256: d("discord-commit"), discordImageSha256: d("discord-image"),
+    discordReleaseSha256: d("discord-release"), infinityCapabilitySha256: sha256(capability),
+    infinityCommitSha256: d("infinity-commit"), infinityImageSha256: d("infinity-image"),
+    infinityProfileSha256: d("profile"), infinityReleaseSha256: d("infinity-release"),
+    mapperSha256: d("mapper"), model: "gpt-5.6-sol", policySha256: d("policy"),
+    promptSha256: d("prompt"), reasoning: "xhigh", sdkArchiveSha256: d("sdk"),
+    serviceTier: "default", targetInventoryAuthorityKeySha256:
+    fingerprint(authorities.deletion!.publicKeyPem), tokenizerSha256: d("tokenizer") };
+}
+
+function packedQuestion(source: "automatic" | "independent_review", prefix: string,
+  index: number) {
+  const id = `${prefix}-${index}`;
+  return { locale: index % 2 === 0 ? "en" as const : "ru" as const,
+    questionDigestSha256: digest(`question:${id}`), questionId: id,
+    rubricDigestSha256: digest(`rubric:${id}`), source };
+}
+
 async function createPackedPreflightFixture(root: string, consumerRoot: string) {
   let observedProviderRequests = 0; let observedReleaseRequests = 0;
   let observedRetrievalRequests = 0;
@@ -248,27 +273,13 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const authorityPolicyPath = join(root, "authority-policy.json"); await writeFile(
     authorityPolicyPath, canonicalJson(Object.fromEntries(Object.entries(roleNames).map(
       ([role, name]) => [role, authorityPaths[name]]))));
-  const d = (value: string) => digest(value); release = { answerImageSha256: d("answer-image"),
-    answerProcessIdentitySha256: d("answer-process"), answerReleaseSha256: d("answer-release"),
-    artifactKeyCustodySha256: fingerprint(authorities.custody!.publicKeyPem),
-    authorityPolicySha256: policyBindingSha256,
-    discordCommitSha256: d("discord-commit"), discordImageSha256: d("discord-image"),
-    discordReleaseSha256: d("discord-release"), infinityCapabilitySha256: sha256(capability),
-    infinityCommitSha256: d("infinity-commit"), infinityImageSha256: d("infinity-image"),
-    infinityProfileSha256: d("profile"), infinityReleaseSha256: d("infinity-release"),
-    mapperSha256: d("mapper"), model: "gpt-5.6-sol", policySha256: d("policy"),
-    promptSha256: d("prompt"), reasoning: "xhigh", sdkArchiveSha256: d("sdk"),
-    serviceTier: "default", targetInventoryAuthorityKeySha256:
-    fingerprint(authorities.deletion!.publicKeyPem), tokenizerSha256: d("tokenizer") };
+  const d = (value: string) => digest(value);
+  release = packedRelease(authorities, capability, policyBindingSha256);
   const releaseDocument = releaseSigner.signed(release); const releaseRootSha256 = sha256(
     releaseDocument); const releaseRootPath = join(root, "release.json"); await writeFile(
       releaseRootPath, canonicalJson(releaseDocument));
-  const question = (source: "automatic" | "independent_review", prefix: string, index: number) => {
-    const id = `${prefix}-${index}`; return { locale: index % 2 === 0 ? "en" : "ru",
-      questionDigestSha256: digest(`question:${id}`), questionId: id,
-      rubricDigestSha256: digest(`rubric:${id}`), source };};
-  const automatic = Array.from({ length: 200 }, (_, index) => question("automatic", "a", index));
-  const reviewed = Array.from({ length: 40 }, (_, index) => question("independent_review", "r", index));
+  const automatic = Array.from({ length: 200 }, (_, index) => packedQuestion("automatic", "a", index));
+  const reviewed = Array.from({ length: 40 }, (_, index) => packedQuestion("independent_review", "r", index));
   const questions = [...automatic, ...reviewed]; const custody = authorities.custody!;
   const corpusDigestSha256 = d("corpus");
   const reviewerDigestSha256 = d("reviewers"); const sourceDigestSha256 = d("source");
