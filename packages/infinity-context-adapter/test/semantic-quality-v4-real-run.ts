@@ -1,8 +1,6 @@
-import type { SemanticQualityV4AdjudicationPort, SemanticQualityV4RawRunnerOutcome,
-  SemanticQualityV4RunQuestion } from
+import type { SemanticQualityV4AdjudicationPort, SemanticQualityV4RunQuestion } from
   "../src/semantic-quality-v4-runner.js";
-import { runSemanticQualityV4AnswerPhase, runSemanticQualityV4RawAnswerPhase,
-  runSemanticQualityV4RetrievalPhase } from
+import { runSemanticQualityV4AnswerPhase, runSemanticQualityV4RetrievalPhase } from
   "../src/semantic-quality-v4-runner.js";
 import { SemanticQualityV4EncryptedArtifactStore, semanticQualityV4AttemptId,
   type SemanticQualityV4ArtifactReceipt } from
@@ -38,13 +36,6 @@ export interface SemanticQualityV4StructuralPortSet {
   readonly retrieval: Parameters<typeof runSemanticQualityV4RetrievalPhase>[0]["retrieval"];
 }
 
-export interface SemanticQualityV4RawExecutionRun {
-  readonly artifactReceipts: readonly SemanticQualityV4ArtifactReceipt[];
-  readonly outcomes: readonly SemanticQualityV4RawRunnerOutcome[];
-  readonly repetition: 1 | 2 | 3;
-  readonly spendReservation: SemanticQualityV4SpendReservation;
-}
-
 export function sealSemanticQualityV4CampaignRequest(input: {
   readonly questionReviewBinding: Readonly<Record<string, string | number>>;
   readonly rootBinding: SemanticQualityV4ReleaseBinding;
@@ -57,65 +48,6 @@ export function sealSemanticQualityV4CampaignRequest(input: {
     rootBinding: input.rootBinding, rootBindingSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_campaign_request.v1" as const };
   return Object.freeze({ ...unsigned, sealedRequestSha256: canonicalSha256(unsigned) });
-}
-
-/** Executes each reserved provider attempt once and stops before human evidence is read. */
-export async function executeSemanticQualityV4RawCampaign(input: {
-  readonly artifactEncryption: { readonly key: Uint8Array; readonly keyId: string };
-  readonly artifactStoreRoot: string;
-  readonly authorities: Readonly<Record<"automated" | "overall" | "real",
-    SemanticQualityV4ScoringAuthority>>;
-  readonly pinnedKeys: readonly SemanticQualityV4PinnedReviewerKey[];
-  readonly productionPorts: Parameters<typeof runSemanticQualityV4RealCampaign>[0]["productionPorts"];
-  readonly questionReviewReceipts: readonly unknown[];
-  readonly questions: readonly SemanticQualityV4RunQuestion[];
-  readonly request: unknown;
-  readonly reserveSpend: Parameters<typeof runSemanticQualityV4RealCampaign>[0]["reserveSpend"];
-}): Promise<readonly SemanticQualityV4RawExecutionRun[]> {
-  const request = decodeCampaignRequest(input.request);
-  assertCanonicalQuestions(input.questions, input.authorities.overall);
-  requireIndependentSemanticQualityV4Receipts({ binding: request.questionReviewBinding,
-    minimum: 2, pinnedKeys: input.pinnedKeys, receipts: input.questionReviewReceipts,
-    role: "question_rubric_review" });
-  const artifactStore = new SemanticQualityV4EncryptedArtifactStore(input.artifactStoreRoot);
-  const runs: SemanticQualityV4RawExecutionRun[] = [];
-  for (const repetition of [1, 2, 3] as const) {
-    const artifactReceipts: SemanticQualityV4ArtifactReceipt[] = [];
-    const recordArtifactReceipt = (receipt: SemanticQualityV4ArtifactReceipt) =>
-      artifactReceipts.push(receipt);
-    const ports = input.productionPorts(repetition, { artifactEncryption: input.artifactEncryption,
-      artifactStore, recordArtifactReceipt });
-    const retrievalOutcomes = await runSemanticQualityV4RetrievalPhase({
-      canonicalQuestions: input.questions, evidence: ports.evidence,
-      questions: input.questions, retrieval: ports.retrieval });
-    assertRetrievalOnlyAdmission(retrievalOutcomes, input.authorities, request.rootBinding);
-    const requestedReservation = Object.freeze({ logicalAnswerRequests: 240 as const,
-      maximumExecutionsIncludingRepair: 480 as const,
-      maximumInputBytesPerExecution: 16_000 as const,
-      maximumOutputTokensPerExecution: 2_048 as const, repetition,
-      rootBindingSha256: request.rootBindingSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_spend_reservation.v1" as const });
-    const spendReservation = await input.reserveSpend(requestedReservation);
-    assertReservationMatches(spendReservation, requestedReservation);
-    const answer = await ports.createAnswer({ artifactEncryption: input.artifactEncryption,
-      artifactStore, recordArtifactReceipt });
-    const outcomes = await runSemanticQualityV4RawAnswerPhase({ answer, retrievalOutcomes });
-    for (const outcome of outcomes) {
-      for (const [artifactKind, value] of [["evidence", outcome.locallyRehydratedEvidence],
-        ["answer", outcome.answer], ["raw_outcome", outcome]] as const) {
-        const receipt = await artifactStore.sealCreateOnly({ artifactKind,
-          attemptId: outcome.answerMeasurement.attemptId, key: input.artifactEncryption.key,
-          keyId: input.artifactEncryption.keyId,
-          plaintext: new TextEncoder().encode(canonicalIntegerJson(value)),
-          rootBindingSha256: request.rootBindingSha256 });
-        await artifactStore.verifyReceipt({ key: input.artifactEncryption.key, receipt });
-        recordArtifactReceipt(receipt);
-      }
-    }
-    runs.push(Object.freeze({ artifactReceipts: Object.freeze(artifactReceipts),
-      outcomes, repetition, spendReservation }));
-  }
-  return Object.freeze(runs);
 }
 
 /**

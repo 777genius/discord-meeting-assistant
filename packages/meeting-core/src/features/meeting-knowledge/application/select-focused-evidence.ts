@@ -334,7 +334,7 @@ function isReference(
   return value !== undefined;
 }
 
-export function focusedHydrationMatchesReferences(
+function focusedHydrationMatchesReferences(
   binding: QuestionBindingSnapshot,
   references: readonly FocusedMemoryReference[],
   turns: readonly RehydratedEvidenceTurn[],

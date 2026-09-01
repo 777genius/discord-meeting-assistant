@@ -29,7 +29,6 @@ export type {
   ConversationCoordinatorDependencies,
   ConversationCoordinatorResult,
   ConversationInterruptionResult,
-  ConversationTurnPlaybackStart,
   ConversationTurnPlaybackSettlement,
   FinalizedConversationTurnInput,
   PreparedConversationCueInput,

@@ -75,3 +75,7 @@ export {
   type SemanticQualityV4RunnerOutcome,
   type SemanticQualityV4RetrievalPhaseOutcome,
 } from "./semantic-quality-v4-runner.js";
+export { admitFinalCampaign } from "./quality-campaign/final-admission.js";
+export { attemptIdentity } from "./quality-campaign/execution.js";
+export { measureQualificationModelInput } from
+  "./quality-campaign/qualification-contract.js";

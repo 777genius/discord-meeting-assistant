@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildHistoricalIndexPlan,
@@ -276,8 +276,17 @@ describe("cooperative historical window planner", () => {
     await planner.prepareWindows(meeting(["deadline warmup"]), policy);
     const startedAt = performance.now();
 
-    await expect(planner.prepareWindows(slowMeeting(), policy))
-      .rejects.toBeInstanceOf(HistoricalIndexPlannerUnavailableError);
+    let nowMs = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => {
+      nowMs += 250;
+      return nowMs;
+    });
+    try {
+      await expect(planner.prepareWindows(slowMeeting(), policy))
+        .rejects.toBeInstanceOf(HistoricalIndexPlannerUnavailableError);
+    } finally {
+      clock.mockRestore();
+    }
     expect(performance.now() - startedAt).toBeLessThan(2_000);
     const prepared = await planner.prepareWindows(meeting(["reusable"]), policy);
     expect(Array.isArray(prepared.windows)).toBe(true);

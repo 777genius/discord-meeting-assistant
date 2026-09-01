@@ -49,13 +49,6 @@ export function classifyRelativeTimeFilter(
   return Object.freeze({ status: firstMinutesIntent.test(question) ? "denied" : "absent" });
 }
 
-/** Legacy convenience for callers which already performed admission. */
-export function relativeTimeFilter(question: string):
-{ readonly endMs: number; readonly startMs: number } | null {
-  const parsed = classifyRelativeTimeFilter(question);
-  return parsed.status === "valid" ? parsed.interval : null;
-}
-
 export function boundedRetrievalQuery(value: string): string {
   let output = "";
   for (const character of value) {

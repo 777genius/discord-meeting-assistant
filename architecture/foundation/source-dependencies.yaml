@@ -279,6 +279,7 @@ boundaries:
       runtimeReferences: []
   - id: composition.infinity-quality-campaign
     roots:
+      - packages/infinity-context-adapter/src/index.ts
       - packages/infinity-context-adapter/src/packed-root.ts
       - packages/infinity-context-adapter/src/quality-campaign/index.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-bootstrap.ts
@@ -287,6 +288,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-execution-evidence.ts
     entrypoints:
+      - packages/infinity-context-adapter/src/index.ts
       - packages/infinity-context-adapter/src/packed-root.ts
       - packages/infinity-context-adapter/src/quality-campaign/index.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-bootstrap.ts
@@ -296,6 +298,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-execution-evidence.ts
     allow:
       boundaries:
+        - adapters.infinity-context
         - adapters.infinity-quality-campaign
         - application.infinity-quality-campaign
       packages: []
@@ -368,8 +371,17 @@ boundaries:
     roots:
       - packages/infinity-context-adapter/src
     entrypoints:
+      - packages/infinity-context-adapter/src/cooperative-historical-index-planner.ts
       - packages/infinity-context-adapter/src/hmac-historical-ids.ts
+      - packages/infinity-context-adapter/src/infinity-context-historical-memory.ts
+      - packages/infinity-context-adapter/src/infinity-context-live-finalized-memory.ts
       - packages/infinity-context-adapter/src/infinity-context-retrieval-v2.ts
+      - packages/infinity-context-adapter/src/infinity-exact-document-compatibility.ts
+      - packages/infinity-context-adapter/src/infinity-production-qualification.ts
+      - packages/infinity-context-adapter/src/infinity-runtime-provenance.ts
+      - packages/infinity-context-adapter/src/infinity-sdk-provenance.ts
+      - packages/infinity-context-adapter/src/pinned-multilingual-minilm-tokenizer.ts
+      - packages/infinity-context-adapter/src/semantic-quality-v4-runner.ts
     allow:
       boundaries:
         - core.meeting.knowledge

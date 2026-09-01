@@ -188,7 +188,6 @@ export class SemanticQualityV4EncryptedArtifactStore {
     }
     this.storeIdentitySha256 = canonicalSha256({ algorithm: "A256GCM", root: this.root,
       schemaVersion: "meeting_knowledge.semantic_quality_artifact_store.v1" });
-    productionArtifactStores.add(this);
     Object.freeze(this);
   }
 
@@ -280,16 +279,6 @@ export class SemanticQualityV4EncryptedArtifactStore {
       envelope.exchangeBindingSha256 !== receipt.exchangeBindingSha256) {
       throw new Error("semantic quality V4 artifact receipt is not envelope-bound");
     }
-  }
-}
-
-const productionArtifactStores = new WeakSet<SemanticQualityV4EncryptedArtifactStore>();
-
-export function assertSemanticQualityV4ProductionArtifactStore(
-  store: SemanticQualityV4EncryptedArtifactStore,
-): void {
-  if (!productionArtifactStores.has(store)) {
-    throw new Error("semantic quality V4 requires the branded A256GCM artifact store");
   }
 }
 

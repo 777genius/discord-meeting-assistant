@@ -6,7 +6,7 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { Pool } from "pg";
 
-export interface ReferencedMeetingRow {
+interface ReferencedMeetingRow {
   readonly meeting_id: string;
   readonly snapshot: unknown;
 }
@@ -75,27 +75,6 @@ interface CurrentHistoricalPlanRow {
   readonly scope_id: string;
   readonly transcript_id: string;
   readonly transcript_version: number;
-}
-
-export async function loadCurrentHistoricalReferenceRows(
-  pool: Pool,
-  binding: QuestionBindingSnapshot,
-  references: readonly FocusedMemoryReference[],
-): Promise<readonly ReferencedMeetingRow[] | null> {
-  try {
-    const batch = await loadCurrentHistoricalReferenceBatch(pool, binding, references);
-    const historical = references.filter(({ historicalSource }) =>
-      historicalSource !== undefined
-    );
-    if (references.some(({ historicalSource, meetingId }) =>
-      meetingId !== binding.meetingId && historicalSource === undefined
-    ) || historical.some((reference) => !batch.validReferences.has(reference))) {
-      return null;
-    }
-    return batch.rows;
-  } catch {
-    return null;
-  }
 }
 
 function historicalReferenceMatches(

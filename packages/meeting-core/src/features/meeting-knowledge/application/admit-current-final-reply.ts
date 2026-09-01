@@ -50,7 +50,7 @@ export interface AdmitCurrentFinalReplyInput {
   readonly scopeId: string;
 }
 
-export interface CurrentFinalReplyRetrievalOptions {
+interface CurrentFinalReplyRetrievalOptions {
   readonly canonicalSpeakerFilters?: {
     readonly aliases: SpeakerAliasMapV1;
     readonly identitySkeletons?: IdentitySkeletonPortV1;

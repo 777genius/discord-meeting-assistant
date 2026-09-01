@@ -281,7 +281,7 @@ export async function runSemanticQualityV4AnswerPhase(input: {
 }
 
 /** Runs provider work without requiring answer-bound human evidence to exist yet. */
-export async function runSemanticQualityV4RawAnswerPhase(input: {
+async function runSemanticQualityV4RawAnswerPhase(input: {
   readonly answer: SemanticQualityV4AnswerPort;
   readonly retrievalOutcomes: readonly SemanticQualityV4RetrievalPhaseOutcome[];
 }): Promise<readonly SemanticQualityV4RawRunnerOutcome[]> {

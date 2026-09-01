@@ -251,7 +251,7 @@ export const groundingCoverageReductionSchema = z.object({
   selectedEvidenceBlockCount: z.number().int().nonnegative().max(256),
 }).strict();
 
-export const groundingPlanV1Schema = z.object({
+const groundingPlanV1Schema = z.object({
   authorityGeneration: boundedText,
   coverageBitmap: z.array(z.boolean()).max(10_000).optional(),
   coveragePlanDigest: boundedText.optional(),
