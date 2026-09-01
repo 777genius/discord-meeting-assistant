@@ -97,6 +97,12 @@ than 2026-10-31, after ADR-0049's full V1 drain and rollback gates pass.
 
 ## VoiceText provider profiles
 
+The private VoiceText service remains the default. To use the separately
+versioned OSS gateway without changing Meeting Platform, add the
+[self-hosted gateway overlay](voicetext-gateway.md). Meeting Platform still
+uses only one VoiceText-compatible URL and machine bearer token; provider keys
+stay in the gateway.
+
 VoiceText batch and live recognition are selected independently in Compose:
 
 ```text
@@ -122,6 +128,11 @@ provider/model in VoiceText `ready` before any audio. Neither selector exposes
 provider credentials, endpoints, SDKs, or probes to Discord. The final batch
 transcript from Craig's authoritative per-speaker Ogg tracks remains the only
 final evidence used by summary, memory, or RAG; live text stays derived.
+
+Recognition languages are provider- and model-dependent. Only the English and
+Russian provider flows are qualified. A successful contract canary is not final
+private-guild acceptance; that claim remains closed until the live Discord
+campaign passes with an official test bot in a private test guild.
 
 Rollback is a profile change on the binding-aware release: set both selectors
 back to Deepgram and redeploy the same source revision. Do not code-revert to a

@@ -1,0 +1,110 @@
+services:
+  voicetext-postgres:
+    image: postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    init: true
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: voicetext
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+      POSTGRES_USER: voicetext
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/voicetext/postgres:/var/lib/postgresql
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/voicetext/postgres-password:/run/secrets/postgres-password:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voicetext -d voicetext"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    networks: [meeting-internal]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    stop_grace_period: 30s
+
+  voicetext-gateway:
+    build:
+      # BuildKit resolves GIT_REF, then refuses the build unless that checkout
+      # has the exact SOURCE_REVISION checksum. The image tag and revision label
+      # therefore cannot bless arbitrary caller-supplied source.
+      context: "${VOICETEXT_GATEWAY_GIT_URL:?set gateway Git URL}?ref=${VOICETEXT_GATEWAY_GIT_REF:?set gateway Git ref}&checksum=${VOICETEXT_GATEWAY_SOURCE_REVISION:?set exact gateway Git commit}"
+      dockerfile: Dockerfile
+    image: discord-meeting/voicetext-gateway:${VOICETEXT_GATEWAY_SOURCE_REVISION:?set exact gateway Git commit}
+    labels:
+      org.opencontainers.image.revision: ${VOICETEXT_GATEWAY_SOURCE_REVISION:?set exact gateway Git commit}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    env_file:
+      - path: ${DEPLOY_ROOT:?set DEPLOY_ROOT}/config/voicetext-gateway.env
+        required: true
+    environment:
+      RUST_LOG: ${VOICETEXT_GATEWAY_RUST_LOG:-info}
+      VOICETEXT_BEARER_TOKEN_FILE: /run/platform-secrets/voicetext-service-token
+      VOICETEXT_BIND_ADDR: 0.0.0.0:8080
+      VOICETEXT_MAX_CONNECTIONS: ${VOICETEXT_GATEWAY_MAX_CONNECTIONS:-128}
+      VOICETEXT_MAX_UPLOAD_BYTES: ${VOICETEXT_BATCH_MAX_ARTIFACT_BYTES:-67108864}
+      VOICETEXT_POSTGRES_URL_FILE: /run/voicetext-secrets/postgres-url
+      VOICETEXT_SPOOL_DIR: /var/lib/voicetext/spool
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/voicetext/spool:/var/lib/voicetext/spool
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform/voicetext-service-token:/run/platform-secrets/voicetext-service-token:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/voicetext/postgres-url:/run/voicetext-secrets/postgres-url:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/voicetext/providers:/run/voicetext-provider-secrets:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001
+    cap_drop: [ALL]
+    depends_on:
+      voicetext-postgres: { condition: service_healthy }
+    networks: [meeting-internal, meeting-egress]
+    security_opt: [no-new-privileges:true]
+    cpus: ${VOICETEXT_GATEWAY_CPUS:-2.0}
+    mem_limit: ${VOICETEXT_GATEWAY_MEMORY_LIMIT:-2g}
+    pids_limit: 256
+    stop_grace_period: 30s
+
+  voicetext-edge:
+    build:
+      context: .
+      dockerfile: recording-edge.Dockerfile
+    image: discord-meeting/voicetext-edge:2.11.4-1
+    init: true
+    restart: unless-stopped
+    read_only: true
+    command: ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    environment:
+      VOICETEXT_PUBLIC_HOST: ${VOICETEXT_PUBLIC_HOST:?set VoiceText public DNS hostname}
+    volumes:
+      - ./voicetext-gateway.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/voicetext/caddy-config:/config
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/voicetext/caddy-data:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    depends_on:
+      voicetext-gateway: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider --timeout=5 https://$${VOICETEXT_PUBLIC_HOST}/health/ready"]
+      interval: 10s
+      timeout: 7s
+      retries: 30
+      start_period: 30s
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    networks:
+      meeting-internal: {}
+      meeting-egress:
+        aliases:
+          - ${VOICETEXT_PUBLIC_HOST:?set VoiceText public DNS hostname}
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 64
+    stop_grace_period: 30s
+
+  meeting-platform:
+    environment:
+      VOICETEXT_WS_URL: wss://${VOICETEXT_PUBLIC_HOST:?set VoiceText public DNS hostname}/api/v1/transcribe/stream
+    depends_on:
+      voicetext-edge: { condition: service_healthy }
