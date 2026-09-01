@@ -68,6 +68,25 @@ describe("canonical admitted qualification question execution", () => {
       expect(answerCalls).toBe(0);
     });
 
+  it("keeps rejected PostgreSQL evidence in the qualification denominator", async () => {
+    const recorded: unknown[] = [];
+    const useCase = new ExecuteAdmittedQualificationQuestion({
+      answer: { generate: async () => {throw new Error("answer must not run");} },
+      evidence: { rehydrate: async () => {throw new Error("stale cross-room locator");} },
+      outcome: { record: async (_attemptId, outcome) => {recorded.push(outcome);} },
+      retrieval: { retrieve: async () => ({ candidates: [{ contributions: [], fusedScore: 0.9,
+        locatorId: "loc-2", providerRank: 2 }], rawResponseSha256: "a".repeat(64),
+      status: "completed" as const }) },
+    });
+
+    await expect(useCase.execute(packet, { attemptId: "attempt-1",
+      signal: new AbortController().signal })).resolves.toMatchObject({
+      rawRetrievalResponseSha256: "a".repeat(64), reason: "evidence_rehydration_failed",
+      retrievalCandidates: [expect.objectContaining({ locatorId: "loc-2" })], status: "failed",
+    });
+    expect(recorded).toHaveLength(1);
+  });
+
   it("rejects citations outside the selected canonical turns", async () => {
     const useCase = new ExecuteAdmittedQualificationQuestion({
       answer: { generate: async () => ({ citations: ["unselected-turn"], claims: ["bad"],

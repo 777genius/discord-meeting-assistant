@@ -406,6 +406,9 @@ describe("Infinity Context locator-only Retrieval V2 adapter", () => {
         status: "unavailable",
       });
       const exchange = concrete.takeExactExchange();
+      expect(exchange.capabilityRequestBytes).toHaveLength(0);
+      expect(JSON.parse(new TextDecoder().decode(exchange.capabilityResponseBytes)))
+        .toEqual({ context: { retrieval: capability } });
       expect(new TextDecoder().decode(exchange.responseBytes)).toBe(exactResponse);
       expect(JSON.parse(new TextDecoder().decode(exchange.requestBytes))).toMatchObject({
         bounds: { candidate_limit: 100, neighbor_radius: 0, result_limit: 10 },

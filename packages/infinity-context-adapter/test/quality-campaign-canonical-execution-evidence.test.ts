@@ -49,6 +49,15 @@ describe("canonical execution evidence durability", () => {
         fixture.input.retrievalJournalRoot, rootBindingSha256 }))
         .resolves.toEqual(outcome);
     });
+
+  it("seals the exact empty-body capability request without admitting other empty artifacts",
+    async () => {
+      const fixture = await evidenceFixture();
+      await expect(fixture.evidence.audit.seal({ attemptId, kind: "capability_request",
+        plaintext: new Uint8Array() })).resolves.toBeUndefined();
+      await expect(fixture.evidence.audit.seal({ attemptId, kind: "retrieval_request",
+        plaintext: new Uint8Array() })).rejects.toThrow("artifact binding is invalid");
+    });
 });
 
 async function evidenceFixture() {

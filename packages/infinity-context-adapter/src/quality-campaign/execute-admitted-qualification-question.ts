@@ -140,8 +140,16 @@ export class ExecuteAdmittedQualificationQuestion {
     }
     assertOrderedCandidates(retrieval.candidates);
     const locatorIds = retrieval.candidates.map(({ locatorId }) => locatorId);
-    const evidence = await this.ports.evidence.rehydrate({ locatorIds,
-      questionId: input.questionId, scopeTopologyReference: input.scopeTopologyReference }, options);
+    let evidence;
+    try {
+      evidence = await this.ports.evidence.rehydrate({ locatorIds,
+        questionId: input.questionId, scopeTopologyReference: input.scopeTopologyReference }, options);
+    } catch {
+      return await this.complete(options.attemptId, { citations: [], claims: [],
+        rawRetrievalResponseSha256: retrieval.rawResponseSha256,
+        reason: "evidence_rehydration_failed", retrievalCandidates: retrieval.candidates,
+        selectedTurns: [], status: "failed" });
+    }
     assertSelectedEvidence(locatorIds, evidence.turns);
     if (evidence.turns.length === 0) {
       return await this.complete(options.attemptId, { citations: [], claims: [],

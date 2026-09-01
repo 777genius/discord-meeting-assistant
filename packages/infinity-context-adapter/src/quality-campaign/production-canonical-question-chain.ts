@@ -52,8 +52,9 @@ export interface QualificationEncryptedAuditPort {
   seal(input: { readonly attemptId: string;
     readonly kind: "answer_normalized_outcome" | "answer_original_model_surface" |
       "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
-      "answer_repair_request" | "answer_repair_response" | "retrieval_request" |
-      "retrieval_response" | "selected_canonical_turns";
+      "answer_repair_request" | "answer_repair_response" | "capability_request" |
+      "capability_response" | "retrieval_request" | "retrieval_response" |
+      "selected_canonical_turns";
     readonly plaintext: Uint8Array }): Promise<void>;
 }
 
@@ -133,6 +134,10 @@ export function createProductionCanonicalQuestionChain(input: {
         throw new Error("retrieval external effect is unknown and terminal", { cause: error });
       }
       await Promise.all([
+        input.audit.seal({ attemptId, kind: "capability_request",
+          plaintext: exchange.capabilityRequestBytes }),
+        input.audit.seal({ attemptId, kind: "capability_response",
+          plaintext: exchange.capabilityResponseBytes }),
         input.audit.seal({ attemptId, kind: "retrieval_request",
           plaintext: exchange.requestBytes }),
         input.audit.seal({ attemptId, kind: "retrieval_response",

@@ -9,7 +9,8 @@ export type SemanticQualityV4TerminalState = "failed" | "outcome_unknown" | "suc
 export type SemanticQualityV4ArtifactKind = "adjudication" | "answer" | "evidence" |
   "answer_normalized_outcome" | "answer_original_model_surface" |
   "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
-  "answer_repair_request" | "answer_repair_response" |
+  "answer_repair_request" | "answer_repair_response" | "capability_request" |
+  "capability_response" |
   "original_model_input" | "original_provider_request" | "original_provider_response" |
   "repair_model_input" | "repair_provider_request" | "repair_provider_response" |
   "raw_outcome" | "response_runtime" | "retrieval_request" | "retrieval_response" |
@@ -214,7 +215,8 @@ export class SemanticQualityV4EncryptedArtifactStore {
   }): Promise<SemanticQualityV4ArtifactReceipt> {
     if (input.key.byteLength !== 32 || !safeQuestionIdPattern.test(input.keyId) ||
       !/^sqv4-[a-f0-9]{64}$/u.test(input.attemptId) ||
-      !digestPattern.test(input.rootBindingSha256) || input.plaintext.byteLength < 1 ||
+      !digestPattern.test(input.rootBindingSha256) || (input.plaintext.byteLength < 1 &&
+        input.artifactKind !== "capability_request") ||
       (input.exchangeBindingSha256 !== undefined &&
         !digestPattern.test(input.exchangeBindingSha256))) {
       throw new Error("semantic quality V4 encrypted artifact binding is invalid");
@@ -471,7 +473,8 @@ export function validateSemanticQualityV4ArtifactReceipt(
     (record.exchangeBindingSha256 !== undefined &&
       (typeof record.exchangeBindingSha256 !== "string" ||
         !digestPattern.test(record.exchangeBindingSha256))) ||
-    (record.sizeBytes as number) < 1) {
+    ((record.sizeBytes as number) < 0 || record.sizeBytes === 0 &&
+      record.artifactKind !== "capability_request")) {
     throw new Error("semantic quality V4 artifact receipt is invalid");
   }
   return record as unknown as SemanticQualityV4ArtifactReceipt;
@@ -482,7 +485,8 @@ function isArtifactKind(value: unknown): value is SemanticQualityV4ArtifactKind 
     value === "answer_normalized_outcome" || value === "answer_original_model_surface" ||
     value === "answer_original_request" || value === "answer_original_response" ||
     value === "answer_repair_model_surface" || value === "answer_repair_request" ||
-    value === "answer_repair_response" || value === "evidence" ||
+    value === "answer_repair_response" || value === "capability_request" ||
+    value === "capability_response" || value === "evidence" ||
     value === "original_model_input" || value === "original_provider_request" ||
     value === "original_provider_response" || value === "repair_model_input" ||
     value === "repair_provider_request" || value === "repair_provider_response" ||
