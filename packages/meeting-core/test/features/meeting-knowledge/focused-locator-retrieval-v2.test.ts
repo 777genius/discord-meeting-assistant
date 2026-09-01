@@ -60,7 +60,7 @@ describe("persisted focused locator Retrieval V2 request", () => {
       roomId: "room-1", scopeId: "scope-1" });
     expectPrepared(request);
 
-    expect(request?.filters.sourceGenerations.map(({ sourceKey }) => sourceKey))
+    expect(request.filters.sourceGenerations.map(({ sourceKey }) => sourceKey))
       .toEqual(["-", "A", "_", "a"].map((identity) => `mkrelease1.${identity}`));
   });
 
@@ -85,7 +85,7 @@ describe("persisted focused locator Retrieval V2 request", () => {
 
       if (historicalCount === 99) {
         expectPrepared(request);
-        expect(request?.filters.sourceGenerations).toHaveLength(100);
+        expect(request.filters.sourceGenerations).toHaveLength(100);
       } else {
         expect(request.status).toBe("unavailable");
       }
@@ -109,8 +109,8 @@ describe("persisted focused locator Retrieval V2 request", () => {
       question: "What changed?", roomId: "room-1", scopeId: "scope-1" });
     expectPrepared(request);
 
-    expect(request?.filters.sourceGenerations).toHaveLength(2);
-    expect(request?.filters.sourceGenerations).toEqual(expect.arrayContaining([
+    expect(request.filters.sourceGenerations).toHaveLength(2);
+    expect(request.filters.sourceGenerations).toEqual(expect.arrayContaining([
       records[0]!.plan,
       records[2]!.plan,
     ].map(({ topology }) => ({
@@ -154,32 +154,32 @@ describe("persisted focused locator Retrieval V2 request", () => {
         scopeId: "scope-1",
       });
       expectPrepared(request);
-      expect(request?.queries).toEqual([{
+      expect(request.queries).toEqual([{
         query: question.normalize("NFKC").toLocaleLowerCase("und")
           .replace(/влад|vlad/gu, "participant"),
         queryId: "original-question",
       }]);
-      expect(request?.filters.actorKeys).toEqual(["opaque-vlad"]);
-      expect(request?.filters.relativeTimeInterval).toEqual({
+      expect(request.filters.actorKeys).toEqual(["opaque-vlad"]);
+      expect(request.filters.relativeTimeInterval).toEqual({
         endMs: 480_000,
         startMs: 420_000,
       });
-      expect(request?.filters.sourceGenerations).toEqual([{
+      expect(request.filters.sourceGenerations).toEqual([{
         projectionGeneration: plan.topology.indexGeneration,
         sourceKey: plan.topology.releaseRef,
       }]);
-      expect(request?.scope).toMatchObject({
+      expect(request.scope).toMatchObject({
         memoryScopeId: plan.topology.roomScopeExternalRef,
         spaceId: plan.topology.spaceSlug,
         threadId: null,
       });
-      expect(request?.budgets).toMatchObject({
+      expect(request.budgets).toMatchObject({
         candidateLimit: 100,
         evidenceByteLimit: 16_000,
         neighborRadius: 0,
         resultLimit: 10,
       });
-      expect(request?.softPreferences).toEqual({
+      expect(request.softPreferences).toEqual({
         actorPreferences: [],
         relativeTimeInterval: null,
         sourcePreferences: [],
@@ -214,11 +214,11 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
     expect(actorKeysForQuestion).toHaveBeenCalledWith(
       `What did <@!${rawActorId}> decide?`,
     );
-    expect(request?.filters.actorKeys).toEqual([
+    expect(request.filters.actorKeys).toEqual([
       "dactor1.r0.unprofiled-retained",
       "dactor1.r1.unprofiled-active",
     ]);
-    expect(request?.queries).toEqual([{
+    expect(request.queries).toEqual([{
       query: "what did participant decide?",
       queryId: "original-question",
     }]);
@@ -249,8 +249,8 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
       });
       expectPrepared(request);
 
-      expect(request?.queries[0]?.query).not.toMatch(/alex|smith/iu);
-    expect(request?.filters.actorKeys).toEqual(["opaque-alex"]);
+      expect(request.queries[0]?.query).not.toMatch(/alex|smith/iu);
+      expect(request.filters.actorKeys).toEqual(["opaque-alex"]);
     });
 
   it.each([
@@ -274,9 +274,9 @@ describe("focused locator Retrieval V2 privacy and serving authority", () => {
       });
       expectPrepared(request);
 
-      expect(request?.filters.actorKeys).toEqual(["opaque-alice"]);
-      expect(JSON.stringify(request?.queries)).not.toMatch(/alice|Ａｌｉｃｅ/iu);
-      expect(request?.queries[0]?.query).toBe("what did participant decide?");
+      expect(request.filters.actorKeys).toEqual(["opaque-alice"]);
+      expect(JSON.stringify(request.queries)).not.toMatch(/alice|Ａｌｉｃｅ/iu);
+      expect(request.queries[0]?.query).toBe("what did participant decide?");
     });
 });
 
@@ -430,8 +430,8 @@ describe("focused locator Retrieval V2 privacy and serving authority continuatio
       });
       expectPrepared(request);
 
-      expect(request?.filters.actorKeys).toEqual(["opaque-symbol"]);
-      expect(request?.queries[0]?.query).toBe(
+      expect(request.filters.actorKeys).toEqual(["opaque-symbol"]);
+      expect(request.queries[0]?.query).toBe(
         "what did participant / participant decide?",
       );
       expect(JSON.stringify(request)).not.toContain(alias);
@@ -453,8 +453,8 @@ describe("focused locator Retrieval V2 privacy and serving authority continuatio
       });
       expectPrepared(request);
 
-      expect(request?.filters.actorKeys).toEqual([]);
-      expect(request?.queries[0]?.query).toContain(variant);
+      expect(request.filters.actorKeys).toEqual([]);
+      expect(request.queries[0]?.query).toContain(variant);
     },
   );
 
@@ -532,17 +532,17 @@ describe("focused locator Retrieval V2 privacy and serving authority continuatio
     });
     expectPrepared(request);
 
-    expect(request?.filters.actorKeys).toEqual([
+    expect(request.filters.actorKeys).toEqual([
       "dactor1.r1.retained",
       "dactor1.r2.active",
     ]);
-    expect(request?.queries[0]?.query).toBe(
+    expect(request.queries[0]?.query).toBe(
       "what did participant participant and participant decide between 07:00 and 08:00?",
     );
     expect(JSON.stringify(request)).not.toMatch(
       new RegExp(`${rawActorId}|Vlad|Vladimir`, "u"),
     );
-    expect(request?.filters.sourceGenerations[0]).toEqual({
+    expect(request.filters.sourceGenerations[0]).toEqual({
       projectionGeneration: plan.topology.indexGeneration,
       sourceKey: plan.topology.releaseRef,
     });
@@ -575,7 +575,7 @@ describe("focused locator Retrieval V2 privacy and serving authority continuatio
       question: "What did Vlad decide?", roomId: "room-1", scopeId: "scope-1" });
     expectPrepared(request);
     const locator = plan.documents[0]?.manifest.candidateLocator;
-    if (request === null || locator === undefined) {
+    if (locator === undefined) {
       throw new Error("missing guarded retrieval fixture");
     }
     const retrieve = vi.fn<FocusedLocatorRetrievalV2Port["retrieve"]>(async () => ({
@@ -602,7 +602,7 @@ describe("focused locator Retrieval V2 rehydration", () => {
         question: "What did Vlad decide?", roomId: "room-1", scopeId: "scope-1" });
       expectPrepared(request);
       const locator = plan.documents[0]?.manifest.candidateLocator;
-      if (request === null || locator === undefined) {throw new Error("missing voice fixture");}
+      if (locator === undefined) {throw new Error("missing voice fixture");}
       const result = await new HistoricalFocusedLocatorRetrievalV2({
         actorKeysForSpeaker: (speakerId) => [speakerId],
         authorization: authorization(), ids: new TestIds(),
@@ -701,7 +701,7 @@ describe("focused locator Retrieval V2 rehydration", () => {
       question: "What did Vlad decide?", roomId: "room-1", scopeId: "scope-1" });
     expectPrepared(request);
     const locator = plan.documents[0]?.manifest.candidateLocator;
-    if (request === null || locator === undefined) {
+    if (locator === undefined) {
       throw new Error("missing Retrieval V2 fixture");}
     const result = await new HistoricalFocusedLocatorRetrievalV2({
       authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
@@ -724,7 +724,7 @@ describe("focused locator Retrieval V2 rehydration", () => {
       question: "What did Vlad decide?", roomId: "room-1", scopeId: "scope-1" });
     expectPrepared(request);
     const locator = plan.documents[0]?.manifest.candidateLocator;
-    if (request === null || locator === undefined) {
+    if (locator === undefined) {
       throw new Error("missing Retrieval V2 fixture");
     }
     const duplicatedStore = new AppliedStore([

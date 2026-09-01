@@ -80,7 +80,7 @@ export class PostgresQuestionReconciliationCheckpoint {
       readonly bot_application_identity: string | null;
       readonly delivery_container_id: string | null;
       readonly final_projection_receipt: string;
-      readonly grounding_plan: unknown | null;
+      readonly grounding_plan: unknown;
       readonly question_hash: string;
       readonly question_id: string;
       readonly question_text: string | null;

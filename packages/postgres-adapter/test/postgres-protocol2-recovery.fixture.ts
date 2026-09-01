@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 export interface QuestionReconciliationFixtureRow {
   readonly binding: unknown;
   readonly bindingHash: string;
-  readonly groundingPlan: unknown | null;
+  readonly groundingPlan: unknown;
   readonly questionId: string;
   readonly state: "queued" | "terminal";
 }
@@ -11,7 +11,7 @@ export interface QuestionReconciliationFixtureRow {
 export interface SerializedQuestionReconciliationFixtureRow {
   readonly binding: unknown;
   readonly binding_hash: string;
-  readonly grounding_plan: unknown | null;
+  readonly grounding_plan: unknown;
   readonly question_id: string;
   readonly state: "queued" | "terminal";
 }

@@ -50,11 +50,11 @@ export class ExactRetrievalExchangeTransport implements HttpTransport {
 
 function exactHttpBodyBytes(body: Parameters<HttpTransport["send"]>[0]["body"]): Uint8Array {
   if (body === undefined) {return new Uint8Array();}
-  if (body?.kind === "json") {return new TextEncoder().encode(JSON.stringify(body.value));}
-  if (body?.kind === "bytes" && typeof body.value === "string") {
+  if (body.kind === "json") {return new TextEncoder().encode(JSON.stringify(body.value));}
+  if (typeof body.value === "string") {
     return new TextEncoder().encode(body.value);
   }
-  if (body?.kind === "bytes" && body.value instanceof Uint8Array) {
+  if (body.value instanceof Uint8Array) {
     return new Uint8Array(body.value);
   }
   throw new Error("Infinity retrieval request body is not exact byte-addressable data");

@@ -2,8 +2,8 @@ import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { canonicalJson, digest } from "./canonical.js";
-import { SemanticQualityV4EncryptedArtifactStore,
-  type SemanticQualityV4ArtifactKind } from "./canonical-execution-evidence-store.js";
+import { SemanticQualityV4EncryptedArtifactStore } from
+  "./canonical-execution-evidence-store.js";
 import type { QualificationCreateOnlyJournalPort, QualificationEncryptedAuditPort } from
   "./production-canonical-question-chain.js";
 import { decodeQualificationQuestionOutcome, type QualificationQuestionOutcome } from
@@ -46,7 +46,7 @@ export function createProductionCanonicalExecutionEvidence(input: {
     seal: async ({ attemptId, kind, plaintext }: Parameters<
       QualificationEncryptedAuditPort["seal"]>[0]) => {
       assertAttempt(attemptId, input.attemptId);
-      const receipt = await artifacts.sealCreateOnly({ artifactKind: kind as SemanticQualityV4ArtifactKind,
+      const receipt = await artifacts.sealCreateOnly({ artifactKind: kind,
         attemptId, key: input.artifactKey, keyId: input.artifactKeyId, plaintext,
         rootBindingSha256: input.rootBindingSha256 });
       if (kind === "answer_normalized_outcome") {

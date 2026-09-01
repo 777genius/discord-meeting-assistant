@@ -43,8 +43,7 @@ export async function executeCanonicalMainCampaignSchedule(input: {
   for (const reservation of input.reservations) {
     const claims = await journal.loadAdmittedClaims(reservation);
     for (const claim of claims) {
-      if (typeof claim === "object" && claim !== null && "attemptId" in claim &&
-        typeof claim.attemptId === "string") {claimedAttemptIds.add(claim.attemptId);}
+      claimedAttemptIds.add(claim.attemptId);
     }
   }
   const packets = new Map(input.executionPackets.map((packet) => [packet.questionId, packet]));

@@ -227,7 +227,7 @@ describe("bounded meeting retrieval composition policy", () => {
       if (request.status !== "prepared") {
         throw new Error("expected prepared Retrieval V2 request");
       }
-      expect(request?.filters.actorKeys).toEqual([]);
+      expect(request.filters.actorKeys).toEqual([]);
     });
 
   it.each(["Vlad", "Ｖｌａｄ", "𝐕𝐥𝐚𝐝"])(

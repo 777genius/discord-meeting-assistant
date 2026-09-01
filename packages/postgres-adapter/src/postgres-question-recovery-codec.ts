@@ -98,7 +98,7 @@ export function durableQuestionRecoveryRetryReason(reason: string): string {
 /** Recovery never supplies absent evidence authority from process configuration. */
 export function decodePersistedQuestionRecovery(input: {
   readonly binding: unknown; readonly bindingHash: string;
-  readonly groundingPlan: unknown | null; readonly questionText: string;
+  readonly groundingPlan: unknown; readonly questionText: string;
 }): PersistedQuestionRecovery {
   let currentBinding: QuestionBindingSnapshot | null = null;
   try {
@@ -151,8 +151,7 @@ export function decodePersistedQuestionRecovery(input: {
   let binding: QuestionBindingSnapshot;
   try {
     binding = QuestionBinding.create({ ...parsed.data,
-      retrievalBinding: migratedRetrievalBinding } as unknown as
-      QuestionBindingSnapshot).toSnapshot();
+      retrievalBinding: migratedRetrievalBinding }).toSnapshot();
   } catch {
     return { reason: "binding_structurally_corrupt", status: "incompatible" };
   }

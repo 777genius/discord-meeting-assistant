@@ -305,9 +305,12 @@ function createAnswerPort(input: ProductionCanonicalQuestionChainInput,
 function assertCanonicalRequest(request: FocusedLocatorRetrievalV2RequestSnapshot,
   question: string): void {
   if (request.budgets.candidateLimit !== 100 || request.budgets.resultLimit !== 10 ||
-    request.budgets.neighborRadius !== 0 || request.queries.length !== 1 ||
-    request.queries[0]?.queryId !== "original-question" ||
-    request.queries[0]?.query.length === 0 || question.trim().length === 0) {
+    request.queries.length !== 1 || question.trim().length === 0) {
+    throw new Error("qualification request violates Meeting Knowledge ownership");
+  }
+  const [originalQuery] = request.queries;
+  if (originalQuery === undefined || originalQuery.queryId !== "original-question" ||
+    originalQuery.query.length === 0) {
     throw new Error("qualification request violates Meeting Knowledge ownership");
   }
 }

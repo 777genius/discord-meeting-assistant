@@ -193,15 +193,20 @@ export class ExecuteAdmittedQualificationQuestion {
   }
 }
 
-function assertExecutionPacket(input: QualificationExecutionPacket): void {
-  if (typeof input !== "object" || input === null ||
+function assertExecutionPacket(input: unknown): asserts input is QualificationExecutionPacket {
+  if (!isRecord(input) ||
     JSON.stringify(Object.keys(input).toSorted()) !== JSON.stringify([...EXECUTION_PACKET_KEYS].toSorted()) ||
-    !["en", "mixed", "ru"].includes(input.locale) ||
+    typeof input.locale !== "string" || !["en", "mixed", "ru"].includes(input.locale) ||
+    typeof input.source !== "string" ||
     !["automatic", "independent_review"].includes(input.source) ||
     [input.questionId, input.questionText, input.scopeTopologyReference]
       .some((value) => typeof value !== "string" || value.trim().length === 0)) {
     throw new Error("qualification execution packet is invalid or gold-bearing");
   }
+}
+
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return typeof input === "object" && input !== null;
 }
 
 function assertOrderedCandidates(candidates: readonly QualificationRetrievalCandidate[]): void {

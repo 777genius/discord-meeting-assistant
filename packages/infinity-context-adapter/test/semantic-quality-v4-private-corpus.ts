@@ -57,7 +57,7 @@ export interface RealSemanticQualityV4Corpus {
     readonly transcriptFileSha256: string;
   };
   /** Private adjudication data, never generator input or public evidence. */
-  readonly privateGoldAuthority: unknown | null;
+  readonly privateGoldAuthority: unknown;
   readonly profile: "human_corpus_v1" | "legacy_private_v1";
   readonly questions: readonly RealSemanticQualityV4Question[];
   readonly reviewReceipts: readonly VerifiedSemanticQualityV4Receipt[];
@@ -123,7 +123,8 @@ export function loadRealSemanticQualityV4Corpus(input: {
     });
     return Object.freeze({ ...decoded, reviewReceipts });
   }
-  if (input.profile !== undefined && input.profile !== "legacy_private_v1") {
+  const legacyProfile: unknown = input.profile;
+  if (legacyProfile !== undefined && legacyProfile !== "legacy_private_v1") {
     throw new Error("semantic quality V4 private corpus profile is invalid");
   }
   const transcriptBytes = readPrivateFile(input.transcriptPath);

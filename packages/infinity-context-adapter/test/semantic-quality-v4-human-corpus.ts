@@ -571,7 +571,7 @@ function decodeGold(value: unknown, authority: {
         for (const [dimension, field] of [["time_phase", "timeTarget"],
           ["latest_correction", "latestCorrectionTarget"]] as const) {
           if (claim.dimensions.includes(dimension) ?
-            typeof claim[field] !== "string" || (claim[field] as string).trim() === "" :
+            typeof claim[field] !== "string" || (claim[field]).trim() === "" :
             Object.hasOwn(claim, field)) {
             throw new Error("semantic quality V4 human claim dimension authority is invalid");
           }
@@ -657,9 +657,9 @@ function decodeLocator(value: unknown,
     throw new Error("semantic quality V4 human evidence is not an exact local turn");
   }
   return Object.freeze({
-    endMs: item.endMs as number,
+    endMs: item.endMs,
     speakerId: item.speakerId,
-    startMs: item.startMs as number,
+    startMs: item.startMs,
     turnId: item.turnId,
   });
 }

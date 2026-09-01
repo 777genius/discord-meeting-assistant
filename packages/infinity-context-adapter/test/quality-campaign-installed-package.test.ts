@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -497,7 +498,7 @@ function canonicalMemoryFixture() {
 }
 
 function sdkFixture(name: "capability" | "success"): Record<string, unknown> {
-  return JSON.parse(require("node:fs").readFileSync(require.resolve(
+  return JSON.parse(readFileSync(require.resolve(
     `@infinity-context/sdk/fixtures/context_retrieval_v2/${name}.json`), "utf8")) as
     Record<string, unknown>;
 }

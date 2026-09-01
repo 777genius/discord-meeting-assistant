@@ -9,13 +9,20 @@ import { durableQuestionRecoveryRetryReason,
 
 describe("PostgreSQL question binding fence readiness contract", () => {
   it("binds startup readiness to the exact forward-migration function body", async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [{
-      definition_matches: true, dependency_matches: true, wiring_matches: true,
-    }] });
+    let capturedParameters: readonly unknown[] = [];
+    const query = vi.fn(async (_text: string, parameters?: readonly unknown[]) => {
+      capturedParameters = parameters ?? [];
+      return { rows: [{
+        definition_matches: true, dependency_matches: true, wiring_matches: true,
+      }] };
+    });
     await expect(assertQuestionBindingFenceDefinition(
       { query } as never, await loadPostgresMigrations(),
     )).resolves.toBeUndefined();
-    const expectedSource = query.mock.calls[0]?.[1]?.[0] as string;
+    const expectedSource = capturedParameters[0];
+    if (typeof expectedSource !== "string") {
+      throw new Error("question binding fence source was not captured");
+    }
     expect(expectedSource).toContain("pre_canonical_text");
     expect(expectedSource).toContain("NEW.binding = expected_binding");
     expect(expectedSource).toContain("question retrieval binding is immutable");

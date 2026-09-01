@@ -501,7 +501,7 @@ describe("PostgreSQL question reconciliation crash recovery", () => {
   it("restarts exhaustively across poison rows, delivered effects, crashes, and cursor CAS",
     async (context) => {
       const rows: Array<{ readonly binding: unknown; readonly bindingHash: string;
-        readonly groundingPlan: unknown | null; readonly questionId: string;
+        readonly groundingPlan: unknown; readonly questionId: string;
         readonly state: "queued" | "terminal" }> =
         Array.from({ length: 403 }, (_, index) => {
         const questionId = String(77_000_000_000_000_000n + BigInt(index));
@@ -625,7 +625,8 @@ describe("PostgreSQL question reconciliation crash recovery", () => {
         contender.saveQuestionReconciliationCursor({
           expectedAfterQuestionId: concurrentCursor, nextAfterQuestionId: pageTwoCursor }),
       ]);
-      expect(cas.toSorted()).toEqual([false, true]);
+      expect(cas.toSorted((left, right) => Number(left) - Number(right)))
+        .toEqual([false, true]);
 
       const durablePages = [...replayed, ...pageTwo];
       const observed = new Set([...firstPage, ...durablePages]
