@@ -334,34 +334,29 @@ function isReference(
   return value !== undefined;
 }
 
-function focusedHydrationMatchesReferences(
+function focusedHydrationReferenceMatchesTurn(
   binding: QuestionBindingSnapshot,
-  references: readonly FocusedMemoryReference[],
-  turns: readonly RehydratedEvidenceTurn[],
+  reference: FocusedMemoryReference,
+  turn: RehydratedEvidenceTurn,
 ): boolean {
-  return references.length === turns.length && references.every((reference, index) => {
-    const turn = turns[index];
-    if (turn === undefined ||
-        turn.turnId !== reference.turnId ||
-        turn.turnHash !== reference.turnHash) {
-      return false;
-    }
-    if (turn.source === undefined) {
-      return reference.meetingId === binding.meetingId &&
-        reference.historicalSource === undefined &&
-        reference.transcriptId === binding.transcriptId &&
-        reference.transcriptVersion === binding.transcriptVersion &&
-        reference.sourceStartCodePoint === undefined &&
-        reference.sourceEndCodePoint === undefined;
-    }
-    return turn.source.meetingId === reference.meetingId &&
-      historicalEvidenceSourceKey(turn.source.historicalSource) ===
-        historicalEvidenceSourceKey(reference.historicalSource) &&
-      turn.source.transcriptId === reference.transcriptId &&
-      turn.source.transcriptVersion === reference.transcriptVersion &&
-      turn.source.sourceStartCodePoint === reference.sourceStartCodePoint &&
-      turn.source.sourceEndCodePoint === reference.sourceEndCodePoint;
-  });
+  if (turn.turnId !== reference.turnId || turn.turnHash !== reference.turnHash) {
+    return false;
+  }
+  if (turn.source === undefined) {
+    return reference.meetingId === binding.meetingId &&
+      reference.historicalSource === undefined &&
+      reference.transcriptId === binding.transcriptId &&
+      reference.transcriptVersion === binding.transcriptVersion &&
+      reference.sourceStartCodePoint === undefined &&
+      reference.sourceEndCodePoint === undefined;
+  }
+  return turn.source.meetingId === reference.meetingId &&
+    historicalEvidenceSourceKey(turn.source.historicalSource) ===
+      historicalEvidenceSourceKey(reference.historicalSource) &&
+    turn.source.transcriptId === reference.transcriptId &&
+    turn.source.transcriptVersion === reference.transcriptVersion &&
+    turn.source.sourceStartCodePoint === reference.sourceStartCodePoint &&
+    turn.source.sourceEndCodePoint === reference.sourceEndCodePoint;
 }
 
 export function alignFocusedHydrationSurvivors(
@@ -370,11 +365,26 @@ export function alignFocusedHydrationSurvivors(
   turns: readonly RehydratedEvidenceTurn[],
 ): { readonly references: readonly FocusedMemoryReference[];
   readonly turns: readonly RehydratedEvidenceTurn[] } | null {
-  if (!focusedHydrationMatchesReferences(binding, references, turns)) {
+  if (turns.length > references.length) {
     return null;
   }
+  const survivorReferences: FocusedMemoryReference[] = [];
+  let previousReferenceIndex = -1;
+  for (const turn of turns) {
+    const matchingIndices = references.flatMap((reference, index) =>
+      focusedHydrationReferenceMatchesTurn(binding, reference, turn)
+        ? [index]
+        : []
+    );
+    if (matchingIndices.length !== 1 ||
+      matchingIndices[0]! <= previousReferenceIndex) {
+      return null;
+    }
+    previousReferenceIndex = matchingIndices[0]!;
+    survivorReferences.push(references[previousReferenceIndex]!);
+  }
   return Object.freeze({
-    references: Object.freeze([...references]),
+    references: Object.freeze(survivorReferences),
     turns: Object.freeze([...turns]),
   });
 }

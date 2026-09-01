@@ -54,7 +54,7 @@ interface ScoredTurn {
 }
 
 const ignoredTerms = new Set([
-  "about", "after", "answer", "could", "does", "from", "have", "please",
+  "about", "after", "answer", "could", "current", "does", "from", "have", "please",
   "tell", "that", "their", "there", "these", "this", "what", "when",
   "where", "which", "who", "would", "were", "was", "какая", "какие",
   "какой", "когда", "ответ", "после", "пожал", "расск", "сказа", "этого",
