@@ -19,6 +19,7 @@ import {
 import {
   parseServerMessage,
   type VoicetextConfigMessage,
+  type VoicetextFinalizeComplete,
 } from "./protocol.js";
 import { VoicetextLiveTimeline } from "./voicetext-live-timeline.js";
 import { VoicetextLiveTranscriptEmitter } from "./voicetext-live-transcript-emitter.js";
@@ -32,8 +33,9 @@ export class LiveSession implements VoicetextLiveSession {
   private readonly abortController = new AbortController();
   private readonly packetIds = new Set<string>();
   private readonly packetIdOrder: string[] = [];
-  private finalizeWaiter: LiveSessionDeferred<"flushed" | "no_provider" | "timeout"> | undefined;
+  private finalizeWaiter: LiveSessionDeferred<VoicetextFinalizeComplete> | undefined;
   private finalizePromise: Promise<void> | undefined;
+  private finalizeResultReceived = false;
   private nextSequence = 0;
   private pump: Promise<void> | undefined;
   private sending = false;
@@ -217,12 +219,19 @@ export class LiveSession implements VoicetextLiveSession {
       }
       this.finalizeWaiter = createLiveSessionDeferred();
       await this.socket.sendText(JSON.stringify({ type: "finalize" }), this.abortController.signal);
-      const status = await withLiveSessionTimeout(
+      const result = await withLiveSessionTimeout(
         this.finalizeWaiter.promise,
         this.options.finalizeTimeoutMs,
         "Voicetext live finalize timed out",
       );
-      validateLiveSessionFinalizeStatus(status, this.nextSequence);
+      validateLiveSessionFinalizeStatus(result, this.nextSequence);
+      // Let the receive pump surface an already-buffered second terminal before
+      // the client begins the close handshake. The first terminal must not hide
+      // contradictory or duplicate evidence already delivered by the gateway.
+      await Promise.resolve();
+      if (this.terminalError !== undefined) {
+        throw this.terminalError;
+      }
     } catch (error) {
       return error;
     }
@@ -306,7 +315,22 @@ export class LiveSession implements VoicetextLiveSession {
       return;
     }
     if (message.type === "finalize_complete") {
-      this.finalizeWaiter?.resolve(message.status);
+      if (this.state !== "finalizing" || this.finalizeWaiter === undefined) {
+        throw new VoicetextAdapterError(
+          "protocol_error",
+          "Voicetext sent finalize_complete outside live finalization",
+          false,
+        );
+      }
+      if (this.finalizeResultReceived) {
+        throw new VoicetextAdapterError(
+          "protocol_error",
+          "Voicetext sent duplicate live finalize terminal evidence",
+          false,
+        );
+      }
+      this.finalizeResultReceived = true;
+      this.finalizeWaiter.resolve(message);
       return;
     }
     if (message.type === "error") {

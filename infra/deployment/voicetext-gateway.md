@@ -70,6 +70,14 @@ in Compose or `.env`. The gateway process, spool, Caddy state directories, and
 gateway-readable secrets use UID/GID `10001`; keep secrets mode `0400` and
 directories mode `0700`.
 
+`voicetext-service-token` is one shared machine-credential file, not two copied
+files. Generate at least 32 random bytes, encode them as one non-empty line with
+no `Bearer ` prefix, make the regular non-symlink file owned by UID `10001` and
+mode `0400`, and mount that exact inode read-only into both services. Meeting
+Platform reads it through `VOICETEXT_SERVICE_TOKEN_FILE`; the gateway reads it
+through `VOICETEXT_BEARER_TOKEN_FILE`. Rotate it stop-first on both services so
+different old/new bytes can never coexist.
+
 Select Meeting Platform profiles independently:
 
 ```text
@@ -87,11 +95,27 @@ fail closed; neither Meeting Platform nor the gateway silently substitutes a
 provider. Keep Deepgram available while draining historical
 `voicetext-batch-v2:deepgram-nova-3` work.
 
-Recognition languages depend on the selected provider and model. Only English
-and Russian provider flows are qualified. The adapter and gateway contract
-checks do not establish final private-guild acceptance; that remains pending
-until the live Discord campaign passes with an official test bot in a private
-test guild.
+### Exact qualification mapping
+
+| Platform profile | Provider / model / mode | Language sent | Synthetic fixture | Evidence qualification |
+| --- | --- | --- | --- | --- |
+| `deepgram-nova-3` batch | Deepgram / `nova-3` / batch contract v2 | `multi` | complete authoritative Craig per-speaker Ogg | EN and RU contract plus provider canary; accepted final turns may become final transcript evidence |
+| `deepgram-nova-3` live | Deepgram / `nova-3` / streaming contract v2 | configured live language (`multi` in the semantic canary) | synthetic mono Opus, 48 kHz | EN and RU derived-caption qualification only; never authoritative evidence |
+| `elevenlabs-scribe-v2` batch | ElevenLabs / `scribe_v2` / batch contract v3 | `multi` | complete authoritative Craig per-speaker Ogg | EN and RU contract plus provider canary; accepted final turns may become final transcript evidence |
+| `elevenlabs-scribe-v2-realtime` live | ElevenLabs / `scribe_v2_realtime` / streaming contract v2 | configured live language (`multi` in the semantic canary) | synthetic mono Opus, 48 kHz | EN and RU derived-caption qualification only; never authoritative evidence |
+
+Recognition languages depend on the selected provider and model, mode, and
+provider account configuration; the gateway contract does not broaden them.
+Only English and Russian provider flows are qualified recognition fixtures.
+Ukrainian may be selected
+for presentation of already accepted text, but is not a qualified STT language
+and must not be inferred from presentation behavior. Pipecat is future/optional
+conversation infrastructure and is not part of this gateway or the core OSS
+meeting topology.
+
+The adapter and gateway contract checks do not establish final private-guild
+acceptance; that remains pending until the live Discord campaign passes with an
+official test bot in a private test guild.
 
 ## Validate the configuration
 
@@ -107,3 +131,16 @@ The overlay exposes only the batch v2/v3, live v2, and health routes. It does
 not run a provider, Discord, admission, or campaign canary. Run any later live
 qualification only with test-only provider keys, synthetic audio, an official
 test bot, and a private test guild.
+
+The cross-head Rust/TypeScript gate is origin-driven and providerless:
+
+```sh
+VOICETEXT_GATEWAY_BLACK_BOX_ORIGIN=http://127.0.0.1:8080 \
+VOICETEXT_CADDY_BIN=/absolute/path/to/caddy \
+pnpm --filter @discord-meeting/voicetext-adapter run test:gateway-exact-head
+```
+
+The ordinary package test always runs the same routing scenario against an
+in-memory origin and skips the production-compatible origin when none is
+provided. The exact-head command fails if either the origin or offline Caddy
+adapter is absent. It sends no authenticated audio and invokes no provider.

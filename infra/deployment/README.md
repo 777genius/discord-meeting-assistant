@@ -97,11 +97,14 @@ than 2026-10-31, after ADR-0049's full V1 drain and rollback gates pass.
 
 ## VoiceText provider profiles
 
-The private VoiceText service remains the default. To use the separately
+No private VoiceText URL is a deployment default. To use the separately
 versioned OSS gateway without changing Meeting Platform, add the
 [self-hosted gateway overlay](voicetext-gateway.md). Meeting Platform still
 uses only one VoiceText-compatible URL and machine bearer token; provider keys
 stay in the gateway.
+
+The clean-checkout ownership, bot, storage, TLS, secret, optional-service, and
+single smoke workflow is in the [OSS meeting topology](oss-meeting-topology.md).
 
 VoiceText batch and live recognition are selected independently in Compose:
 

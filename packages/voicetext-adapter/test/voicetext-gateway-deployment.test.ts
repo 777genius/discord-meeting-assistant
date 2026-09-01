@@ -41,7 +41,8 @@ describe("VoiceText gateway deployment overlay", () => {
     expect(caddy).toContain("/api/v1/transcribe/batch/*");
     expect(caddy).toContain("/api/v1/transcribe/stream");
     expect(caddy).toContain("/health/ready");
-    expect(caddy).toContain("respond 404");
+    expect(caddy).toMatch(/handle @voicetext_contract\s*\{/u);
+    expect(caddy).toMatch(/handle\s*\{\s*respond 404\s*\}/u);
   });
 
   it("documents bounded language qualification without claiming live acceptance", async () => {
@@ -50,6 +51,26 @@ describe("VoiceText gateway deployment overlay", () => {
     expect(guide).toMatch(/languages depend on the selected provider and model/iu);
     expect(guide).toMatch(/Only English\s+and Russian provider flows are qualified/u);
     expect(guide).toMatch(/acceptance; that remains pending/iu);
+  });
+
+  it("documents a private-SaaS-free OSS topology and one safe smoke path", async () => {
+    const guide = await readDeploymentFile("oss-meeting-topology.md");
+
+    expect(guide).toContain("craig-lifecycle-v3");
+    expect(guide).toMatch(/official Discord applications/iu);
+    expect(guide).toMatch(/up -> ready -> synthetic smoke/iu);
+    expect(guide).toContain("test:gateway-exact-head");
+    expect(guide).toMatch(/Infinity Context[\s\S]*subscription-runtime[\s\S]*Pipecat/iu);
+  });
+
+  it("does not retain a private VoiceText SaaS endpoint as the Compose default", async () => {
+    const [compose, environment] = await Promise.all([
+      readDeploymentFile("compose.yaml"),
+      readDeploymentFile(".env.example"),
+    ]);
+
+    expect(compose).not.toContain("api.voicetext.site");
+    expect(environment).not.toContain("api.voicetext.site");
   });
 });
 

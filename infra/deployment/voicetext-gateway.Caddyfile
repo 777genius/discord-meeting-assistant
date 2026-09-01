@@ -6,15 +6,20 @@
 	encode zstd gzip
 
 	@voicetext_contract path \
- /api/v1/transcribe/batch \
- /api/v1/transcribe/batch/* \
- /api/v1/transcribe/stream \
- /health \
- /health/live \
- /health/ready
+		/api/v1/transcribe/batch \
+		/api/v1/transcribe/batch/* \
+		/api/v1/transcribe/stream \
+		/health \
+		/health/live \
+		/health/ready
 
-	reverse_proxy @voicetext_contract http://voicetext-gateway:8080
-	respond 404
+	handle @voicetext_contract {
+		reverse_proxy http://voicetext-gateway:8080
+	}
+
+	handle {
+		respond 404
+	}
 
 	log {
 		output stdout

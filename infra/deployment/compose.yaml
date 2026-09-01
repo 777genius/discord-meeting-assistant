@@ -292,7 +292,7 @@ services:
       VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS: ${VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS:-2000}
       VOICETEXT_LIVE_PROFILE: ${VOICETEXT_LIVE_PROFILE:-deepgram-nova-3}
       VOICETEXT_SERVICE_TOKEN_FILE: /run/secrets/voicetext-service-token
-      VOICETEXT_WS_URL: ${VOICETEXT_WS_URL:-wss://api.voicetext.site/api/v1/transcribe/stream}
+      VOICETEXT_WS_URL: ${VOICETEXT_WS_URL:-}
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/spool:/var/lib/discord-meeting/spool
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { VoicetextAdapterError } from "./errors.js";
 import type { VoicetextLivePacket } from "./voicetext-live-transcription-configuration.js";
+import type { VoicetextFinalizeComplete } from "./protocol.js";
 
 const maximumOpusPacketBytes = 65_536;
 
@@ -42,17 +43,31 @@ export function validateLiveSessionPacket(packet: VoicetextLivePacket): void {
 }
 
 export function validateLiveSessionFinalizeStatus(
-  status: "flushed" | "no_provider" | "timeout",
+  result: VoicetextFinalizeComplete,
   nextSequence: number,
 ): void {
-  if (status === "timeout") {
+  if (result.status === "flushed" && !result.sawResult) {
+    throw new VoicetextAdapterError(
+      "protocol_error",
+      "Voicetext live finalize reported flushed without provider result evidence",
+      false,
+    );
+  }
+  if (result.status === "no_provider" && result.sawResult) {
+    throw new VoicetextAdapterError(
+      "protocol_error",
+      "Voicetext live finalize reported provider evidence without a provider session",
+      false,
+    );
+  }
+  if (result.status === "timeout") {
     throw new VoicetextAdapterError(
       "provider_error",
       "Voicetext live finalize completed with timeout",
       true,
     );
   }
-  if (status === "no_provider" && nextSequence > 0) {
+  if (result.status === "no_provider" && nextSequence > 0) {
     throw new VoicetextAdapterError(
       "provider_error",
       "Voicetext did not create a provider session for acknowledged audio",

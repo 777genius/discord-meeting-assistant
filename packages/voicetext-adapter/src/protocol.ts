@@ -15,6 +15,12 @@ export interface VoicetextPartialSegment {
   readonly text: string;
 }
 
+export interface VoicetextFinalizeComplete {
+  readonly sawResult: boolean;
+  readonly status: "flushed" | "no_provider" | "timeout";
+  readonly type: "finalize_complete";
+}
+
 export type VoicetextServerMessage =
   | ({ readonly sessionId: string; readonly type: "ready" } & VoicetextLiveContractIdentity)
   | { readonly seq: number; readonly type: "ack" }
@@ -23,11 +29,7 @@ export type VoicetextServerMessage =
   | ({ readonly type: "segment_final" } & VoicetextFinalSegment)
   | { readonly type: "usage_update" }
   | { readonly code: string; readonly message: string; readonly type: "error" }
-  | {
-    readonly sawResult: boolean;
-    readonly status: "flushed" | "no_provider" | "timeout";
-    readonly type: "finalize_complete";
-  }
+  | VoicetextFinalizeComplete
   | { readonly type: "resumed" };
 
 interface VoicetextConfigBase {
