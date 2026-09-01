@@ -15,6 +15,8 @@ import type {
   HistoricalTopologyV1,
   LocallyRehydratedEvidenceBlockV1,
 } from "./ports/historical-memory.js";
+import { HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION } from
+  "./ports/historical-memory.js";
 import {
   buildHistoricalTurnSources,
   canonicalHistoricalTurnSources,
@@ -172,7 +174,11 @@ function historicalPlanEnvelopeMatches(input: HistoricalPlanEnvelopeValidation):
     ) &&
     plan.indexMutationId === opaque(
       "mkmutation1",
-      input.ids.keyedId("historical-release-index-mutation", [topology.releaseRef]),
+      input.ids.keyedId("historical-release-index-mutation", [
+        topology.releaseRef,
+        topology.indexGeneration,
+        HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
+      ]),
     ) &&
     plan.planDigest === input.planDigest;
 }
@@ -252,7 +258,9 @@ function buildPersistedHistoricalTopology(
       String(policy.maxBlockUtf8Bytes), String(policy.maxBlocksPerMeeting),
       String(policy.maxTurnsPerBlock), String(policy.maximumEmbeddingTokens),
       String(policy.turnOverlap), tokenProfile,
+      HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
     ])),
+    projectionContractVersion: HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
     releaseRef,
     roomScopeExternalRef,
     spaceSlug,
@@ -277,6 +285,7 @@ function historicalTopologyMatches(
   right: HistoricalTopologyV1,
 ): boolean {
   return left.indexGeneration === right.indexGeneration &&
+    left.projectionContractVersion === right.projectionContractVersion &&
     left.releaseRef === right.releaseRef &&
     left.roomScopeExternalRef === right.roomScopeExternalRef &&
     left.spaceSlug === right.spaceSlug && left.threadExternalRef === right.threadExternalRef;

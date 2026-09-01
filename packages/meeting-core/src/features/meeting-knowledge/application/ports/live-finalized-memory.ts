@@ -32,13 +32,68 @@ export interface LiveFinalizedMemoryLifecyclePort {
 
 export interface LiveFinalizedMemoryLeaseV1 {
   readonly attempt: number;
+  readonly enqueuedAtMs: number;
   readonly fence: number;
   readonly identityGeneration: number;
   readonly meetingId: string;
   readonly mutationId: string;
+  readonly operation: "delete" | "upsert";
+  /** A prior request may have committed remotely and must be reconciled first. */
+  readonly requiresReconciliation: boolean;
   readonly sourceGeneration: number;
   readonly turnHash: string;
   readonly turnId: string;
+}
+
+export interface LiveFinalizedMemoryProjectionV1 {
+  readonly documentId: string;
+  readonly generation: number;
+  readonly meetingId: string;
+  readonly mutationId: string;
+  readonly ordinal: number;
+  readonly roomId: string;
+  readonly scopeId: string;
+  readonly turn: CanonicalEvidenceTurn;
+  readonly turnHash: string;
+}
+
+export type LiveFinalizedMemoryProjectionResultV1 =
+  | { readonly status: "applied" }
+  | { readonly status: "not_found" }
+  | {
+      readonly code: string;
+      readonly retryable: boolean;
+      readonly status: "outcome_unknown" | "rejected";
+    };
+
+/** Consumer-owned provider boundary. SDK values never cross this interface. */
+export interface LiveFinalizedMemoryProjectionPort {
+  reconcile(
+    projection: LiveFinalizedMemoryProjectionV1,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<LiveFinalizedMemoryProjectionResultV1>;
+
+  upsert(
+    projection: LiveFinalizedMemoryProjectionV1,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<LiveFinalizedMemoryProjectionResultV1>;
+
+  reconcileRemoval(
+    projection: LiveFinalizedMemoryProjectionV1,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<LiveFinalizedMemoryProjectionResultV1>;
+
+  remove(
+    projection: LiveFinalizedMemoryProjectionV1,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<LiveFinalizedMemoryProjectionResultV1>;
+}
+
+export interface LiveFinalizedMemoryTelemetryPort {
+  observe(input: {
+    readonly ingestToAppliedMs: number;
+    readonly outcome: "applied" | "reconciled";
+  }): void;
 }
 
 export interface LiveFinalizedMemorySyncStore {
@@ -51,10 +106,14 @@ export interface LiveFinalizedMemorySyncStore {
     lease: LiveFinalizedMemoryLeaseV1,
   ): Promise<CanonicalEvidenceTurn | null>;
 
+  loadProjection(
+    lease: LiveFinalizedMemoryLeaseV1,
+  ): Promise<LiveFinalizedMemoryProjectionV1 | null>;
+
   apply(
     lease: LiveFinalizedMemoryLeaseV1,
     input: { readonly maximumHotTailTurns: number },
-  ): Promise<void>;
+  ): Promise<{ readonly appliedAtMs: number }>;
 
   recordDeadLetter(
     lease: LiveFinalizedMemoryLeaseV1,
@@ -65,6 +124,13 @@ export interface LiveFinalizedMemorySyncStore {
     lease: LiveFinalizedMemoryLeaseV1,
     input: { readonly code: string; readonly retryAfterMs: number },
   ): Promise<void>;
+
+  recordOutcomeUnknown(
+    lease: LiveFinalizedMemoryLeaseV1,
+    input: { readonly code: string; readonly retryAfterMs: number },
+  ): Promise<void>;
+
+  settleRemoval(lease: LiveFinalizedMemoryLeaseV1): Promise<void>;
 }
 
 export interface LiveMemoryContextV1 {
@@ -94,7 +160,14 @@ export type LiveMemoryCandidateResultV1 =
     }
   | {
       readonly schemaVersion: 1;
-      readonly status: "ineligible" | "low_coverage" | "pending" | "stale" | "unavailable";
+      readonly status:
+        | "backpressured"
+        | "degraded"
+        | "ineligible"
+        | "low_coverage"
+        | "pending"
+        | "stale"
+        | "unavailable";
     };
 
 export type LiveMemoryRehydrationResultV1 =

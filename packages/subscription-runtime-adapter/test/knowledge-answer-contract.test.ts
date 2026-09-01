@@ -186,6 +186,15 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     expect(measurement.runtimeProfile).toContain("sol-medium.bounded-grounding.v3");
     expect(measurement.inputTokens).toBeGreaterThan(0);
     expect(measurement.requestBytes).toBeGreaterThan(0);
+    expect(measurement.original.fullInputBytes).toBe(
+      measurement.original.systemPromptBytes + measurement.original.userPromptBytes +
+        measurement.original.outputSchemaBytes + 2,
+    );
+    expect(measurement.repair.fullInputBytes).toBe(
+      measurement.repair.systemPromptBytes + measurement.repair.userPromptBytes +
+        measurement.repair.outputSchemaBytes + 2,
+    );
+    expect(measurement.maximumModelInputBytes).toBe(measurement.repair.fullInputBytes);
     expect(runtime.request?.context.purpose).toBe(subscriptionRuntimeKnowledgeAnswerPurpose);
     expect(runtime.request?.task.controls).toMatchObject({
       disableTools: true,
@@ -238,6 +247,16 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     );
   });
 
+  it("rejects original and repair byte-bound excess before provider execution", async () => {
+    const runtime = new RuntimeFake();
+    const generator = adapter(runtime);
+    const oversized = { ...generationRequest(), question: "x".repeat(15_000) };
+
+    await expect(generator.measure(oversized)).rejects.toThrow(/16000-byte/u);
+    await expect(generator.generate(oversized)).rejects.toThrow(/16000-byte/u);
+    expect(runtime.requests).toHaveLength(0);
+  });
+
   it("binds a name in the question to anonymous speaker evidence", async () => {
     const runtime = new RuntimeFake();
     const request = {
@@ -258,7 +277,7 @@ describe("Meeting Knowledge subscription runtime contract", () => {
       }[];
     };
     expect(prompt.questionSpeakerBindings).toEqual([
-      { name: "Vlad", speakerReference: "S2" },
+      { name: "vlad", speakerReference: "S2" },
     ]);
     expect(serializedPrompt).not.toContain("77777777777777777");
     expect(serializedPrompt).not.toContain("88888888888888888");

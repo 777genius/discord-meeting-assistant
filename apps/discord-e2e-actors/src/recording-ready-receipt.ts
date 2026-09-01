@@ -11,6 +11,13 @@ import type {
   DeploymentRevisionExpectation,
 } from "./e2e-evidence.js";
 import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
+import {
+  recordingReadyProducerEvidenceV1Schema,
+  sealRecordingReadyProducerEvidenceV1,
+} from "./recording-ready-producer-evidence.js";
+export {
+  sealRecordingReadyProducerEvidenceV1,
+} from "./recording-ready-producer-evidence.js";
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const snowflake = z.string().regex(/^\d{17,20}$/u);
@@ -214,7 +221,47 @@ export const recordingReadyReceiptV1Schema = z.object({
   message: "meetingId must equal recordingId",
 });
 
-export type RecordingReadyReceiptV1 = z.infer<typeof recordingReadyReceiptV1Schema>;
+export const recordingReadyReceiptV2Schema = z.object({
+  ...recordingReadyReceiptV1Schema.shape,
+  authoritativeSource: z.object({
+    eventDigestSha256: sha256,
+    eventId: identifier,
+    eventType: z.literal("recording.authoritative_ready"),
+    kind: z.literal("meeting-platform-completion-receipt-v4"),
+    lifecycleGeneration: z.literal(3),
+    occurredAt: z.iso.datetime(),
+  }).strict(),
+  producerEvidence: recordingReadyProducerEvidenceV1Schema,
+  schemaVersion: z.literal(2),
+}).strict().superRefine((receipt, context) => {
+  const identity = receipt.producerEvidence.meetingIdentity;
+  if (identity.meetingId !== receipt.meetingId || identity.recordingId !== receipt.recordingId ||
+    identity.guildId !== receipt.pinnedTestTarget.guildId ||
+    identity.channelId !== receipt.pinnedTestTarget.voiceChannelId) {
+    context.addIssue({ code: "custom", message: "Producer evidence is bound to another recording target" });
+  }
+  if (receipt.meetingId !== receipt.recordingId) {
+    context.addIssue({ code: "custom", message: "meetingId must equal recordingId" });
+  }
+  const completion = receipt.producerEvidence.authoritativeLifecycleCompletion;
+  if (JSON.stringify(completion) !== JSON.stringify({
+    eventDigestSha256: receipt.authoritativeSource.eventDigestSha256,
+    eventId: receipt.authoritativeSource.eventId,
+    eventType: receipt.authoritativeSource.eventType,
+    lifecycleGeneration: receipt.authoritativeSource.lifecycleGeneration,
+    occurredAt: receipt.authoritativeSource.occurredAt,
+    receiptKind: receipt.authoritativeSource.kind,
+  })) {
+    context.addIssue({ code: "custom",
+      message: "Producer evidence does not bind the recording-ready authoritative completion event" });
+  }
+});
+
+export const recordingReadyReceiptSchema = z.union([
+  recordingReadyReceiptV1Schema,
+  recordingReadyReceiptV2Schema,
+]);
+export type RecordingReadyReceiptV2 = z.infer<typeof recordingReadyReceiptV2Schema>;
 
 export class RecordingReadyNotObservedError extends Error {
   public constructor() {
@@ -229,7 +276,7 @@ export function deriveRecordingReadyReceipt(input: {
   readonly expectedRevisions: DeploymentRevisionExpectation;
   readonly observedAt: string;
   readonly provenance: CurrentDeploymentProvenance;
-}): RecordingReadyReceiptV1 {
+}): RecordingReadyReceiptV2 {
   const actorRun = unboundActorRunEvidenceV1Schema.parse(input.actorRun);
   assertV9DeploymentProvenance(input.provenance, input.expectedRevisions);
   const candidates = input.completionReceipts
@@ -246,6 +293,9 @@ export function deriveRecordingReadyReceipt(input: {
     throw new Error(`Expected exactly one authoritative completion receipt, found ${candidates.length}`);
   }
   const completion = candidates[0]!;
+  if (completion.schemaVersion !== 4 || completion.lifecycleSchemaVersion !== 3) {
+    throw new Error("Recording-ready trusted-human evidence requires an authoritative Craig V4 lifecycle-v3 receipt");
+  }
   if (completion.recording.recordingId !== completion.recordingId) {
     throw new Error("Completion receipt recording identity is inconsistent");
   }
@@ -254,15 +304,34 @@ export function deriveRecordingReadyReceipt(input: {
     finalEvent.digest !== completion.finalEventDigest) {
     throw new Error("Completion receipt does not bind its authoritative-ready event");
   }
-  return recordingReadyReceiptV1Schema.parse({
+  const producerEvidence = sealRecordingReadyProducerEvidenceV1({
+    actors: [...completion.actors].toSorted((left, right) =>
+      left.actorId.localeCompare(right.actorId) || left.kind.localeCompare(right.kind)),
+    authoritativeLifecycleCompletion: {
+      eventDigestSha256: finalEvent.digest,
+      eventId: finalEvent.eventId,
+      eventType: finalEvent.type,
+      lifecycleGeneration: completion.lifecycleSchemaVersion,
+      occurredAt: finalEvent.occurredAt,
+      receiptKind: "meeting-platform-completion-receipt-v4",
+    },
+    craigDeployment: input.provenance.craig,
+    identityProvenance: completion.identityProvenance,
+    lifecycleGeneration: completion.lifecycleSchemaVersion,
+    meetingIdentity: {
+      channelId: completion.channelId,
+      guildId: completion.guildId,
+      meetingId: completion.recordingId,
+      recordingId: completion.recordingId,
+    },
+  });
+  return recordingReadyReceiptV2Schema.parse({
     authoritativeSource: {
       eventDigestSha256: finalEvent.digest,
       eventId: finalEvent.eventId,
-      kind: completion.schemaVersion === 2
-        ? "meeting-platform-completion-receipt-v2"
-        : completion.schemaVersion === 3
-          ? "meeting-platform-completion-receipt-v3"
-          : "meeting-platform-completion-receipt-v4",
+      eventType: finalEvent.type,
+      kind: "meeting-platform-completion-receipt-v4",
+      lifecycleGeneration: completion.lifecycleSchemaVersion,
       occurredAt: finalEvent.occurredAt,
     },
     meetingId: completion.recordingId,
@@ -273,8 +342,9 @@ export function deriveRecordingReadyReceipt(input: {
       voiceChannelId: HOSTED_CAMPAIGN_TARGET.voiceChannelId,
     },
     recordingId: completion.recordingId,
+    producerEvidence,
     runId: actorRun.runId,
-    schemaVersion: 1,
+    schemaVersion: 2,
   });
 }
 
@@ -319,7 +389,11 @@ function actorRunFitsWindow(
 }
 
 export function deploymentProvenanceDigest(provenance: CurrentDeploymentProvenance): string {
-  return createHash("sha256").update(JSON.stringify(canonicalize(provenance))).digest("hex");
+  return canonicalDigest(provenance);
+}
+
+function canonicalDigest(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex");
 }
 
 function canonicalize(value: unknown): unknown {

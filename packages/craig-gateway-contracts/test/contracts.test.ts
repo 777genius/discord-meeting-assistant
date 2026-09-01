@@ -362,8 +362,15 @@ describe("Craig conversation playback", () => {
   it("accepts recording-scoped readiness and sender-side playback evidence", () => {
     expect(
       parseCraigPlaybackEvent({
-        schemaVersion: 1,
+        schemaVersion: 3,
         type: "session-ready",
+        playbackCapabilities: {
+          attestsDiscordVoiceSend: true,
+          deduplicatesCommandIds: true,
+          deduplicationRetentionSeconds: 300,
+          replaysOriginalStartedAtMs: true,
+          suppressesPlaybackAtOrAfterNotAfter: true,
+        },
         recordingId: "recording-1",
         guildId: "1533224474609057793",
         channelId: "1533224474609057794",
@@ -377,6 +384,50 @@ describe("Craig conversation playback", () => {
         startedAtMs: 4_000,
       }),
     ).toMatchObject({ type: "playback-started", startedAtMs: 4_000 });
+  });
+
+  it("binds an absolute not-after fence to playback start", () => {
+    expect(parseCraigPlaybackCommand({
+      ...playbackEnvelope,
+      channels: 1,
+      format: "pcm_s16le",
+      notAfterUnixMs: 12_345,
+      sampleRateHz: 48_000,
+      type: "playback-start",
+    })).toMatchObject({ notAfterUnixMs: 12_345, type: "playback-start" });
+    expect(() => parseCraigPlaybackCommand({
+      ...playbackEnvelope,
+      channels: 1,
+      format: "pcm_s16le",
+      notAfterUnixMs: -1,
+      sampleRateHz: 48_000,
+      type: "playback-start",
+    })).toThrow();
+  });
+
+  it("rejects playback activation without complete sender durability attestation", () => {
+    expect(() => parseCraigPlaybackEvent({
+      schemaVersion: 1,
+      type: "session-ready",
+      recordingId: "recording-1",
+      guildId: "1533224474609057793",
+      channelId: "1533224474609057794",
+      gatewaySessionId: "gateway-session-legacy",
+    })).toThrow();
+    expect(() => parseCraigPlaybackEvent({
+      schemaVersion: 3,
+      type: "session-ready",
+      playbackCapabilities: {
+        attestsDiscordVoiceSend: true,
+        deduplicatesCommandIds: true,
+        deduplicationRetentionSeconds: 300,
+        suppressesPlaybackAtOrAfterNotAfter: true,
+      },
+      recordingId: "recording-1",
+      guildId: "1533224474609057793",
+      channelId: "1533224474609057794",
+      gatewaySessionId: "gateway-session-without-original-start-replay",
+    })).toThrow();
   });
 
   it("rejects unbounded, odd-length, or secret-bearing playback data", () => {

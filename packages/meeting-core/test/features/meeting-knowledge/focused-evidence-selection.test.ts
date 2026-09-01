@@ -53,6 +53,18 @@ function fixture(provider = new SelectorFake()) {
 }
 
 describe("focused evidence selection", () => {
+  it("rejects 25 qualified candidates before invoking the selector", async () => {
+    const { provider, selector } = fixture();
+
+    await expect(selector.execute({
+      attemptId: "question-1:generation:1:attempt:1",
+      question: "When is the release?",
+      turns: Array.from({ length: 25 }, (_, index) =>
+        turn(`turn-${index}`, `Evidence ${index}`, "actor-private-a", index * 1_000)),
+    })).rejects.toThrow("1..24 canonical turns");
+    expect(provider.input).toBeUndefined();
+  });
+
   it("sends opaque bounded candidates and locally rehydrates canonical turns", async () => {
     const { observations, provider, selector } = fixture();
     const turns = [

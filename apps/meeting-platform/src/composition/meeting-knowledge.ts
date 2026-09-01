@@ -1,11 +1,8 @@
 import {
-  DiscordAnswerDeliveryAdapter,
-  DiscordAnswerPayloadCodec,
-  DiscordGroundedAnswerRenderer,
-  DiscordHistoricalAuthorizationAdapter,
-  DiscordLocalFinalReplyHandler,
-  DiscordQuestionAuthorizationAdapter,
-  DiscordQuestionPrincipalCodec,
+  DiscordAnswerDeliveryAdapter, DiscordAnswerPayloadCodec,
+  DiscordGroundedAnswerRenderer, DiscordHistoricalAuthorizationAdapter,
+  DiscordLocalFinalReplyHandler, DiscordQuestionAuthorizationAdapter,
+  DiscordQuestionPrincipalCodec, DiscordConfusableIdentitySkeletons,
   createDiscordOneAttemptAnswerRest,
   decodeDiscordQuestionPrincipalKey,
   discordParticipantQuestionPolicyVersion,
@@ -17,15 +14,11 @@ import {
   GroundedMeetingAnswer,
   HistoricalExhaustiveMemoryRetrieval,
   MaintainFinalReplies,
-  ProcessFinalReplyJob,
-  SameRoomFocusedMemoryRetrieval,
-  SelectFocusedEvidence,
+  ProcessFinalReplyJob, qualifiedFocusedEvidenceCandidateLimit,
   type LocalFinalReplyPolicy,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import {
-  DurableAnswerPublication,
-  type AnswerDeliveryPort,
-} from "@discord-meeting/meeting-core/publishing";
+import { DurableAnswerPublication, type AnswerDeliveryPort } from
+  "@discord-meeting/meeting-core/publishing";
 import type { Logger } from "@discord-meeting/observability-adapter";
 import {
   PostgresAnswerEffectStore,
@@ -37,44 +30,82 @@ import {
   PostgresQuestionAdmissionCommit,
   PostgresQuestionJobStore,
 } from "@discord-meeting/postgres-adapter";
-import {
-  SubscriptionRuntimeGroundedAnswerAdapter,
-  SubscriptionRuntimeFocusedEvidenceSelectorAdapter,
-  subscriptionRuntimeCliEngine,
-  type SubscriptionRuntimeTransportPort,
-} from "@discord-meeting/subscription-runtime-adapter";
+import type { SubscriptionRuntimeTransportPort } from
+  "@discord-meeting/subscription-runtime-adapter";
 import type { Client } from "discord.js";
+import { createHash } from "node:crypto";
 import type { Pool } from "pg";
+import { TestOnlyAnswerDeliveryCrashInjection } from
+  "../adapters/outbound/test-only-answer-delivery-crash-injection.js";
 
 import type { PlatformConfig } from "../config.js";
-import { participantSpeakerAliases } from
-  "../config/participant-greeting-profiles.js";
+import { participantSpeakerAliases } from "../config/participant-greeting-profiles.js";
 import { classifyPlatformError } from "./observability.js";
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
+import { createPersistedFocusedMemoryRoute } from "./meeting-knowledge-retrieval-router.js";
+import { createFocusedEvidenceSelector, createGroundedAnswerGenerator } from
+  "./meeting-knowledge-provider-composition.js";
+import { createMeetingKnowledgePollingRuntime,
+  type MeetingKnowledgeLocalFinalReplyRuntime } from
+  "./meeting-knowledge-polling-runtime.js";
+export { createMeetingKnowledgePollingRuntime, MeetingKnowledgeDrainTimeoutError } from
+  "./meeting-knowledge-polling-runtime.js";
+export type { MeetingKnowledgeLocalFinalReplyRuntime } from
+  "./meeting-knowledge-polling-runtime.js";
 
-const processIntervalMilliseconds = 500;
-const reconciliationIntervalMilliseconds = 30_000;
-const maximumMaintenanceJobsPerPass = 100;
-const shutdownDrainTimeoutMilliseconds = 5_000;
-export const meetingKnowledgeProviderLeasePolicy = Object.freeze({
+const meetingKnowledgeProviderLeasePolicy = Object.freeze({
   focusedEvidenceSelectorTimeoutMilliseconds: 60_000,
-  groundedAnswerTimeoutMilliseconds: 180_000,
-  maximumGroundedAnswerExecutions: 2, safetyMilliseconds: 120_000,
+  groundedAnswerTimeoutMilliseconds: 180_000, maximumGroundedAnswerExecutions: 2,
+  safetyMilliseconds: 120_000,
 });
 const providerAttemptLeaseSeconds = (
   meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds +
   (meetingKnowledgeProviderLeasePolicy.maximumGroundedAnswerExecutions *
     meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds) +
-  meetingKnowledgeProviderLeasePolicy.safetyMilliseconds
-) / 1_000;
+  meetingKnowledgeProviderLeasePolicy.safetyMilliseconds) / 1_000;
 
-export class MeetingKnowledgeDrainTimeoutError extends Error {
-  public constructor(timeoutMilliseconds: number) {
-    super(
-      `Meeting Knowledge final reply drain exceeded ${timeoutMilliseconds}ms`,
-    );
-    this.name = "MeetingKnowledgeDrainTimeoutError";
-  }
+export const meetingKnowledgeRetrievalProfilePreimages = Object.freeze({
+  composite: Object.freeze({
+    candidatePolicy: "bounded-lane-round-robin-dedupe.v1",
+    historicalLane: "infinity-context-retrieval-v2-exact-request",
+    interleavePolicy: "local-then-historical-per-rank.v1",
+    localLane: "canonical-local-exact-lexical-v1",
+    maximumCandidates: qualifiedFocusedEvidenceCandidateLimit,
+    profileId: "meeting-knowledge.composite-retrieval.v1",
+    provenanceVerification: "request-result-lane-accounting.v2", version: 1,
+  }),
+  infinity: Object.freeze({
+    authoritySnapshot: "repeatable-read-cursor-room-snapshot.v1",
+    candidateIsolation: "malformed-candidate-only;batch-overflow-churn-abort",
+    contract: "context-retrieval.v2", digestCanonicalization: "utf8-lexicographic-json.v1",
+    evidenceByteLimit: 16_000, path: "infinity_locator_v2",
+    provenance: "exact-request-response-digests-and-lane-accounting.v2",
+    rankingPolicy: "weighted_rrf_canonical_preferences.v1", version: 2,
+  }),
+  local: Object.freeze({
+    algorithm: "nfkc-lowercase-token-exact-match-balanced-speaker-minute.v1",
+    candidateLimit: 100, digestCanonicalization: "utf8-lexicographic-json.v1",
+    evidenceByteLimit: 16_000,
+    hardFilters: "sealed-speaker-and-relative-time-overlap.v1",
+    path: "canonical_local_exact_lexical_v1",
+    profileId: "meeting-knowledge.local-current.v2",
+    provenance: "exact-original-question-request-result-digests.v2",
+    queryTermPolicy: "temporal-scaffolding-stop-terms.v2", resultLimit: 10, version: 2,
+  }),
+});
+
+export function retrievalProfileFingerprint(preimage: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalProfileValue(preimage)), "utf8")
+    .digest("hex");
+}
+
+function canonicalProfileValue(value: unknown): unknown {
+  if (Array.isArray(value)) {return value.map(canonicalProfileValue);}
+  if (typeof value !== "object" || value === null) {return value;}
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .toSorted(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, nested]) => [key, canonicalProfileValue(nested)]));
 }
 
 /**
@@ -102,16 +133,24 @@ export const localFinalReplyPolicy: LocalFinalReplyPolicy = Object.freeze({
   // orchestration slack inside the durable lease.
   jobLeaseSeconds: providerAttemptLeaseSeconds,
   maximumProviderAttempts: 2,
-  policyVersion: "meeting-knowledge.focused-memory-final-reply.v3",
-  retrieval: Object.freeze({
-    maximumCandidates: 40,
-    neighborTurns: 2,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v4",
+  retrieval: Object.freeze({ maximumCandidates: qualifiedFocusedEvidenceCandidateLimit, neighborTurns: 2 }),
+  retrievalAdmission: Object.freeze({
+    compositeProfileFingerprint: retrievalProfileFingerprint(
+      meetingKnowledgeRetrievalProfilePreimages.composite,
+    ),
+    cutoverEpoch: "composite-retrieval-authority-r3",
+    infinityProfileFingerprint: retrievalProfileFingerprint(
+      meetingKnowledgeRetrievalProfilePreimages.infinity,
+    ),
+    localProfileFingerprint: retrievalProfileFingerprint(
+      meetingKnowledgeRetrievalProfilePreimages.local,
+    ),
   }),
 });
 
-export const localFinalReplyPolicyRelease = Object.freeze({
-  authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion,
-  policyEpoch: 2,
+const localFinalReplyPolicyRelease = Object.freeze({
+  authorizationPolicyVersion: localFinalReplyPolicy.authorizationPolicyVersion, policyEpoch: 4,
   policyVersion: localFinalReplyPolicy.policyVersion,
 });
 
@@ -127,10 +166,22 @@ function discordQuestionIngressOptions(
   };
 }
 
-export interface MeetingKnowledgeLocalFinalReplyRuntime {
-  close(): Promise<void>;
-  settleIngress(): Promise<void>;
-  start(): void;
+function createRetrievalV2Admission(
+  historicalMemory: PlatformHistoricalMemoryRuntime | undefined,
+  config: PlatformConfig,
+) {
+  const binding = config.meetingKnowledge?.retrievalV2ProviderBinding;
+  return binding === undefined || historicalMemory === undefined
+    ? undefined
+    : historicalMemory.createRetrievalV2Admission(binding);
+}
+
+export function meetingKnowledgeLocalServingEnabled(
+  config: PlatformConfig, historicalRuntimeAvailable: boolean,
+): boolean {
+  return config.meetingKnowledge?.localFinalReply === true && (
+    config.meetingKnowledge.retrievalV2ProviderBinding === undefined ||
+    historicalRuntimeAvailable);
 }
 
 class ConfiguredDiscordQuestionScope implements DiscordQuestionScopePort {
@@ -146,37 +197,6 @@ class ConfiguredDiscordQuestionScope implements DiscordQuestionScopePort {
   }
 }
 
-function createGroundedAnswerGenerator(config: PlatformConfig,
-  runtimeTransport: SubscriptionRuntimeTransportPort) {
-  return new SubscriptionRuntimeGroundedAnswerAdapter(runtimeTransport, {
-    expectedLauncherSha256: config.subscriptionRuntime.launcherSha256,
-    expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-    speakerAliases: participantSpeakerAliases(config.participantGreetingProfiles),
-    timeoutMs: meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds,
-  });
-}
-
-function createFocusedEvidenceSelector(input: {
-  readonly launcherSha256: string;
-  readonly logger: Logger;
-  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
-}): SelectFocusedEvidence {
-  return new SelectFocusedEvidence(
-    new SubscriptionRuntimeFocusedEvidenceSelectorAdapter(
-      input.runtimeTransport,
-      {
-        expectedLauncherSha256: input.launcherSha256,
-        expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-        timeoutMs: meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds,
-      },
-    ),
-    (measurement) => {
-      input.logger.info("Focused evidence selection settled", measurement);
-    },
-    () => performance.now(),
-  );
-}
-
 export function createMeetingKnowledgeLocalFinalReply(input: {
   readonly answerDelivery?: AnswerDeliveryPort;
   readonly answers?: GroundedMeetingAnswer;
@@ -188,13 +208,19 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   readonly pool: Pool;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): MeetingKnowledgeLocalFinalReplyRuntime {
-  const servingEnabled = input.config.meetingKnowledge?.localFinalReply === true;
+  const servingEnabled = meetingKnowledgeLocalServingEnabled(
+    input.config,
+    input.historicalMemory !== undefined,
+  );
   const jobs = new PostgresQuestionJobStore(input.pool, localFinalReplyPolicyRelease);
-  const publication = new DurableAnswerPublication({
-    delivery: input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
+  const baseDelivery = input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
       createDiscordOneAttemptAnswerRest(input.config.secrets.discordToken),
       input.config.discordApplicationId,
-    ),
+    );
+  const crash = input.config.testOnly?.publicReplyCrashInjection;
+  const publication = new DurableAnswerPublication({
+    delivery: crash === undefined ? baseDelivery
+      : new TestOnlyAnswerDeliveryCrashInjection(baseDelivery, crash.root, crash.workerId),
     payloads: new DiscordAnswerPayloadCodec(),
     store: new PostgresAnswerEffectStore(input.pool, localFinalReplyPolicyRelease),
   });
@@ -222,6 +248,9 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
       reportError,
     });
   }
+  const meetingKnowledgeConfig = input.config.meetingKnowledge;
+  if (meetingKnowledgeConfig === undefined) {throw new Error(
+    "Meeting Knowledge serving configuration is unavailable");}
 
   const secret = input.config.secrets.meetingKnowledgePrincipalKey;
   if (secret === undefined) {
@@ -246,37 +275,52 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   const currentMemory = new PostgresFocusedMemoryRetrieval(
     input.pool,
     input.config.discordApplicationId,
-    participantSpeakerAliases(input.config.participantGreetingProfiles),
   );
   const historicalAuthorization = input.historicalMemory === undefined
     ? undefined
     : new DiscordHistoricalAuthorizationAdapter(input.client, principals);
-  const memory = input.historicalMemory === undefined ||
-      historicalAuthorization === undefined
-    ? currentMemory
-    : new SameRoomFocusedMemoryRetrieval({
-        current: currentMemory,
-        historical: input.historicalMemory.createFocusedRetrieval(
-          historicalAuthorization,
-        ),
-        turnHashes: { hash: canonicalFinalReplyTurnHash },
-      }, {
-        historicalServingAuthorized: () =>
-          input.historicalMemory?.servingAuthorized() === true,
-        remoteSearchAvailable: () =>
-          input.historicalMemory?.searchEnabled() === true,
-      });
+  const memory = createPersistedFocusedMemoryRoute({
+    current: currentMemory,
+    ...(input.historicalMemory === undefined || historicalAuthorization === undefined
+      ? {} : {
+          retrievalV2Historical:
+            input.historicalMemory.createFocusedLocatorRetrievalV2(
+              historicalAuthorization,
+            ),
+        }),
+  });
+  const retrievalV2Admission = createRetrievalV2Admission(
+    input.historicalMemory, input.config,
+  );
   const admission = new AdmitCurrentFinalReply(
     evidence,
     authorization,
     admissions,
-    localFinalReplyPolicy,
+    Object.freeze({
+      ...localFinalReplyPolicy,
+      retrievalAdmission: Object.freeze({
+        ...localFinalReplyPolicy.retrievalAdmission,
+        ...(meetingKnowledgeConfig.retrievalV2ProviderBinding === undefined
+          ? {}
+          : { retrievalV2ProviderBinding:
+              meetingKnowledgeConfig.retrievalV2ProviderBinding }),
+      }),
+    }),
+    Object.freeze({
+      canonicalSpeakerFilters: Object.freeze({
+        aliases: participantSpeakerAliases(input.config.participantGreetingProfiles),
+        identitySkeletons: new DiscordConfusableIdentitySkeletons(),
+      }),
+      ...(retrievalV2Admission === undefined ? {} : { retrievalV2Admission }),
+    }),
   );
-  const generator = createGroundedAnswerGenerator(input.config, input.runtimeTransport);
+  const generator = createGroundedAnswerGenerator({ config: input.config, runtimeTransport: input.runtimeTransport,
+    timeoutMs: meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds,
+  });
   const selector = createFocusedEvidenceSelector({
     launcherSha256: input.config.subscriptionRuntime.launcherSha256,
-    logger: input.logger,
-    runtimeTransport: input.runtimeTransport,
+    logger: input.logger, runtimeTransport: input.runtimeTransport,
+    timeoutMs: meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds,
   });
   const processor = new ProcessFinalReplyJob({
     answerPublication: publication,
@@ -322,100 +366,4 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     reportDuplicateContainment,
     reportError,
   });
-}
-
-async function awaitBoundedFinalReplyDrain(
-  operations: readonly (Promise<unknown> | undefined)[],
-): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
-  const pending = operations.filter(
-    (operation): operation is Promise<unknown> => operation !== undefined);
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      reject(new MeetingKnowledgeDrainTimeoutError(
-        shutdownDrainTimeoutMilliseconds,
-      ));
-    }, shutdownDrainTimeoutMilliseconds);
-    timer.unref();
-  });
-  try {
-    const results = await Promise.race([
-      Promise.allSettled(pending),
-      timeout,
-    ]);
-    const failures = results.flatMap((result): unknown[] =>
-      result.status === "rejected" ? [result.reason as unknown] : [],
-    );
-    if (failures.length > 0) {
-      throw new AggregateError(failures, "Meeting Knowledge drain failed");
-    }
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-  }
-}
-
-export function createMeetingKnowledgePollingRuntime(input: {
-  readonly handler?: Pick<
-    DiscordLocalFinalReplyHandler,
-    "close" | "settle" | "start"
-  >;
-  readonly maintenance: MaintainFinalReplies;
-  readonly processor?: Pick<ProcessFinalReplyJob, "executeOnce">;
-  readonly publication: Pick<
-    DurableAnswerPublication,
-    "reconcileRetractions" | "reconcileUnknown"
-  >;
-  readonly reportDuplicateContainment?: (count: number) => void;
-  readonly reportError: (error: unknown) => void;
-}): MeetingKnowledgeLocalFinalReplyRuntime {
-  let processing: Promise<unknown> | undefined;
-  let reconciling: Promise<unknown> | undefined;
-  let processTimer: NodeJS.Timeout | undefined;
-  let reconcileTimer: NodeJS.Timeout | undefined;
-  const processOnce = (): void => {
-    processing ??= input.maintenance.execute(maximumMaintenanceJobsPerPass)
-      .then(async () => await input.processor?.executeOnce())
-      .catch(input.reportError)
-      .finally(() => {
-        processing = undefined;
-      });
-  };
-  const reconcile = (): void => {
-    reconciling ??= input.publication.reconcileUnknown(100)
-      .then((result) => {
-        if (result.containedDuplicates > 0) {
-          input.reportDuplicateContainment?.(result.containedDuplicates);
-        }
-        return result;
-      })
-      .then(async () => await input.publication.reconcileRetractions(100))
-      .catch(input.reportError)
-      .finally(() => {
-        reconciling = undefined;
-      });
-  };
-  return {
-    close: async () => {
-      input.handler?.close();
-      clearInterval(processTimer);
-      clearInterval(reconcileTimer);
-      const ingress = input.handler?.settle();
-      await awaitBoundedFinalReplyDrain([ingress, processing, reconciling]);
-    },
-    settleIngress: () => input.handler?.settle() ?? Promise.resolve(),
-    start: () => {
-      if (processTimer !== undefined) {
-        return;
-      }
-      input.handler?.start();
-      processTimer = setInterval(processOnce, processIntervalMilliseconds);
-      reconcileTimer = setInterval(reconcile, reconciliationIntervalMilliseconds);
-      processTimer.unref();
-      reconcileTimer.unref();
-      processOnce();
-      reconcile();
-    },
-  };
 }

@@ -7,6 +7,8 @@ import {
   PostgresQuestionJobStore,
   type QuestionPolicyIdentity,
 } from "../src/index.js";
+import { questionAdmissionBindingHash } from
+  "../src/postgres-meeting-knowledge-codecs.js";
 import {
   databaseOrSkip,
   usePostgresIntegrationDatabase,
@@ -23,6 +25,11 @@ const nextPolicy = Object.freeze({
   authorizationPolicyVersion: "discord.participant-current-results.v2",
   policyEpoch: 2,
   policyVersion: "meeting-knowledge.focused-memory-final-reply.v3",
+});
+const currentPolicy = Object.freeze({
+  authorizationPolicyVersion: "discord.participant-current-results.v3",
+  policyEpoch: 3,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v4",
 });
 
 function policyBinding(id: string, policy: QuestionPolicyIdentity) {
@@ -76,7 +83,7 @@ async function insertQueuedPolicyJob(
       binding.authorizationPrincipalRef,
       binding.authorizationDigest,
       binding,
-      "f".repeat(64),
+      questionAdmissionBindingHash(binding),
       policyEpoch,
     ],
   );
@@ -105,6 +112,33 @@ async function waitForPolicyFenceWait(
 }
 
 describe("PostgreSQL question policy fence", () => {
+  it("prevents stale epoch-2 maintenance from terminalizing epoch-3 work", async (context) => {
+    const database = databaseOrSkip(context);
+    const currentMaintenance = new PostgresFinalReplyMaintenance(database, currentPolicy);
+    await expect(currentMaintenance.maintain({ maximumJobs: 100, servingEnabled: true }))
+      .resolves.toEqual({ cancelled: 0, expired: 0 });
+
+    const binding = policyBinding("policy-maintenance-epoch-3", currentPolicy);
+    await insertQueuedPolicyJob(database, binding, currentPolicy.policyEpoch);
+    const staleMaintenance = new PostgresFinalReplyMaintenance(database, nextPolicy);
+    await expect(staleMaintenance.maintain({ maximumJobs: 100, servingEnabled: false }))
+      .rejects.toThrow("maintenance policy is not current");
+
+    await expect(database.query(
+      `SELECT state, outcome, question_text, scrubbed_at
+       FROM meeting_knowledge.question_jobs
+       WHERE question_id = $1`,
+      [binding.questionId],
+    )).resolves.toMatchObject({
+      rows: [{
+        outcome: null,
+        question_text: "Question?",
+        scrubbed_at: null,
+        state: "queued",
+      }],
+    });
+  });
+
   it("activates the next epoch from maintenance while serving is disabled", async (context) => {
     const database = databaseOrSkip(context);
     const oldStore = new PostgresQuestionJobStore(database, oldPolicy);
@@ -173,12 +207,13 @@ describe("PostgreSQL question policy fence", () => {
     const effects = new PostgresAnswerEffectStore(database, oldPolicy);
     const effectId = `meeting-knowledge-answer:v1:${binding.questionId}`;
     await expect(effects.reserve({
+      authorityScopeId: binding.scopeId,
       authorizationDigest: binding.authorizationDigest,
       bindingHash: "e".repeat(64),
       deliveryContainerId: binding.deliveryContainerId,
       effectId,
       marker: effectId,
-      payloadBytes: "{}",
+      payloadBytes: '{"content":"answer"}',
       payloadHash: "f".repeat(64),
       projectionTargetContainerId: binding.projectionTargetContainerId,
       questionFence: {
@@ -188,12 +223,6 @@ describe("PostgreSQL question policy fence", () => {
       replyToRemoteMessageId: binding.questionId,
       sourceMeetingIds: [binding.meetingId],
     })).resolves.toEqual({ status: "reserved" });
-    const claim = await effects.claim(effectId, "old-worker");
-    expect(claim.status).toBe("claimed");
-    if (claim.status !== "claimed") {
-      throw new Error("answer effect claim unexpectedly failed");
-    }
-
     const activation = await database.connect();
     try {
       await activation.query("BEGIN");
@@ -212,8 +241,8 @@ describe("PostgreSQL question policy fence", () => {
       const requestStart = effects.startRequest({
         authorizationDigest: binding.authorizationDigest,
         effectId,
-        generation: claim.generation,
         questionGeneration: lease?.generation ?? 0,
+        workerId: "old-worker",
       });
       await waitForPolicyFenceWait(database);
       await activation.query("COMMIT");
@@ -223,7 +252,7 @@ describe("PostgreSQL question policy fence", () => {
       activation.release();
     }
 
-    await expect(effects.findById(effectId)).resolves.toMatchObject({ state: "cancelled" });
+    await expect(effects.findById(effectId)).resolves.toMatchObject({ state: "reserved" });
   });
 
   it("rejects request start after an exact lease-generation takeover", async (context) => {
@@ -237,12 +266,13 @@ describe("PostgreSQL question policy fence", () => {
     const effects = new PostgresAnswerEffectStore(database, oldPolicy);
     const effectId = `meeting-knowledge-answer:v1:${binding.questionId}`;
     await expect(effects.reserve({
+      authorityScopeId: binding.scopeId,
       authorizationDigest: binding.authorizationDigest,
       bindingHash: "e".repeat(64),
       deliveryContainerId: binding.deliveryContainerId,
       effectId,
       marker: effectId,
-      payloadBytes: "{}",
+      payloadBytes: '{"content":"answer"}',
       payloadHash: "f".repeat(64),
       projectionTargetContainerId: binding.projectionTargetContainerId,
       questionFence: {
@@ -252,12 +282,6 @@ describe("PostgreSQL question policy fence", () => {
       replyToRemoteMessageId: binding.questionId,
       sourceMeetingIds: [binding.meetingId],
     })).resolves.toEqual({ status: "reserved" });
-    const claim = await effects.claim(effectId, "stale-worker");
-    expect(claim.status).toBe("claimed");
-    if (claim.status !== "claimed") {
-      throw new Error("answer effect claim unexpectedly failed");
-    }
-
     await database.query(
       `UPDATE meeting_knowledge.question_jobs
        SET lease_until = transaction_timestamp() - interval '1 second'
@@ -274,9 +298,60 @@ describe("PostgreSQL question policy fence", () => {
     await expect(effects.startRequest({
       authorizationDigest: binding.authorizationDigest,
       effectId,
-      generation: claim.generation,
       questionGeneration: staleLease?.generation ?? 0,
+      workerId: "stale-worker",
     })).resolves.toBe(false);
-    await expect(effects.findById(effectId)).resolves.toMatchObject({ state: "cancelled" });
+    await expect(effects.findById(effectId)).resolves.toMatchObject({ state: "reserved" });
+  });
+
+  it("atomically recovers an expired pre-request claim under the current generation", async (context) => {
+    const database = databaseOrSkip(context);
+    const jobs = new PostgresQuestionJobStore(database, oldPolicy);
+    const binding = policyBinding("policy-expired-claim-question", oldPolicy);
+    await insertQueuedPolicyJob(database, binding, oldPolicy.policyEpoch);
+    const lease = await jobs.leaseNext({
+      leaseSeconds: 60,
+      maximumProviderAttempts: 2,
+      workerId: "replacement-worker",
+    });
+    expect(lease).not.toBeNull();
+
+    const effects = new PostgresAnswerEffectStore(database, oldPolicy);
+    const effectId = `meeting-knowledge-answer:v1:${binding.questionId}`;
+    await expect(effects.reserve({
+      authorityScopeId: binding.scopeId,
+      authorizationDigest: binding.authorizationDigest,
+      bindingHash: "e".repeat(64),
+      deliveryContainerId: binding.deliveryContainerId,
+      effectId,
+      marker: effectId,
+      payloadBytes: '{"content":"answer"}',
+      payloadHash: "f".repeat(64),
+      projectionTargetContainerId: binding.projectionTargetContainerId,
+      questionFence: {
+        generation: lease?.generation ?? 0,
+        jobId: binding.questionId,
+      },
+      replyToRemoteMessageId: binding.questionId,
+      sourceMeetingIds: [binding.meetingId],
+    })).resolves.toEqual({ status: "reserved" });
+    await database.query(
+      `UPDATE meeting_core.answer_effects
+       SET state = 'claimed', claim_owner = 'crashed-worker',
+           claim_until = transaction_timestamp() - interval '1 second'
+       WHERE effect_id = $1`,
+      [effectId],
+    );
+
+    await expect(effects.startRequest({
+      authorizationDigest: binding.authorizationDigest,
+      effectId,
+      questionGeneration: lease?.generation ?? 0,
+      workerId: "replacement-worker",
+    })).resolves.toBe(true);
+    await expect(effects.findById(effectId)).resolves.toMatchObject({
+      claimGeneration: 1,
+      state: "request_started",
+    });
   });
 });

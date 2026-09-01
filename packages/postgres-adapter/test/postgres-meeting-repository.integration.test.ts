@@ -218,11 +218,6 @@ describe("PostgresMeetingRepository", () => {
         retryable: false,
         status: "outcome_unknown",
       }),
-      searchRoom: async () => ({
-        code: "fixture.unused",
-        retryable: false,
-        status: "unavailable",
-      }),
     };
     const ids = new DeterministicHistoricalTestIds();
     const store = new PostgresHistoricalMemoryStore(database);

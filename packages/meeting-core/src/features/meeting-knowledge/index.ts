@@ -44,6 +44,7 @@ export {
 } from "./domain/grounding-mode.js";
 export {
   DEFAULT_HISTORICAL_EVIDENCE_BLOCK_POLICY,
+  HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
   HistoricalIndexPlanError,
   buildHistoricalIndexPlan,
   buildHistoricalIndexPlanFromPreparedWindows,
@@ -83,25 +84,20 @@ export {
 } from "./application/historical-sync-worker.js";
 export { RequestHistoricalMeetingDeletion } from "./application/request-historical-meeting-deletion.js";
 export {
-  DEFAULT_FOCUSED_RETRIEVAL_POLICY,
-  HistoricalFocusedRetrieval,
-  type FocusedGroundingPlanV1,
-  type FocusedRetrievalPolicyV1,
-  type FocusedRetrievalResultV1,
-} from "./application/historical-retrieval.js";
-export {
-  decomposeHistoricalQuery,
-} from "./application/historical-retrieval-ranking.js";
-export {
+  hasAmbiguousRequestedActorAlias,
+  hasUncertainRequestedActorAlias,
+  resolveRequestedActorAliases,
+  resolveRequestedActorKeys,
   resolveRequestedSpeakerAliases,
   resolveRequestedSpeakerIds,
+  type RequestedRetrievalActorAliasV1,
   type RequestedSpeakerAliasV1,
+  type IdentitySkeletonPortV1,
+  type IdentitySkeletonV1,
+  type RetrievalActorAliasOwnerV1,
+  type RetrievalActorReferenceAuthorityV1,
   type SpeakerAliasMapV1,
 } from "./application/speaker-alias-resolution.js";
-export {
-  SameRoomFocusedMemoryRetrieval,
-  type CanonicalEvidenceTurnHashPort,
-} from "./application/same-room-focused-memory.js";
 export {
   AnswerGroundedMeetingQuestion,
   DEFAULT_GROUNDED_MEETING_QUESTION_POLICY,
@@ -128,11 +124,18 @@ export {
   type LiveFinalizedMemoryPolicyV1,
   type LiveFinalizedMemoryWorkerResultV1,
 } from "./application/live-finalized-memory-worker.js";
+export {
+  qualifiedFocusedEvidenceCandidateLimit,
+} from "./application/ports/focused-evidence-selector.js";
 export type {
   LiveFinalizedMemoryLeaseV1,
   LiveFinalizedMemoryLifecyclePort,
+  LiveFinalizedMemoryProjectionPort,
+  LiveFinalizedMemoryProjectionResultV1,
+  LiveFinalizedMemoryProjectionV1,
   LiveFinalizedMemoryQueryPort,
   LiveFinalizedMemorySyncStore,
+  LiveFinalizedMemoryTelemetryPort,
   LiveMemoryCandidateReferenceV1,
   LiveMemoryCandidateResultV1,
   LiveMemoryContextV1,
@@ -177,7 +180,6 @@ export type {
 } from "./application/ports/historical-index-planner.js";
 export type {
   HistoricalBlockManifestV1,
-  HistoricalCandidateLocatorV1,
   HistoricalDeleteRequestV1,
   HistoricalDeleteResultV1,
   HistoricalEvidenceSliceV1,
@@ -187,8 +189,6 @@ export type {
   HistoricalMemoryPort,
   HistoricalMemoryOperationOptionsV1,
   HistoricalOpaqueIdPort,
-  HistoricalSearchRequestV1,
-  HistoricalSearchResultV1,
   HistoricalTopologyV1,
   HistoricalTurnSourceV1,
   LocallyRehydratedEvidenceBlockV1,
@@ -198,6 +198,9 @@ export type {
   HistoricalCandidateRecordV1,
   HistoricalEvidenceAuthority,
   HistoricalOperationOptionsV1,
+  HistoricalRoomAuthoritySnapshotEntryV1,
+  HistoricalRoomAuthoritySnapshotPort,
+  HistoricalRoomAuthoritySnapshotResultV1,
   HistoricalSyncClaimOptionsV1,
   HistoricalSyncLeaseV1,
   HistoricalSyncOperationV1,
@@ -229,6 +232,7 @@ export {
   focusedMemoryGeneration,
   type CanonicalEvidenceTurn,
   type FocusedMemoryReference,
+  type FocusedRetrievalAudit,
   type GroundingAdmission,
   type GroundingEvidence,
   type GroundingCoverageReduction,
@@ -253,10 +257,23 @@ export {
 export {
   QuestionBinding,
   canTransitionQuestionJob,
+  isLegacyQuestionBinding,
   questionBindingsEqual,
   type QuestionBindingSnapshot,
   type QuestionJobState,
 } from "./domain/question-job.js";
+export {
+  RetrievalBinding,
+  compareRetrievalV2Utf8,
+  retrievalV2ConsumerEvidenceByteLimit,
+  sameFocusedLocatorRetrievalV2Value,
+  selectRetrievalBinding,
+  type RetrievalAdmissionRollout,
+  type RetrievalBindingSnapshot,
+  type RetrievalPath,
+  type FocusedLocatorRetrievalV2ProviderBinding,
+  type FocusedLocatorRetrievalV2RequestSnapshot,
+} from "./domain/retrieval-admission.js";
 export { requiresExhaustiveCoverage } from "./domain/question-scope.js";
 export {
   AdmitCurrentFinalReply,
@@ -274,15 +291,36 @@ export {
   SelectFocusedEvidence,
   type FocusedEvidenceSelection,
 } from "./application/select-focused-evidence.js";
+export {
+  DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY,
+  FocusedHistoricalEvidenceV2,
+  HistoricalFocusedLocatorRetrievalV2,
+  PersistedFocusedMemoryRetrievalV2,
+  PrepareFocusedLocatorRetrievalV2Request,
+  isPersistedRetrievalV2Binding,
+  type FocusedLocatorRetrievalV2Policy,
+} from "./application/focused-locator-retrieval-v2.js";
 export type {
   FocusedEvidenceSelectionCandidateV1,
   FocusedEvidenceSelectionResultV1,
   FocusedEvidenceSelectorPort,
 } from "./application/ports/focused-evidence-selector.js";
 export type {
+  FocusedHistoricalEvidenceV2Port,
+  FocusedHistoricalEvidenceV2Result,
+  FocusedLocatorRetrievalV2Candidate,
+  FocusedLocatorRetrievalV2Preparation,
+  FocusedLocatorRetrievalV2PreparationUnavailableReason,
+  FocusedLocatorRetrievalV2Port,
+  FocusedLocatorRetrievalV2Result,
+} from "./application/ports/focused-locator-retrieval-v2.js";
+export { groundingPlanRetrievalAuditsBindInput, retrievalAuditsBindInput } from
+  "./application/ports/focused-retrieval-provenance.js";
+export type {
   AnswerEffectDeliveryResult,
   AnswerEffectReservation,
   AnswerPublicationPort,
+  CanonicalEvidenceTurnHashPort,
   CanonicalFinalReplyEvidenceResult,
   CurrentFinalReplyBindingResult,
   CurrentFinalReplyBinding,
@@ -292,6 +330,7 @@ export type {
   FinalReplyMaintenancePort,
   FinalReplyEvidencePort,
   FinalReplyRendererPort,
+  FocusedLocatorRetrievalV2AdmissionPort,
   FocusedMemoryRetrievalPort,
   FocusedMemoryRetrievalResult,
   GroundedAnswerGenerationRequest,

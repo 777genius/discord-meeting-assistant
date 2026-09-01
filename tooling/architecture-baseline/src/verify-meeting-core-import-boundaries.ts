@@ -27,6 +27,15 @@ function pathBelongsToRoot(filePath: string, root: string): boolean {
   return filePath === root || filePath.startsWith(`${root}/`);
 }
 
+function isExactFeatureExport(value: unknown, subpath: string): boolean {
+  if (value === `./src/features/${subpath}/index.ts`) {return true;}
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {return false;}
+  const conditions = value as Record<string, unknown>;
+  return JSON.stringify(Object.keys(conditions).toSorted()) === JSON.stringify(["import", "types"]) &&
+    conditions.types === `./dist/features/${subpath}/index.d.ts` &&
+    conditions.import === `./dist/features/${subpath}/index.js`;
+}
+
 async function verifyExportPolicy(
   repositoryRoot: string,
   policy: MeetingCoreImportPolicy,
@@ -60,10 +69,9 @@ async function verifyExportPolicy(
 
   for (const subpath of policy.featureSubpaths) {
     const exportKey = `./${subpath}`;
-    const expectedTarget = `./src/features/${subpath}/index.ts`;
-    if (exports[exportKey] !== expectedTarget) {
+    if (!isExactFeatureExport(exports[exportKey], subpath)) {
       diagnostics.push(
-        `${policy.packageManifest}: ${exportKey} must target ${expectedTarget}.`,
+        `${policy.packageManifest}: ${exportKey} must target its exact source or built feature entrypoint.`,
       );
     }
   }

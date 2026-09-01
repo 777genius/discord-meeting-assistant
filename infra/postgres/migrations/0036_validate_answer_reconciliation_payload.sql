@@ -1,0 +1,9 @@
+ALTER TABLE meeting_core.answer_effects
+  VALIDATE CONSTRAINT answer_effects_state_is_supported,
+  VALIDATE CONSTRAINT answer_effects_request_receipt_is_consistent,
+  VALIDATE CONSTRAINT answer_effects_delivery_receipt_is_consistent,
+  VALIDATE CONSTRAINT answer_effects_terminal_payload_is_scrubbed,
+  VALIDATE CONSTRAINT answer_effects_actionable_delivery_is_known,
+  VALIDATE CONSTRAINT answer_effects_reconciliation_authority_is_known,
+  VALIDATE CONSTRAINT answer_effects_unresolved_payload_is_retained,
+  VALIDATE CONSTRAINT answer_effects_containment_state_is_consistent;

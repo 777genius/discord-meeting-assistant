@@ -54,6 +54,9 @@ catalogs:
     bullmq:
       specifier: 5.81.3
       version: 5.81.3
+    confusables:
+      specifier: 1.1.1
+      version: 1.1.1
     discord.js:
       specifier: 14.27.0
       version: 14.27.0
@@ -99,12 +102,15 @@ catalogs:
     ws:
       specifier: 8.21.1
       version: 8.21.1
+    yaml:
+      specifier: 2.9.0
+      version: 2.9.0
     zod:
       specifier: 4.4.3
       version: 4.4.3
 
 overrides:
-  '@infinity-context/sdk': file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz
+  '@infinity-context/sdk': file:vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz
 
 importers:
 
@@ -152,6 +158,9 @@ importers:
       discord.js:
         specifier: 'catalog:'
         version: 14.27.0
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.0
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -225,12 +234,6 @@ importers:
       '@discord-meeting/voicetext-adapter':
         specifier: workspace:*
         version: link:../../packages/voicetext-adapter
-      '@grpc/grpc-js':
-        specifier: 'catalog:'
-        version: 1.14.4
-      '@grpc/proto-loader':
-        specifier: 'catalog:'
-        version: 0.8.1
       bullmq:
         specifier: 'catalog:'
         version: 5.81.3(supports-color@7.2.0)
@@ -417,6 +420,9 @@ importers:
       '@discord-meeting/meeting-routing-core':
         specifier: workspace:*
         version: link:../meeting-routing-core
+      confusables:
+        specifier: 'catalog:'
+        version: 1.1.1
       discord.js:
         specifier: 'catalog:'
         version: 14.27.0
@@ -439,16 +445,28 @@ importers:
       '@discord-meeting/meeting-core':
         specifier: workspace:*
         version: link:../meeting-core
+      '@discord-meeting/postgres-adapter':
+        specifier: workspace:*
+        version: link:../postgres-adapter
+      '@discord-meeting/subscription-runtime-adapter':
+        specifier: workspace:*
+        version: link:../subscription-runtime-adapter
       '@huggingface/tokenizers':
         specifier: 'catalog:'
         version: 0.1.3
       '@infinity-context/sdk':
-        specifier: file:../../vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz
-        version: file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz
+        specifier: file:../../vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz
+        version: file:vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz
+      pg:
+        specifier: 'catalog:'
+        version: 8.22.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
+      '@types/pg':
+        specifier: 'catalog:'
+        version: 8.20.1
       tsx:
         specifier: 'catalog:'
         version: 4.23.1
@@ -632,6 +650,12 @@ importers:
       '@discord-meeting/meeting-core':
         specifier: workspace:*
         version: link:../meeting-core
+      '@grpc/grpc-js':
+        specifier: 'catalog:'
+        version: 1.14.4
+      '@grpc/proto-loader':
+        specifier: 'catalog:'
+        version: 0.8.1
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -1163,9 +1187,9 @@ packages:
   '@huggingface/tokenizers@0.1.3':
     resolution: {integrity: sha512-8rF/RRT10u+kn7YuUbUg0OF30K8rjTc78aHpxT+qJ1uWSqxT1MHi8+9ltwYfkFYJzT/oS+qw3JVfHtNMGAdqyA==}
 
-  '@infinity-context/sdk@file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz':
-    resolution: {integrity: sha512-V2RCQKfJ3XMiIXQ7B3F+wvGAu9RJeRYGnDaRIVdT890tLvv0asviGpmsyyM5El7JuNjgPKI+TpdygaoKjxYSDw==, tarball: file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz}
-    version: 0.1.0
+  '@infinity-context/sdk@file:vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz':
+    resolution: {integrity: sha512-lCIL90wIF9dSme7qhMVdjN/ey+SAGCrmraKc3mak5oyer6ye7ZxbUBPMaCBBApr3+HTO8HduTtUPtqUPbrhJ/A==, tarball: file:vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz}
+    version: 0.2.1
     engines: {node: '>=20'}
     hasBin: true
 
@@ -2524,6 +2548,10 @@ packages:
 
   concat-map@0.0.1:
     resolution: {integrity: sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==}
+
+  confusables@1.1.1:
+    resolution: {integrity: sha512-BzFtzUrufackm00Wb2zvrZV0ItRqPdWaUprU5FXHeZiJRrOWxGmXmQl/muGTF9EQl+MdBXz+Irk99meskGZmXw==}
+    engines: {node: '>=10', npm: '>=6'}
 
   console-control-strings@1.1.0:
     resolution: {integrity: sha512-ty/fTekppD2fIwRvnZAVdeOiGd1c7YXEixbgJTNzqcxJWKQnjJ/V1bNEEE6hygpM3WjwHFUVK6HTjWSzV4a8sQ==}
@@ -4748,7 +4776,7 @@ snapshots:
 
   '@huggingface/tokenizers@0.1.3': {}
 
-  '@infinity-context/sdk@file:vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz': {}
+  '@infinity-context/sdk@file:vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz': {}
 
   '@ioredis/commands@1.10.0': {}
 
@@ -5811,6 +5839,8 @@ snapshots:
       readable-stream: 4.7.0
 
   concat-map@0.0.1: {}
+
+  confusables@1.1.1: {}
 
   console-control-strings@1.1.0: {}
 

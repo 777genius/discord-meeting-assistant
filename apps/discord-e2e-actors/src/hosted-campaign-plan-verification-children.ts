@@ -52,16 +52,19 @@ export function makeCollector(
 }
 
 export function makeCampaignVerifier(context: HostedCampaignChildContext): HostedCampaignExecutableSpec {
-  const { barrierPath, campaignVerified, definition, paths, provenanceAfter, reconnect, revisions } = context;
+  const { barrierPath, campaignVerified, definition, paths, provenanceAfter, reconnect,
+    remediationBundleReady, revisions } = context;
   return {
     arguments: {
       evidencePaths: [paths.run(1, "evidence.json"), paths.run(2, "evidence.json"), paths.run(3, "evidence.json")],
+      historicalReplyPath: paths.historicalReply,
       kind: "campaign-verifier", manifestPath: definition.fixtureManifestPath,
+      thinRemediationPath: paths.thinRemediation,
     }, childId: "campaign-verifier", completion: {
       action: { kind: "campaign-verified" }, campaignId: definition.campaignId,
       kind: "campaign-verifier", runIds: definition.runIds,
     }, entrypoint: "campaign-verifier", environment: revisions,
     produces: [produced(reconnect, campaignVerified.action, barrierPath("campaign-verified"))],
-    requires: [provenanceAfter], startBefore: { ...campaignVerified, kind: "barrier" },
+    requires: [provenanceAfter, remediationBundleReady], startBefore: { ...campaignVerified, kind: "barrier" },
   };
 }

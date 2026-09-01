@@ -60,6 +60,7 @@ describe("Meeting Knowledge final reply runtime lifecycle", () => {
     const order: string[] = [];
     const handler = {
       close: vi.fn(),
+      reconcilePending: vi.fn(async () => {}),
       settle: vi.fn(async () => {}),
       start: vi.fn(() => {
         order.push("ingress");
@@ -94,11 +95,50 @@ describe("Meeting Knowledge final reply runtime lifecycle", () => {
 
     expect(order).toEqual(["ingress", "maintenance", "process"]);
     expect(handler.start).toHaveBeenCalledOnce();
+    expect(handler.reconcilePending).toHaveBeenCalledOnce();
     expect(jobs.calls).toEqual([{ maximumJobs: 100, servingEnabled: true }]);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(handler.reconcilePending).toHaveBeenCalledTimes(2);
 
     await runtime.close();
     expect(handler.close).toHaveBeenCalledOnce();
     expect(handler.settle).toHaveBeenCalledOnce();
+  });
+
+  it("supports deterministic immediate processing and reconciliation passes", async () => {
+    const order: string[] = [];
+    const runtime = createMeetingKnowledgePollingRuntime({
+      maintenance: new MaintainFinalReplies({
+        maintain: async () => {
+          order.push("maintenance");
+          return { cancelled: 0, expired: 0 };
+        },
+      }, true),
+      processor: {
+        executeOnce: async () => {
+          order.push("process");
+          return { status: "idle" as const };
+        },
+      },
+      publication: {
+        reconcileRetractions: async () => {
+          order.push("retractions");
+          return { pending: 0, retracted: 0 };
+        },
+        reconcileUnknown: async () => {
+          order.push("unknown");
+          return { absentUnconfirmed: 0, containedDuplicates: 0, delivered: 0 };
+        },
+      },
+      reportError: vi.fn(),
+    });
+
+    await runtime.processPending();
+    await runtime.reconcilePending();
+
+    expect(order).toEqual(["maintenance", "process", "unknown", "retractions"]);
+    await runtime.close();
   });
 
   it("bounds shutdown when external reconciliation never settles", async () => {

@@ -2,7 +2,9 @@
 
 ## Proposed
 
+- [ADR-0063: Reserved live-branch integration decision](0063-current-retrieval-generation-fence.md)
 - [ADR-0026: Host subscription account pool](0026-host-subscription-account-pool.md)
+- [ADR-0057: Exact-document live-memory reconciliation](0057-exact-document-live-reconciliation.md)
 
 ## Accepted
 
@@ -32,8 +34,6 @@
 - [ADR-0027: Durable meeting source and actor identity](0027-durable-meeting-source-and-actor-identity.md)
 - [ADR-0028: Meeting Knowledge test ownership](0028-meeting-knowledge-test-ownership.md)
 - [ADR-0029: Trusted lifecycle evidence](0029-trusted-lifecycle-evidence.md)
-- [ADR-0030: Memory-backed grounded final reply](0030-local-final-reply.md)
-- [ADR-0031: Infinity Context historical memory](0031-infinity-context-historical-memory.md)
 - [ADR-0032: Live finalized grounded memory](0032-live-finalized-grounded-memory.md)
 - [ADR-0034: Bounded answer-model grounding](0034-bounded-answer-model-grounding.md)
 - [ADR-0035: Separate immutable Infinity package and semantic qualification](0035-infinity-package-and-semantic-qualification.md)
@@ -50,9 +50,25 @@
 - [ADR-0046: Scoped Infinity deletion reconciliation](0046-scoped-infinity-deletion-reconciliation.md)
 - [ADR-0047: Active-only scoped document enumeration](0047-active-only-scoped-document-enumeration.md)
 - [ADR-0048: Exact-head Infinity deletion qualification](0048-exact-head-infinity-deletion-qualification.md)
+- [ADR-0049: Locator-only upstream retrieval with downstream evidence authority](0049-locator-only-upstream-retrieval.md)
+- [ADR-0051: Provider-attested greeting and ready-only recording publication](0051-greeting-playback-and-recording-readiness.md)
+- [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)
+- [ADR-0054: Official-SDK finalized-live memory projection](0054-official-sdk-live-memory-projection.md)
+- [ADR-0055: Deadline-bound durable participant greetings](0055-deadline-bound-durable-participant-greetings.md)
+- [ADR-0056: Terminal-evidence greeting reconciliation](0056-terminal-evidence-greeting-reconciliation.md)
+- [ADR-0059: Closed Craig recovery authority](0059-closed-craig-recovery-authority.md)
+- [ADR-0060: Authenticated quality-campaign runner boundaries](0060-authenticated-quality-campaign-runner-boundaries.md)
+- [ADR-0061: Atomic quality evidence and holdout repetition](0061-atomic-quality-evidence-and-holdout-repetition.md)
+- [ADR-0062: Initial-roster durable greetings](0062-initial-roster-durable-greetings.md)
+- [ADR-0053: V2-only meeting retrieval composition](0053-v2-only-meeting-retrieval.md)
+- [ADR-0064: Composite retrieval authority fence and candidate isolation](0064-composite-retrieval-authority-fence.md)
 
 ## Superseded
 
 - [ADR-0013: Provider-neutral meeting source boundary](0013-provider-neutral-meeting-source-boundary.md)
 - [ADR-0022: Provider-neutral readable transcript segments](0022-provider-neutral-readable-transcript-segments.md)
+- [ADR-0030: Memory-backed grounded final reply](0030-local-final-reply.md)
+- [ADR-0031: Infinity Context historical memory](0031-infinity-context-historical-memory.md)
 - [ADR-0033: Adaptive bounded current grounding](0033-adaptive-current-grounding.md)
+- [ADR-0058: Exact Craig hosted stack recovery](0058-exact-craig-hosted-stack-recovery.md)
+- [ADR-0050: Persisted Retrieval V2 serving binding and official SDK custody](0050-persisted-retrieval-v2-serving-binding.md)

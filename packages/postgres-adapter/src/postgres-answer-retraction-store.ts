@@ -5,6 +5,7 @@ import type {
 import type { Pool } from "pg";
 
 interface AnswerRetractionRow {
+  readonly authority_scope_id: string;
   readonly authorization_digest: string;
   readonly binding_hash: string;
   readonly claim_generation: number;
@@ -29,7 +30,7 @@ export async function listAnswerRetractions(
     throw new RangeError("answer retraction reconciliation limit must be between 1 and 1000");
   }
   const result = await pool.query<AnswerRetractionRow>(
-    `SELECT effect_id, state, projection_target_container_id,
+    `SELECT effect_id, state, authority_scope_id, projection_target_container_id,
             delivery_container_id, reply_to_remote_message_id, marker,
             payload_bytes, payload_hash, binding_hash, authorization_digest,
             source_meeting_ids,
@@ -42,6 +43,7 @@ export async function listAnswerRetractions(
     [limit],
   );
   return Object.freeze(result.rows.map((row) => Object.freeze({
+    authorityScopeId: row.authority_scope_id,
     authorizationDigest: row.authorization_digest,
     bindingHash: row.binding_hash,
     claimGeneration: row.claim_generation,

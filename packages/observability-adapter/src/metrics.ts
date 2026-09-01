@@ -5,6 +5,7 @@ import type {
   DiscordPublicationOutcome,
   IngressOutcome,
   IngressReason,
+  LiveMemoryProjectionOutcome,
   Metrics,
   ProcessingStage,
   ProviderDependency,
@@ -69,6 +70,7 @@ const PROVIDER_DEPENDENCIES = [
   "summary-provider",
 ] as const;
 const DEPENDENCY_HEALTH = ["degraded", "healthy", "unhealthy"] as const;
+const LIVE_MEMORY_PROJECTION_OUTCOMES = ["applied", "reconciled"] as const;
 
 const STAGE_DURATION_BUCKETS = [
   0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300,
@@ -259,6 +261,11 @@ const PROVIDER_HEALTH = {
   name: "discord_meeting_provider_health",
   type: "gauge",
 } as const;
+const LIVE_MEMORY_INGEST_TO_QUERY = {
+  help: "Finalized-human-turn latency from durable ingest to queryable projection.",
+  name: "discord_meeting_live_memory_ingest_to_query_seconds",
+  type: "histogram",
+} as const;
 
 export class PrometheusMetrics implements Metrics {
   private readonly ingress = new ScalarMetric(INGRESS);
@@ -273,6 +280,23 @@ export class PrometheusMetrics implements Metrics {
   private readonly stageOutcomes = new ScalarMetric(STAGE_OUTCOMES_METRIC);
   private readonly discordPublications = new ScalarMetric(DISCORD_PUBLICATIONS);
   private readonly providerHealth = new ScalarMetric(PROVIDER_HEALTH);
+  private readonly liveMemoryIngestToQuery = new HistogramMetric(
+    LIVE_MEMORY_INGEST_TO_QUERY,
+    STAGE_DURATION_BUCKETS,
+  );
+
+  public observeLiveMemoryProjection(
+    outcome: LiveMemoryProjectionOutcome,
+    ingestToQuerySeconds: number,
+  ): void {
+    this.liveMemoryIngestToQuery.observe({
+      outcome: requireAllowed(
+        outcome,
+        LIVE_MEMORY_PROJECTION_OUTCOMES,
+        "liveMemoryProjectionOutcome",
+      ),
+    }, requireNonNegativeFinite(ingestToQuerySeconds, "ingestToQuerySeconds"));
+  }
 
   public observeStage(
     stage: ProcessingStage,
@@ -359,6 +383,7 @@ export class PrometheusMetrics implements Metrics {
       this.stageOutcomes,
       this.discordPublications,
       this.providerHealth,
+      this.liveMemoryIngestToQuery,
     ];
     const lines = metrics.flatMap((metric) => [
       `# HELP ${metric.definition.name} ${metric.definition.help}`,

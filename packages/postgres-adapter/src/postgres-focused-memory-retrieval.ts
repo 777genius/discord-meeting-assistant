@@ -1,12 +1,11 @@
 import {
   type CanonicalEvidenceTurn,
-  decomposeHistoricalQuery,
+  compareRetrievalV2Utf8,
   type FocusedMemoryReference,
   type FocusedMemoryRetrievalPort,
   type FocusedMemoryRetrievalResult,
-  resolveRequestedSpeakerIds,
-  type SpeakerAliasMapV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 
 import {
@@ -15,22 +14,17 @@ import {
   type ResolvedFinalReplyAuthority,
 } from "./postgres-final-reply-evidence.js";
 
-interface ScoredTurn {
-  readonly index: number;
+interface ExactLexicalMatch {
   readonly matchedTerms: number;
-  readonly queryIndex: number;
-  readonly relevanceScore: number;
   readonly turn: CanonicalEvidenceTurn;
 }
-
-const maximumQueries = 4;
-const minimumRelevanceScore = 0.2;
 
 const ignoredQueryTerms = new Set([
   "about",
   "after",
   "answer",
   "could",
+  "current",
   "did",
   "does",
   "from",
@@ -80,18 +74,12 @@ const ignoredQueryTerms = new Set([
   "начал",
   "перв",
   "послед",
-].map(termRoot));
-
-const correctionOrConflict = /\b(?:actually|correction|instead|not|rather|revised|updated)\b|(?:вообще-то|исправ|не\s|нет|обнов|поправ|уточн)/iu;
-
-function termRoot(value: string): string {
-  return value.length <= 5 ? value : value.slice(0, 5);
-}
+]);
 
 function searchableTerms(value: string): ReadonlySet<string> {
-  const tokens = value.normalize("NFKC").toLocaleLowerCase()
+  const tokens = value.normalize("NFKC").toLowerCase()
     .match(/[\p{L}\p{N}]{3,}/gu) ?? [];
-  return new Set(tokens.map(termRoot));
+  return new Set(tokens);
 }
 
 function queryTerms(value: string): ReadonlySet<string> {
@@ -100,155 +88,111 @@ function queryTerms(value: string): ReadonlySet<string> {
   ));
 }
 
-function scoreTurns(
+function exactLexicalMatches(
   turns: readonly CanonicalEvidenceTurn[],
   question: string,
-  requestedSpeakerIds: ReadonlySet<string>,
-): readonly ScoredTurn[] {
-  const queries = decomposeHistoricalQuery(question, maximumQueries);
-  const normalizedQuestion = question.normalize("NFKC").toLocaleLowerCase("und");
-  const wantsCorrection = /\b(?:actual|correct|final|instead|latest|revised|updated)\b|(?:исправ|итог|послед|поправ|уточн)/iu
-    .test(normalizedQuestion);
-  const wantsStart = /\b(?:beginning|early|earlier|first|initial|start)\b|(?:вначал|начал|перв|раньш)/iu
-    .test(normalizedQuestion);
-  const wantsEnd = /\b(?:end|final|last|late|latest|recent)\b|(?:в\s+конце|итог|конеч|послед|поздн)/iu
-    .test(normalizedQuestion);
-  const profiles = queries.map((query, queryIndex) => ({
-    queryIndex,
-    terms: queryTerms(query),
-  })).filter(({ terms }) => terms.size > 0);
-  const maximumStartMs = turns.at(-1)?.startMs ?? 0;
-  const best = new Map<number, ScoredTurn>();
-  for (const [index, turn] of turns.entries()) {
+): readonly ExactLexicalMatch[] {
+  const terms = queryTerms(question);
+  const matches: ExactLexicalMatch[] = [];
+  for (const turn of turns) {
     const turnTerms = searchableTerms(turn.text);
-    for (const profile of profiles) {
-      const matchedTerms = [...profile.terms].filter((term) => turnTerms.has(term)).length;
-      if (matchedTerms === 0) {
-        continue;
-      }
-      const lexicalScore = matchedTerms / profile.terms.size;
-      const speakerScore = requestedSpeakerIds.has(turn.speakerId) ||
-          normalizedQuestion.includes(
-            turn.speakerId.normalize("NFKC").toLocaleLowerCase("und"),
-          )
-        ? 1
-        : 0;
-      const position = maximumStartMs <= 0 ? 1 : turn.startMs / maximumStartMs;
-      const temporalScore = wantsStart === wantsEnd
-        ? 0
-        : wantsEnd ? position : 1 - position;
-      const relevanceScore = Math.min(1, lexicalScore * 0.75 +
-        (wantsCorrection && correctionOrConflict.test(turn.text) ? 0.1 : 0) +
-        speakerScore * 0.1 + temporalScore * 0.05);
-      if (relevanceScore < minimumRelevanceScore) {
-        continue;
-      }
-      const candidate = Object.freeze({
-        index,
-        matchedTerms,
-        queryIndex: profile.queryIndex,
-        relevanceScore,
-        turn,
-      });
-      const previous = best.get(index);
-      if (previous === undefined || compareScored(candidate, previous) < 0) {
-        best.set(index, candidate);
-      }
+    const matchedTerms = [...terms].filter((term) => turnTerms.has(term)).length;
+    if (matchedTerms > 0) {
+      matches.push(Object.freeze({ matchedTerms, turn }));
     }
   }
-  return [...best.values()]
+  return matches
     .toSorted((left, right) =>
-      compareScored(left, right) ||
+      right.matchedTerms - left.matchedTerms ||
       left.turn.startMs - right.turn.startMs ||
       left.turn.endMs - right.turn.endMs ||
-      left.turn.turnId.localeCompare(right.turn.turnId)
+      compareRetrievalV2Utf8(left.turn.turnId, right.turn.turnId)
     );
 }
 
-function compareScored(left: ScoredTurn, right: ScoredTurn): number {
-  return right.relevanceScore - left.relevanceScore ||
-    right.matchedTerms - left.matchedTerms ||
-    left.queryIndex - right.queryIndex;
-}
-
-function selectFocusedTurns(
-  turns: readonly CanonicalEvidenceTurn[],
-  scored: readonly ScoredTurn[],
+function selectExactLexicalTurns(
+  matches: readonly ExactLexicalMatch[],
   maximumCandidates: number,
-  neighborTurns: number,
-): readonly ScoredTurn[] {
-  const neighborhoodWidth = neighborTurns * 2 + 1;
-  const primaryHitCount = Math.max(
-    1,
-    Math.min(scored.length, Math.floor(maximumCandidates / neighborhoodWidth)),
-  );
-  const primary = new Map<number, ScoredTurn>();
-  for (const hit of scored) {
-    if (![...primary.values()].some(({ queryIndex }) => queryIndex === hit.queryIndex)) {
-      primary.set(hit.index, hit);
+): readonly ExactLexicalMatch[] {
+  const speakerOrder: string[] = [];
+  const bySpeaker = new Map<string, Map<number, ExactLexicalMatch[]>>();
+  for (const match of matches) {
+    let buckets = bySpeaker.get(match.turn.speakerId);
+    if (buckets === undefined) {
+      buckets = new Map();
+      bySpeaker.set(match.turn.speakerId, buckets);
+      speakerOrder.push(match.turn.speakerId);
     }
-    if (primary.size >= primaryHitCount) {
-      break;
-    }
+    const timeBucket = Math.floor(match.turn.startMs / 60_000);
+    buckets.set(timeBucket, [...(buckets.get(timeBucket) ?? []), match]);
   }
-  for (const hit of scored) {
-    if (primary.size >= primaryHitCount) {
-      break;
-    }
-    primary.set(hit.index, hit);
-  }
-  const selected = new Map<number, ScoredTurn>();
-  for (const hit of primary.values()) {
-    for (
-      let index = Math.max(0, hit.index - neighborTurns);
-      index <= Math.min(turns.length - 1, hit.index + neighborTurns);
-      index += 1
-    ) {
-      if (selected.size >= maximumCandidates) {
-        break;
-      }
-      const turn = turns[index];
-      if (turn === undefined) {
+  const selected: ExactLexicalMatch[] = [];
+  const nextBucket = new Map<string, number>();
+  while (selected.length < maximumCandidates) {
+    let progressed = false;
+    for (const speakerId of speakerOrder) {
+      const buckets = bySpeaker.get(speakerId);
+      if (buckets === undefined) {
         continue;
       }
-      const distance = Math.abs(index - hit.index);
-      const candidate = distance === 0 ? hit : Object.freeze({
-        index,
-        matchedTerms: 0,
-        queryIndex: hit.queryIndex,
-        relevanceScore: hit.relevanceScore * 0.5 / distance,
-        turn,
-      });
-      const previous = selected.get(index);
-      if (previous === undefined || compareScored(candidate, previous) < 0) {
-        selected.set(index, candidate);
+      const bucketOrder = [...buckets.keys()];
+      const start = nextBucket.get(speakerId) ?? 0;
+      for (let offset = 0; offset < bucketOrder.length; offset += 1) {
+        const index = (start + offset) % bucketOrder.length;
+        const bucket = buckets.get(bucketOrder[index]!);
+        const match = bucket?.shift();
+        if (match !== undefined) {
+          selected.push(match);
+          nextBucket.set(speakerId, (index + 1) % bucketOrder.length);
+          progressed = true;
+          break;
+        }
+      }
+      if (selected.length === maximumCandidates) {
+        break;
       }
     }
-  }
-  for (const hit of scored) {
-    if (selected.size >= maximumCandidates) {
+    if (!progressed) {
       break;
     }
-    const previous = selected.get(hit.index);
-    if (previous === undefined || compareScored(hit, previous) < 0) {
-      selected.set(hit.index, hit);
-    }
   }
-  return Object.freeze([...selected.values()].toSorted((left, right) =>
-    compareScored(left, right) ||
-    left.turn.startMs - right.turn.startMs ||
-    left.turn.turnId.localeCompare(right.turn.turnId)
-  ));
+  return Object.freeze(selected);
 }
 
 function referenceFor(
   input: Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0],
-  scored: ScoredTurn,
+  matched: ExactLexicalMatch,
+  providerRank: number,
+  requestDigest: string,
+  responseDigest: string,
 ): FocusedMemoryReference {
-  const { turn } = scored;
+  const { turn } = matched;
+  const identity = input.retrievalBinding?.localCurrentIdentity;
+  const fingerprint = identity?.profileFingerprint ??
+    createHash("sha256").update("canonical-local-unbound", "utf8").digest("hex");
   return Object.freeze({
     meetingId: input.meetingId,
-    relevanceScore: scored.relevanceScore,
+    retrievalAudit: Object.freeze({
+      contributions: Object.freeze([Object.freeze({
+        contributionScorePicos: matched.matchedTerms * 1_000_000,
+        providerLaneId: "canonical_local_exact_lexical",
+        providerRank,
+        queryId: "original-question",
+        rawScoreKind: "bm25" as const,
+        rawScoreValue: matched.matchedTerms,
+      })]),
+      fusedScore: matched.matchedTerms,
+      laneIdentity: Object.freeze({
+        algorithmId: "canonical_local_exact_lexical_v1" as const,
+        lane: "local_current" as const,
+        profileFingerprint: fingerprint,
+        profileId: "meeting-knowledge.local-current.v2" as const,
+      }),
+      locator: `canonical-turn:${turn.turnId}`,
+      providerRank,
+      requestDigest,
+      responseDigest,
+    }),
     transcriptId: input.transcriptId,
     transcriptVersion: input.transcriptVersion,
     turnHash: canonicalFinalReplyTurnHash(turn),
@@ -297,7 +241,6 @@ export class PostgresFocusedMemoryRetrieval
   public constructor(
     private readonly pool: Pool,
     private readonly botApplicationIdentity: string,
-    private readonly speakerAliases: SpeakerAliasMapV1 = {},
   ) {}
 
   public async retrieve(
@@ -329,32 +272,52 @@ export class PostgresFocusedMemoryRetrieval
         return { schemaVersion: 1, status: "stale" };
       }
       const humanActors = new Set(authority.binding.humanActorIds);
-      const humanTurns = authority.turns.filter(({ speakerId }) =>
+      const requestedSpeakers = new Set(input.hardFilters?.speakerIds ?? []);
+      const interval = input.hardFilters?.relativeTimeInterval ?? null;
+      const canonicalHumanTurns = authority.turns.filter(({ speakerId }) =>
         humanActors.has(speakerId)
+      );
+      const humanTurns = canonicalHumanTurns.filter(({ speakerId }) =>
+        (input.hardFilters?.requiresSpeakerMatch !== true ||
+          requestedSpeakers.has(speakerId))
+      ).filter((turn) =>
+        interval === null ||
+        (turn.startMs < interval.endMs && turn.endMs > interval.startMs)
       );
       if (queryTerms(input.question).size === 0) {
         return { schemaVersion: 1, status: "low_coverage" };
       }
-      const scored = scoreTurns(
-        humanTurns,
-        input.question,
-        resolveRequestedSpeakerIds(input.question, this.speakerAliases),
-      );
-      if (scored.length === 0) {
+      const matches = exactLexicalMatches(humanTurns, input.question);
+      if (matches.length === 0) {
         return { schemaVersion: 1, status: "low_coverage" };
       }
-      const selected = selectFocusedTurns(
-        humanTurns,
-        scored,
-        input.maximumCandidates,
-        input.neighborTurns,
-      );
-      if (selected.length === 0 || selected.length >= humanTurns.length) {
+      const selected = selectExactLexicalTurns(matches, input.maximumCandidates);
+      if (selected.length === 0 || selected.length >= canonicalHumanTurns.length) {
         return { schemaVersion: 1, status: "low_coverage" };
       }
+      const requestDigest = digestJson({
+        hardFilters: input.hardFilters ?? null,
+        laneIdentity: input.retrievalBinding?.localCurrentIdentity ?? null,
+        originalQuestion: input.retrievalBinding?.originalQuestion ?? input.question,
+        schemaVersion: 1,
+      });
       return Object.freeze({
         authorityGeneration: authority.binding.memoryGeneration,
-        candidates: Object.freeze(selected.map((turn) => referenceFor(input, turn))),
+        candidates: Object.freeze(selected.map((turn, index) =>
+          referenceFor(input, turn, index + 1, requestDigest, digestJson({
+            contributions: [{
+              contributionScorePicos: turn.matchedTerms * 1_000_000,
+              providerLaneId: "canonical_local_exact_lexical",
+              providerRank: index + 1,
+              queryId: "original-question",
+              rawScoreKind: "bm25",
+              rawScoreValue: turn.matchedTerms,
+            }],
+            fusedScore: turn.matchedTerms,
+            locator: `canonical-turn:${turn.turn.turnId}`,
+            providerRank: index + 1,
+          }))
+        )),
         schemaVersion: 1,
         status: "current",
       });
@@ -362,4 +325,17 @@ export class PostgresFocusedMemoryRetrieval
       return { schemaVersion: 1, status: "unavailable" };
     }
   }
+}
+
+function digestJson(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(canonicalValue(value)), "utf8")
+    .digest("hex");
+}
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) {return value.map(canonicalValue);}
+  if (typeof value !== "object" || value === null) {return value;}
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .toSorted(([left], [right]) => compareRetrievalV2Utf8(left, right))
+    .map(([key, nested]) => [key, canonicalValue(nested)]));
 }

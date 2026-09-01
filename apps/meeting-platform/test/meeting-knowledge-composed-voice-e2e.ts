@@ -117,7 +117,7 @@ export async function proveComposedGroundedVoice(input: {
             attemptId: command.attemptId,
             recordingId: command.recordingId,
             schemaVersion: 1,
-            startedAtMs: Date.now(),
+            startedAtMs: playbackClockMs,
             turnId: command.turnId,
             type: "playback-started",
           }));
@@ -151,8 +151,15 @@ export async function proveComposedGroundedVoice(input: {
       gatewaySessionId: "gateway-composed-grounded-voice-e2e",
       guildId: "333333333333333333",
       recordingId,
-      schemaVersion: 1,
+      schemaVersion: 3,
       type: "session-ready",
+      playbackCapabilities: {
+        attestsDiscordVoiceSend: true,
+        deduplicatesCommandIds: true,
+        deduplicationRetentionSeconds: 300,
+        replaysOriginalStartedAtMs: true,
+        suppressesPlaybackAtOrAfterNotAfter: true,
+      },
     }));
     await waitForCondition(() => playback?.hasSession(recordingId) === true);
 

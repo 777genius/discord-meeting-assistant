@@ -71,7 +71,7 @@ function greetingRuntime(
   });
 }
 
-it("routes initial joins and reconnects through one meeting-local greeting", async () => {
+it("treats the initial roster as presence-only until a retained incremental join", async () => {
   vi.useFakeTimers();
   vi.setSystemTime("2026-08-02T10:00:00.000Z");
   const meetings = new MemoryLiveMeetingRepository();
@@ -86,21 +86,23 @@ it("routes initial joins and reconnects through one meeting-local greeting", asy
   ]));
   expect(coordinator.proactiveCalls).toEqual([]);
 
+  await runtime.acceptLifecycle({
+    occurredAt: "2026-08-02T10:00:00.000Z",
+    participantId: "2533228054724346087",
+    recordingId: "recording-live-1",
+    type: "participant.joined",
+  });
+  await runtime.acceptLifecycle({
+    occurredAt: "2026-08-02T10:00:00.000Z",
+    participantId: "2533228054724346087",
+    recordingId: "recording-live-1",
+    type: "participant.left",
+  });
+
   playbackReady = true;
+  await runtime.conversationPlaybackReady("recording-live-1");
   await vi.advanceTimersByTimeAsync(100);
-  await vi.waitFor(() => {
-    expect(coordinator.proactiveCalls).toHaveLength(2);
-  });
-  expect(coordinator.proactiveCalls[0]).toMatchObject({
-    locale: "ru",
-    prompt: "Привет!",
-    speakerId: "3533228054724346087",
-  });
-  expect(coordinator.proactiveCalls[1]).toMatchObject({
-    locale: "ru",
-    prompt: "Привет, Саша!",
-    speakerId: "1533228054724346087",
-  });
+  expect(coordinator.proactiveCalls).toEqual([]);
 
   vi.setSystemTime("2026-08-02T10:01:00.000Z");
   await runtime.acceptLifecycle({
@@ -110,9 +112,9 @@ it("routes initial joins and reconnects through one meeting-local greeting", asy
     type: "participant.joined",
   });
   await vi.waitFor(() => {
-    expect(coordinator.proactiveCalls).toHaveLength(3);
+    expect(coordinator.proactiveCalls).toHaveLength(1);
   });
-  expect(coordinator.proactiveCalls[2]).toMatchObject({
+  expect(coordinator.proactiveCalls[0]).toMatchObject({
     locale: "en",
     prompt: "Hi, Alex!",
     speakerId: "2533228054724346087",
@@ -127,8 +129,14 @@ it("routes initial joins and reconnects through one meeting-local greeting", asy
       type,
     });
   }
-  await vi.advanceTimersByTimeAsync(100);
-  expect(coordinator.proactiveCalls).toHaveLength(3);
+  await vi.waitFor(() => {
+    expect(coordinator.proactiveCalls).toHaveLength(2);
+  });
+  expect(coordinator.proactiveCalls[1]).toMatchObject({
+    locale: "ru",
+    prompt: "Привет, Саша!",
+    speakerId: "1533228054724346087",
+  });
 
   await runtime.close();
 });
@@ -197,7 +205,7 @@ it("cancels departed participant work before a stalled roster projection", async
   await runtime.close();
 });
 
-it("does not suppress an unplayed greeting merely because a meeting is restored", async () => {
+it("restores initial-roster presence without greeting until an incremental join", async () => {
   vi.useFakeTimers();
   vi.setSystemTime("2026-08-02T10:00:00.000Z");
   const meetings = new MemoryLiveMeetingRepository();
@@ -210,11 +218,8 @@ it("does not suppress an unplayed greeting merely because a meeting is restored"
   const restoredRuntime = greetingRuntime(meetings, restoredCoordinator, () => true);
   await restoredRuntime.acceptLifecycle(event);
   await vi.advanceTimersByTimeAsync(100);
-  expect(restoredCoordinator.proactiveCalls).toHaveLength(1);
-  expect(restoredCoordinator.proactiveCalls[0]).toMatchObject({
-    prompt: "Привет, Саша!",
-    speakerId: "1533228054724346087",
-  });
+  expect(firstCoordinator.proactiveCalls).toEqual([]);
+  expect(restoredCoordinator.proactiveCalls).toEqual([]);
 
   vi.setSystemTime("2026-08-02T10:01:00.000Z");
   await restoredRuntime.acceptLifecycle({
@@ -224,9 +229,9 @@ it("does not suppress an unplayed greeting merely because a meeting is restored"
     type: "participant.joined",
   });
   await vi.waitFor(() => {
-    expect(restoredCoordinator.proactiveCalls).toHaveLength(2);
+    expect(restoredCoordinator.proactiveCalls).toHaveLength(1);
   });
-  expect(restoredCoordinator.proactiveCalls[1]).toMatchObject({
+  expect(restoredCoordinator.proactiveCalls[0]).toMatchObject({
     prompt: "Hi, Alex!",
     speakerId: "2533228054724346087",
   });

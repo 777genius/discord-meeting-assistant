@@ -40,7 +40,7 @@ import {
   resolveSubscriptionAccountPool,
 } from "./subscription-account-manifest.js";
 const defaultProtoPath = fileURLToPath(
-  new URL("../../meeting-platform/proto/agent_runtime.proto", import.meta.url),
+  new URL("../../../packages/subscription-runtime-adapter/proto/agent_runtime.proto", import.meta.url),
 );
 const deploymentPolicySchema = z
   .object({

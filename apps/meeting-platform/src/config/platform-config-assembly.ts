@@ -12,6 +12,7 @@ export interface LoadedPlatformSecrets {
   readonly infinityContextToken?: string;
   readonly infinityContextTopologyKey?: string;
   readonly meetingKnowledgePrincipalKey?: string;
+  readonly meetingKnowledgeActorKeyring?: string;
   readonly postgresUrl: string;
   readonly redisUrl: string;
   readonly s3AccessKeyId: string;
@@ -64,6 +65,9 @@ function platformSecrets(loaded: LoadedPlatformSecrets): PlatformConfig["secrets
     ...(loaded.meetingKnowledgePrincipalKey === undefined
       ? {}
       : { meetingKnowledgePrincipalKey: loaded.meetingKnowledgePrincipalKey }),
+    ...(loaded.meetingKnowledgeActorKeyring === undefined
+      ? {}
+      : { meetingKnowledgeActorKeyring: loaded.meetingKnowledgeActorKeyring }),
     postgresUrl: loaded.postgresUrl,
     ...(loaded.recordingPlayback.signingSecret === undefined
       ? {}
@@ -85,6 +89,7 @@ function meetingKnowledgeConfig(
   if (
     !environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED &&
     !environment.MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED &&
+    environment.MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON === undefined &&
     twoHourHistoricalQualification === undefined
   ) {
     return {};
@@ -111,6 +116,14 @@ function meetingKnowledgeConfig(
       ...(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
         ? { localFinalReply: true as const }
         : {}),
+      ...(environment.MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON === undefined
+        ? {}
+        : { retrievalV2ProviderBinding: Object.freeze({
+            ...environment.MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON,
+            requiredProviderLanes: Object.freeze([
+              ...environment.MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON.requiredProviderLanes,
+            ]),
+          }) }),
       ...(twoHourHistoricalQualification === undefined
         ? {}
         : {
@@ -168,6 +181,13 @@ export function assemblePlatformConfig(
         }),
     speaches: { baseUrl: environment.SPEACHES_BASE_URL, model: environment.SPEACHES_MODEL },
     subscriptionRuntime: { address: environment.SUBSCRIPTION_RUNTIME_ADDRESS, launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256 },
+    ...(environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT === undefined ||
+      environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID === undefined
+      ? {}
+      : { testOnly: { publicReplyCrashInjection: {
+          root: environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT,
+          workerId: environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID,
+        } } }),
     transcriptionProvider: environment.TRANSCRIPTION_PROVIDER,
     transcriptionLegacyExecutionBinding: environment.TRANSCRIPTION_LEGACY_EXECUTION_BINDING,
     ...(environment.VOICETEXT_WS_URL === undefined ? {} : { voicetext: { batchMaxArtifactBytes: environment.VOICETEXT_BATCH_MAX_ARTIFACT_BYTES, batchMaxConcurrency: environment.VOICETEXT_BATCH_MAX_CONCURRENCY, batchMaxConcurrentMeetings: environment.VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS, batchProfile: environment.VOICETEXT_BATCH_PROFILE, liveMaxConcurrentSessions: environment.VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS, livePacketBackpressureTimeoutMs: environment.VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS, liveProfile: environment.VOICETEXT_LIVE_PROFILE, webSocketUrl: environment.VOICETEXT_WS_URL } }),

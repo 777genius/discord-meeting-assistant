@@ -5,6 +5,8 @@ import {
 } from "@discord-meeting/discord-adapter";
 import {
   AnswerGroundedMeetingQuestion,
+  FocusedHistoricalEvidenceV2,
+  type HistoricalAuthorizationPort,
   type GroundedMeetingAnswer,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { canonicalFinalReplyTurnHash } from "@discord-meeting/postgres-adapter";
@@ -15,6 +17,19 @@ import { MeetingKnowledgeGroundedAnswerAcl } from "../adapters/outbound/meeting-
 import type { PlatformConfig } from "../config.js";
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 import type { PlatformLiveFinalizedMemoryRuntime } from "./live-finalized-memory.js";
+
+export interface VoiceGroundedAnswersAuthoritySeams {
+  readonly historicalAuthorization: HistoricalAuthorizationPort;
+  readonly principalFor: (
+    request: {
+      readonly activeParticipantId: string;
+      readonly meetingId: string;
+      readonly roomId: string;
+    },
+    signal: AbortSignal,
+  ) => Promise<string | null>;
+  readonly rolloutAuthorized: (signal: AbortSignal) => Promise<boolean>;
+}
 
 export function createGroundedVoiceRolloutAuthority(
   rolloutStateFile: string,
@@ -41,9 +56,10 @@ export function createGroundedVoiceRolloutAuthority(
 export function createVoiceGroundedAnswers(
   input: {
     readonly config: PlatformConfig;
+    readonly authority?: VoiceGroundedAnswersAuthoritySeams;
     readonly groundedAnswerUseCase?: GroundedMeetingAnswer;
     readonly historicalMemory?: PlatformHistoricalMemoryRuntime;
-    readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
+    readonly liveFinalizedMemory?: Pick<PlatformLiveFinalizedMemoryRuntime, "query">;
   },
   discord: Client,
 ): MeetingKnowledgeGroundedAnswerAcl | undefined {
@@ -57,10 +73,8 @@ export function createVoiceGroundedAnswers(
   }
   const rolloutEpoch = input.config.meetingKnowledge.groundedVoice.rolloutEpoch;
   const rolloutStateFile = input.config.meetingKnowledge.groundedVoice.rolloutStateFile;
-  const rolloutAuthorized = createGroundedVoiceRolloutAuthority(
-    rolloutStateFile,
-    rolloutEpoch,
-  );
+  const rolloutAuthorized = input.authority?.rolloutAuthorized ??
+    createGroundedVoiceRolloutAuthority(rolloutStateFile, rolloutEpoch);
   const secret = input.config.secrets.meetingKnowledgePrincipalKey;
   if (secret === undefined) {
     throw new Error("Grounded voice requires the Meeting Knowledge principal key");
@@ -68,22 +82,29 @@ export function createVoiceGroundedAnswers(
   const principals = new DiscordQuestionPrincipalCodec(
     decodeDiscordQuestionPrincipalKey(secret),
   );
-  const authorization = new DiscordHistoricalAuthorizationAdapter(
-    discord,
-    principals,
-  );
+  const authorization = input.authority?.historicalAuthorization ??
+    new DiscordHistoricalAuthorizationAdapter(discord, principals);
   const answers = new AnswerGroundedMeetingQuestion({
     answers: input.groundedAnswerUseCase,
     authorization,
-    ...(input.historicalMemory === undefined
+    ...(input.historicalMemory === undefined ? {} : {
+      exhaustive: input.historicalMemory.createExhaustiveCoverage(authorization),
+    }),
+    ...(input.historicalMemory === undefined ||
+      input.config.meetingKnowledge.retrievalV2ProviderBinding === undefined
       ? {}
       : {
-          exhaustive: input.historicalMemory.createExhaustiveCoverage(authorization),
-          focusedHistorical: input.historicalMemory.createFocusedRetrieval(authorization),
-          historicalSearchEnabled: () => input.historicalMemory?.searchEnabled() === true,
-          historicalServingAuthorized: () =>
-            input.historicalMemory?.servingAuthorized() === true,
+          historical: new FocusedHistoricalEvidenceV2({
+            admission: input.historicalMemory.createRetrievalV2Admission(
+              input.config.meetingKnowledge.retrievalV2ProviderBinding,
+            ),
+            retrieval: input.historicalMemory.createFocusedLocatorRetrievalV2(
+              authorization,
+            ),
+          }),
         }),
+    historicalRequired:
+      input.config.meetingKnowledge.retrievalV2ProviderBinding !== undefined,
     ids: {
       digest: (namespace, parts) =>
         principals.observationDigest(namespace, ...parts),
@@ -91,7 +112,7 @@ export function createVoiceGroundedAnswers(
     live: input.liveFinalizedMemory.query,
     turnHashes: { hash: canonicalFinalReplyTurnHash },
   });
-  const principalFor = async (
+  const productionPrincipalFor = async (
     request: {
       readonly activeParticipantId: string;
       readonly meetingId: string;
@@ -117,6 +138,7 @@ export function createVoiceGroundedAnswers(
           scopeId: context.scopeId,
         });
   };
+  const principalFor = input.authority?.principalFor ?? productionPrincipalFor;
   return new MeetingKnowledgeGroundedAnswerAcl({
     execute: async (request, options) => {
       options.signal.throwIfAborted();

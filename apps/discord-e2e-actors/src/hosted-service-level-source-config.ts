@@ -6,6 +6,7 @@ import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 
 const absolutePath = z.string().refine(isAbsolute, "Expected an absolute path");
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
+const craigProject = z.string().regex(/^(?:craig-meeting-e2e|craig-e2e-[a-f\d]{20})$/u);
 export const hostedServiceLevelSourceConfigSchema = z.object({
   campaignId: identifier,
   clockPreflightPath: absolutePath.optional(),
@@ -20,7 +21,7 @@ export const hostedServiceLevelSourceConfigSchema = z.object({
   recordingId: identifier,
   remote: z.object({
     composeFile: absolutePath,
-    craigProjectName: z.literal(HOSTED_CAMPAIGN_TARGET.craigProject),
+    craigProjectName: craigProject,
     craigServiceName: z.literal("bot"),
     environmentFile: absolutePath,
     host: z.literal(HOSTED_CAMPAIGN_TARGET.host),
@@ -55,7 +56,7 @@ export type HostedServiceLevelSourceConfig = z.infer<
 const environmentSchema = z.object({
   DISCORD_E2E_MUTATION_TARGET: z.literal(HOSTED_CAMPAIGN_TARGET.mutationTarget),
   DISCORD_E2E_REMOTE_COMPOSE_FILE: absolutePath,
-  DISCORD_E2E_REMOTE_CRAIG_PROJECT: z.literal(HOSTED_CAMPAIGN_TARGET.craigProject),
+  DISCORD_E2E_REMOTE_CRAIG_PROJECT: craigProject,
   DISCORD_E2E_REMOTE_CRAIG_SERVICE: z.literal("bot"),
   DISCORD_E2E_REMOTE_ENV_FILE: absolutePath,
   DISCORD_E2E_REMOTE_HOST: z.literal(HOSTED_CAMPAIGN_TARGET.host),

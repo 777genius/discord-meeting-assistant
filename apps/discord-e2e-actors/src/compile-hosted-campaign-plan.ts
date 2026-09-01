@@ -38,6 +38,15 @@ export function parseHostedCampaignPlanCompilerArguments(
 }
 
 export async function readStablePrivateJson(path: string): Promise<unknown> {
+  const contents = await readStablePrivateJsonText(path);
+  try {
+    return JSON.parse(contents) as unknown;
+  } catch {
+    throw new Error("Private campaign JSON input is not valid JSON");
+  }
+}
+
+export async function readStablePrivateJsonText(path: string): Promise<string> {
   let handle: FileHandle | undefined;
   try {
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -49,11 +58,7 @@ export async function readStablePrivateJson(path: string): Promise<unknown> {
     if (!sameFileSnapshot(before, after) || Buffer.byteLength(contents, "utf8") !== before.size) {
       throw new Error("Private campaign JSON input changed while reading");
     }
-    try {
-      return JSON.parse(contents) as unknown;
-    } catch {
-      throw new Error("Private campaign JSON input is not valid JSON");
-    }
+    return contents;
   } finally {
     if (handle !== undefined) {
       await handle.close();

@@ -13,6 +13,7 @@ import {
   DiscordProjectionConfigurationError,
   DiscordProjectionConflictError,
   DiscordSummaryPublicationAdapter,
+  encodeDiscordExternalPublicationId,
   renderRussianFullSummaryAttachmentMarkdown,
   renderRussianSummaryMarkdown,
   toDiscordMessagePayload,
@@ -530,6 +531,59 @@ describe("Discord recording playback link", () => {
     expect(projector.inputs[0]?.markdown).toMatch(
       /## Запись\n\[Прослушать запись\]\(https:\/\/recordings\.example\.com\/recordings\/playback#signed-meeting-42\)$/u,
     );
+  });
+
+  it("publishes processing without a link then performs a stable idempotent ready edit", async () => {
+    const projector = new FakeProjector();
+    const enqueued: Array<{ readonly externalPublicationId: string }> = [];
+    let status: "processing" | "ready" = "processing";
+    const recordingUrl = "https://recordings.example.com/recordings/playback#ready-token";
+    const adapter = new DiscordSummaryPublicationAdapter(projector, {
+      recordingPlayback: () => Promise.resolve(status === "ready"
+        ? { status: "ready", url: recordingUrl }
+        : { status: "processing" }),
+      recordingPlaybackReconciliation: {
+        enqueue: (input) => { enqueued.push(input); return Promise.resolve(); },
+      },
+    });
+
+    await expect(adapter.publish(request)).resolves.toMatchObject({ ok: true });
+    expect(projector.inputs[0]?.markdown).not.toContain("/recordings/playback");
+    expect(enqueued).toHaveLength(1);
+
+    status = "ready";
+    await expect(adapter.reconcileRecordingPlayback({
+      externalPublicationId: enqueued[0]!.externalPublicationId,
+      request,
+    })).resolves.toBe("edited");
+    await expect(adapter.reconcileRecordingPlayback({
+      externalPublicationId: enqueued[0]!.externalPublicationId,
+      request,
+    })).resolves.toBe("edited");
+    expect(projector.inputs[1]?.currentReference).toEqual({
+      kind: "thread", messageId: "33333333333333333", threadId: "22222222222222222",
+    });
+    expect(projector.inputs[1]?.markdown).toContain(recordingUrl);
+    expect(projector.inputs[2]).toEqual(projector.inputs[1]);
+  });
+
+  it("never enqueues or edits an unavailable recording", async () => {
+    const projector = new FakeProjector();
+    const adapter = new DiscordSummaryPublicationAdapter(projector, {
+      recordingPlayback: () => Promise.resolve({ status: "unavailable" }),
+      recordingPlaybackReconciliation: {
+        enqueue: () => Promise.reject(new Error("must not enqueue unavailable")),
+      },
+    });
+    await expect(adapter.publish(request)).resolves.toMatchObject({ ok: true });
+    await expect(adapter.reconcileRecordingPlayback({
+      externalPublicationId: encodeDiscordExternalPublicationId({
+        kind: "thread", messageId: "33333333333333333", threadId: "22222222222222222",
+      }),
+      request,
+    })).resolves.toBe("unavailable");
+    expect(projector.inputs).toHaveLength(1);
+    expect(projector.inputs[0]?.markdown).not.toContain("/recordings/playback");
   });
 
   it.each([

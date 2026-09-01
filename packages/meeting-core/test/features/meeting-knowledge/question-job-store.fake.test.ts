@@ -9,6 +9,7 @@ import type {
 export class QuestionJobStoreFake implements QuestionJobStore {
   public activeLeaseResults: boolean[] = [];
   public plans: Parameters<QuestionJobStore["persistGroundingPlan"]>[0][] = [];
+  public groundingFenceResult = true;
   public providerReservations:
     Parameters<QuestionJobStore["reserveProviderAttempt"]>[0][] = [];
   public providerCompletions:
@@ -60,6 +61,21 @@ export class QuestionJobStoreFake implements QuestionJobStore {
     input: Parameters<QuestionJobStore["persistGroundingPlan"]>[0],
   ): Promise<boolean> {
     this.plans.push(input);
+    if (!this.groundingFenceResult) {
+      return Promise.resolve(false);
+    }
+    if (!input.attemptAlreadyReserved) {
+      if (!this.providerReservationResult) {
+        return Promise.resolve(false);
+      }
+      this.providerReservations.push({
+        attemptId: input.attemptId,
+        generation: input.generation,
+        jobId: input.jobId,
+        leaseSeconds: input.leaseSeconds,
+        maximumProviderAttempts: input.maximumProviderAttempts,
+      });
+    }
     return Promise.resolve(true);
   }
 

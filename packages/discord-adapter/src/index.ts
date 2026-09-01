@@ -1,4 +1,7 @@
 export {
+  DiscordConfusableIdentitySkeletons,
+} from "./discord-confusable-identity-skeletons.js";
+export {
   createMeetingDiscordFinalSummaryProjectionKey,
   createMeetingDiscordProjectionKey,
   decodeDiscordExternalPublicationId,
@@ -82,6 +85,11 @@ export {
   decodeDiscordQuestionPrincipalKey,
   type DiscordQuestionPrincipal,
 } from "./discord-question-principal.js";
+export {
+  DiscordInfinityActorKeys,
+  decodeDiscordInfinityActorKeyring,
+  type DiscordInfinityActorKeyringV1,
+} from "./discord-infinity-actor-keys.js";
 export {
   DiscordLocalFinalReplyHandler,
   type DiscordLocalFinalReplyHandlerOptions,

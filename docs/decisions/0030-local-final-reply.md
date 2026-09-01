@@ -1,8 +1,8 @@
 ---
 id: ADR-0030
-status: accepted
+status: superseded
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0049]
 ---
 
 # ADR-0030: Memory-backed grounded final reply

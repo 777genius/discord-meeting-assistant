@@ -5,6 +5,7 @@ import { expect, vi } from "vitest";
 import type {
   LiveConversationConfiguration,
   LiveConversationOneShotReceiptPort,
+  LiveParticipantGreetingProfile,
   LiveRuntimeLogger,
   LiveRuntimeTimer,
 } from "../src/live-runtime/contracts.js";
@@ -44,6 +45,7 @@ export class GreetingCoordinatorProbe {
     readonly literalSpeech?: string;
     readonly meetingId: string;
     readonly nowMs: number;
+    readonly playbackAttemptId?: string;
     readonly prompt: string;
     readonly recordingId: string;
     readonly speakerId: string;
@@ -140,6 +142,7 @@ export function fixture(
   } | null,
   options: {
     readonly conversationLocale?: string;
+    readonly greetingProfiles?: Readonly<Record<string, LiveParticipantGreetingProfile>>;
     readonly oneShotReceipts?: LiveConversationOneShotReceiptPort;
   } = {},
 ): {
@@ -156,7 +159,7 @@ export function fixture(
       defaultLocale,
       excludedParticipantIds: [excludedParticipantId],
       isPlaybackReady: () => ready,
-      profiles: {
+      profiles: options.greetingProfiles ?? {
         [englishParticipantId]: {
           displayName: "Alex Smith",
           greetingLocale: "en",
@@ -222,14 +225,14 @@ export async function advanceAndSettle(
   }
 }
 
-export async function survivesCrashAfterProviderInvocation(): Promise<void> {
+export async function retriesCrashBeforeProviderConfirmedAudio(): Promise<void> {
   const receipts = new MemoryOneShotReceipts();
   const context = fixture(true, "ru", logger, () => 321, undefined, {
     oneShotReceipts: receipts,
   });
   context.coordinator.handleProactiveTurn = (input) => {
     expect(receipts.state("greeting", "recording-1", russianParticipantId))
-      .toBe("attempted");
+      .toBe("commanded");
     context.coordinator.calls.push(structuredClone(input));
     return Promise.resolve({ status: "active" as const });
   };
@@ -242,39 +245,34 @@ export async function survivesCrashAfterProviderInvocation(): Promise<void> {
     expect(context.coordinator.calls).toHaveLength(1);
   });
 
-  // Simulate process loss after the irreversible provider call, followed by a
-  // restart beyond the old reservation lease.
-  receipts.expireReservations();
+  // The provider never attested first audio, so restart must retry the exact command.
   const restarted = fixture(true, "ru", logger, () => 654, undefined, {
     oneShotReceipts: receipts,
   });
   restarted.bridge.participantsRestored([russianParticipantId], occurredAt);
   await restarted.bridge.settle();
 
-  expect(receipts.state("greeting", "recording-1", russianParticipantId))
-    .toBe("attempted");
-  expect(restarted.coordinator.calls).toEqual([]);
+  expect(receipts.state("greeting", "recording-1", russianParticipantId)).toBe("played");
+  expect(restarted.coordinator.calls).toHaveLength(1);
+  expect(restarted.coordinator.calls[0]?.turnId).toBe(
+    context.coordinator.calls[0]?.turnId,
+  );
+  expect(restarted.coordinator.calls[0]?.playbackAttemptId).toBe(
+    context.coordinator.calls[0]?.playbackAttemptId,
+  );
   context.bridge.close();
-  await abandonedDrain;
+  void abandonedDrain;
 }
 
 export async function emitsNoAudioWhenAdmissionCommitFails(): Promise<void> {
-  const release = vi.fn(() => Promise.resolve());
   const receipts: LiveConversationOneShotReceiptPort = {
     complete: () => Promise.reject(new Error("synthetic durable commit failure")),
-    release,
+    release: () => Promise.resolve(),
     reserve: () => Promise.resolve({ leaseToken: "lease-1", status: "reserved" }),
   };
-  const context = fixture(true, "ru", logger, () => 321, undefined, {
+  expect(() => fixture(true, "ru", logger, () => 321, undefined, {
     oneShotReceipts: receipts,
-  });
-
-  context.bridge.participantJoined(russianParticipantId, occurredAt);
-  await context.bridge.settle();
-
-  expect(context.coordinator.calls).toEqual([]);
-  expect(context.coordinator.preparedCalls).toEqual([]);
-  expect(release).not.toHaveBeenCalled();
+  })).toThrow("requires durable commanded/started/settled receipts");
 }
 
 export async function fencesThrownAdmissionOutcome(): Promise<void> {
@@ -382,8 +380,6 @@ export async function doesNotMistakeRestorationForPlayback(): Promise<void> {
 
   expect(context.coordinator.calls.map(({ speakerId }) => speakerId)).toEqual([
     unknownParticipantId,
-    russianParticipantId,
-    englishParticipantId,
   ]);
 }
 
@@ -404,7 +400,6 @@ export async function playsMatchingPreparedGreeting(): Promise<void> {
   context.bridge.participantJoined(russianParticipantId, occurredAt);
   await context.bridge.settle();
 
-  expect(context.coordinator.calls).toEqual([]);
   expect(context.coordinator.preparedCalls).toEqual([{
     cueId: "greeting-ru-sasha-v1",
     interruptible: false,
@@ -412,8 +407,9 @@ export async function playsMatchingPreparedGreeting(): Promise<void> {
     meetingId: "recording-1",
     nowMs: 321,
     pcmChunks,
-    playbackAttemptId: "greeting-attempt-1",
-    preemptive: false,
+    playbackAttemptId: `participant-greeting:${russianParticipantId}`,
+    playbackNotAfterMs: 5_321,
+    preemptive: true,
     recordingId: "recording-1",
     speakerId: russianParticipantId,
     turnId: `participant-greeting:${russianParticipantId}`,

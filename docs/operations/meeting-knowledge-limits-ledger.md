@@ -21,6 +21,9 @@ These limits implement ADR-0034's bounded-only answer-model grounding.
 | Exhaustive checkpoint attempts | 8 | Fenced durable retry budget; exhaustion terminates without synthesis |
 | Infinity SDK request deadline | 10 seconds by default; 60 seconds maximum | A fresh composed deadline is created for every official-SDK request; caller cancellation and timeout listeners/timers are removed after settlement |
 | Infinity resumable operation deadline | 300 seconds by default; 600 seconds maximum | Separately bounds one index/delete/search attempt across up to 100 documents; exhaustion preserves deterministic mutations and returns to durable retry/reconciliation |
+| Retrieval V2 focused snapshot | 100 source candidates; 10 provider-ordered results; 16,000 UTF-8 evidence bytes; zero downstream neighbors | Matches accepted ADR-0052. Indexed current-final sources participate under their exact persisted generation; bounded local exact lexical admission is a separately fingerprinted path. |
+| Live exact-document reconciliation | Official contract `infinity.document-exact-reconciliation.v1`; published SDK 0.2.0 does not satisfy it | Live external projection remains fail closed until an externally released, pinned official SDK supplies exact document ID, idempotency ID, generation and scope reconciliation; scoped listing is forbidden for unknown outcomes |
+| Live cleanup inventory | Exact operations first; cursor inventory only when exact deletion cannot enumerate | Every cursor page must make deterministic progress under the operation deadline and bounded worker admission; 100, 101 and 2,209-document disposable suites must restart and retire to zero |
 | Infinity historical sync lease | operation deadline plus 30 seconds; 630 seconds maximum | Durable claim always outlives the separately bounded provider operation; the margin covers bounded local plan/checkpoint settlement and no accepted configuration permits operation deadline >= lease |
 | Exhaustive reduction | fan-in 8; 1,024 calls | Deterministic lossless union of locally validated semantic selections |
 | Exhaustive synthesis | 64 selected blocks; 256 canonical turns | No truncation: an over-limit relevant selection is unsupported |
@@ -31,8 +34,10 @@ These limits implement ADR-0034's bounded-only answer-model grounding.
 | Answer output reservation | 2,048 tokens | Exact runtime profile maximum |
 | Drift reservation | 32,768 units | Launcher/model/tokenizer drift headroom |
 | Focused answer request bytes | 1,572,864 | Bounds transport and measurement for focused evidence only; transcript size cannot widen it and no truncation is allowed |
-| Focused candidates | 24 references | Retrieval returns identities without text; every selected turn is locally rehydrated |
-| Canonical neighbors | 2 human turns per selected side | Bounded correction/context expansion before the 24-reference cap |
+| Focused candidates | 24 composed references | Retrieval V2 contributes at most 10 provider-ordered identities; bounded local current evidence may fill the remaining composition cap, canonical identities are deduplicated, and every selected turn is locally rehydrated |
+| Focused cross-source order | live rank 1, historical rank 1, live rank 2, historical rank 2, continuing to the 24-turn cap | Deterministic Meeting Knowledge composition; no comparison of local and provider score scales |
+| Canonical neighbors | 0 for focused historical V2 and local exact lexical fallback | Neighbor selection is not performed downstream; Infinity candidate order is locator-only and canonical blocks are rehydrated exactly |
+| Discord actor-key profile | `discord-meeting:infinity-actor-key:v1`, output prefix `dactor1` | Versioned secret keyring in Discord custody; active key salts index generations and retained keys support bounded rotation filters |
 | Answer message | 2,000 characters | One Discord message, all-or-nothing |
 | Provider deadline | 180 seconds | One stateless answer call; two durable job attempts maximum |
 | Job expiry | 900 seconds | Bounds raw question and authorization-principal retention |

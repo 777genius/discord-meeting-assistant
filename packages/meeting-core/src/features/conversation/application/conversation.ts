@@ -29,7 +29,6 @@ export type {
   ConversationCoordinatorDependencies,
   ConversationCoordinatorResult,
   ConversationInterruptionResult,
-  ConversationTurnPlaybackStart,
   ConversationTurnPlaybackSettlement,
   FinalizedConversationTurnInput,
   PreparedConversationCueInput,
@@ -117,13 +116,25 @@ export class ConversationCoordinator {
       return Object.freeze({ status: "ignored" as const });
     }
     advanceConversationState(state, input.nowMs);
-    this.wakeLatches.clearForSpeaker(state, input.speakerId);
+    const preemptive = input.preemptive ?? false;
+    if (preemptive) {
+      this.wakeLatches.clear(state);
+      state.pending.clear();
+    } else {
+      this.wakeLatches.clearForSpeaker(state, input.speakerId);
+    }
+    const cancellation = preemptive
+      ? state.session.close("superseded", state.lastObservedAtMs)
+      : null;
     const admission = this.wakeLatches.admitProactive(state, input);
     if (admission.turnToStart !== null) {
       trackConversationTask(
         state,
         this.activeTurns.start(state, admission.turnToStart),
       );
+    }
+    if (cancellation?.status === "requested") {
+      await this.activeTurns.enactCancellation(state, cancellation);
     }
     return admission.result;
   }

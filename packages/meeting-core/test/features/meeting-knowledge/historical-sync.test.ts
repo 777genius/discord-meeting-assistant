@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   HistoricalIndexPlannerUnavailableError,
+  HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
   HistoricalSyncWorker,
   RequestHistoricalMeetingDeletion,
   admitAcceptedFinalMeeting,
@@ -36,6 +37,15 @@ const exactTokenizer: HistoricalEmbeddingTokenizerPort = Object.freeze({
 class TestIds implements HistoricalOpaqueIdPort {
   public keyedId(namespace: string, parts: readonly string[]): string {
     return Buffer.from(`${namespace}:${parts.join("|")}`).toString("base64url");
+  }
+}
+
+class RecordingIds extends TestIds {
+  public readonly calls: { readonly namespace: string; readonly parts: readonly string[] }[] = [];
+
+  public override keyedId(namespace: string, parts: readonly string[]): string {
+    this.calls.push({ namespace, parts: [...parts] });
+    return super.keyedId(namespace, parts);
   }
 }
 
@@ -224,7 +234,7 @@ describe("historical exact planning", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids: new TestIds(),
-      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting },
       planner: {
         prepareWindows: async () => {
           throw new HistoricalIndexPlannerUnavailableError("planner busy");
@@ -265,7 +275,6 @@ describe("historical projection sync worker", () => {
       indexFinalMeeting: vi.fn()
         .mockResolvedValueOnce({ code: "memory.network_error", retryable: true, status: "outcome_unknown" })
         .mockResolvedValueOnce({ code: "memory.contract_rejected", retryable: false, status: "rejected" }),
-      searchRoom: vi.fn(),
     };
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
@@ -305,7 +314,7 @@ describe("historical projection sync worker", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting, indexFinalMeeting: vi.fn(), searchRoom: vi.fn() },
+      memory: { deleteMeeting, indexFinalMeeting: vi.fn() },
       store,
     });
 
@@ -334,7 +343,7 @@ describe("historical projection sync worker", () => {
     const indexing = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting },
       store: indexingStore,
     });
 
@@ -352,7 +361,7 @@ describe("historical projection sync worker", () => {
     const deleting = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting, indexFinalMeeting: vi.fn(), searchRoom: vi.fn() },
+      memory: { deleteMeeting, indexFinalMeeting: vi.fn() },
       store: deletionStore,
     });
 
@@ -392,7 +401,7 @@ describe("historical projection sync worker", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting },
       store,
     });
 
@@ -417,7 +426,7 @@ describe("historical projection sync worker", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting: vi.fn(), indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting: vi.fn(), indexFinalMeeting },
       store,
     });
 
@@ -446,7 +455,7 @@ describe("historical projection sync worker", () => {
     const worker = new HistoricalSyncWorker({
       authority: { loadAcceptedFinalMeeting: async () => accepted },
       ids,
-      memory: { deleteMeeting, indexFinalMeeting, searchRoom: vi.fn() },
+      memory: { deleteMeeting, indexFinalMeeting },
       store,
       tokenizer: () => exactTokenizer,
     });
@@ -462,6 +471,94 @@ describe("historical projection sync worker", () => {
     expect(store.plans[0]?.planDigest).not.toBe(stale.planDigest);
   });
 
+});
+
+describe("historical retrieval projection generation identity", () => {
+  it("isolates generation, locator, document, and mutation identities from legacy ingest", () => {
+    const ids = new RecordingIds();
+    const plan = buildHistoricalIndexPlan(meeting(), ids, undefined, exactTokenizer);
+    const generationCall = ids.calls.find(({ namespace }) =>
+      namespace === "historical-index-generation"
+    );
+    expect(generationCall?.parts.at(-1)).toBe(
+      HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
+    );
+    const legacyGeneration = `mkgen1.${ids.keyedId(
+      "historical-index-generation",
+      generationCall!.parts.slice(0, -1),
+    )}`;
+    const document = plan.documents[0]!;
+    const legacyLocator = `mkcandidate1.${ids.keyedId("historical-candidate", [
+      legacyGeneration,
+      String(document.manifest.ordinal),
+      document.manifest.contentHash,
+    ])}`;
+    const legacyDocumentId = `mkdocument1.${ids.keyedId(
+      "historical-document",
+      [legacyLocator],
+    )}`;
+    const legacyDocumentMutation = `mkmutation1.${ids.keyedId(
+      "historical-index-mutation",
+      [legacyDocumentId],
+    )}`;
+    const legacyReleaseMutation = `mkmutation1.${ids.keyedId(
+      "historical-release-index-mutation",
+      [plan.topology.releaseRef],
+    )}`;
+
+    expect(plan.topology.indexGeneration).not.toBe(legacyGeneration);
+    expect(document.manifest.candidateLocator).not.toBe(legacyLocator);
+    expect(document.manifest.documentExternalId).not.toBe(legacyDocumentId);
+    expect(document.mutationId).not.toBe(legacyDocumentMutation);
+    expect(plan.indexMutationId).not.toBe(legacyReleaseMutation);
+  });
+
+  it("deletes and rebuilds a persisted legacy projection before indexing", async () => {
+    const accepted = meeting();
+    const ids = new TestIds();
+    const current = buildHistoricalIndexPlan(accepted, ids);
+    const legacy = {
+      ...current,
+      topology: {
+        ...current.topology,
+        projectionContractVersion: "legacy.document-retrieval-projection.none",
+      },
+    };
+    const store = new QueueStore([{
+      ...lease(accepted, "index", 2, legacy),
+      appliedIndexProfileId: "legacy-profile",
+    }]);
+    const deleteMeeting = vi.fn().mockResolvedValue({ status: "verified_absent" });
+    let indexedProjectionContractVersion: string | null = null;
+    const indexFinalMeeting = vi.fn(
+      async (plan: HistoricalIndexPlanV1) => {
+        indexedProjectionContractVersion = plan.topology.projectionContractVersion;
+        return {
+          remoteDocumentIds: {
+            [plan.documents[0]!.manifest.documentExternalId]: "remote-v2",
+          },
+          status: "applied" as const,
+        };
+      },
+    );
+    const worker = new HistoricalSyncWorker({
+      authority: { loadAcceptedFinalMeeting: async () => accepted },
+      ids,
+      memory: { deleteMeeting, indexFinalMeeting },
+      store,
+    });
+
+    await expect(worker.executeOnce({ indexingEnabled: true })).resolves.toMatchObject({
+      status: "applied",
+    });
+    expect(deleteMeeting).toHaveBeenCalledWith(expect.objectContaining({
+      topology: legacy.topology,
+    }), {});
+    expect(indexFinalMeeting).toHaveBeenCalledTimes(1);
+    expect(indexedProjectionContractVersion).toBe(
+      HISTORICAL_RETRIEVAL_PROJECTION_CONTRACT_VERSION,
+    );
+  });
 });
 
 describe("historical profile rebuild retry", () => {
@@ -534,7 +631,7 @@ describe("historical profile rebuild retry", () => {
         authority: { loadAcceptedFinalMeeting: async () => accepted },
         ids,
         indexProfileId: "new-profile",
-        memory: { deleteMeeting, indexFinalMeeting, searchRoom: vi.fn() },
+        memory: { deleteMeeting, indexFinalMeeting },
         store,
         tokenizer: () => exactTokenizer,
       }, {
@@ -588,7 +685,6 @@ describe("historical projection sync worker recovery", () => {
           status: "absence_unverified",
         }),
         indexFinalMeeting: vi.fn(),
-        searchRoom: vi.fn(),
       },
       store,
     });
@@ -626,7 +722,6 @@ describe("historical projection sync worker recovery", () => {
           await provider;
           return { remoteDocumentIds: {}, status: "applied" };
         },
-        searchRoom: vi.fn(),
       };
       const worker = new HistoricalSyncWorker({
         authority: { loadAcceptedFinalMeeting: async () => accepted },

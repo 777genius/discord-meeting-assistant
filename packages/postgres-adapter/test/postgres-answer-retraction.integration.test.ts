@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   createFocusedRetrievalGroundingPlan,
   createHistoricalReleaseBinding,
+  type QuestionBindingSnapshot,
 } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { describe, expect, it } from "vitest";
@@ -83,6 +84,10 @@ function groundingPlan(meetingId: string) {
   });
 }
 
+function withdrawnFixtureBinding(meetingId: string): QuestionBindingSnapshot {
+  return { meetingId } as unknown as QuestionBindingSnapshot;
+}
+
 async function waitForBlockedAnswerFence(
   database: ReturnType<typeof databaseOrSkip>,
 ): Promise<void> {
@@ -110,7 +115,8 @@ usePostgresIntegrationDatabase();
 async function insertMaintenanceFixture(
   database: ReturnType<typeof databaseOrSkip>,
   suffix: string,
-  state: "reserved" | "request_started" | "outcome_unknown",
+  state: "delivered" | "outcome_unknown" | "request_started" |
+    "reserved" | "retraction_pending",
   expired: boolean,
 ): Promise<{ readonly effectId: string; readonly questionId: string }> {
   const questionId = `maintenance-${suffix}`;
@@ -141,14 +147,19 @@ async function insertMaintenanceFixture(
   );
   await database.query(
     `INSERT INTO meeting_core.answer_effects (
-       effect_id, state, projection_target_container_id,
+       effect_id, state, authority_scope_id, projection_target_container_id,
        delivery_container_id, reply_to_remote_message_id, marker,
        payload_bytes, payload_hash, binding_hash, authorization_digest,
-       source_meeting_ids, request_started_at
+       source_meeting_ids, request_started_at, external_receipt,
+       retraction_requested_at, settled_at
      ) VALUES (
-       $1, $2, $3, $3, $4, $1, $5, $6, $7, $8,
+       $1, $2, 'scope-1', $3, $3, $4, $1, $5, $6, $7, $8,
        ARRAY[$9]::text[],
-       CASE WHEN $2 = 'reserved' THEN NULL ELSE transaction_timestamp() END
+       CASE WHEN $2 = 'reserved' THEN NULL ELSE transaction_timestamp() END,
+       CASE WHEN $2 IN ('delivered', 'retraction_pending')
+         THEN 'receipt-' || $10 ELSE NULL END,
+       CASE WHEN $2 = 'retraction_pending' THEN transaction_timestamp() ELSE NULL END,
+       CASE WHEN $2 = 'delivered' THEN transaction_timestamp() ELSE NULL END
      )`,
     [
       effectId,
@@ -160,6 +171,7 @@ async function insertMaintenanceFixture(
       digest(`binding-${suffix}`),
       "c".repeat(64),
       `source-${suffix}`,
+      suffix,
     ],
   );
   return { effectId, questionId };
@@ -201,13 +213,14 @@ describe("PostgreSQL answer cancellation and retraction", () => {
         [questionId],
       );
       const reservation = new PostgresAnswerEffectStore(database, questionPolicy).reserve({
+        authorityScopeId: "scope-1",
         authorizationDigest: "c".repeat(64),
         bindingHash: "d".repeat(64),
         deliveryContainerId: channelId,
         effectId,
         marker: effectId,
-        payloadBytes: "{}",
-        payloadHash: digest("{}"),
+        payloadBytes: '{"content":"answer"}',
+        payloadHash: digest('{"content":"answer"}'),
         projectionTargetContainerId: channelId,
         questionFence: { generation: 1, jobId: questionId },
         replyToRemoteMessageId: questionId,
@@ -226,7 +239,6 @@ describe("PostgreSQL answer cancellation and retraction", () => {
         [questionId],
       );
       await cancellation.query("COMMIT");
-
       await expect(reservation).resolves.toEqual({ status: "stale_fence" });
       await expect(database.query(
         "SELECT 1 FROM meeting_core.answer_effects WHERE effect_id = $1",
@@ -276,17 +288,17 @@ describe("PostgreSQL answer cancellation and retraction", () => {
       [meeting.meetingId, meeting.revision, meeting],
     );
     for (const [suffix, state, receipt, payload] of [
-      ["delivered", "delivered", "88888888888888888", "{}"],
+      ["delivered", "delivered", "88888888888888888", '{"content":"answer"}'],
       ["unknown", "outcome_unknown", null, '{"content":"answer"}'],
     ] as const) {
       await database.query(
         `INSERT INTO meeting_core.answer_effects (
-           effect_id, state, projection_target_container_id,
+           effect_id, state, authority_scope_id, projection_target_container_id,
            delivery_container_id, reply_to_remote_message_id, marker,
            payload_bytes, payload_hash, binding_hash, authorization_digest,
            source_meeting_ids, request_started_at, external_receipt, settled_at
          ) VALUES (
-           $1, $2, $3, $3, $4, $5, $6, $7, $8, $9,
+           $1, $2, $3, $3, $3, $4, $5, $6, $7, $8, $9,
            ARRAY[$10]::text[], transaction_timestamp(), $11,
            CASE WHEN $2 = 'delivered' THEN transaction_timestamp() ELSE NULL END
          )`,
@@ -318,14 +330,14 @@ describe("PostgreSQL answer cancellation and retraction", () => {
       {
         external_receipt: "88888888888888888",
         marker: "marker-delivered",
-        payload_bytes: "{}",
-        payload_hash: digest("{}"),
+        payload_bytes: '{"content":"answer"}',
+        payload_hash: digest('{"content":"answer"}'),
         state: "retraction_pending",
       },
       {
         external_receipt: null,
         marker: "marker-unknown",
-        payload_bytes: "{}",
+        payload_bytes: '{"content":"answer"}',
         payload_hash: digest('{"content":"answer"}'),
         state: "retraction_pending",
       },
@@ -335,8 +347,10 @@ describe("PostgreSQL answer cancellation and retraction", () => {
       [sourceMeetingId],
     )).resolves.toMatchObject({ rowCount: 1 });
   });
+});
 
-  it("atomically fences and scrubs effects when jobs expire", async (context) => {
+describe("PostgreSQL answer maintenance payload retention", () => {
+  it("atomically fences jobs while retaining unresolved effect bytes", async (context) => {
     const database = databaseOrSkip(context);
     const reserved = await insertMaintenanceFixture(
       database,
@@ -375,19 +389,19 @@ describe("PostgreSQL answer cancellation and retraction", () => {
       },
       {
         outcome: "delivery_unknown",
-        payload_bytes: "{}",
+        payload_bytes: JSON.stringify({ sensitive: "raw-expired-started" }),
         question_id: "maintenance-expired-started",
         retracting: true,
         state: "retraction_pending",
       },
     ]);
-    await expect(new PostgresAnswerEffectStore(database, questionPolicy).claim(
-      reserved.effectId,
-      "late-worker",
-    )).resolves.toEqual({ status: "not_claimable" });
+    await expect(new PostgresAnswerEffectStore(database, questionPolicy).startRequest({
+      authorizationDigest: "d".repeat(64),
+      effectId: reserved.effectId, questionGeneration: 1, workerId: "late-worker",
+    })).resolves.toBe(false);
   });
 
-  it("drains a bounded disabled-serving backlog without retaining payloads", async (context) => {
+  it("drains a bounded disabled-serving backlog while retaining unresolved payloads", async (context) => {
     const database = databaseOrSkip(context);
     for (const [suffix, state] of [
       ["backlog-1", "reserved"],
@@ -417,18 +431,18 @@ describe("PostgreSQL answer cancellation and retraction", () => {
       { outcome: "cancelled", payload_bytes: "{}", state: "cancelled" },
       {
         outcome: "delivery_unknown",
-        payload_bytes: "{}",
+        payload_bytes: JSON.stringify({ sensitive: "raw-backlog-2" }),
         state: "retraction_pending",
       },
       {
         outcome: "delivery_unknown",
-        payload_bytes: "{}",
+        payload_bytes: JSON.stringify({ sensitive: "raw-backlog-3" }),
         state: "retraction_pending",
       },
     ]);
   });
 });
-  it("scrubs a request-started payload on direct question cancellation", async (context) => {
+  it("retains a request-started payload on direct question cancellation", async (context) => {
     const database = databaseOrSkip(context);
     const fixture = await insertMaintenanceFixture(
       database,
@@ -446,7 +460,10 @@ describe("PostgreSQL answer cancellation and retraction", () => {
        WHERE effect_id = $1`,
       [fixture.effectId],
     )).resolves.toMatchObject({
-      rows: [{ payload_bytes: "{}", state: "retraction_pending" }],
+      rows: [{
+        payload_bytes: JSON.stringify({ sensitive: "raw-direct-cancel-started" }),
+        state: "retraction_pending",
+      }],
     });
   });
 
@@ -474,7 +491,7 @@ describe("PostgreSQL answer cancellation and retraction", () => {
       rows: [{
         containment_receipts: receipts,
         external_receipt: receipts[0],
-        payload_bytes: "{}",
+        payload_bytes: JSON.stringify({ sensitive: "raw-duplicate-containment" }),
         state: "retraction_pending",
       }],
     });
@@ -482,6 +499,82 @@ describe("PostgreSQL answer cancellation and retraction", () => {
       effectId: fixture.effectId,
       externalReceipts: ["duplicate-receipt-1", "duplicate-receipt-1"],
     })).rejects.toThrow("2 to 1000 unique");
+  });
+
+  it("fences legacy workers from scrubbing unresolved payload bytes or hash", async (context) => {
+    const database = databaseOrSkip(context);
+    const fixture = await insertMaintenanceFixture(
+      database,
+      "old-worker-fence",
+      "outcome_unknown",
+      false,
+    );
+
+    await expect(database.query(
+      `UPDATE meeting_core.answer_effects
+       SET state = 'absent_unconfirmed', payload_bytes = '{}'
+       WHERE effect_id = $1`,
+      [fixture.effectId],
+    )).rejects.toThrow("unresolved answer reconciliation payload is immutable");
+    await expect(database.query(
+      `UPDATE meeting_core.answer_effects
+       SET payload_hash = repeat('f', 64)
+       WHERE effect_id = $1`,
+      [fixture.effectId],
+    )).rejects.toThrow("unresolved answer reconciliation payload is immutable");
+    await expect(database.query(
+      `SELECT state, payload_bytes, payload_hash
+       FROM meeting_core.answer_effects
+       WHERE effect_id = $1`,
+      [fixture.effectId],
+    )).resolves.toMatchObject({ rows: [{
+      payload_bytes: JSON.stringify({ sensitive: "raw-old-worker-fence" }),
+      payload_hash: digest(JSON.stringify({ sensitive: "raw-old-worker-fence" })),
+      state: "outcome_unknown",
+    }] });
+  });
+
+  it("keeps the hash immutable while allowing bytes to scrub only after completed retraction", async (context) => {
+    const database = databaseOrSkip(context);
+    const delivered = await insertMaintenanceFixture(
+      database,
+      "old-worker-delivered-scrub",
+      "delivered",
+      true,
+    );
+    await expect(database.query(
+      `UPDATE meeting_core.answer_effects
+       SET state = 'cancelled', payload_bytes = '{}'
+       WHERE effect_id = $1`,
+      [delivered.effectId],
+    )).rejects.toThrow("unresolved answer reconciliation payload is immutable");
+
+    const pending = await insertMaintenanceFixture(
+      database,
+      "old-worker-retracted-hash",
+      "retraction_pending",
+      true,
+    );
+    await expect(database.query(
+      `UPDATE meeting_core.answer_effects
+       SET state = 'retracted', payload_bytes = '{}', payload_hash = repeat('f', 64)
+       WHERE effect_id = $1`,
+      [pending.effectId],
+    )).rejects.toThrow("unresolved answer reconciliation payload is immutable");
+    await expect(new PostgresAnswerEffectStore(database, questionPolicy).markRetracted({
+      effectId: pending.effectId,
+      externalReceipt: "receipt-old-worker-retracted-hash",
+    })).resolves.toBe(true);
+    await expect(database.query(
+      `SELECT state, payload_bytes, payload_hash
+       FROM meeting_core.answer_effects
+       WHERE effect_id = $1`,
+      [pending.effectId],
+    )).resolves.toMatchObject({ rows: [{
+      payload_bytes: "{}",
+      payload_hash: digest(JSON.stringify({ sensitive: "raw-old-worker-retracted-hash" })),
+      state: "retracted",
+    }] });
   });
 
 
@@ -513,13 +606,31 @@ describe("PostgreSQL withdrawal fencing", () => {
       }],
     });
     await expect(new PostgresQuestionJobStore(database, questionPolicy).persistGroundingPlan({
+      attemptAlreadyReserved: false,
+      attemptId: `${questionId}:generation:1:attempt:1`,
+      binding: withdrawnFixtureBinding(meetingId),
       generation: 1,
       jobId: questionId,
+      leaseSeconds: 60,
+      maximumProviderAttempts: 2,
       measurement: { inputTokens: 10, requestBytes: 100 },
       plan: groundingPlan(meetingId),
+      question: "Sensitive question?",
       runtimeProfile: "test-runtime",
       sourceMeetingIds: [meetingId],
     })).resolves.toBe(false);
+    await expect(database.query(
+      `SELECT grounding_plan, provider_attempt_id, provider_attempt_state
+       FROM meeting_knowledge.question_jobs
+       WHERE question_id = $1`,
+      [questionId],
+    )).resolves.toMatchObject({
+      rows: [{
+        grounding_plan: null,
+        provider_attempt_id: null,
+        provider_attempt_state: "none",
+      }],
+    });
   });
 
   it("serializes a new grounding source with its tombstone", async (context) => {
@@ -538,10 +649,16 @@ describe("PostgreSQL withdrawal fencing", () => {
 
     const [persisted] = await Promise.all([
       jobs.persistGroundingPlan({
+        attemptAlreadyReserved: false,
+        attemptId: `${questionId}:generation:1:attempt:1`,
+        binding: withdrawnFixtureBinding(admittedMeetingId),
         generation: 1,
         jobId: questionId,
+        leaseSeconds: 60,
+        maximumProviderAttempts: 2,
         measurement: { inputTokens: 10, requestBytes: 100 },
         plan: groundingPlan(historicalMeetingId),
+        question: "Sensitive question?",
         runtimeProfile: "test-runtime",
         sourceMeetingIds: [admittedMeetingId, historicalMeetingId],
       }),
@@ -562,10 +679,16 @@ describe("PostgreSQL withdrawal fencing", () => {
       expect(stored.rows).toEqual([{ grounding_plan: null, state: "running" }]);
     }
     await expect(jobs.persistGroundingPlan({
+      attemptAlreadyReserved: false,
+      attemptId: `${questionId}:generation:1:attempt:1`,
+      binding: withdrawnFixtureBinding(admittedMeetingId),
       generation: 1,
       jobId: questionId,
+      leaseSeconds: 60,
+      maximumProviderAttempts: 2,
       measurement: { inputTokens: 10, requestBytes: 100 },
       plan: groundingPlan(historicalMeetingId),
+      question: "Sensitive question?",
       runtimeProfile: "test-runtime",
       sourceMeetingIds: [admittedMeetingId, historicalMeetingId],
     })).resolves.toBe(false);
@@ -587,6 +710,9 @@ describe("PostgreSQL withdrawal fencing", () => {
     const projectionReceipt = "overlapping-withdrawal-projection";
     const questionIds = ["withdrawal-z-question", "withdrawal-a-question"];
     for (const questionId of questionIds) {
+      const reservedPayload = questionId === questionIds[0]
+        ? JSON.stringify({ sensitive: "overlapping-withdrawal" })
+        : "{}";
       await insertRunningQuestion(database, {
         meetingId,
         projectionReceipt,
@@ -595,21 +721,29 @@ describe("PostgreSQL withdrawal fencing", () => {
       });
       await database.query(
         `INSERT INTO meeting_core.answer_effects (
-           effect_id, projection_target_container_id, delivery_container_id,
+           effect_id, authority_scope_id, projection_target_container_id, delivery_container_id,
            reply_to_remote_message_id, marker, payload_bytes, payload_hash,
            binding_hash, authorization_digest, source_meeting_ids
-         ) VALUES ($1, $2, $2, $3, $1, '{}', $4, $5, $6, ARRAY[$7]::text[])`,
+         ) VALUES ($1, $2, $2, $2, $3, $1, $4, $5, $6, $7, ARRAY[$8]::text[])`,
         [
           `meeting-knowledge-answer:v1:${questionId}`,
           channelId,
           questionId,
-          digest("{}"),
+          reservedPayload,
+          digest(reservedPayload),
           "b".repeat(64),
           "c".repeat(64),
           meetingId,
         ],
       );
     }
+    const unresolvedPayload = JSON.stringify({ sensitive: "overlapping-withdrawal" });
+    await database.query(
+      `UPDATE meeting_core.answer_effects
+       SET state = 'request_started', request_started_at = transaction_timestamp()
+       WHERE effect_id = $1`,
+      [`meeting-knowledge-answer:v1:${questionIds[0]}`],
+    );
 
     const [, affectedQuestions] = await Promise.all([
       new PostgresHistoricalMemoryStore(database).requestMeetingDeletion(meetingId),
@@ -624,9 +758,12 @@ describe("PostgreSQL withdrawal fencing", () => {
       rows: [{ state: "terminal" }, { state: "terminal" }],
     });
     await expect(database.query(
-      `SELECT state FROM meeting_core.answer_effects ORDER BY effect_id`,
+      `SELECT state, payload_bytes FROM meeting_core.answer_effects ORDER BY effect_id`,
     )).resolves.toMatchObject({
-      rows: [{ state: "cancelled" }, { state: "cancelled" }],
+      rows: [
+        { payload_bytes: "{}", state: "cancelled" },
+        { payload_bytes: unresolvedPayload, state: "retraction_pending" },
+      ],
     });
   });
 });

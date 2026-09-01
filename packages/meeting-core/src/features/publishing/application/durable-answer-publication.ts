@@ -43,6 +43,7 @@ export class DurableAnswerPublication {
     const payload = this.payloads.prepare(input);
     const reserved = await this.store.reserve({
       ...payload,
+      authorityScopeId: input.binding.scopeId,
       authorizationDigest: input.authorizationDigest,
       deliveryContainerId: input.deliveryContainerId,
       effectId,
@@ -75,28 +76,26 @@ export class DurableAnswerPublication {
     | { readonly externalReceipt: string; readonly status: "delivered" }
     | { readonly status: "outcome_unknown" | "rejected_before_request" }
   > {
-    const claim = await this.store.claim(input.effectId, input.workerId);
-    if (claim.status !== "claimed") {
+    const started = await this.store.startRequest({
+      authorizationDigest: input.authorizationDigest,
+      effectId: input.effectId,
+      questionGeneration: input.questionGeneration,
+      workerId: input.workerId,
+    });
+    if (!started) {
       const record = await this.store.findById(input.effectId);
-      const mayHaveStarted = record?.state === "claimed" ||
-        record?.state === "request_started" ||
+      if (record?.state === "delivered" && record.externalReceipt !== null) {
+        return { externalReceipt: record.externalReceipt, status: "delivered" };
+      }
+      const mayHaveStarted = record?.state === "request_started" ||
         record?.state === "outcome_unknown" ||
         record?.state === "absent_unconfirmed";
       return { status: mayHaveStarted ? "outcome_unknown" : "rejected_before_request" };
     }
-    const started = await this.store.startRequest({
-      authorizationDigest: input.authorizationDigest,
-      effectId: input.effectId,
-      generation: claim.generation,
-      questionGeneration: input.questionGeneration,
-    });
-    if (!started) {
-      await this.store.cancelBeforeRequest(input.effectId);
-      return { status: "rejected_before_request" };
-    }
     try {
       const record = await this.effectAfterRequestStart(input.effectId);
       const externalReceipt = await this.delivery.create({
+        authorityScopeId: record.authorityScopeId,
         effectId: record.effectId,
         deliveryContainerId: record.deliveryContainerId,
         marker: record.marker,
@@ -134,8 +133,10 @@ export class DurableAnswerPublication {
     let delivered = 0;
     for (const record of records) {
       const inspected = await this.delivery.inspect({
+        authorityScopeId: record.authorityScopeId,
         deliveryContainerId: record.deliveryContainerId,
         marker: record.marker,
+        payloadBytes: record.payloadBytes,
         payloadHash: record.payloadHash,
         projectionTargetContainerId: record.projectionTargetContainerId,
         replyToRemoteMessageId: record.replyToRemoteMessageId,
@@ -172,8 +173,10 @@ export class DurableAnswerPublication {
       let externalReceipts = record.containmentReceipts;
       if (externalReceipt === null) {
         const inspected = await this.delivery.inspect({
+          authorityScopeId: record.authorityScopeId,
           deliveryContainerId: record.deliveryContainerId,
           marker: record.marker,
+          payloadBytes: record.payloadBytes,
           payloadHash: record.payloadHash,
           projectionTargetContainerId: record.projectionTargetContainerId,
           replyToRemoteMessageId: record.replyToRemoteMessageId,

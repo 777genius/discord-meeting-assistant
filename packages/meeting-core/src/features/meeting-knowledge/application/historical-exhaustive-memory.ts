@@ -1,6 +1,6 @@
 import type { ExhaustiveCoverage } from "./exhaustive-coverage.js";
-import type { CanonicalEvidenceTurnHashPort } from "./same-room-focused-memory.js";
 import type {
+  CanonicalEvidenceTurnHashPort,
   ExhaustiveMemoryRetrievalPort,
   ExhaustiveMemoryRetrievalRequest,
   ExhaustiveMemoryRetrievalResult,

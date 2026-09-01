@@ -4,17 +4,19 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./conversation": "./src/features/conversation/index.ts",
-    "./live-meeting": "./src/features/live-meeting/index.ts",
-    "./meeting-intelligence": "./src/features/meeting-intelligence/index.ts",
-    "./meeting-knowledge": "./src/features/meeting-knowledge/index.ts",
-    "./meeting-lifecycle": "./src/features/meeting-lifecycle/index.ts",
-    "./post-call-workflow": "./src/features/post-call-workflow/index.ts",
-    "./publishing": "./src/features/publishing/index.ts",
-    "./recording": "./src/features/recording/index.ts",
-    "./transcription": "./src/features/transcription/index.ts"
+    "./conversation": { "types": "./dist/features/conversation/index.d.ts", "import": "./dist/features/conversation/index.js" },
+    "./live-meeting": { "types": "./dist/features/live-meeting/index.d.ts", "import": "./dist/features/live-meeting/index.js" },
+    "./meeting-intelligence": { "types": "./dist/features/meeting-intelligence/index.d.ts", "import": "./dist/features/meeting-intelligence/index.js" },
+    "./meeting-knowledge": { "types": "./dist/features/meeting-knowledge/index.d.ts", "import": "./dist/features/meeting-knowledge/index.js" },
+    "./meeting-lifecycle": { "types": "./dist/features/meeting-lifecycle/index.d.ts", "import": "./dist/features/meeting-lifecycle/index.js" },
+    "./post-call-workflow": { "types": "./dist/features/post-call-workflow/index.d.ts", "import": "./dist/features/post-call-workflow/index.js" },
+    "./publishing": { "types": "./dist/features/publishing/index.d.ts", "import": "./dist/features/publishing/index.js" },
+    "./recording": { "types": "./dist/features/recording/index.d.ts", "import": "./dist/features/recording/index.js" },
+    "./transcription": { "types": "./dist/features/transcription/index.d.ts", "import": "./dist/features/transcription/index.js" }
   },
+  "files": ["dist", "package.json"],
   "scripts": {
+    "build": "tsc --project tsconfig.build.json --pretty false",
     "check": "pnpm run typecheck && pnpm run test",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"

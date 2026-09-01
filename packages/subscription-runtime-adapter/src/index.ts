@@ -9,6 +9,13 @@ export {
 } from "./attestation.js";
 export { canonicalJsonSha256 } from "./canonical-json.js";
 export {
+  assertGrpcQualifiedGroundedAnswerAdapter,
+  createGrpcQualifiedGroundedAnswerAdapter,
+  GrpcSubscriptionRuntimeTransport,
+} from "./grpc-transport.js";
+export { fromGrpcTaskResponse, toGrpcTaskRequest } from
+  "./subscription-runtime-grpc-mapping.js";
+export {
   buildSubscriptionRuntimeConversationRequest,
   type SubscriptionRuntimeConversationRequest,
   type SubscriptionRuntimeConversationRequestOptions,
@@ -62,7 +69,16 @@ export {
   type KnowledgeCoverageRequestOptions,
 } from "./knowledge-coverage-request-mapper.js";
 export {
+  knowledgeAnswerMaximumModelInputBytes,
+  measureKnowledgeAnswerModelInputs,
   SubscriptionRuntimeGroundedAnswerAdapter,
+  type KnowledgeAnswerExactInputMeasurement,
+  type KnowledgeAnswerModelInputSurfaceMeasurement,
+  type KnowledgeAnswerProviderExchange,
+  type KnowledgeAnswerProviderExchangeIdentity,
+  type KnowledgeAnswerQualificationObservation,
+  type KnowledgeAnswerWireObservationPort,
+  type PreparedKnowledgeAnswerRuntimeRequest,
   utf8ByteUpperBoundKnowledgeTokenCounter,
   type KnowledgeAnswerTokenCounter,
   type SubscriptionRuntimeGroundedAnswerAdapterOptions,
@@ -145,6 +161,7 @@ export {
   type JsonObject,
   type JsonPrimitive,
   type JsonValue,
+  type KnowledgeAnswerQualificationExecutionBinding,
   type SubscriptionRuntimeAgentTaskRequest,
   type SubscriptionRuntimeCostRange,
   type SubscriptionRuntimeExecutionAttestation,

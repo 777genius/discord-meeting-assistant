@@ -16,11 +16,15 @@ interface MeetingKnowledgeEnvironment {
   readonly DISCORD_PUBLICATION_MODE: string;
   readonly E2E_TEST_ONLY_LABEL: boolean;
   readonly MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS: readonly string[];
+  readonly MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT?: string | undefined;
+  readonly MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID?: string | undefined;
   readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: boolean;
   readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH?: string | undefined;
   readonly MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE?: string | undefined;
   readonly MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: boolean;
+  readonly MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE?: string | undefined;
   readonly MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE?: string | undefined;
+  readonly MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON?: object | undefined;
 }
 
 export function validateConversationReadinessEnvironment(
@@ -51,6 +55,29 @@ export function validateMeetingKnowledgeEnvironment(
   context: RefinementCtx,
 ): void {
   if (
+    environment.MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON !== undefined &&
+    environment.MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE === undefined
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Retrieval V2 requires Discord actor-key mapping authority",
+      path: ["MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE"],
+    });
+  }
+  const crashValues = [environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT,
+    environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID];
+  if (crashValues.filter((value) => value !== undefined).length === 1) {
+    context.addIssue({ code: "custom",
+      message: "public-reply crash root and worker ID must be configured together",
+      path: ["MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT"] });
+  }
+  if (crashValues[0] !== undefined &&
+    (!environment.E2E_TEST_ONLY_LABEL || !environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED)) {
+    context.addIssue({ code: "custom",
+      message: "public-reply crash injection requires the test-only local-final-reply profile",
+      path: ["MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT"] });
+  }
+  if (
     environment.MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS.length > 0 &&
     !environment.E2E_TEST_ONLY_LABEL
   ) {
@@ -59,6 +86,12 @@ export function validateMeetingKnowledgeEnvironment(
       message: "synthetic human question actors are permitted only in an explicitly test-only deployment",
       path: ["E2E_TEST_ONLY_LABEL"],
     });
+  }
+  if (environment.MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON !== undefined &&
+    !environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED) {
+    context.addIssue({ code: "custom",
+      message: "Retrieval V2 provider binding requires local final reply",
+      path: ["MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON"] });
   }
   if (
     environment.MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS.length > 0 &&

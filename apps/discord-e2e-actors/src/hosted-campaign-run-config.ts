@@ -7,6 +7,8 @@ import {
   type HostedCampaignExecutableSpec,
   type HostedCampaignInput,
 } from "./hosted-campaign-coordinator.js";
+import { governedCampaignObservationPolicyV1Schema } from
+  "./governed-private-campaign-observation-contract.js";
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const trustedRuntimeEnvironmentNames = new Set(["HOME", "LANG", "LC_ALL", "PATH", "SSH_AUTH_SOCK"]);
@@ -28,7 +30,8 @@ const argumentsSchema = z.discriminatedUnion("kind", [
   }).strict(),
   z.object({
     evidencePaths: z.tuple([z.string().refine(isAbsolute), z.string().refine(isAbsolute), z.string().refine(isAbsolute)]),
-    kind: z.literal("campaign-verifier"), manifestPath: z.string().refine(isAbsolute),
+    historicalReplyPath: z.string().refine(isAbsolute).optional(), kind: z.literal("campaign-verifier"),
+    manifestPath: z.string().refine(isAbsolute), thinRemediationPath: z.string().refine(isAbsolute).optional(),
     thresholdsPath: z.string().refine(isAbsolute).optional(),
   }).strict(),
 ]);
@@ -49,6 +52,12 @@ const barrierActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("campaign-verified") }).strict(),
   z.object({ kind: z.literal("actor-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
   z.object({ kind: z.literal("conversation-observer-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("greeting-ledger-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("historical-reply-input-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("historical-reply-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("live-memory-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("private-coverage-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+  z.object({ kind: z.literal("remediation-bundle-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
   z.object({ kind: z.literal("playback-link-seen"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
   z.object({ kind: z.literal("recording-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
   z.object({ kind: z.literal("replay-attestation-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
@@ -86,7 +95,19 @@ const completionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("actor"), outputPath: z.string().refine(isAbsolute), runId: identifier,
     scenario: z.enum(["sequential", "overlap", "reconnect"]) }).strict(),
   z.object({ action: z.object({ kind: z.literal("conversation-observer-completed"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
-    kind: z.literal("conversation-observer"), outputPaths: z.array(z.string().refine(isAbsolute)).min(1).max(6), runId: identifier }).strict(),
+    kind: z.literal("conversation-observer"), outputPaths: z.array(z.string().refine(isAbsolute)).min(1).max(7), runId: identifier }).strict(),
+  z.object({ action: z.object({ kind: z.literal("greeting-ledger-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("greeting-ledger-observer"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
+  z.object({ action: z.object({ kind: z.literal("historical-reply-input-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("historical-reply-preparer"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
+  z.object({ action: z.object({ kind: z.literal("historical-reply-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("historical-reply-observer"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
+  z.object({ action: z.object({ kind: z.literal("live-memory-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("live-memory-observer"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
+  z.object({ action: z.object({ kind: z.literal("private-coverage-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("private-coverage-observer"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
+  z.object({ action: z.object({ kind: z.literal("remediation-bundle-ready"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
+    kind: z.literal("remediation-bundle"), outputPath: z.string().refine(isAbsolute), runId: identifier }).strict(),
   z.object({ action: z.object({ kind: z.literal("playback-link-seen"), ordinal: z.number().int().min(1).max(3), runId: identifier }).strict(),
     kind: z.literal("playback-link-observer"), outputPath: z.string().refine(isAbsolute), recordingId: identifier.optional(),
     runId: identifier }).strict(),
@@ -140,7 +161,8 @@ const executableSchema = z.object({
   completion: completionSchema.optional(),
   completionAfter: actionReferenceSchema.optional(),
   entrypoint: z.enum([
-    "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier",
+    "actor", "campaign-verifier", "collector", "conversation-observer", "evidence-verifier", "greeting-ledger-observer",
+    "historical-reply-observer", "historical-reply-preparer", "live-memory-observer", "private-coverage-observer", "remediation-bundle",
     "live-observer", "playback-link-observer", "provenance-probe", "recording-ready", "replay-attestation-publisher", "service-level-sources", "service-levels",
     "supplemental-player",
   ]),
@@ -170,12 +192,15 @@ const executableSchema = z.object({
   }).strict().optional(),
 }).strict();
 
-const targetSchema = z.object(
-  Object.fromEntries(Object.entries(HOSTED_CAMPAIGN_TARGET).map(([key, value]) => [key, z.literal(value)])),
-).strict();
+const targetSchema = z.object({
+  ...Object.fromEntries(Object.entries(HOSTED_CAMPAIGN_TARGET)
+    .filter(([key]) => key !== "craigProject").map(([key, value]) => [key, z.literal(value)])),
+  craigProject: z.string().regex(/^(?:craig-meeting-e2e|craig-e2e-[a-f\d]{20})$/u),
+}).strict();
 
 const planSchema = z.object({
   children: z.array(executableSchema).min(1),
+  historicalReplyObservationPolicy: governedCampaignObservationPolicyV1Schema.optional(),
   runs: z.tuple([
     runSchema(1, "sequential", 0),
     runSchema(2, "overlap", 0),
@@ -205,6 +230,11 @@ export function parseHostedCampaignPlan(value: unknown): HostedCampaignInput {
   }
   if (new Set(parsed.runs.map(({ runId }) => runId)).size !== 3) {
     throw new Error("Hosted campaign runIds must be unique");
+  }
+  if (parsed.children.some(({ entrypoint }) => entrypoint === "historical-reply-observer" ||
+    entrypoint === "historical-reply-preparer") &&
+    parsed.historicalReplyObservationPolicy === undefined) {
+    throw new Error("Hosted historical campaign plan requires its compiled observation policy");
   }
   return parsed as unknown as HostedCampaignInput;
 }

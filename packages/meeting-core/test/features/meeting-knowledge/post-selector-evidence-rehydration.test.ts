@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  groundingPlanRetrievalAuditsBindInput,
   ProcessFinalReplyJob,
+  retrievalAuditsBindInput,
   SelectFocusedEvidence,
   type AnswerPublicationPort,
   type CanonicalFinalReplyEvidenceResult,
@@ -11,7 +13,10 @@ import {
   type GroundedAnswerGenerationRequest,
   type GroundedAnswerGenerationResult,
   type GroundedAnswerGenerator,
+  type GroundingEvidence,
+  type FocusedMemoryReference,
   type LocalFinalReplyPolicy,
+  type QuestionBindingSnapshot,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
@@ -25,6 +30,9 @@ import {
   selectedTurns,
 } from "./local-final-reply-application-fixtures.test.js";
 import { QuestionJobStoreFake } from "./question-job-store.fake.test.js";
+import { compositeProfile, retrievalProvenance, retrievalV2ProviderBinding,
+  retrievalV2Request, rollbackPolicy, rolloutABinding } from
+  "./retrieval-v2-application-fixtures.test.js";
 
 const policy: LocalFinalReplyPolicy = {
   admission: {
@@ -46,6 +54,13 @@ const policy: LocalFinalReplyPolicy = {
   maximumProviderAttempts: 2,
   policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
   retrieval: { maximumCandidates: 24, neighborTurns: 2 },
+  retrievalAdmission: {
+    compositeProfileFingerprint: "e".repeat(64),
+    cutoverEpoch: "test-cutover-r1",
+    infinityProfileFingerprint: "e".repeat(64),
+    localProfileFingerprint: "f".repeat(64),
+    retrievalV2ProviderBinding,
+  },
 };
 
 const renderer: FinalReplyRendererPort = {
@@ -138,12 +153,14 @@ function focusedSelector(
   return new SelectFocusedEvidence(provider, () => {}, () => 1);
 }
 
-function processingFixture(selector = focusedSelector()) {
+function processingFixture(selector = focusedSelector(),
+  jobBinding: QuestionBindingSnapshot = currentV2Binding(),
+  processorPolicy: LocalFinalReplyPolicy = policy) {
   const evidence = new EvidenceFake();
   const jobs = new QuestionJobStoreFake({
     answerCandidate: null,
     attempts: 0,
-    binding: binding(),
+    binding: jobBinding,
     generation: 1,
     groundingPlan: null,
     jobId: "question-1",
@@ -160,12 +177,40 @@ function processingFixture(selector = focusedSelector()) {
     generator,
     jobs,
     memory,
-    policy,
+    policy: processorPolicy,
     selector,
     renderer,
     workerId: "worker-1",
   });
   return { evidence, generator, jobs, memory, processor, publication };
+}
+
+function currentV2Binding(): QuestionBindingSnapshot {
+  return {
+    ...binding(),
+    bindingProtocolVersion: 2,
+    retrievalBinding: {
+      ...retrievalProvenance(),
+      compositeProfile,
+      cutoverEpoch: policy.retrievalAdmission.cutoverEpoch,
+      profileFingerprint: policy.retrievalAdmission.infinityProfileFingerprint,
+      request: retrievalV2Request,
+      retrievalPath: "infinity_locator_v2",
+    },
+  };
+}
+
+function currentLocalExactBinding(): QuestionBindingSnapshot {
+  return {
+    ...binding(),
+    bindingProtocolVersion: 2,
+    retrievalBinding: {
+      ...retrievalProvenance(),
+      cutoverEpoch: policy.retrievalAdmission.cutoverEpoch,
+      profileFingerprint: policy.retrievalAdmission.localProfileFingerprint,
+      retrievalPath: "canonical_local_exact_lexical_v1",
+    },
+  };
 }
 
 function indexedAnchorEvidence(indexGeneration = "generation-1") {
@@ -195,7 +240,141 @@ function indexedAnchorEvidence(indexGeneration = "generation-1") {
   };
 }
 
-describe("post-selector evidence rehydration", () => {
+describe("persisted focused evidence rehydration", () => {
+  it("rejects a queued rollout-A Retrieval V2 binding before retrieval under rollout-B",
+    async () => {
+      const rolloutA = rolloutABinding(binding());
+      const fixture = processingFixture(
+        focusedSelector(), rolloutA, rollbackPolicy(policy),
+      );
+
+      await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+        outcome: "stale_binding",
+      });
+      expect(fixture.memory.calls).toEqual([]);
+      expect(fixture.generator.generationCalls).toBe(0);
+      expect(fixture.publication.reservations).toEqual([]);
+    });
+
+  it.each([
+    ["application profile", { profileFingerprint: "0".repeat(64) }],
+    ["cutover epoch", { cutoverEpoch: "stale-cutover-r0" }],
+  ] as const)("rejects a stale V2 %s before retrieval and recovers on a current lease",
+    async (_name, staleValue) => {
+      const current = currentV2Binding();
+      const currentRetrievalBinding = current.retrievalBinding;
+      if (currentRetrievalBinding === undefined) {
+        throw new Error("current V2 fixture is missing its retrieval binding");
+      }
+      const fixture = processingFixture(focusedSelector(), {
+        ...current,
+        bindingProtocolVersion: 2,
+        retrievalBinding: { ...currentRetrievalBinding, ...staleValue },
+      });
+
+      await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+        outcome: "stale_binding",
+      });
+      expect(fixture.memory.calls).toEqual([]);
+      expect(fixture.generator.generationCalls).toBe(0);
+      expect(fixture.publication.reservations).toEqual([]);
+
+      const recovered = processingFixture(focusedSelector(), current);
+      recovered.memory.result = { authorityGeneration: authority.memoryGeneration,
+        candidates: references, schemaVersion: 1, status: "current" };
+      recovered.evidence.hydrated = {
+        binding: authority, status: "current", turns: selectedTurns,
+      };
+      await expect(recovered.processor.executeOnce()).resolves.toMatchObject({
+        outcome: "answered",
+      });
+      expect(recovered.memory.calls).toHaveLength(1);
+    });
+
+  it("bypasses the migration selector for exact persisted Retrieval V2 evidence",
+    async () => {
+      let selectorCalls = 0;
+      const v2Binding = {
+        ...binding(),
+        bindingProtocolVersion: 2 as const,
+        retrievalBinding: {
+          ...retrievalProvenance(),
+          compositeProfile,
+          cutoverEpoch: policy.retrievalAdmission.cutoverEpoch,
+          profileFingerprint: policy.retrievalAdmission.infinityProfileFingerprint,
+          request: retrievalV2Request,
+          retrievalPath: "infinity_locator_v2" as const,
+        },
+      } as QuestionBindingSnapshot;
+      const fixture = processingFixture(
+        focusedSelector(undefined, () => { selectorCalls += 1; }),
+        v2Binding,
+      );
+      fixture.memory.result = { authorityGeneration: authority.memoryGeneration,
+        candidates: references, schemaVersion: 1, status: "current" };
+      fixture.evidence.hydrated = { binding: authority, status: "current",
+        turns: selectedTurns };
+
+      await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+        outcome: "answered",
+      });
+      expect(selectorCalls).toBe(0);
+      expect(fixture.memory.calls[0]?.retrievalBinding)
+        .toEqual(v2Binding.retrievalBinding);
+      expect(fixture.generator.requests[0]?.plan.evidence)
+        .toHaveLength(selectedTurns.length);
+      expect(JSON.stringify(fixture.generator.requests[0]))
+        .not.toContain("fullTranscript");
+    });
+
+  it.each(["infinity_locator_v1", "infinity_locator_v2"] as const)(
+    "rejects an %s binding before retrieval, provider, or publication",
+    async (retrievalPath) => {
+      const fixture = processingFixture();
+      if (fixture.jobs.lease === null) {throw new Error("fixture lease is missing");}
+      fixture.jobs.lease = { ...fixture.jobs.lease, binding: {
+        ...fixture.jobs.lease.binding, bindingProtocolVersion: 2,
+        retrievalBinding: {
+          ...retrievalProvenance(),
+          ...(retrievalPath === "infinity_locator_v2" ? { compositeProfile } : {}),
+          cutoverEpoch: policy.retrievalAdmission.cutoverEpoch,
+          profileFingerprint: policy.retrievalAdmission.infinityProfileFingerprint,
+          retrievalPath,
+        },
+      } as typeof fixture.jobs.lease.binding };
+      const execution = fixture.processor.executeOnce();
+      if (retrievalPath === "infinity_locator_v2") {
+        await expect(execution).rejects.toThrow("requires its exact persisted request");
+      } else {
+        await expect(execution).resolves.toMatchObject({ outcome: "stale_binding" });
+      }
+      expect(fixture.memory.calls).toEqual([]);
+      expect(fixture.generator.generationCalls).toBe(0);
+      expect(fixture.publication.reservations).toEqual([]);
+      expect(fixture.publication.sends).toEqual([]);
+    },
+  );
+
+  it("rejects a labelled legacy binding whose fingerprint is not composed", async () => {
+    const fixture = processingFixture();
+    if (fixture.jobs.lease === null) {throw new Error("fixture lease is missing");}
+    fixture.jobs.lease = { ...fixture.jobs.lease, binding: {
+      ...fixture.jobs.lease.binding, bindingProtocolVersion: 2,
+      retrievalBinding: {
+        ...retrievalProvenance(),
+        cutoverEpoch: policy.retrievalAdmission.cutoverEpoch,
+        profileFingerprint: "0".repeat(64),
+        retrievalPath: "legacy_downstream_v1",
+      },
+    } };
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "stale_binding",
+    });
+    expect(fixture.memory.calls).toEqual([]);
+    expect(fixture.generator.generationCalls).toBe(0);
+    expect(fixture.publication.reservations).toEqual([]);
+  });
+
   it("rejects reordered initial hydration before selection or generation", async () => {
     let selectorCalls = 0;
     const selector = focusedSelector(undefined, () => {
@@ -217,32 +396,124 @@ describe("post-selector evidence rehydration", () => {
     expect(fixture.generator.requests).toEqual([]);
     expect(fixture.generator.generationCalls).toBe(0);
   });
+});
 
-  it("reserves the shared provider attempt before billed evidence selection", async () => {
-    let fixture: ReturnType<typeof processingFixture> | undefined;
-    let reservationsSeenBySelector = -1;
-    const selector = focusedSelector(undefined, () => {
-      reservationsSeenBySelector = fixture?.jobs.providerReservations.length ?? -1;
+describe("persisted focused evidence provenance and reservation", () => {
+  it("persists canonical current-first evidence after validating the raw mixed interleave",
+    async () => {
+    const fixture = processingFixture();
+    const mixed = mixedCurrentAndHistoricalEvidence();
+    fixture.memory.result = {
+      authorityGeneration: authority.memoryGeneration,
+      candidates: mixed.references,
+      schemaVersion: 1,
+      status: "current",
+    };
+    fixture.evidence.hydrated = {
+      binding: authority,
+      status: "current",
+      turns: mixed.turns,
+    };
+    fixture.generator.result = {
+      answer: {
+        claims: [{
+          evidenceIds: ["evidence-000001"],
+          text: "CURRENT-ANCHOR is canonical for the current meeting.",
+        }],
+        locale: "en",
+        status: "answered",
+      },
+      status: "completed",
+    };
+    const persist = fixture.jobs.persistGroundingPlan.bind(fixture.jobs);
+    fixture.jobs.persistGroundingPlan = async (input) => {
+      const planReferences = input.plan.evidence.map((turn) => referenceForPlan(
+        turn, input.binding,
+      ));
+      expect(await retrievalAuditsBindInput(
+        planReferences, input.binding.retrievalBinding, input.question,
+      )).toBe(false);
+      if (!await groundingPlanRetrievalAuditsBindInput(
+        planReferences, input.binding.retrievalBinding, input.question,
+      )) {
+        return false;
+      }
+      return persist(input);
+    };
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "answered",
+      status: "settled",
     });
-    fixture = processingFixture(selector);
+    expect(fixture.generator.requests[0]?.plan.evidence.map(({ source, text }) => ({
+      meetingId: source?.meetingId ?? authority.meetingId,
+      text,
+    }))).toEqual([
+      { meetingId: authority.meetingId,
+        text: "CURRENT-ANCHOR is canonical for the current meeting." },
+      { meetingId: authority.meetingId,
+        text: "Current supporting detail follows the anchor." },
+      { meetingId: "historical-distractor-meeting",
+        text: "HISTORICAL-DISTRACTOR claims the anchor is obsolete." },
+    ]);
+    expect(fixture.publication.reservations[0]?.content)
+      .toContain("CURRENT-ANCHOR");
+    expect(fixture.publication.reservations[0]?.content)
+      .not.toContain("HISTORICAL-DISTRACTOR");
+  });
+
+  it("rejects same-run result digest corruption before generation", async () => {
+    const fixture = processingFixture();
+    const retrieve = fixture.memory.retrieve.bind(fixture.memory);
+    fixture.memory.retrieve = async (input) => {
+      const result = await retrieve(input);
+      if (result.status !== "current") {return result;}
+      return {
+        ...result,
+        candidates: result.candidates.map((candidate, index) => index === 0
+          ? Object.freeze({ ...candidate, retrievalAudit: Object.freeze({
+              ...candidate.retrievalAudit!, responseDigest: "0".repeat(64),
+            }) })
+          : candidate),
+      };
+    };
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "unavailable",
+      status: "settled",
+    });
+    expect(fixture.generator.generationCalls).toBe(0);
+    expect(fixture.jobs.plans).toEqual([]);
+  });
+
+  it("reserves the provider attempt atomically after V2 evidence preparation",
+    async () => {
+    const fixture = processingFixture();
+    const originalRehydrate = fixture.evidence.rehydrateSelectedEvidence.bind(
+      fixture.evidence,
+    );
+    let hydrationCalls = 0;
+    let reservationsSeenByPreparation = -1;
+    fixture.evidence.rehydrateSelectedEvidence = (questionBinding, selectedReferences) => {
+      hydrationCalls += 1;
+      if (hydrationCalls === 2) {
+        reservationsSeenByPreparation = fixture.jobs.providerReservations.length;
+      }
+      return originalRehydrate(questionBinding, selectedReferences);
+    };
 
     await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
       outcome: "answered",
     });
-    expect(reservationsSeenBySelector).toBe(1);
+    expect(reservationsSeenByPreparation).toBe(0);
     expect(fixture.jobs.providerReservations).toHaveLength(1);
     expect(fixture.generator.requests[0]?.attemptId).toBe(
       fixture.jobs.providerReservations[0]?.attemptId,
     );
   });
 
-  it("rehydrates only the exact selected references after semantic selection", async () => {
-    const selector = focusedSelector({
-      schemaVersion: 1,
-      selectedCandidateIds: ["candidate-000002"],
-      status: "selected",
-    });
-    const { evidence, generator, processor } = processingFixture(selector);
+  it("rehydrates only the exact provider-selected V2 references", async () => {
+    const { evidence, generator, memory, processor } = processingFixture();
     generator.result = {
       answer: {
         claims: [{
@@ -254,27 +525,20 @@ describe("post-selector evidence rehydration", () => {
       },
       status: "completed",
     };
+    memory.result = {
+      authorityGeneration: authority.memoryGeneration,
+      candidates: [references[1]!],
+      schemaVersion: 1,
+      status: "current",
+    };
     evidence.hydrated = {
       binding: authority,
       status: "current",
       turns: [selectedTurns[1]!],
     };
-    const originalRehydrate = evidence.rehydrateSelectedEvidence.bind(evidence);
-    let calls = 0;
-    evidence.rehydrateSelectedEvidence = (questionBinding, selectedReferences) => {
-      calls += 1;
-      if (calls === 1) {
-        evidence.references.push(selectedReferences);
-        return Promise.resolve({
-          binding: authority,
-          status: "current" as const,
-          turns: selectedTurns,
-        });
-      }
-      return originalRehydrate(questionBinding, selectedReferences);
-    };
 
     await expect(processor.executeOnce()).resolves.toMatchObject({ outcome: "answered" });
+    expect(evidence.references[0]).toEqual([references[1]]);
     expect(evidence.references[1]).toEqual([references[1]]);
     expect(generator.requests[0]?.plan.evidence.map(({ turnId }) => turnId))
       .toEqual(["turn-correction"]);
@@ -297,13 +561,11 @@ describe("post-selector evidence rehydration", () => {
     CanonicalFinalReplyEvidenceResult,
     "stale_binding" | "unavailable",
   ][])("fails closed for %s after selection", async (_label, hydrated, outcome) => {
-    let fixture: ReturnType<typeof processingFixture> | undefined;
-    const selector = focusedSelector(undefined, () => {
-      if (fixture !== undefined) {
-        fixture.evidence.hydrated = hydrated;
-      }
-    });
-    fixture = processingFixture(selector);
+    const fixture = processingFixture();
+    fixture.evidence.hydrationResults.push(
+      { binding: authority, status: "current", turns: selectedTurns },
+      hydrated,
+    );
 
     await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
       outcome,
@@ -312,6 +574,156 @@ describe("post-selector evidence rehydration", () => {
     expect(fixture.evidence.references).toEqual([references, references]);
     expect(fixture.generator.requests).toEqual([]);
     expect(fixture.generator.generationCalls).toBe(0);
+  });
+});
+
+function mixedCurrentAndHistoricalEvidence() {
+  const turns = Object.freeze([
+    Object.freeze({
+      endMs: 12_000,
+      speakerId: "requester-actor",
+      startMs: 10_000,
+      text: "Current supporting detail follows the anchor.",
+      turnHash: "3".repeat(64),
+      turnId: "current-supporting-detail",
+    }),
+    Object.freeze({
+      endMs: 2_000,
+      source: Object.freeze({
+        historicalSource: Object.freeze({
+          candidateLocator: "historical-distractor-locator",
+          indexGeneration: "historical-generation-1",
+          releaseId: "historical-release-1",
+        }),
+        meetingId: "historical-distractor-meeting",
+        transcriptId: "historical-distractor-transcript",
+        transcriptVersion: 1,
+      }),
+      speakerId: "speaker-b",
+      startMs: 1_000,
+      text: "HISTORICAL-DISTRACTOR claims the anchor is obsolete.",
+      turnHash: "4".repeat(64),
+      turnId: "historical-distractor-turn",
+    }),
+    Object.freeze({
+      endMs: 2_000,
+      speakerId: "requester-actor",
+      startMs: 1_000,
+      text: "CURRENT-ANCHOR is canonical for the current meeting.",
+      turnHash: "5".repeat(64),
+      turnId: "current-anchor",
+    }),
+  ]);
+  const mixedReferences = turns.map((turn) =>
+    Object.freeze({
+      ...("source" in turn
+        ? {
+            historicalSource: turn.source.historicalSource,
+            meetingId: turn.source.meetingId,
+            transcriptId: turn.source.transcriptId,
+            transcriptVersion: turn.source.transcriptVersion,
+          }
+        : {
+            meetingId: authority.meetingId,
+            transcriptId: authority.transcriptId,
+            transcriptVersion: authority.transcriptVersion,
+          }),
+      turnHash: turn.turnHash,
+      turnId: turn.turnId,
+    })) as readonly FocusedMemoryReference[];
+  return { references: mixedReferences, turns };
+}
+
+function referenceForPlan(
+  turn: GroundingEvidence,
+  questionBinding: QuestionBindingSnapshot,
+): FocusedMemoryReference {
+  const source = turn.source;
+  return Object.freeze({
+    ...(source?.historicalSource === undefined ? {} : {
+      historicalSource: source.historicalSource,
+    }),
+    meetingId: source?.meetingId ?? questionBinding.meetingId,
+    ...(source?.sourceEndCodePoint === undefined ? {} : {
+      sourceEndCodePoint: source.sourceEndCodePoint,
+      sourceStartCodePoint: source.sourceStartCodePoint,
+    }),
+    ...(turn.retrievalAudit === undefined ? {} : {
+      retrievalAudit: turn.retrievalAudit,
+    }),
+    transcriptId: source?.transcriptId ?? questionBinding.transcriptId,
+    transcriptVersion: source?.transcriptVersion ?? questionBinding.transcriptVersion,
+    turnHash: turn.turnHash,
+    turnId: turn.turnId,
+  });
+}
+
+describe("canonical local-exact evidence preparation", () => {
+  it("processes a full binding without invoking the semantic selector", async () => {
+    let selectorCalls = 0;
+    const fixture = processingFixture(
+      focusedSelector(undefined, () => {selectorCalls += 1;}),
+      currentLocalExactBinding(),
+    );
+    fixture.memory.result = { authorityGeneration: authority.memoryGeneration,
+      candidates: references, schemaVersion: 1, status: "current" };
+    fixture.evidence.hydrated = { binding: authority, status: "current",
+      turns: selectedTurns };
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "answered",
+    });
+    expect(selectorCalls).toBe(0);
+    expect(fixture.evidence.references.slice(0, 2).map((items) =>
+      items.map(({ turnId }) => turnId)
+    )).toEqual([references, references].map((items) =>
+      items.map(({ turnId }) => turnId)
+    ));
+    expect(fixture.generator.requests[0]?.plan.evidence).toHaveLength(selectedTurns.length);
+  });
+
+  it("enforces the exact 100-candidate, 10-result, and 16000-byte bounds", async () => {
+    let selectorCalls = 0;
+    const boundedPolicy = { ...policy, retrieval: {
+      maximumCandidates: 256, neighborTurns: policy.retrieval.neighborTurns,
+    } };
+    const fixture = processingFixture(
+      focusedSelector(undefined, () => {selectorCalls += 1;}),
+      currentLocalExactBinding(),
+      boundedPolicy,
+    );
+    const turns = Array.from({ length: 100 }, (_, index) => Object.freeze({
+      endMs: index * 1_000 + 900,
+      speakerId: selectedTurns[0]!.speakerId,
+      startMs: index * 1_000,
+      text: "x".repeat(index < 9 ? 1_600 : index === 9 ? 1_591 : 1),
+      turnHash: index.toString(16).padStart(64, "0"),
+      turnId: `bounded-turn-${String(index).padStart(3, "0")}`,
+    }));
+    const boundedReferences = turns.map(({ turnHash, turnId }) => Object.freeze({
+      meetingId: authority.meetingId, transcriptId: authority.transcriptId,
+      transcriptVersion: authority.transcriptVersion, turnHash, turnId,
+    }));
+    fixture.memory.result = { authorityGeneration: authority.memoryGeneration,
+      candidates: boundedReferences, schemaVersion: 1, status: "current" };
+    fixture.evidence.hydrationResults.push(
+      { binding: authority, status: "current", turns },
+      { binding: authority, status: "current", turns: turns.slice(0, 10) },
+    );
+    fixture.evidence.hydrated = {
+      binding: authority, status: "current", turns: turns.slice(0, 10),
+    };
+
+    await expect(fixture.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "answered",
+    });
+    expect(fixture.memory.calls[0]?.maximumCandidates).toBe(100);
+    expect(fixture.evidence.references[1]).toHaveLength(10);
+    const selected = fixture.generator.requests[0]?.plan.evidence ?? [];
+    expect(selected).toHaveLength(10);
+    expect(new TextEncoder().encode(selected.map(({ text }) => text).join("\n")))
+      .toHaveLength(16_000);
+    expect(selectorCalls).toBe(0);
   });
 });
 

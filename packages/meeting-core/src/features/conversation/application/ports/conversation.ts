@@ -286,6 +286,8 @@ export interface ConversationPlaybackReadinessPort {
 export interface VoicePlaybackRequest {
   readonly attemptId: string;
   readonly meetingId: string;
+  /** Absolute application-clock fence; the transport must suppress audio at or after it. */
+  readonly notAfterMs?: number;
   readonly recordingId: string;
   readonly turnId: string;
 }

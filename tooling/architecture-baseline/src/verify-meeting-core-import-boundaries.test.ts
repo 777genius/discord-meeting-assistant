@@ -88,6 +88,28 @@ void test("accepts allowed Meeting Core feature subpaths in supported import syn
   assert.deepEqual(diagnostics, []);
 });
 
+void test("accepts exact installable Meeting Core feature exports and rejects condition drift",
+  async () => {
+    const repositoryRoot = await createFixtureRepository();
+    const manifestPath = resolve(repositoryRoot, "packages/meeting-core/package.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      exports: Record<string, unknown>;
+    };
+    manifest.exports = Object.fromEntries(features.map((feature) => [`./${feature}`, {
+      import: `./dist/features/${feature}/index.js`,
+      types: `./dist/features/${feature}/index.d.ts`,
+    }]));
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    assert.deepEqual(await verifyMeetingCoreImportBoundaries({ repositoryRoot }), []);
+
+    manifest.exports["./conversation"] = { default: "./dist/features/conversation/index.js",
+      import: "./dist/features/conversation/index.js",
+      types: "./dist/features/conversation/index.d.ts" };
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    assert.ok((await verifyMeetingCoreImportBoundaries({ repositoryRoot }))
+      .some((diagnostic) => diagnostic.includes("exact source or built feature entrypoint")));
+  });
+
 void test("rejects forbidden, root, deep, and unclassified Meeting Core imports", async () => {
   const repositoryRoot = await createFixtureRepository();
   const fixture = await readFile(

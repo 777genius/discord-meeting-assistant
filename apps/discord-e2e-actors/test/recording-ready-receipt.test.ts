@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   deriveRecordingReadyReceipt,
+  recordingReadyReceiptV2Schema,
 } from "../src/recording-ready-receipt.js";
 
 const guildId = "1533228590643155034";
@@ -11,7 +12,7 @@ describe("recording-ready receipt", () => {
   it("derives exactly one run binding from a completed authoritative window", () => {
     const result = deriveRecordingReadyReceipt({
       actorRun: actorRun(),
-      completionReceipts: [completion("recording-1")],
+      completionReceipts: [completionV4("recording-1")],
       expectedRevisions: expectedRevisions(),
       observedAt: "2026-08-12T10:01:00.000Z",
       provenance: provenance(),
@@ -21,21 +22,18 @@ describe("recording-ready receipt", () => {
       pinnedTestTarget: { guildId, voiceChannelId },
       recordingId: "recording-1",
       runId: "campaign-overlap-1",
-      schemaVersion: 1,
+      schemaVersion: 2,
     });
   });
 
-  it("accepts a v3 completion receipt only with validated lifecycle actor identity", () => {
-    const result = deriveRecordingReadyReceipt({
+  it("rejects legacy completion evidence even when its actor identity is internally valid", () => {
+    expect(() => deriveRecordingReadyReceipt({
       actorRun: actorRun(),
       completionReceipts: [completionV3("recording-v3")],
       expectedRevisions: expectedRevisions(),
       observedAt: "2026-08-12T10:01:00.000Z",
       provenance: provenance(),
-    });
-
-    expect(result.authoritativeSource.kind)
-      .toBe("meeting-platform-completion-receipt-v3");
+    })).toThrow(/requires an authoritative Craig V4/u);
 
     const missingActors = { ...completionV3("recording-v3"), actors: null };
     expect(() => deriveRecordingReadyReceipt({
@@ -75,6 +73,42 @@ describe("recording-ready receipt", () => {
     })).toThrow();
   });
 
+  it.each([2, 4])("rejects authoritative Craig lifecycle generation %i", (generation) => {
+    const receipt = completionV4("recording-generation");
+    Reflect.set(receipt, "lifecycleSchemaVersion", generation);
+    expect(() => deriveRecordingReadyReceipt({
+      actorRun: actorRun(), completionReceipts: [receipt],
+      expectedRevisions: expectedRevisions(), observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: provenance(),
+    })).toThrow();
+  });
+
+  it.each(["eventId", "eventType", "occurredAt", "lifecycleGeneration"] as const)(
+    "rejects recording-ready %s substitution against its sealed Craig event",
+    (field) => {
+      const receipt = deriveRecordingReadyReceipt({
+        actorRun: actorRun(), completionReceipts: [completionV4("recording-event")],
+        expectedRevisions: expectedRevisions(), observedAt: "2026-08-12T10:01:00.000Z",
+        provenance: provenance(),
+      });
+      const hostile = structuredClone(receipt);
+      Reflect.set(hostile.authoritativeSource, field, field === "lifecycleGeneration" ? 4
+        : field === "occurredAt" ? "2026-08-12T10:00:41.000Z"
+          : field === "eventType" ? "meeting.ended" : "ready-substituted");
+      expect(recordingReadyReceiptV2Schema.safeParse(hostile).success).toBe(false);
+    },
+  );
+
+  it("rejects missing authoritative event identity", () => {
+    const receipt = deriveRecordingReadyReceipt({
+      actorRun: actorRun(), completionReceipts: [completionV4("recording-event")],
+      expectedRevisions: expectedRevisions(), observedAt: "2026-08-12T10:01:00.000Z",
+      provenance: provenance(),
+    });
+    Reflect.deleteProperty(receipt.authoritativeSource, "eventId");
+    expect(recordingReadyReceiptV2Schema.safeParse(receipt).success).toBe(false);
+  });
+
   it("fails closed for ambiguous windows", () => {
     expect(() => deriveRecordingReadyReceipt({
       actorRun: actorRun(),
@@ -98,7 +132,7 @@ describe("recording-ready receipt", () => {
   it("binds readiness to the same four V9 provenance components and revisions", () => {
     const { pipecat: _pipecat, ...withoutPipecat } = provenance();
     expect(() => deriveRecordingReadyReceipt({
-      actorRun: actorRun(), completionReceipts: [completion("recording-1")],
+      actorRun: actorRun(), completionReceipts: [completionV4("recording-1")],
       expectedRevisions: expectedRevisions(), observedAt: "2026-08-12T10:01:00.000Z",
       provenance: withoutPipecat,
     })).toThrow(/Pipecat component/u);
@@ -106,7 +140,7 @@ describe("recording-ready receipt", () => {
     const changedPipecat = provenance();
     changedPipecat.pipecat.sourceRevision = "f".repeat(40);
     expect(() => deriveRecordingReadyReceipt({
-      actorRun: actorRun(), completionReceipts: [completion("recording-1")],
+      actorRun: actorRun(), completionReceipts: [completionV4("recording-1")],
       expectedRevisions: expectedRevisions(), observedAt: "2026-08-12T10:01:00.000Z",
       provenance: changedPipecat,
     })).toThrow(/pipecat provenance does not match/u);
@@ -184,7 +218,7 @@ function completionV4(recordingId: string) {
       actorObservationState: "consistent" as const,
       actorSemanticsVersion: 1,
       producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
-      producerRevision: "0123456789abcdef0123456789abcdef01234567",
+      producerRevision: "a".repeat(40),
       rosterState: "sealed" as const,
     },
     lifecycleSchemaVersion: 3 as const,

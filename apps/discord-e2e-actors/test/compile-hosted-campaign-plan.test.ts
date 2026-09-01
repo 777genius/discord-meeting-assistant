@@ -17,6 +17,8 @@ const definition = () => ({
   campaignRoot: "/private/e2e/campaigns",
   clockPreflightPath: "/private/e2e/clock/preflight.json",
   fixtureManifestPath: "/private/e2e/fixtures/manifest.json",
+  historicalReplyObservationPolicy: observationPolicy(),
+  privateCoverageSourcePath: "/private/e2e/private/private-coverage.source.json",
   recordingPlaybackOrigin: "https://recordings.test.example",
   remote: {
     composeFile: "/srv/discord-meeting/source/infra/deployment/compose.yaml",
@@ -34,6 +36,15 @@ const definition = () => ({
   serviceLevelThresholdsPath: "/private/e2e/fixtures/service-level-thresholds.json",
   supplementalManifestPath: "/private/e2e/fixtures/supplemental-manifest.json",
 });
+
+function observationPolicy() {
+  return {
+    archivedThreadVisibilities: ["public", "private"] as const,
+    endedAt: "2026-08-24T00:10:00.000Z", guildId: "1533228590643155034",
+    maximumArchivePagesPerParent: 100, maximumMessagePagesPerSurface: 100,
+    parentChannelIds: ["1533228891827736657"], startedAt: "2026-08-24T00:00:00.000Z",
+  };
+}
 
 const bindings = () => ({
   runs: [1, 2, 3].map((ordinal) => ({

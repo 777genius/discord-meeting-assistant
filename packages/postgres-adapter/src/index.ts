@@ -1,12 +1,18 @@
 export {
+  liveMemoryLagStatus,
+} from "./postgres-live-finalized-memory-query.js";
+export {
   CorruptMeetingSnapshotError,
   MeetingPersistenceConflictError,
   PostCallDeadLetterConflictError,
   type MeetingPersistenceConflict,
 } from "./errors.js";
 export { PostgresMeetingRepository } from "./postgres-meeting-repository.js";
-export { PostgresHistoricalMemoryStore } from "./postgres-historical-memory-store.js";
-export { PostgresHistoricalEvidenceAuthority } from "./postgres-historical-evidence-authority.js";
+export { PostgresHistoricalMemoryStore,
+  assertConstructedPostgresHistoricalMemoryStore } from "./postgres-historical-memory-store.js";
+export { PostgresHistoricalEvidenceAuthority,
+  PostgresHistoricalRoomAuthoritySnapshot,
+  assertConstructedPostgresHistoricalEvidenceAuthority } from "./postgres-historical-evidence-authority.js";
 export { PostgresExhaustiveCoverageStore } from "./postgres-exhaustive-coverage-store.js";
 export {
   HistoricalPostgresCancellationError,
@@ -35,6 +41,10 @@ export {
 } from "./postgres-final-reply-evidence.js";
 export { PostgresFocusedMemoryRetrieval } from "./postgres-focused-memory-retrieval.js";
 export { PostgresConversationOneShotReceiptStore } from "./postgres-conversation-one-shot-receipts.js";
+export {
+  PostgresDerivedGreetingObligationStore,
+  type DerivedGreetingObligation,
+} from "./postgres-derived-greeting-obligations.js";
 export { PostgresQuestionAdmissionCommit } from "./postgres-question-admission-commit.js";
 export { PostgresQuestionJobStore } from "./postgres-question-job-store.js";
 export { PostgresFinalReplyMaintenance } from "./postgres-final-reply-maintenance.js";

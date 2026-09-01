@@ -11,9 +11,13 @@ import {
 } from "discord.js";
 
 import {
+  decodeDiscordExternalPublicationId,
   encodeDiscordExternalPublicationId,
 } from "./discord-projection.js";
 import { DiscordQuestionPrincipalCodec } from "./discord-question-principal.js";
+import { isExplicitDiscordAbsence, reconciliationPrincipalMatches,
+  reconciliationProjectionMatchesChannel } from
+  "./discord-question-reconciliation-classification.js";
 
 export interface DiscordQuestionScopePort {
   resultsContainerForGuild(guildId: string): Promise<string | null>;
@@ -26,9 +30,13 @@ export interface DiscordLocalFinalReplyHandlerOptions {
 
 export class DiscordLocalFinalReplyHandler {
   private readonly admission: Pick<AdmitCurrentFinalReply, "execute">;
-  private readonly admissions: Pick<QuestionAdmissionCommitPort, "withdrawProjection">;
+  private readonly admissions: Pick<QuestionAdmissionCommitPort, "withdrawProjection"> &
+    Partial<Pick<QuestionAdmissionCommitPort, "recordQuestionMutation">>;
   private readonly client: Client;
-  private readonly jobs: Pick<QuestionJobStore, "cancelQuestion" | "hasActiveQuestion">;
+  private readonly jobs: Pick<QuestionJobStore, "cancelQuestion" |
+    "hasActiveQuestion" | "listActiveQuestionsForReconciliation" |
+    "loadQuestionReconciliationCursor" | "saveQuestionReconciliationCursor" |
+    "convergeDeliveredQuestion">;
   private readonly nowMilliseconds: () => number;
   private readonly options: DiscordLocalFinalReplyHandlerOptions;
   private readonly e2eSyntheticHumanAuthorIds: ReadonlySet<string>;
@@ -37,25 +45,34 @@ export class DiscordLocalFinalReplyHandler {
   private readonly reportError: (error: unknown) => void;
   private readonly scopes: DiscordQuestionScopePort;
   private readonly pending = new Set<Promise<void>>();
+  private readonly questionLanes = new Map<string, Promise<void>>();
+  private reconciling: Promise<void> | undefined;
   private started = false;
   private readonly onCreate = (message: Message): void => {
-    this.track(this.handleCreate(message));
+    this.enqueue(message.id, () => this.handleCreate(message));
   };
   private readonly onDelete = (message: Message | PartialMessage): void => {
-    this.track(this.handleDelete(message));
+    this.enqueue(message.id, () => this.handleDelete(message));
   };
   private readonly onUpdate = (
     _previous: Message | PartialMessage,
     message: Message | PartialMessage,
   ): void => {
-    this.track(this.cancelQuestion(message.id));
+    this.enqueue(message.id, async () => {
+      await this.recordMutation("edit", message.id);
+      await this.cancelQuestion(message.id);
+    });
   };
 
   public constructor(input: {
     readonly admission: Pick<AdmitCurrentFinalReply, "execute">;
-    readonly admissions: Pick<QuestionAdmissionCommitPort, "withdrawProjection">;
+    readonly admissions: Pick<QuestionAdmissionCommitPort, "withdrawProjection"> &
+      Partial<Pick<QuestionAdmissionCommitPort, "recordQuestionMutation">>;
     readonly client: Client;
-    readonly jobs: Pick<QuestionJobStore, "cancelQuestion" | "hasActiveQuestion">;
+    readonly jobs: Pick<QuestionJobStore, "cancelQuestion" |
+      "hasActiveQuestion" | "listActiveQuestionsForReconciliation" |
+      "loadQuestionReconciliationCursor" | "saveQuestionReconciliationCursor" |
+      "convergeDeliveredQuestion">;
     readonly nowMilliseconds?: () => number;
     readonly options: DiscordLocalFinalReplyHandlerOptions;
     readonly principals: DiscordQuestionPrincipalCodec;
@@ -103,6 +120,7 @@ export class DiscordLocalFinalReplyHandler {
     this.client.on("messageCreate", this.onCreate);
     this.client.on("messageDelete", this.onDelete);
     this.client.on("messageUpdate", this.onUpdate);
+    this.track(this.reconcilePending());
   }
 
   public close(): void {
@@ -119,6 +137,15 @@ export class DiscordLocalFinalReplyHandler {
     while (this.pending.size > 0) {
       await Promise.allSettled(this.pending);
     }
+  }
+
+  /** One bounded, cursor-backed pass; unavailable Discord reads retry next period. */
+  public reconcilePending(): Promise<void> {
+    if (!this.started) {return Promise.resolve();}
+    this.reconciling ??= this.reconcileActiveQuestions().finally(() => {
+      this.reconciling = undefined;
+    });
+    return this.reconciling;
   }
 
   private async handleCreate(message: Message): Promise<void> {
@@ -172,6 +199,7 @@ export class DiscordLocalFinalReplyHandler {
   }
 
   private async handleDelete(message: Message | PartialMessage): Promise<void> {
+    await this.recordMutation("delete", message.id);
     const wasQuestion = await this.jobs.hasActiveQuestion(message.id);
     await this.cancelQuestion(message.id);
     if (wasQuestion) {
@@ -224,6 +252,145 @@ export class DiscordLocalFinalReplyHandler {
       this.pending.delete(tracked);
     });
     this.pending.add(tracked);
+  }
+
+  private enqueue(questionId: string, operation: () => Promise<void>): void {
+    this.track(this.runQuestionLane(questionId, operation));
+  }
+
+  private runQuestionLane<T>(
+    questionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const predecessor = this.questionLanes.get(questionId) ?? Promise.resolve();
+    const queued = predecessor.catch(() => {}).then(operation);
+    const laneCompletion = queued.then(() => {return;}, () => {return;});
+    this.questionLanes.set(questionId, laneCompletion);
+    return queued.finally(() => {
+      if (this.questionLanes.get(questionId) === laneCompletion) {
+        this.questionLanes.delete(questionId);
+      }
+    });
+  }
+
+  private async reconcileActiveQuestions(): Promise<void> {
+    const list = this.jobs.listActiveQuestionsForReconciliation;
+    if (list === undefined) {return;}
+    const afterQuestionId = await this.jobs.loadQuestionReconciliationCursor?.() ?? null;
+    if (!this.started) {return;}
+    const questions = await list.call(this.jobs, {
+      afterQuestionId,
+      maximumRows: 100,
+    });
+    let processedAfterQuestionId = afterQuestionId;
+    let unavailable = false;
+    for (const question of questions) {
+      if (question.reconciliationDisposition === "quarantined" ||
+        question.deliveryContainerId === null) {
+        processedAfterQuestionId = question.questionId;
+        continue;
+      }
+      const status = await this.runQuestionLane(question.questionId, async () => {
+        const observedStatus = await this.reconciliationStatus({ ...question,
+          deliveryContainerId: question.deliveryContainerId! });
+        if (observedStatus === "current") {
+          await this.jobs.convergeDeliveredQuestion?.(question.questionId);
+          return observedStatus;
+        }
+        if (observedStatus === "unavailable") {return observedStatus;}
+        await this.recordMutation(observedStatus, question.questionId);
+        await this.cancelQuestion(question.questionId);
+        return observedStatus;
+      });
+      if (status === "unavailable") {
+        unavailable = true;
+        break;
+      }
+      processedAfterQuestionId = question.questionId;
+    }
+    const nextCursor = unavailable ? processedAfterQuestionId :
+      questions.length === 100 ? processedAfterQuestionId : null;
+    const saveCursor = this.jobs.saveQuestionReconciliationCursor;
+    if (saveCursor !== undefined && !await saveCursor.call(this.jobs, {
+      expectedAfterQuestionId: afterQuestionId,
+      nextAfterQuestionId: nextCursor,
+    })) {
+      // Another owner won this bounded page. Its durable cursor is the next
+      // invocation's authority; this owner must not scan past it.
+      return;
+    }
+  }
+
+  private async reconciliationStatus(question: {
+    readonly authorizationPrincipalRef: string | null;
+    readonly botApplicationIdentity: string | null;
+    readonly deliveryContainerId: string;
+    readonly finalProjectionReceipt: string;
+    readonly questionHash: string;
+    readonly questionId: string;
+    readonly requesterSubject: string;
+    readonly scopeId: string;
+  }): Promise<"current" | "delete" | "edit" | "unavailable"> {
+    const principal = question.authorizationPrincipalRef === null
+      ? null : this.principals.resolve(question.authorizationPrincipalRef);
+    const projection = decodeDiscordExternalPublicationId(
+      question.finalProjectionReceipt,
+    );
+    if (projection === undefined || !reconciliationPrincipalMatches(
+      principal, question, this.principals,
+    )) {
+      return "edit";
+    }
+    try {
+      const channel = await this.client.channels.fetch(question.deliveryContainerId, {
+        force: true,
+      });
+      return await this.inspectReconciliationChannel(
+        channel, principal, projection, question,
+      );
+    } catch (error) {
+      return isExplicitDiscordAbsence(error) ? "delete" : "unavailable";
+    }
+  }
+
+  private async inspectReconciliationChannel(
+    channel: Awaited<ReturnType<Client["channels"]["fetch"]>>,
+    principal: ReturnType<DiscordQuestionPrincipalCodec["resolve"]>,
+    projection: NonNullable<ReturnType<typeof decodeDiscordExternalPublicationId>>,
+    question: { readonly botApplicationIdentity: string | null;
+      readonly questionHash: string; readonly questionId: string;
+      readonly requesterSubject: string; readonly scopeId: string },
+  ): Promise<"current" | "edit" | "unavailable"> {
+    if (channel === null) {return "unavailable";}
+    if (!channel.isTextBased() || !("messages" in channel) ||
+      !reconciliationProjectionMatchesChannel(channel, projection)) {
+      return "edit";
+    }
+    const live = await channel.messages.fetch({ cache: false, force: true,
+      message: question.questionId });
+    if ((principal !== null && live.author.id !== principal.actorId) ||
+      this.principals.keyedSubject(live.author.id, question.scopeId) !==
+        question.requesterSubject || live.webhookId !== null ||
+      this.principals.questionHash(live.content.trim()) !== question.questionHash ||
+      live.reference?.messageId !== projection.messageId) {
+      return "edit";
+    }
+    const reference = await channel.messages.fetch({ cache: false, force: true,
+      message: projection.messageId });
+    return reference.author.id ===
+      (question.botApplicationIdentity ?? this.client.user?.id) &&
+      reference.webhookId === null ? "current" : "edit";
+  }
+
+  private async recordMutation(
+    kind: "delete" | "edit",
+    questionId: string,
+  ): Promise<void> {
+    const record = this.admissions.recordQuestionMutation;
+    if (record !== undefined) {
+      await record.call(this.admissions, { kind, questionId,
+        retentionSeconds: 86_400 });
+    }
   }
 }
 

@@ -1,14 +1,7 @@
 import {
-  SameRoomFocusedMemoryRetrieval,
   admitAcceptedFinalMeeting,
-  createFocusedRetrievalGroundingPlan,
   createHistoricalReleaseBinding,
   type AcceptedFinalMeetingV1,
-  type CoverageCheckpointLeaseV1,
-  type CoverageExtractV1,
-  type CoverageReductionV1,
-  type ExhaustiveCoverageStore,
-  type FocusedMemoryReference,
   type HistoricalAppliedPlanV1,
   type HistoricalCandidateRecordV1,
   type HistoricalEvidenceAuthority,
@@ -18,8 +11,19 @@ import {
   type HistoricalSyncLeaseV1,
   type HistoricalSyncOperationV1,
   type HistoricalSyncStore,
-  type HistoricalFocusedRetrieval,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { createHmac } from "node:crypto";
+
+import type { HistoricalRetrievalActorKeyMapper } from
+  "../src/historical-retrieval-projection.js";
+
+export const testHistoricalActorKeys: HistoricalRetrievalActorKeyMapper =
+  Object.freeze({
+    activeActorKey: (actorId: string) => `test-actor.v1.${createHmac(
+      "sha256",
+      "infinity-context-disposable-test-actor-key",
+    ).update(actorId, "utf8").digest("base64url")}`,
+  });
 
 type RowState = "applied" | "dead_letter" | "deleted" | "deleting" | "in_flight" | "pending" | "retry_wait";
 
@@ -365,249 +369,6 @@ export class MemoryHistoricalStore implements HistoricalSyncStore {
   }
 }
 
-export class MemoryCoverageCheckpoints implements ExhaustiveCoverageStore {
-  readonly #rows = new Map<string, CoverageCheckpointLeaseV1>();
-  public completed = false;
-  public reduction: CoverageReductionV1 | null = null;
-
-  public async open(input: {
-    readonly blockLocators: readonly string[];
-    readonly checkpointId: string;
-    readonly planDigest: string;
-  }): Promise<CoverageCheckpointLeaseV1> {
-    const existing = this.#rows.get(input.checkpointId);
-    if (existing !== undefined) {
-      if (existing.state !== "active") {
-        return existing;
-      }
-      const reopened = {
-        ...existing,
-        attempt: existing.attempt + 1,
-        fence: existing.fence + 1,
-      };
-      this.#rows.set(input.checkpointId, reopened);
-      return reopened;
-    }
-    const created = {
-      attempt: 1,
-      bitmap: input.blockLocators.map(() => false),
-      checkpointId: input.checkpointId,
-      extracts: {},
-      fence: 1,
-      planDigest: input.planDigest,
-      reduction: null,
-      state: "active" as const,
-      terminalReason: null,
-    };
-    this.#rows.set(input.checkpointId, created);
-    return created;
-  }
-
-  public async recordExtract(input: {
-    readonly blockOrdinal: number;
-    readonly checkpointId: string;
-    readonly extract: CoverageExtractV1;
-    readonly fence: number;
-  }): Promise<CoverageCheckpointLeaseV1> {
-    const row = this.#require(input.checkpointId, input.fence);
-    const bitmap = [...row.bitmap];
-    bitmap[input.blockOrdinal] = true;
-    const updated = {
-      ...row,
-      bitmap,
-      extracts: { ...row.extracts, [input.extract.blockLocator]: input.extract },
-    };
-    this.#rows.set(input.checkpointId, updated);
-    return updated;
-  }
-
-  public async recordReduction(input: {
-    readonly checkpointId: string;
-    readonly fence: number;
-    readonly reduction: CoverageReductionV1;
-  }): Promise<void> {
-    const row = this.#require(input.checkpointId, input.fence);
-    this.reduction = input.reduction;
-    this.#rows.set(input.checkpointId, {
-      ...row,
-      reduction: input.reduction,
-    });
-  }
-
-  public async complete(input: { readonly checkpointId: string; readonly fence: number }): Promise<void> {
-    const row = this.#require(input.checkpointId, input.fence);
-    if (row.bitmap.some((bit) => !bit) || this.reduction === null) {
-      throw new Error("historical test coverage is incomplete");
-    }
-    this.#rows.set(input.checkpointId, {
-      ...row,
-      reduction: this.reduction,
-      state: "completed",
-      terminalReason: null,
-    });
-    this.completed = true;
-  }
-
-  public async terminate(input: {
-    readonly checkpointId: string;
-    readonly fence: number;
-    readonly reason: string;
-    readonly state: "failed" | "invalidated";
-  }): Promise<void> {
-    const row = this.#require(input.checkpointId, input.fence);
-    this.#rows.set(input.checkpointId, {
-      ...row,
-      state: input.state,
-      terminalReason: input.reason,
-    });
-  }
-
-  public scrubExpired(): Promise<number> {
-    return Promise.resolve(0);
-  }
-
-  #require(checkpointId: string, fence: number): CoverageCheckpointLeaseV1 {
-    const row = this.#rows.get(checkpointId);
-    if (row === undefined || row.fence !== fence) {
-      throw new Error("historical test checkpoint lost its fence");
-    }
-    return row;
-  }
-}
-
 function compare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function focusedReferenceKey(reference: FocusedMemoryReference): string {
-  return [
-    reference.meetingId,
-    reference.transcriptId,
-    reference.transcriptVersion,
-    reference.turnId,
-    reference.turnHash,
-  ].join("\u0000");
-}
-
-export async function buildSameRoomFocusedPlan(input: {
-  readonly historical: Pick<
-    HistoricalFocusedRetrieval,
-    "buildPlan" | "reauthorizeRoom"
-  >;
-  readonly historicalMeeting: AcceptedFinalMeetingV1;
-  readonly turnHash: (
-    turn: AcceptedFinalMeetingV1["humanTurns"][number],
-  ) => string;
-}) {
-  const currentTurns = Object.freeze(Array.from({ length: 3 }, (_, index) =>
-    Object.freeze({
-      endMs: (index + 1) * 10_000,
-      speakerId: "human-current",
-      startMs: index * 10_000,
-      text: index === 2
-        ? "The current meeting confirms Cedar remains on the release agenda."
-        : `Current accepted meeting detail ${index}.`,
-      turnId: `current-turn-${index}`,
-    })
-  ));
-  const currentReferences = Object.freeze(currentTurns.map((turn) =>
-    Object.freeze({
-      meetingId: "fixture-current-meeting",
-      transcriptId: "fixture-current-transcript",
-      transcriptVersion: 1,
-      turnHash: input.turnHash(turn),
-      turnId: turn.turnId,
-    })
-  ));
-  const sameRoom = new SameRoomFocusedMemoryRetrieval({
-    current: {
-      retrieve: async () => ({
-        authorityGeneration: "current-authority-generation-v1",
-        candidates: currentReferences.slice(2, 3),
-        schemaVersion: 1,
-        status: "current",
-      }),
-    },
-    historical: input.historical,
-    turnHashes: { hash: input.turnHash },
-  }, {
-    historicalServingAuthorized: true,
-    remoteSearchAvailable: true,
-  });
-  const merged = await sameRoom.retrieve({
-    authorizationPrincipalRef: "principal",
-    canonicalEvidenceHash: "a".repeat(64),
-    expectedAuthorityGeneration: "current-authority-generation-v1",
-    finalProjectionReceipt: "fixture-current-final-receipt",
-    maximumCandidates: 5,
-    meetingId: "fixture-current-meeting",
-    meetingRevision: 1,
-    neighborTurns: 1,
-    projectionTargetContainerId: "fixture-current-container",
-    question: "What is the Project Cedar launch day?",
-    roomId: input.historicalMeeting.binding.roomId,
-    scopeId: input.historicalMeeting.binding.scopeId,
-    transcriptId: "fixture-current-transcript",
-    transcriptVersion: 1,
-  });
-  if (merged.status !== "current") {
-    throw new Error("same-room focused merge failed");
-  }
-  const hydrationReferences = [...new Map(merged.candidates.map((reference) => [
-    focusedReferenceKey(reference),
-    reference,
-  ])).values()];
-  const currentByTurn = new Map<string, (typeof currentTurns)[number]>(
-    currentTurns.map((turn) => [turn.turnId, turn]),
-  );
-  const historicalByTurn = new Map(input.historicalMeeting.humanTurns.map((turn) => [
-    turn.turnId,
-    turn,
-  ]));
-  const locallyRehydrated = hydrationReferences.map((reference) => {
-    const turn = reference.meetingId === "fixture-current-meeting"
-      ? currentByTurn.get(reference.turnId)
-      : historicalByTurn.get(reference.turnId);
-    if (turn === undefined || input.turnHash(turn) !== reference.turnHash) {
-      throw new Error("same-room candidate failed local rehydration");
-    }
-    return Object.freeze({
-      ...turn,
-      source: Object.freeze({
-        meetingId: reference.meetingId,
-        transcriptId: reference.transcriptId,
-        transcriptVersion: reference.transcriptVersion,
-      }),
-      turnHash: reference.turnHash,
-    });
-  });
-  const turnsByReference = new Map(hydrationReferences.map((reference, index) => [
-    focusedReferenceKey(reference),
-    locallyRehydrated[index],
-  ]));
-  const selectedTurns = (references: readonly FocusedMemoryReference[]) =>
-    references.map((reference) => {
-      const turn = turnsByReference.get(focusedReferenceKey(reference));
-      if (turn === undefined) {
-        throw new Error("same-room hydration omitted a selected reference");
-      }
-      return turn;
-    });
-  return Object.freeze({
-    currentTurnIds: Object.freeze(merged.candidates
-      .filter(({ meetingId }) => meetingId === "fixture-current-meeting")
-      .map(({ turnId }) => turnId)),
-    historicalMeetingIncluded: merged.candidates.some(({ meetingId }) =>
-      meetingId === input.historicalMeeting.binding.meetingId
-    ),
-    plan: createFocusedRetrievalGroundingPlan({
-      authorityGeneration: merged.authorityGeneration,
-      coverage: "sufficient",
-      humanActorIds: [
-        "human-current",
-        ...new Set(input.historicalMeeting.humanTurns.map(({ speakerId }) => speakerId)),
-      ],
-      turns: selectedTurns(merged.candidates),
-    }),
-  });
 }

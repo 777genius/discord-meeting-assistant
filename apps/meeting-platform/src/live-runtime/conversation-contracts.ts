@@ -50,6 +50,9 @@ interface LiveProactiveConversationTurnInput {
   readonly literalSpeech?: string;
   readonly meetingId: string;
   readonly nowMs: number;
+  readonly playbackNotAfterMs?: number;
+  readonly playbackAttemptId?: string;
+  readonly preemptive?: boolean;
   readonly prompt: string;
   readonly recordingId: string;
   readonly speakerId: string;
@@ -67,6 +70,7 @@ interface LivePreparedConversationCueInput {
   readonly nowMs: number;
   readonly pcmChunks: readonly Uint8Array[];
   readonly playbackAttemptId: string;
+  readonly playbackNotAfterMs?: number;
   readonly preemptive?: boolean;
   readonly recordingId: string;
   readonly speakerId: string;
@@ -139,7 +143,24 @@ interface LiveParticipantGreetingConfiguration {
 
 export type LiveConversationOneShotReceiptReservation =
   | { readonly status: "completed" | "in_flight" }
-  | { readonly leaseToken: string; readonly status: "reserved" };
+  | {
+      /** Stable across process restarts and lease recovery; providers must deduplicate it. */
+      readonly providerCommand?: {
+        readonly locale: "en" | "ru";
+        readonly prompt: string;
+      };
+      readonly providerCommandId?: string;
+      /** Database-attested remaining provider-dedup window; absent until a command is durable. */
+      readonly providerRecoveryRemainingMilliseconds?: number;
+      readonly leaseToken: string;
+      readonly status: "reserved";
+    };
+
+export interface LiveConversationGreetingCapacityReconciliation {
+  readonly commandedSubjectIds: readonly string[];
+  readonly suppressedSubjectIds: readonly string[];
+  readonly terminalSubjectIds: readonly string[];
+}
 
 export interface LiveConversationOneShotReceiptPort {
   /** Farewell-only durable transition immediately before provider invocation. */
@@ -154,10 +175,45 @@ export interface LiveConversationOneShotReceiptPort {
     readonly kind: "greeting";
     readonly leaseToken: string;
     readonly meetingId: string;
+    readonly locale: "en" | "ru";
+    readonly prompt: string;
+    readonly providerCommandId: string;
     readonly subjectId: string;
   }): Promise<void>;
+  /** Atomically binds every represented participant to one literal cohort command. */
+  beginGreetingCohortAttempt?(input: {
+    readonly kind: "greeting";
+    readonly locale: "en" | "ru";
+    readonly meetingId: string;
+    readonly prompt: string;
+    readonly providerCommandId: string;
+    readonly receipts: readonly {
+      readonly leaseToken: string;
+      readonly subjectId: string;
+    }[];
+  }): Promise<void>;
+  /** Persists provider-attested first audio. After this succeeds the command is never replayed. */
+  confirmGreetingStarted?(input: {
+    readonly kind: "greeting";
+    readonly leaseToken: string;
+    readonly meetingId: string;
+    readonly providerCommandId: string;
+    readonly startedAtMilliseconds: number;
+    readonly subjectId: string;
+  }): Promise<void>;
+  /** Atomically persists one provider start for every member of a shared cohort command. */
+  confirmGreetingCohortStarted?(input: {
+    readonly kind: "greeting";
+    readonly meetingId: string;
+    readonly providerCommandId: string;
+    readonly receipts: readonly {
+      readonly leaseToken: string;
+      readonly subjectId: string;
+    }[];
+    readonly startedAtMilliseconds: number;
+  }): Promise<void>;
   complete(input: {
-    readonly kind: "farewell" | "greeting";
+    readonly kind: "farewell";
     readonly leaseToken: string;
     readonly meetingId: string;
     readonly subjectId: string;
@@ -188,6 +244,8 @@ export interface LiveConversationOneShotReceiptPort {
     readonly kind: "farewell" | "greeting";
     readonly leaseSeconds: number;
     readonly meetingId: string;
+    /** Startup-only fencing takeover. Commanded rows retain the same provider command. */
+    readonly reclaimActive?: boolean;
     readonly subjectId: string;
   }): Promise<LiveConversationOneShotReceiptReservation>;
   /** Greeting-only terminal transition. Farewell completion semantics are unchanged. */
@@ -196,9 +254,16 @@ export interface LiveConversationOneShotReceiptPort {
     readonly leaseToken: string;
     readonly meetingId: string;
     readonly outcome: "played" | "suppressed";
-    readonly reason?: "ambiguous" | "stale";
+    readonly reason?: "ambiguous" | "capacity" | "stale";
     readonly subjectId: string;
   }): Promise<void>;
+  /** Atomically chooses overflow only among greetings that are still due. */
+  reconcileGreetingCapacity?(input: {
+    readonly capacity: number;
+    readonly kind: "greeting";
+    readonly meetingId: string;
+    readonly orderedSubjectIds: readonly string[];
+  }): Promise<LiveConversationGreetingCapacityReconciliation>;
   /** Farewell-only terminal transition preserving the observed playback outcome. */
   settleFarewell?(input: {
     readonly kind: "farewell";

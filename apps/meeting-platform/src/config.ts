@@ -39,6 +39,24 @@ const optionalSnowflake = z.preprocess(
   snowflake.optional(),
 );
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
+const retrievalV2ProviderBinding = z.string().min(2).max(4_000).transform((value, context) => {
+  try {
+    return z.object({
+      capabilityFingerprint: sha256,
+      contractVersion: z.literal("context-retrieval.v2"),
+      indexProfileDigest: sha256,
+      profileId: z.string().trim().min(1).max(256),
+      rankingPolicy: z.literal("weighted_rrf_canonical_preferences.v1"),
+      requiredProviderLanes: z.array(z.string().trim().min(1).max(256)).min(1).max(4)
+        .refine((lanes) => lanes.every((lane, index) => index === 0 || lanes[index - 1]! < lane)),
+      serviceRevision: z.string().trim().min(1).max(256),
+    }).strict().parse(JSON.parse(value) as unknown);
+  } catch (error: unknown) {
+    context.addIssue({ code: "custom", message: error instanceof Error
+      ? error.message : "invalid Retrieval V2 provider binding" });
+    return z.NEVER;
+  }
+});
 const mebibyte = 1_024 * 1_024;
 const defaultVoicetextBatchMaxArtifactBytes = 64 * mebibyte;
 const defaultVoicetextBatchMaxConcurrency = 2;
@@ -178,6 +196,7 @@ const environmentSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
+    MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE: absolutePath.optional(),
     MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: z
       .enum(["true", "false"])
       .default("false")
@@ -185,7 +204,11 @@ const environmentSchema = z
     MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: profileIdentifier.optional(),
     MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_STATE_FILE: absolutePath.optional(),
     MEETING_KNOWLEDGE_E2E_SYNTHETIC_HUMAN_ACTOR_IDS: e2eSyntheticHumanActorIds,
+    MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT: optionalAbsolutePath,
+    MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID: optionalProfileIdentifier,
     MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE: absolutePath.optional(),
+    MEETING_KNOWLEDGE_RETRIEVAL_V2_PROVIDER_BINDING_JSON:
+      retrievalV2ProviderBinding.optional(),
     MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_FILE: optionalAbsolutePath,
     NODE_ENV: z
       .enum(["development", "production", "test"])

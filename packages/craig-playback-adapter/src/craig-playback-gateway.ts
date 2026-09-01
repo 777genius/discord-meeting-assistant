@@ -34,6 +34,7 @@ export interface CraigPlaybackTransport {
 }
 
 export class CraigPlaybackGateway implements VoicePlaybackPort {
+  private readonly sessionReadyListeners = new Set<(recordingId: string) => void>();
   private readonly transports = new Map<string, RegisteredTransport>();
 
   public constructor(
@@ -66,6 +67,9 @@ export class CraigPlaybackGateway implements VoicePlaybackPort {
     transport.onClose((reason) => {
       registered.disconnect(reason);
     });
+    for (const listener of this.sessionReadyListeners) {
+      listener(transport.identity.recordingId);
+    }
     return () => {
       registered.disconnect("playback transport detached");
     };
@@ -77,6 +81,15 @@ export class CraigPlaybackGateway implements VoicePlaybackPort {
   ): Promise<ConversationPortResult<VoicePlaybackSession>> {
     if (options.signal?.aborted === true) {
       return playbackOpenCancelled();
+    }
+    if (request.notAfterMs !== undefined &&
+      (!Number.isSafeInteger(request.notAfterMs) ||
+        request.notAfterMs < 0 || this.nowMilliseconds() >= request.notAfterMs)) {
+      return failure(
+        "CRAIG_PLAYBACK_DEADLINE_EXPIRED",
+        "Craig playback deadline expired before session open",
+        false,
+      );
     }
     const registered = this.transports.get(request.recordingId);
     if (registered === undefined) {
@@ -99,6 +112,17 @@ export class CraigPlaybackGateway implements VoicePlaybackPort {
 
   public hasSession(recordingId: string): boolean {
     return this.transports.has(recordingId);
+  }
+
+  /** Observes validated Craig readiness without leaking its wire DTO downstream. */
+  public onSessionReady(listener: (recordingId: string) => void): () => void {
+    this.sessionReadyListeners.add(listener);
+    for (const recordingId of this.transports.keys()) {
+      listener(recordingId);
+    }
+    return () => {
+      this.sessionReadyListeners.delete(listener);
+    };
   }
 }
 

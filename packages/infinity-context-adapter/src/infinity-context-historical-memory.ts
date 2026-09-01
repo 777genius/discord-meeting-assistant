@@ -7,14 +7,10 @@ import {
   type HistoricalIndexResultV1,
   type HistoricalMemoryPort,
   type HistoricalMemoryOperationOptionsV1,
-  type HistoricalSearchRequestV1,
-  type HistoricalSearchResultV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   InfinityContextClient,
-  ReadScope,
   type HttpTransport,
-  type InfinityContextCapabilities,
 } from "@infinity-context/sdk";
 
 import {
@@ -25,15 +21,12 @@ import { deleteHistoricalMeeting } from "./infinity-context-deletion.js";
 import { indexHistoricalMeeting } from "./infinity-context-indexing.js";
 import { InfinityOperationDeadline } from "./infinity-request-deadline.js";
 import {
-  candidateLocators,
   failure,
-  isHybridQualified,
   validDeleteRequest,
   validIndexPlan,
-  validSearchRequest,
 } from "./infinity-context-sdk-contract.js";
-
-const MAXIMUM_INFINITY_CONTEXT_SEARCH_TOKEN_BUDGET = 6_000;
+import type { HistoricalRetrievalActorKeyMapper } from
+  "./historical-retrieval-projection.js";
 
 /* The reviewed Node SDK declaration names this DOM alias in HttpTransport. */
 declare global {
@@ -41,6 +34,7 @@ declare global {
 }
 
 export interface InfinityContextHistoricalMemoryConfigV1 {
+  readonly actorKeys?: HistoricalRetrievalActorKeyMapper;
   readonly baseUrl: string;
   /** Separately bounds one resumable index/search/delete attempt. */
   readonly operationTimeoutMs?: number;
@@ -59,11 +53,12 @@ type InfinityContextHistoricalMemoryConfigInputV1 = Omit<
 > & { readonly schemaVersion: number };
 
 export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryPort {
+  readonly #actorKeys: HistoricalRetrievalActorKeyMapper | undefined;
   readonly #client: InfinityContextClient;
+  readonly #indexClient: InfinityContextClient;
   readonly #operationTimeoutMs: number;
   readonly #requestTimeoutMs: number;
   readonly #embeddingTokenProfile: (() => string | undefined) | undefined;
-  #capabilities: InfinityContextCapabilities | null = null;
 
   public constructor(config: InfinityContextHistoricalMemoryConfigV1);
   public constructor(config: InfinityContextHistoricalMemoryConfigInputV1) {
@@ -81,10 +76,20 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
       throw new RangeError("Infinity historical memory configuration is invalid");
     }
     this.#requestTimeoutMs = config.requestTimeoutMs;
+    this.#actorKeys = config.actorKeys;
     this.#operationTimeoutMs = config.operationTimeoutMs ??
       DEFAULT_HISTORICAL_MEMORY_OPERATION_TIMEOUT_MS;
     this.#embeddingTokenProfile = config.embeddingTokenProfile;
     this.#client = new InfinityContextClient({
+      baseUrl: config.baseUrl,
+      retryPolicy: { maxAttempts: 1 },
+      timeoutMs: config.requestTimeoutMs,
+      ...(config.token === undefined ? {} : { token: config.token }),
+      ...(config.transport === undefined
+        ? {}
+        : { transport: config.transport as HttpTransport }),
+    });
+    this.#indexClient = new InfinityContextClient({
       baseUrl: config.baseUrl,
       retryPolicy: { maxAttempts: 1 },
       timeoutMs: config.requestTimeoutMs,
@@ -107,7 +112,6 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
         this.#requestTimeoutMs,
         (signal) => this.#client.system.capabilities({ signal }),
       );
-      this.#capabilities = capabilities;
       return decodeInfinityContextCapabilityAttestation(capabilities);
     } finally {
       operation.close();
@@ -119,9 +123,11 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
     options: HistoricalMemoryOperationOptionsV1 = {},
   ): Promise<HistoricalIndexResultV1> {
     const embeddingTokenProfile = this.#embeddingTokenProfile?.();
+    const actorKeys = this.#actorKeys;
     if (
       embeddingTokenProfile === undefined ||
-      !validIndexPlan(request, embeddingTokenProfile)
+      actorKeys === undefined ||
+      !validIndexPlan(request, embeddingTokenProfile, actorKeys)
     ) {
       return {
         code: "memory.index_plan_outside_qualified_bounds",
@@ -130,60 +136,13 @@ export class InfinityContextHistoricalMemoryAdapter implements HistoricalMemoryP
       };
     }
     return indexHistoricalMeeting({
-      client: this.#client,
+      actorKeys,
+      client: this.#indexClient,
       operationTimeoutMs: this.#operationTimeoutMs,
       options,
       request,
       requestTimeoutMs: this.#requestTimeoutMs,
     });
-  }
-
-  public async searchRoom(
-    request: HistoricalSearchRequestV1,
-  ): Promise<HistoricalSearchResultV1> {
-    if (!validSearchRequest(request)) {
-      return { code: "memory.invalid_search_request", retryable: false, status: "unqualified" };
-    }
-    const operation = new InfinityOperationDeadline(
-      this.#operationTimeoutMs,
-      request.signal,
-    );
-    try {
-      const response = await operation.request(
-        Math.min(this.#requestTimeoutMs, request.timeoutMs),
-        (signal) => this.#client.context.search({
-          maxChunks: request.candidateLimit,
-          maxEvidenceItems: request.candidateLimit,
-          maxFacts: 0,
-          projectAnchorPolicy: "advisory",
-          query: request.query,
-          readScope: ReadScope.external({
-            memoryScopeExternalRefs: [request.roomScopeExternalRef],
-            spaceSlug: request.spaceSlug,
-          }),
-          timeoutMs: request.timeoutMs,
-          signal,
-          tokenBudget: MAXIMUM_INFINITY_CONTEXT_SEARCH_TOKEN_BUDGET,
-        }),
-      );
-      if (!isHybridQualified(this.#capabilities, response.data.diagnostics)) {
-        return {
-          code: "memory.hybrid_retrieval_not_qualified",
-          retryable: false,
-          status: "unqualified",
-        };
-      }
-      return {
-        candidates: candidateLocators(response.data.items, request.candidateLimit),
-        hybridQualified: true,
-        status: "available",
-      };
-    } catch (error) {
-      const mapped = failure(error, "outcome_unknown");
-      return { code: mapped.code, retryable: mapped.retryable, status: "unavailable" };
-    } finally {
-      operation.close();
-    }
   }
 
   public async deleteMeeting(

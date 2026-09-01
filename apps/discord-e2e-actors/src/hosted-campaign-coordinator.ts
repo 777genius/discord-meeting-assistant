@@ -3,6 +3,8 @@ import {
 } from "./hosted-finite-process-contract.js";
 export { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-target.js";
 import type { HostedCampaignTarget } from "./hosted-campaign-target.js";
+import type { GovernedCampaignObservationPolicy } from
+  "./governed-private-campaign-observation.js";
 export type CampaignScenario = "sequential" | "overlap" | "reconnect";
 export interface HostedCampaignRun {
   readonly campaignId: string; readonly ordinal: number;
@@ -26,7 +28,13 @@ export type HostedCampaignEntrypoint =
   | "service-level-sources"
   | "service-levels"
   | "supplemental-player"
-  | "evidence-verifier";
+  | "evidence-verifier"
+  | "greeting-ledger-observer"
+  | "historical-reply-observer"
+  | "historical-reply-preparer"
+  | "live-memory-observer"
+  | "private-coverage-observer"
+  | "remediation-bundle";
 export interface HostedCampaignActionReference {
   readonly action: HostedCampaignBarrierAction;
   readonly ordinal: number;
@@ -57,6 +65,12 @@ interface HostedCampaignEnvironmentBinding {
 export type HostedCampaignCompletionAction =
   | { readonly kind: "actor-completed"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "conversation-observer-completed"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "greeting-ledger-ready"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "historical-reply-input-ready"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "historical-reply-ready"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "live-memory-ready"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "private-coverage-ready"; readonly ordinal: number; readonly runId: string }
+  | { readonly kind: "remediation-bundle-ready"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "playback-link-seen"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "recording-ready"; readonly ordinal: number; readonly runId: string }
   | { readonly kind: "replay-attestation-ready"; readonly ordinal: number; readonly runId: string }
@@ -64,7 +78,14 @@ export type HostedCampaignCompletionAction =
 type HostedCampaignExecutableArguments =
   | { readonly kind: "environment" }
   | { readonly evidencePath: string; readonly kind: "evidence-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string }
-  | { readonly evidencePaths: readonly [string, string, string]; readonly kind: "campaign-verifier"; readonly manifestPath: string; readonly thresholdsPath?: string };
+  | {
+      readonly evidencePaths: readonly [string, string, string];
+      readonly historicalReplyPath?: string;
+      readonly kind: "campaign-verifier";
+      readonly manifestPath: string;
+      readonly thinRemediationPath?: string;
+      readonly thresholdsPath?: string;
+    };
 export type HostedCampaignExecutableCompletion =
   | HostedFiniteProcessCompletion
   | {
@@ -150,7 +171,22 @@ export interface HostedCampaignChildHandle {
 declare const campaignLeaseHandleBrand: unique symbol;
 export interface HostedCampaignLeaseHandle {
   readonly campaignId: string;
+  readonly campaignRoot: string;
+  readonly device: number;
+  readonly inode: number;
+  readonly leaseSha256: string;
+  readonly planSha256: string;
   readonly [campaignLeaseHandleBrand]: true;
+}
+export interface HostedCampaignLeaseCleanupProof {
+  readonly campaignId: string;
+  readonly campaignRoot: string;
+  readonly deleted: true;
+  readonly device: number;
+  readonly inode: number;
+  readonly leasePath: string;
+  readonly leaseSha256: string;
+  readonly planSha256: string;
 }
 export type HostedCampaignBarrierAction =
   | { readonly kind: "provenance-before" }
@@ -210,7 +246,18 @@ interface HostedCampaignLaunchAuthorization {
 }
 export interface HostedCampaignRuntimeAuthorization {
   /** Invoked only after the exact campaign lease has been acquired. */
-  authorizeAfterLease(): Promise<HostedCampaignLaunchAuthorization>;
+  authorizeAfterLease(lease: HostedCampaignLeaseHandle): Promise<HostedCampaignLaunchAuthorization>;
+  /** Commits retained evidence and any success-only infrastructure action while the exact lease is still held. */
+  finalizeUnderLease?(execution: HostedCampaignPassReceipt, lease: HostedCampaignLeaseHandle): Promise<void>;
+  /** Publishes success only after the exact canonical lease has been unlinked and proven absent. */
+  readonly finalizeAfterLeaseCleanup?: (
+    cleanup: HostedCampaignLeaseCleanupProof,
+    lease: HostedCampaignLeaseHandle,
+  ) => Promise<void>;
+  /** Failed provisioned stacks quarantine their lease and evidence root. */
+  retainLeaseOnFailure?(): boolean;
+  /** Retains a closed failure receipt after children stop and before a failed stack remains quarantined. */
+  retainFailureUnderLease?(failure: unknown, lease: HostedCampaignLeaseHandle): Promise<void>;
 }
 export interface HostedCampaignPorts {
   acquireCampaignLease(
@@ -240,11 +287,12 @@ export interface HostedCampaignPorts {
     phase: "connection" | "playback",
     bounded: HostedCampaignBoundedSignal,
   ): Promise<void>;
-  releaseCampaignLease(handle: HostedCampaignLeaseHandle): Promise<void>;
+  releaseCampaignLease(handle: HostedCampaignLeaseHandle): Promise<HostedCampaignLeaseCleanupProof | void>;
   stopChild(handle: HostedCampaignChildHandle): Promise<void>;
 }
 export interface HostedCampaignInput {
   readonly children: readonly HostedCampaignExecutableSpec[]; readonly runs: readonly HostedCampaignRun[];
+  readonly historicalReplyObservationPolicy?: GovernedCampaignObservationPolicy;
   readonly target: HostedCampaignTarget;
   readonly thresholds: HostedCampaignThresholds;
 }

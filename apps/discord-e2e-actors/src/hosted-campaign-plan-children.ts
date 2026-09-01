@@ -28,6 +28,14 @@ import {
   makeCampaignVerifier,
   makeCollector,
 } from "./hosted-campaign-plan-verification-children.js";
+import {
+  makeGreetingLedgerObserver,
+  makeHistoricalReplyObserver,
+  makeHistoricalReplyPreparer,
+  makeLiveMemoryObserver,
+  makePrivateCoverageObserver,
+  makeRemediationBundle,
+} from "./hosted-campaign-plan-qualification-children.js";
 
 export function makeHostedCampaignChildren(
   definition: HostedCampaignDefinitionV1,
@@ -37,7 +45,7 @@ export function makeHostedCampaignChildren(
 ): readonly HostedCampaignExecutableSpec[] {
   const context = makeHostedCampaignChildContext(definition, bindings, runs, campaignRoot);
   const {
-    conversationCompleted, overlap, overlapBinding, playbackLinkSeen, provenanceAfter,
+    conversationCompleted, greetingLedgerReady, overlap, overlapBinding, playbackLinkSeen, provenanceAfter,
     observerSubscribed, provenanceBefore, reconnect, reconnectBinding, recordingReady,
     replayAttestationReady,
     runVerified, sequential, sequentialBinding, serviceLevelsReady, supplementalCompleted,
@@ -68,6 +76,8 @@ export function makeHostedCampaignChildren(
       ], serviceLevelsPath: serviceLevelPaths.levels,
     }),
     makeConversationObserver(context),
+    makeGreetingLedgerObserver(context),
+    makeLiveMemoryObserver(context),
     makeSupplementalPlayer(context),
     makeRecordingReadyCollector(context, reconnect),
     makeReplayAttestationPublisher(context, reconnect),
@@ -78,9 +88,13 @@ export function makeHostedCampaignChildren(
       action: runVerified[2]!, binding: reconnectBinding, run: reconnect,
       required: [
         recordingReady[2]!, replayAttestationReady[2]!, playbackLinkSeen, serviceLevelsReady,
-        conversationCompleted, supplementalCompleted,
+        conversationCompleted, greetingLedgerReady, supplementalCompleted,
       ], serviceLevelsPath: serviceLevelPaths.levels,
     }),
+    makeHistoricalReplyPreparer(context),
+    makeHistoricalReplyObserver(context),
+    makePrivateCoverageObserver(context),
+    makeRemediationBundle(context),
     makeProvenanceProbe(context, "after", reconnect, provenanceAfter),
     makeCampaignVerifier(context),
   ]);

@@ -2,6 +2,10 @@ import type { Pool } from "pg";
 import { describe, expect, it } from "vitest";
 
 import { PostgresQuestionJobStore } from "../src/index.js";
+import { questionAdmissionBindingHash } from
+  "../src/postgres-meeting-knowledge-codecs.js";
+import { QUESTION_JOB_WORKER_PROTOCOL_EPOCH } from
+  "../src/postgres-question-worker-protocol.js";
 import {
   databaseOrSkip,
   usePostgresIntegrationDatabase,
@@ -34,7 +38,7 @@ describe("PostgreSQL provider attempt accounting", () => {
             'authorizationPolicyVersion', 'discord.participant-current-results.v1'), $5,
           'running', 1, 'provider-worker',
           transaction_timestamp() + interval '1 minute',
-          2, 1,
+          ${QUESTION_JOB_WORKER_PROTOCOL_EPOCH}, 1,
           transaction_timestamp() + interval '10 minutes'
         )
       `,
@@ -104,7 +108,7 @@ describe("PostgreSQL provider attempt accounting", () => {
             'policyVersion', 'meeting-knowledge.focused-memory-final-reply.v2',
             'authorizationPolicyVersion', 'discord.participant-current-results.v1'), $4, 'running', 2, 1, 'worker',
           transaction_timestamp() + interval '1 minute',
-          2, 1,
+          ${QUESTION_JOB_WORKER_PROTOCOL_EPOCH}, 1,
           transaction_timestamp() + interval '10 minutes'
         )
       `,
@@ -306,7 +310,6 @@ async function insertQueued(
   const requesterSubject = "a".repeat(64);
   const questionHash = "b".repeat(64);
   const authorizationDigest = "c".repeat(64);
-  const bindingHash = "d".repeat(64);
   const canonicalEvidenceHash = "e".repeat(64);
   const binding = {
     authorizationDigest,
@@ -315,7 +318,7 @@ async function insertQueued(
     botApplicationIdentity: "bot-application",
     canonicalEvidenceHash,
     deliveryContainerId: "delivery-channel",
-    expectedLocale: "en",
+    expectedLocale: "en" as const,
     finalProjectionEpoch: "projection-epoch",
     finalProjectionReceipt: `projection-${questionId}`,
     humanActorIds: ["human-actor"],
@@ -351,7 +354,7 @@ async function insertQueued(
       binding.finalProjectionReceipt,
       authorizationDigest,
       JSON.stringify(binding),
-      bindingHash,
+      questionAdmissionBindingHash(binding),
       expiresInSeconds,
     ],
   );

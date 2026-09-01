@@ -3,13 +3,17 @@ import { isAbsolute, normalize } from "node:path";
 import { z } from "zod";
 
 import {
-  HOSTED_CAMPAIGN_TARGET,
   type HostedCampaignInput,
   type HostedCampaignRun,
   validateHostedCampaign,
 } from "./hosted-campaign-coordinator.js";
+import { hostedCampaignTargetForCraigProject, resolveHostedCampaignCraigProject } from "./hosted-campaign-target.js";
+import { craigProjectName } from "./craig-disposable-campaign-stack.js";
+import { hostedCampaignReleaseReferenceV1Schema } from "./hosted-campaign-release-reference.js";
 import { makeHostedCampaignChildren } from "./hosted-campaign-plan-children.js";
 import { validateHostedCampaignOwnedPaths } from "./hosted-campaign-plan-paths.js";
+import { governedCampaignObservationPolicyV1Schema } from
+  "./governed-private-campaign-observation-contract.js";
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
 const absolutePath = z.string().refine((value) =>
@@ -24,8 +28,13 @@ export const hostedCampaignDefinitionV1Schema = z.object({
   answerFirstPacketMilliseconds: z.number().int().positive(),
   campaignId: identifier,
   campaignRoot: absolutePath,
+  craigProject: z.string().regex(/^(?:craig-meeting-e2e|craig-e2e-[a-f\d]{20})$/u).optional(),
+  craigRelease: hostedCampaignReleaseReferenceV1Schema.optional(),
   clockPreflightPath: absolutePath,
   fixtureManifestPath: absolutePath,
+  historicalReplyObservationPolicy: governedCampaignObservationPolicyV1Schema,
+  historicalReplyTemplatePath: absolutePath.optional(),
+  privateCoverageSourcePath: absolutePath,
   recordingPlaybackOrigin: httpsOrigin,
   remote: z.object({
     composeFile: absolutePath,
@@ -47,6 +56,10 @@ export const hostedCampaignDefinitionV1Schema = z.object({
 }).strict().superRefine((value, context) => {
   if (new Set(value.runIds).size !== 3) {
     context.addIssue({ code: "custom", message: "Hosted campaign definition runIds must be unique", path: ["runIds"] });
+  }
+  if (value.craigProject !== undefined && value.craigRelease !== undefined
+    && value.craigProject !== craigProjectName(value.campaignId, value.craigRelease)) {
+    context.addIssue({ code: "custom", message: "Hosted campaign Craig project does not match its staged release" });
   }
 });
 
@@ -114,12 +127,16 @@ export function buildResolvedHostedCampaignPlanV1(
   const children = makeHostedCampaignChildren(definition, bindings, runs, definition.campaignRoot);
   const plan = Object.freeze({
     children: Object.freeze(children),
+    historicalReplyObservationPolicy: Object.freeze(definition.historicalReplyObservationPolicy),
     runs,
-    target: HOSTED_CAMPAIGN_TARGET,
+    target: hostedCampaignTargetForCraigProject(resolveHostedCampaignCraigProject(definition)),
     thresholds: Object.freeze({ answerFirstPacketMilliseconds: definition.answerFirstPacketMilliseconds }),
   });
   validateHostedCampaignOwnedPaths(plan, definition.campaignRoot, [
     definition.clockPreflightPath, definition.fixtureManifestPath,
+    definition.privateCoverageSourcePath,
+    ...(definition.historicalReplyTemplatePath === undefined
+      ? [] : [definition.historicalReplyTemplatePath]),
     definition.remote.composeFile, definition.remote.environmentFile, definition.remote.sourceRoot,
     definition.secretDirectory, definition.speakerFixtures.a, definition.speakerFixtures.b,
     definition.serviceLevelThresholdsPath, definition.supplementalManifestPath,

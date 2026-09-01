@@ -50,9 +50,12 @@ function corpusTurn(index: number): TranscriptTurnSnapshot {
   };
 }
 
-function twoHourSnapshot(turnCount = 720) {
+function twoHourSnapshot(
+  turnCount = 720,
+  turnAt: (index: number) => TranscriptTurnSnapshot = corpusTurn,
+) {
   const meeting = recordedMeeting("focused-memory-two-hour");
-  const turns = Array.from({ length: turnCount }, (_, index) => corpusTurn(index));
+  const turns = Array.from({ length: turnCount }, (_, index) => turnAt(index));
   meeting.beginTranscription();
   const transcript = FinalTranscript.create({
     recordingId: meeting.recording.recordingId,
@@ -124,6 +127,36 @@ function retrievalInput(
     },
   };
 }
+
+describe("PostgreSQL current-meeting query term policy", () => {
+  it("does not let current-meeting query scaffolding saturate the current evidence lane",
+    async () => {
+      const snapshot = twoHourSnapshot(16, (index) => ({
+        endMs: index * 10_000 + 2_000,
+        speakerId: index % 2 === 0 ? "speaker-a" : "speaker-b",
+        startMs: index * 10_000,
+        text: index === 8
+          ? "CURRENT-ANCHOR confirms Project Atlas is active."
+          : `Current accepted planning detail ${index}.`,
+        turnId: `turn-${String(index).padStart(4, "0")}`,
+      }));
+      const { input } = retrievalInput(
+        snapshot,
+        "What does CURRENT-ANCHOR confirm about Project Atlas, and which deployment day does PINE-GOLF record?",
+      );
+
+      const result = await new PostgresFocusedMemoryRetrieval(
+        snapshotPool(snapshot),
+        botId,
+      ).retrieve(input);
+
+      expect(result).toMatchObject({ status: "current" });
+      if (result.status === "current") {
+        expect(result.candidates.map(({ turnId }) => turnId))
+          .toEqual(["turn-0008"]);
+      }
+    });
+});
 
 describe("PostgreSQL focused current-meeting memory", () => {
   it("returns only bounded focused locators for a short current transcript", async () => {
@@ -320,9 +353,6 @@ describe("PostgreSQL focused current-meeting memory", () => {
         expect.arrayContaining(["turn-0000", "turn-0180", "turn-0719"]),
       );
       expect(result.candidates.length).toBeLessThanOrEqual(input.maximumCandidates);
-      const scores = result.candidates.map(({ relevanceScore }) => relevanceScore ?? -1);
-      expect(scores.every((score) => score >= 0 && score <= 1)).toBe(true);
-      expect(scores).toEqual(scores.toSorted((left, right) => right - left));
       expect(JSON.stringify(result.candidates)).not.toContain("thirty days");
     }
   });
@@ -394,43 +424,128 @@ describe("PostgreSQL focused current-meeting memory", () => {
   });
 });
 
-describe("PostgreSQL focused retrieval cues", () => {
-  it("resolves configured real names without exposing them as evidence", async () => {
+describe("PostgreSQL focused candidate hydration isolation", () => {
+  it("keeps valid local candidates around a missing turn in original order", async () => {
     const snapshot = twoHourSnapshot();
-    const { input } = retrievalInput(
+    const pool = snapshotPool(snapshot);
+    const { authority, input } = retrievalInput(
       snapshot,
-      "Что Влад сказал latest about Atlas?",
+      "What is the corrected Atlas rollout owner and retention?",
     );
-    const result = await new PostgresFocusedMemoryRetrieval(
-      snapshotPool(snapshot),
-      botId,
-      { "speaker-b": ["Влад", "Vlad"] },
-    ).retrieve({ ...input, maximumCandidates: 6, neighborTurns: 1 });
+    const retrieval = await new PostgresFocusedMemoryRetrieval(pool, botId)
+      .retrieve({ ...input, maximumCandidates: 4 });
+    if (retrieval.status !== "current" || retrieval.candidates.length < 2) {
+      throw new Error("missing local survivor fixture");
+    }
+    const valid = retrieval.candidates.slice(0, 2);
+    const binding = {
+      authorizationDigest: "a".repeat(64),
+      authorizationPolicyVersion: "discord.participant-current-results.v1",
+      authorizationPrincipalRef: "opaque",
+      ...authority.binding,
+      deliveryContainerId: authority.binding.projectionTargetContainerId,
+      expectedLocale: "en" as const,
+      policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+      questionHash: "c".repeat(64),
+      questionId: "question-mixed-hydration",
+      requesterSubject: "d".repeat(64),
+    };
+    const hydrated = await new PostgresFinalReplyEvidence(pool, botId)
+      .rehydrateSelectedEvidence(binding, [valid[0]!, {
+        ...valid[0]!, turnHash: "f".repeat(64), turnId: "missing-turn",
+      }, valid[1]!]);
 
-    expect(result.status).toBe("current");
+    expect(hydrated).toMatchObject({ status: "current" });
+    if (hydrated.status === "current") {
+      expect(hydrated.turns.map(({ turnId }) => turnId))
+        .toEqual(valid.map(({ turnId }) => turnId));
+    }
+  });
+});
+
+describe("PostgreSQL bounded canonical exact lexical fallback", () => {
+  it("reapplies canonical speaker and relative-time boundaries before returning locators",
+    async () => {
+      const snapshot = twoHourSnapshot(8, (index) => ({
+        endMs: index * 60_000 + 1_000,
+        speakerId: index % 2 === 0 ? "speaker-a" : "speaker-b",
+        startMs: index * 60_000,
+        text: index === 3 ? "Атлас Atlas решение decision" : "Atlas decision detail",
+        turnId: `turn-${String(index).padStart(4, "0")}`,
+      }));
+      const { input } = retrievalInput(snapshot, "Atlas decision решение");
+      const result = await new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
+        .retrieve({ ...input, hardFilters: {
+          relativeTimeInterval: { endMs: 241_000, startMs: 179_000 },
+          requiresSpeakerMatch: true,
+          speakerIds: ["speaker-b"],
+        }, maximumCandidates: 4 });
+
+      expect(result.status === "current"
+        ? result.candidates.map(({ turnId }) => turnId) : [])
+        .toEqual(["turn-0003"]);
+    });
+
+  it("round-robins speakers even when one speaker matches across many time buckets",
+    async () => {
+      const snapshot = twoHourSnapshot(8, (index) => ({
+        endMs: index * 60_000 + 1_000,
+        speakerId: index < 6 ? "speaker-a" : "speaker-b",
+        startMs: index * 60_000,
+        text: index < 6 ? "Atlas decision owner" : "Atlas update",
+        turnId: `turn-${String(index).padStart(4, "0")}`,
+      }));
+      const { input } = retrievalInput(snapshot, "What is the Atlas decision owner update?");
+      const result = await new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
+        .retrieve({ ...input, maximumCandidates: 4 });
+
+      expect(result).toMatchObject({ status: "current" });
+      if (result.status === "current") {
+        expect(result.candidates.map(({ turnId }) => turnId))
+          .toEqual(["turn-0000", "turn-0006", "turn-0001", "turn-0007"]);
+      }
+    });
+
+  it("reports honest low coverage for a Russian question over English-only evidence", async () => {
+    const snapshot = twoHourSnapshot(16);
+    const { input } = retrievalInput(snapshot, "Кто утвердил бюджет запуска?");
+
+    await expect(new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
+      .retrieve(input)).resolves.toEqual({ schemaVersion: 1, status: "low_coverage" });
+  });
+
+  it("keeps matching current evidence speaker/time-diverse within the bound", async () => {
+    const snapshot = twoHourSnapshot();
+    const { input } = retrievalInput(snapshot, "What changed about the Atlas rollout?");
+    const result = await new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
+      .retrieve({ ...input, maximumCandidates: 4 });
+
+    expect(result).toMatchObject({ status: "current" });
     if (result.status === "current") {
-      expect(result.candidates[0]?.turnId).toBe("turn-0719");
-      expect(JSON.stringify(result.candidates)).not.toContain("Влад");
+      const turns = snapshot.transcript?.turns ?? [];
+      const selected = result.candidates.map(({ turnId }) =>
+        turns.find((turn) => turn.turnId === turnId));
+      expect(new Set(selected.map((turn) => turn?.speakerId)).size).toBeGreaterThan(1);
+      expect(new Set(selected.map((turn) => Math.floor((turn?.startMs ?? 0) / 60_000))).size)
+        .toBeGreaterThan(1);
     }
   });
 
-  it("uses explicit speaker and timeline cues without widening the candidate set", async () => {
+  it("does not expand neighbors or apply speaker/time boosts", async () => {
     const snapshot = twoHourSnapshot();
     const { input } = retrievalInput(
       snapshot,
-      "What did speaker-b say latest about Atlas?",
+      "What was ORION-START?",
     );
     const result = await new PostgresFocusedMemoryRetrieval(
       snapshotPool(snapshot),
       botId,
-    ).retrieve({ ...input, maximumCandidates: 6, neighborTurns: 1 });
+    ).retrieve({ ...input, maximumCandidates: 6, neighborTurns: 8 });
 
     expect(result.status).toBe("current");
     if (result.status === "current") {
-      expect(result.candidates[0]?.turnId).toBe("turn-0719");
-      expect(result.candidates.length).toBeLessThanOrEqual(6);
-      expect(result.candidates.map(({ turnId }) => turnId))
-        .toEqual(expect.arrayContaining(["turn-0718", "turn-0719"]));
+      expect(result.candidates.map(({ turnId }) => turnId)).toEqual(["turn-0000"]);
+      expect(result.candidates[0]).not.toHaveProperty("relevanceScore");
     }
   });
 });

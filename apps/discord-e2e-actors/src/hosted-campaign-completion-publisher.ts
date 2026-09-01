@@ -6,7 +6,7 @@ import { HOSTED_CAMPAIGN_TARGET } from "./hosted-campaign-coordinator.js";
 import type { HostedFiniteProcessCompletion } from "./hosted-finite-process-contract.js";
 import { verifyHostedFiniteProcessCompletion } from "./hosted-finite-process-completion.js";
 import { hostedCampaignProvenanceCompletionV1Schema } from "./hosted-campaign-provenance.js";
-import { recordingReadyReceiptV1Schema } from "./recording-ready-receipt.js";
+import { recordingReadyReceiptSchema } from "./recording-ready-receipt.js";
 import { verifyHostedServiceLevelCompletion } from "./hosted-service-level-completion.js";
 import {
   hostedServiceLevelSourceReportV1Schema,
@@ -146,7 +146,7 @@ async function verifyServiceLevelSourceCompletion(
 }
 
 function recordingIdentityCoordinates(value: unknown): { readonly meetingId: string; readonly recordingId: string } {
-  const { meetingId, recordingId } = recordingReadyReceiptV1Schema.parse(value);
+  const { meetingId, recordingId } = recordingReadyReceiptSchema.parse(value);
   return { meetingId, recordingId };
 }
 

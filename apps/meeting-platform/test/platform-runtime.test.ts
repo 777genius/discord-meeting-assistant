@@ -33,6 +33,8 @@ import {
   createGroundedKnowledgeAnswerLogger,
   createVoicetextBatchFinalTranscriptionOptions,
 } from "../src/platform-runtime.js";
+import { createRunningPlatformRuntime } from
+  "../src/composition/platform-runtime.js";
 import type { GrpcSubscriptionRuntimeTransport } from "../src/adapters/outbound/subscription-runtime-grpc-transport.js";
 
 const temporaryCueRoots: string[] = [];
@@ -186,6 +188,25 @@ describe("meeting platform runtime wiring", () => {
     const deletion = createPlatformHistoricalDeletion({} as Pool);
 
     expect(deletion.requestMeetingDeletion).toBeTypeOf("function");
+  });
+
+  it("handles a rejected greeting reconcile timer without an unhandled rejection", async () => {
+    vi.useFakeTimers();
+    const warn = vi.fn();
+    createRunningPlatformRuntime({
+      greetingObligationDispatcher: {
+        dispatchPendingGreetings: () => Promise.reject(new Error("synthetic timer failure")),
+      },
+      logger: { warn },
+      outboxDispatcher: { dispatchPending: async () => {}, whenIdle: async () => {} },
+    } as unknown as Parameters<typeof createRunningPlatformRuntime>[0]);
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(warn).toHaveBeenCalledWith(
+      "Derived greeting obligation reconciliation failed",
+      { errorName: "Error" },
+    );
   });
 
   it("writes provider-neutral conversation latency to structured logs", async () => {
@@ -427,6 +448,8 @@ describe("Meeting Knowledge shutdown dependency fence", () => {
       logger: { flush: async () => { calls.push("logger:flush"); } } as unknown as Logger,
       meetingKnowledge: {
         close: async () => never,
+        processPending: async () => {},
+        reconcilePending: async () => {},
         settleIngress: async () => {},
         start: () => {},
       },

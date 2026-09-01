@@ -3,14 +3,29 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PostgresMigrationRunner } from "@discord-meeting/postgres-adapter";
+import {
+  PostgresConversationOneShotReceiptStore,
+  PostgresMigrationRunner,
+} from "@discord-meeting/postgres-adapter";
+import {
+  DiscordSummaryPublicationAdapter,
+  type DiscordProjectionReference,
+  type PublishDiscordSummary,
+} from "@discord-meeting/discord-adapter";
+import type { SummaryPublicationRequest } from "@discord-meeting/meeting-core/publishing";
 import { Pool, type PoolConfig } from "pg";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import type { PlatformConfig } from "../src/config.js";
 import { stableLiveTranscriptTurnId } from "../src/live-runtime/transcript-turn-id.js";
+import type { LiveConversationOneShotReceiptPort } from
+  "../src/live-runtime/contracts.js";
+import { PostgresRecordingPublicationReconciliation } from
+  "../src/recording-playback/adapters/index.js";
 import {
   composePhase,
+  departedParticipant,
   GroundedAnswerProbe,
   hardGreetingLatencyMs,
   oneMinuteMs,
@@ -20,6 +35,7 @@ import {
   participantTwo,
   type QualificationPhase,
   runMinute,
+  sevenSyntheticParticipants,
   startEvent,
   transcript,
   twoHoursMs,
@@ -34,7 +50,6 @@ import {
   greetingStarts,
   playbackStarts,
   readEvents,
-  readGreetingManifest,
   turnPcmSha256,
   waitForEvidence,
   waitForPersistedTurn,
@@ -43,10 +58,44 @@ import {
 const postgresImage =
   "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const postgresPort = 5_432;
+const maximumLengthSyntheticProfiles = Object.freeze(Object.fromEntries(
+  sevenSyntheticParticipants.map((participantId, index) => {
+    const ordinal = index + 1;
+    const displayName = `Synthetic-${ordinal}-`.padEnd(100, String(ordinal));
+    const spokenName = index === 0
+      ? `Синтетический-${ordinal}-`.padEnd(100, "Я")
+      : displayName;
+    return [participantId, Object.freeze({
+      displayName,
+      greetingLocale: index === 0 ? "ru" as const : "en" as const,
+      spokenName,
+    })] as const;
+  }),
+)) as PlatformConfig["participantGreetingProfiles"];
 let container: StartedTestContainer | undefined;
 let databaseOptions: PoolConfig | undefined;
 
 beforeAll(async () => {
+  const externalDisposableUrl = process.env.VOICE_DURABILITY_E2E_POSTGRES_URL?.trim();
+  if (externalDisposableUrl !== undefined && externalDisposableUrl.length > 0) {
+    const parsed = new URL(externalDisposableUrl);
+    if (
+      !["127.0.0.1", "localhost", "::1"].includes(parsed.hostname) ||
+      !parsed.pathname.slice(1).startsWith("voice_durability_test_")
+    ) {
+      throw new Error(
+        "VOICE_DURABILITY_E2E_POSTGRES_URL must target a loopback disposable voice_durability_test_* database",
+      );
+    }
+    databaseOptions = { connectionString: externalDisposableUrl };
+    const bootstrap = new Pool(databaseOptions);
+    try {
+      await new PostgresMigrationRunner(bootstrap).migrate();
+    } finally {
+      await bootstrap.end();
+    }
+    return;
+  }
   const databaseName = `voice_durability_test_${randomUUID().replaceAll("-", "")}`;
   const useHostNetwork = process.env.VOICE_DURABILITY_HOST_NETWORK === "true";
   let postgres = new GenericContainer(postgresImage)
@@ -82,7 +131,278 @@ afterAll(async () => {
   await container?.stop();
 });
 
+beforeEach(async () => {
+  const pool = new Pool(requiredDatabaseOptions());
+  try {
+    await pool.query(
+      `TRUNCATE meeting_core.recording_publication_reconciliations,
+                meeting_core.conversation_one_shot_receipts`,
+    );
+  } finally {
+    await pool.end();
+  }
+}, 30_000);
+
+// oxlint-disable-next-line max-lines-per-function
 describe("providerless production-composition voice durability", () => {
+  it.each([
+    "reserved",
+    "commanded",
+    "provider-start-before-db-confirm",
+    "db-start-before-settlement",
+  ] as const)("recovers a process kill at %s within the original join deadline", async (checkpoint) => {
+    const recordingRoot = await mkdtemp(join(tmpdir(), `voice-kill-${checkpoint}-`));
+    const meetingId = `voice-kill-${checkpoint}-${randomUUID()}`;
+    const startedAtMs = 1_800_000_000_000;
+    const reached = checkpointFault(checkpoint);
+    let killed: QualificationPhase | undefined;
+    let restarted: QualificationPhase | undefined;
+    try {
+      killed = await composePhase({
+        clock: new VirtualClock(startedAtMs),
+        database: requiredDatabaseOptions(),
+        groundedAnswers: new GroundedAnswerProbe(`unused-${checkpoint}`),
+        meetingId,
+        phase: `killed-${checkpoint}`,
+        receiptDecorator: reached.decorate,
+        recordingRoot,
+      });
+      const event = startEvent(
+        meetingId,
+        new Date(startedAtMs).toISOString(),
+        [],
+      );
+      await killed.runtime.acceptLifecycle(event);
+      const joined = participantEvent(
+        meetingId,
+        killed.clock,
+        "participant.joined",
+        participantOne,
+      );
+      const interruptedAdmission = killed.runtime.acceptLifecycle(joined);
+      void interruptedAdmission.catch(() => {});
+      await reached.wait;
+      await killed.killForRestart();
+
+      restarted = await composePhase({
+        clock: new VirtualClock(startedAtMs + 100),
+        database: requiredDatabaseOptions(),
+        groundedAnswers: new GroundedAnswerProbe(`unused-restarted-${checkpoint}`),
+        meetingId,
+        phase: `restarted-${checkpoint}`,
+        recordingRoot,
+      });
+      await restarted.runtime.acceptLifecycle(event);
+      await restarted.runtime.acceptLifecycle(joined);
+      await restarted.coordinator.whenIdle(meetingId);
+
+      if (checkpoint === "db-start-before-settlement") {
+        await expect(restarted.pool.query<{ readonly state: string }>(
+          "SELECT state FROM meeting_core.conversation_one_shot_receipts",
+        )).resolves.toMatchObject({ rows: [{ state: "started" }] });
+      } else {
+        expect(await completedReceiptStates(restarted.pool, 1)).toEqual(["played"]);
+      }
+      const events = await readEvents(recordingRoot);
+      expect(greetingStarts(events)).toHaveLength(1);
+      const greetingAudio = audioChunks(
+        events,
+        `participant-greeting:${participantOne}`,
+      );
+      if (checkpoint === "provider-start-before-db-confirm") {
+        expect(greetingAudio.length).toBeGreaterThan(0);
+      } else {
+        expect(greetingAudio.length).toBeGreaterThan(1);
+      }
+      expect(new Set(greetingAudio.map(({ attemptId }) => attemptId)).size).toBe(1);
+      expect(greetingAudio.map(({ sequence }) => sequence)).toEqual(
+        Array.from({ length: greetingAudio.length }, (_, index) => index),
+      );
+      if (checkpoint === "provider-start-before-db-confirm") {
+        expect(restarted.conversationRuntime.proactiveRequests[0]?.idempotencyKey)
+          .toBe(killed.conversationRuntime.proactiveRequests[0]?.idempotencyKey);
+        const providerStart = await restarted.pool.query<{ readonly started_at_ms: string }>(
+          `SELECT floor(extract(epoch FROM provider_started_at) * 1000)::bigint::text
+             AS started_at_ms
+           FROM meeting_core.conversation_one_shot_receipts`,
+        );
+        expect(Number(providerStart.rows[0]?.started_at_ms)).toBe(startedAtMs);
+      }
+      expect(restarted.clock.nowMilliseconds() - startedAtMs)
+        .toBeLessThan(hardGreetingLatencyMs);
+    } finally {
+      await restarted?.closeFinal();
+      await killed?.killForRestart();
+      await rm(recordingRoot, { force: true, recursive: true });
+    }
+  }, 60_000);
+
+  it("greets seven configured participants through real PostgreSQL sequentially and simultaneously", async () => {
+    const recordingRoot = await mkdtemp(join(tmpdir(), "voice-seven-greetings-"));
+    const startedAtMs = 1_800_000_000_000;
+    const simultaneousMeetingId = `voice-seven-simultaneous-${randomUUID()}`;
+    const sequentialMeetingId = `voice-seven-sequential-${randomUUID()}`;
+    let simultaneous: QualificationPhase | undefined;
+    let sequential: QualificationPhase | undefined;
+    try {
+      simultaneous = await composePhase({
+        clock: new VirtualClock(startedAtMs),
+        database: requiredDatabaseOptions(),
+        groundedAnswers: new GroundedAnswerProbe("unused-seven-simultaneous"),
+        meetingId: simultaneousMeetingId,
+        participantGreetingProfiles: maximumLengthSyntheticProfiles,
+        phase: "seven-simultaneous",
+        recordingRoot,
+        waitForPlaybackReadiness: false,
+      });
+      await simultaneous.runtime.acceptLifecycle(startEvent(
+        simultaneousMeetingId,
+        new Date(startedAtMs).toISOString(),
+        [],
+      ));
+      for (const participantId of sevenSyntheticParticipants) {
+        await simultaneous.runtime.acceptLifecycle(participantEvent(
+          simultaneousMeetingId,
+          simultaneous.clock,
+          "participant.joined",
+          participantId,
+        ));
+      }
+      await simultaneous.connectPlayback();
+      await simultaneous.coordinator.whenIdle(simultaneousMeetingId);
+      expect(await completedReceiptStates(simultaneous.pool, 7))
+        .toEqual(Array.from({ length: 7 }, () => "played"));
+      expect(simultaneous.conversationRuntime.proactiveRequests).toHaveLength(1);
+      const cohortPrompt = await simultaneous.pool.query<{
+        readonly prompt: string;
+        readonly prompt_length: number;
+      }>(`
+        SELECT DISTINCT provider_command_prompt AS prompt,
+          char_length(provider_command_prompt) AS prompt_length
+        FROM meeting_core.conversation_one_shot_receipts
+      `);
+      expect(cohortPrompt.rows).toHaveLength(1);
+      expect(cohortPrompt.rows[0]?.prompt_length).toBeLessThanOrEqual(1_024);
+      for (const profile of Object.values(maximumLengthSyntheticProfiles)) {
+        expect(cohortPrompt.rows[0]?.prompt).toContain(profile.spokenName);
+      }
+
+      sequential = await composePhase({
+        clock: new VirtualClock(startedAtMs + 10_000),
+        database: requiredDatabaseOptions(),
+        groundedAnswers: new GroundedAnswerProbe("unused-seven-sequential"),
+        meetingId: sequentialMeetingId,
+        participantGreetingProfiles: maximumLengthSyntheticProfiles,
+        phase: "seven-sequential",
+        recordingRoot,
+      });
+      await sequential.runtime.acceptLifecycle(startEvent(
+        sequentialMeetingId,
+        new Date(startedAtMs + 10_000).toISOString(),
+        [],
+      ));
+      for (const [index, participantId] of sevenSyntheticParticipants.entries()) {
+        await sequential.runtime.acceptLifecycle(participantEvent(
+          sequentialMeetingId,
+          sequential.clock,
+          "participant.joined",
+          participantId,
+        ));
+        await sequential.coordinator.whenIdle(sequentialMeetingId);
+        expect(await completedReceiptStates(sequential.pool, 8 + index))
+          .toEqual(Array.from({ length: 8 + index }, () => "played"));
+      }
+      expect(await completedReceiptStates(sequential.pool, 14))
+        .toEqual(Array.from({ length: 14 }, () => "played"));
+      expect(sequential.conversationRuntime.proactiveRequests).toHaveLength(7);
+    } finally {
+      await sequential?.closeFinal();
+      await simultaneous?.closeFinal();
+      await rm(recordingRoot, { force: true, recursive: true });
+    }
+  }, 60_000);
+
+  it("publishes no processing link and reconciles ready or unavailable exactly once across takeover", async () => {
+    const pool = new Pool(requiredDatabaseOptions());
+    const recordingStates = new Map<string, "processing" | "ready" | "unavailable">();
+    const projector = new RecordingPublicationProjector();
+    const obligations = new PostgresRecordingPublicationReconciliation(pool);
+    const adapter = new DiscordSummaryPublicationAdapter(projector, {
+      recordingPlayback: (meetingId) => {
+        const status = recordingStates.get(meetingId) ?? "processing";
+        return Promise.resolve(status === "ready"
+          ? { status, url: `https://recordings.invalid/playback#${meetingId}` }
+          : { status });
+      },
+      recordingPlaybackReconciliation: obligations,
+    });
+    try {
+      const readyRequest = recordingPublicationRequest(`ready-${randomUUID()}`);
+      recordingStates.set(readyRequest.meetingId, "processing");
+      await expect(adapter.publish(readyRequest)).resolves.toMatchObject({ ok: true });
+      expect(projector.calls).toHaveLength(1);
+      expect(projector.calls[0]?.input.markdown).not.toContain("/playback#");
+
+      const abandoned = await obligations.claim({
+        leaseOwner: "publication-owner-before-restart",
+        leaseSeconds: 120,
+      });
+      expect(abandoned.map(({ meetingId }) => meetingId)).toContain(readyRequest.meetingId);
+      await expect(obligations.claim({
+        leaseOwner: "publication-contender",
+      })).resolves.toEqual([]);
+      await pool.query(
+        `UPDATE meeting_core.recording_publication_reconciliations
+         SET lease_expires_at = transaction_timestamp() - interval '1 second'
+         WHERE meeting_id = $1`,
+        [readyRequest.meetingId],
+      );
+
+      recordingStates.set(readyRequest.meetingId, "ready");
+      const takeover = await obligations.claim({ leaseOwner: "publication-owner-after-restart" });
+      const readyObligation = takeover.find(({ meetingId }) => meetingId === readyRequest.meetingId);
+      expect(readyObligation).toBeDefined();
+      await expect(adapter.reconcileRecordingPlayback(readyObligation!)).resolves.toBe("edited");
+      await expect(obligations.complete(
+        readyObligation!.meetingId,
+        readyObligation!.leaseOwner,
+        "edited",
+      )).resolves.toBe(true);
+      await expect(obligations.claim({ leaseOwner: "publication-owner-final" }))
+        .resolves.toEqual([]);
+      expect(projector.calls).toHaveLength(2);
+      expect(projector.calls[1]).toMatchObject({ directEditOnly: true });
+      expect(projector.calls[1]?.input.markdown).toContain(
+        `https://recordings.invalid/playback#${readyRequest.meetingId}`,
+      );
+
+      const unavailableRequest = recordingPublicationRequest(`unavailable-${randomUUID()}`);
+      recordingStates.set(unavailableRequest.meetingId, "processing");
+      await expect(adapter.publish(unavailableRequest)).resolves.toMatchObject({ ok: true });
+      expect(projector.calls.at(-1)?.input.markdown).not.toContain("/playback#");
+      recordingStates.set(unavailableRequest.meetingId, "unavailable");
+      const unavailable = (await obligations.claim({ leaseOwner: "publication-terminal" }))
+        .find(({ meetingId }) => meetingId === unavailableRequest.meetingId);
+      expect(unavailable).toBeDefined();
+      await expect(adapter.reconcileRecordingPlayback(unavailable!)).resolves.toBe("unavailable");
+      await expect(obligations.complete(
+        unavailable!.meetingId,
+        unavailable!.leaseOwner,
+        "unavailable",
+      )).resolves.toBe(true);
+      const terminal = await pool.query<{ readonly state: string }>(
+        `SELECT state FROM meeting_core.recording_publication_reconciliations
+         WHERE meeting_id = $1`,
+        [unavailableRequest.meetingId],
+      );
+      expect(terminal.rows[0]?.state).toBe("unavailable");
+      expect(projector.calls).toHaveLength(3);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  // oxlint-disable-next-line max-lines-per-function
   it("qualifies two compressed hours across durable playback and owner restart", async () => {
     const meetingId = `voice-durability-${randomUUID()}`;
     const recordingRoot = await mkdtemp(join(tmpdir(), "voice-durability-recording-"));
@@ -98,48 +418,65 @@ describe("providerless production-composition voice durability", () => {
         meetingId,
         phase: "owner-1",
         recordingRoot,
+        waitForPlaybackReadiness: false,
       });
       await first.runtime.acceptLifecycle(startEvent(meetingId, startedAt, []));
 
-      const firstGreetingAt = performance.now();
+      const clusteredGreetingAt = performance.now();
       await first.runtime.acceptLifecycle(participantEvent(
         meetingId,
         first.clock,
         "participant.joined",
         participantOne,
       ));
-      await waitForEvidence(
-        recordingRoot,
-        (events) => audioChunks(events, `participant-greeting:${participantOne}`).length > 0,
-        hardGreetingLatencyMs,
-      );
-      expect(performance.now() - firstGreetingAt).toBeLessThan(hardGreetingLatencyMs);
-      await waitForEvidence(
-        recordingRoot,
-        (events) => completedTurn(events, `participant-greeting:${participantOne}`),
-      );
-
-      const secondGreetingAt = performance.now();
       await first.runtime.acceptLifecycle(participantEvent(
         meetingId,
         first.clock,
         "participant.joined",
         participantTwo,
       ));
-      await waitForEvidence(
-        recordingRoot,
-        (events) => audioChunks(events, `participant-greeting:${participantTwo}`).length > 0,
+      await first.runtime.acceptLifecycle(participantEvent(
+        meetingId,
+        first.clock,
+        "participant.joined",
+        departedParticipant,
+      ));
+      await first.runtime.acceptLifecycle(participantEvent(
+        meetingId,
+        first.clock,
+        "participant.left",
+        departedParticipant,
+      ));
+      await first.connectPlayback();
+      const firstAudioAcceptedAt = await first.transport.whenFirstAudioAccepted(
+        `participant-greeting:${participantOne}`,
         hardGreetingLatencyMs,
       );
-      expect(performance.now() - secondGreetingAt).toBeLessThan(hardGreetingLatencyMs);
+      expect(firstAudioAcceptedAt - clusteredGreetingAt)
+        .toBeLessThan(hardGreetingLatencyMs);
+      const secondAudioAcceptedAt = await first.transport.whenFirstAudioAccepted(
+        `participant-greeting:${participantTwo}`,
+        hardGreetingLatencyMs,
+      );
+      expect(secondAudioAcceptedAt - clusteredGreetingAt)
+        .toBeLessThan(hardGreetingLatencyMs);
+      await waitForEvidence(
+        recordingRoot,
+        (events) => audioChunks(events, `participant-greeting:${participantOne}`).length > 0,
+      );
+      await waitForEvidence(
+        recordingRoot,
+        (events) => completedTurn(events, `participant-greeting:${participantOne}`),
+      );
       await waitForEvidence(
         recordingRoot,
         (events) => completedTurn(events, `participant-greeting:${participantTwo}`),
       );
-      expect(await completedReceiptStates(first.pool)).toEqual([
+      expect(await completedReceiptStates(first.pool, 2)).toEqual([
         "played",
         "played",
       ]);
+      expect(first.conversationRuntime.proactiveRequests).toEqual([]);
 
       for (let minute = 1; minute <= 60; minute += 1) {
         await runMinute(first, meetingId, startedAtMs, minute, `Status update ${minute}.`);
@@ -186,7 +523,7 @@ describe("providerless production-composition voice durability", () => {
       ));
       await restarted.clock.advanceTo(startedAtMs + 3_610_000);
       await restarted.coordinator.whenIdle(meetingId);
-      expect(await completedReceiptStates(restarted.pool)).toEqual([
+      expect(await completedReceiptStates(restarted.pool, 2)).toEqual([
         "played",
         "played",
       ]);
@@ -264,6 +601,7 @@ describe("providerless production-composition voice durability", () => {
       await waitForEvidence(
         recordingRoot,
         (events) => completedTurn(events, "meeting-farewell:v1"),
+        10_000,
       );
       restarted.transcriber.emit(participantOne, farewellEvent);
       await restarted.clock.advanceTo(startedAtMs + twoHoursMs + 10_000);
@@ -285,7 +623,7 @@ describe("providerless production-composition voice durability", () => {
         .toBe(true);
       expect(Math.max(...(persisted?.timeline.map(({ turn }) => turn.endMs) ?? [])))
         .toBe(twoHoursMs);
-      expect(await completedReceiptStates(restarted.pool)).toEqual([
+      expect(await completedReceiptStates(restarted.pool, 3)).toEqual([
         "played",
         "played",
         "played",
@@ -310,13 +648,11 @@ describe("providerless production-composition voice durability", () => {
         event.turnId === questionTurnId && event.type === "audio-chunk"
       )).toBe(false);
 
-      const greetingManifest = await readGreetingManifest();
-      expect(turnPcmSha256(events, `participant-greeting:${participantOne}`)).toBe(
-        greetingManifest.get("Привет, Тест А!"),
-      );
-      expect(turnPcmSha256(events, `participant-greeting:${participantTwo}`)).toBe(
-        greetingManifest.get("Hi, Test B!"),
-      );
+      expect(audioChunks(events, `participant-greeting:${participantOne}`).length)
+        .toBeGreaterThan(0);
+      expect(events.some(({ turnId }) =>
+        turnId.startsWith(`participant-greeting:${departedParticipant}`)
+      )).toBe(false);
       expect(turnPcmSha256(events, "meeting-farewell:v1")).toBe(
         await farewellSha256("en"),
       );
@@ -345,6 +681,130 @@ describe("providerless production-composition voice durability", () => {
     }
   }, 180_000);
 });
+
+type GreetingKillCheckpoint =
+  | "commanded"
+  | "db-start-before-settlement"
+  | "provider-start-before-db-confirm"
+  | "reserved";
+
+function checkpointFault(checkpoint: GreetingKillCheckpoint): {
+  readonly decorate: (
+    store: PostgresConversationOneShotReceiptStore,
+  ) => LiveConversationOneShotReceiptPort;
+  readonly wait: Promise<void>;
+} {
+  let signal!: () => void;
+  let signalled = false;
+  const wait = new Promise<void>((resolve) => { signal = resolve; });
+  const kill = async (): Promise<never> => {
+    if (!signalled) {
+      signalled = true;
+      signal();
+    }
+    return await new Promise<never>(() => {});
+  };
+  return {
+    decorate: (store) => ({
+      beginFarewellAttempt: (input) => store.beginFarewellAttempt(input),
+      beginGreetingAttempt: async (input) => {
+        await store.beginGreetingAttempt(input);
+        if (checkpoint === "commanded") {
+          await kill();
+        }
+      },
+      beginGreetingCohortAttempt: async (input) => {
+        await store.beginGreetingCohortAttempt(input);
+        if (checkpoint === "commanded") {
+          await kill();
+        }
+      },
+      complete: (input) => store.complete(input),
+      confirmGreetingStarted: async (input) => {
+        if (checkpoint === "provider-start-before-db-confirm") { await kill(); }
+        await store.confirmGreetingStarted(input);
+      },
+      confirmGreetingCohortStarted: async (input) => {
+        if (checkpoint === "provider-start-before-db-confirm") { await kill(); }
+        await store.confirmGreetingCohortStarted(input);
+      },
+      release: async (input) => { await store.release(input); },
+      releaseFarewellAttempt: async (input) => { await store.releaseFarewellAttempt(input); },
+      releaseGreetingAttempt: async (input) => { await store.releaseGreetingAttempt(input); },
+      reconcileGreetingCapacity: (input) => store.reconcileGreetingCapacity(input),
+      reserve: async (input) => {
+        const reservation = await store.reserve(input);
+        if (checkpoint === "reserved" && reservation.status === "reserved") {
+          await kill();
+        }
+        return reservation;
+      },
+      settleFarewell: (input) => store.settleFarewell(input),
+      settleGreeting: async (input) => {
+        if (checkpoint === "db-start-before-settlement") { await kill(); }
+        await store.settleGreeting(input);
+      },
+    }),
+    wait,
+  };
+}
+
+class RecordingPublicationProjector {
+  readonly calls: Array<{
+    readonly directEditOnly: boolean;
+    readonly input: PublishDiscordSummary;
+  }> = [];
+
+  public publish(
+    input: PublishDiscordSummary,
+    options?: { readonly directEditOnly?: boolean },
+  ): Promise<DiscordProjectionReference> {
+    this.calls.push({ directEditOnly: options?.directEditOnly === true, input });
+    return Promise.resolve({
+      kind: "channel-message",
+      messageId: "33333333333333333",
+      parentChannelId: "11111111111111111",
+    });
+  }
+}
+
+function recordingPublicationRequest(meetingId: string): SummaryPublicationRequest {
+  const turnId = `${meetingId}:turn`;
+  const transcriptId = `${meetingId}:transcript`;
+  return {
+    idempotencyKey: `${meetingId}:publication:v1`,
+    meetingId,
+    publicationTargetId: "11111111111111111",
+    summary: {
+      actionItems: [],
+      decisions: [{
+        decisionId: `${meetingId}:decision`,
+        evidenceTurnIds: [turnId],
+        text: "Ship the synthetic fixture.",
+      }],
+      openQuestions: [],
+      overview: "Providerless recording publication qualification.",
+      summaryId: `${meetingId}:summary`,
+      title: "Providerless publication",
+      topics: [],
+      transcriptId,
+      version: 1,
+    },
+    transcript: {
+      readableSegments: [],
+      recordingId: meetingId,
+      transcriptId,
+      turns: [{
+        endMs: 1_000,
+        speakerId: "synthetic-speaker",
+        startMs: 0,
+        text: "Ship the synthetic fixture.",
+        turnId,
+      }],
+      version: 1,
+    },
+  };
+}
 
 function assertGroundedTurn(
   phase: QualificationPhase,

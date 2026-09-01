@@ -2,12 +2,16 @@ import { requiresExhaustiveCoverage } from "../domain/question-scope.js";
 import { createFocusedRetrievalGroundingPlan, type RehydratedEvidenceTurn } from "../domain/grounding-plan.js";
 import type { ExhaustiveCoverage } from "./exhaustive-coverage.js";
 import { GroundedMeetingAnswer } from "./grounded-meeting-answer.js";
-import type { HistoricalFocusedRetrieval } from "./historical-retrieval.js";
 import type { HistoricalAuthorizationObservationV1, HistoricalAuthorizationPort } from "./ports/historical-grounding.js";
-import type { CanonicalEvidenceTurnHashPort } from "./same-room-focused-memory.js";
+import type { CanonicalEvidenceTurnHashPort } from "./ports/final-reply.js";
 import type { LiveFinalizedMemoryQueryPort } from "./ports/live-finalized-memory.js";
-import { crossSourceTurns, deduplicateEvidenceTurns, executeActiveExhaustiveCoverage,
-  normalizedLocale, notAnswered, recheckGroundedPlaybackAuthority, sameAuthorization,
+import type { FocusedHistoricalEvidenceV2Port, FocusedHistoricalEvidenceV2Result } from
+  "./ports/focused-locator-retrieval-v2.js";
+import { deduplicateEvidenceTurns, executeActiveExhaustiveCoverage,
+  crossSourceTurns, normalizedLocale, notAnswered,
+  normalizeHistoricalResult,
+  unavailableHistoricalResult,
+  recheckGroundedPlaybackAuthority, sameAuthorization,
   sameLiveContext, type GroundedPlaybackAuthorityRequest,
   type GroundedPlaybackAuthorityResultV1 } from "./grounded-question-internals.js";
 export interface GroundedMeetingQuestionIdentityPort { digest(namespace: string, parts: readonly string[]): string }
@@ -59,9 +63,8 @@ export class AnswerGroundedMeetingQuestion {
       readonly answers: GroundedMeetingAnswer;
       readonly authorization?: HistoricalAuthorizationPort;
       readonly exhaustive?: Pick<ExhaustiveCoverage, "buildPlan">;
-      readonly focusedHistorical?: Pick<HistoricalFocusedRetrieval, "buildPlan">;
-      readonly historicalSearchEnabled?: () => boolean;
-      readonly historicalServingAuthorized?: () => boolean;
+      readonly historical?: FocusedHistoricalEvidenceV2Port;
+      readonly historicalRequired?: boolean;
       readonly ids: GroundedMeetingQuestionIdentityPort;
       readonly live: LiveFinalizedMemoryQueryPort;
       readonly turnHashes: CanonicalEvidenceTurnHashPort;
@@ -127,6 +130,9 @@ export class AnswerGroundedMeetingQuestion {
         scopeId: current.scopeId,
         signal: options.signal,
       });
+    }
+    if (prepared === "historical_unavailable") {
+      return notAnswered("unavailable", "historical_authority_unavailable");
     }
     if (prepared === null) {
       return notAnswered("insufficient_evidence", "no_current_authorized_evidence");
@@ -221,7 +227,10 @@ export class AnswerGroundedMeetingQuestion {
     input: Parameters<AnswerGroundedMeetingQuestion["execute"]>[0],
     context: NonNullable<Awaited<ReturnType<LiveFinalizedMemoryQueryPort["resolveContext"]>>>,
     signal: AbortSignal,
-  ): Promise<PreparedFocusedEvidence | "route_required" | null> {
+  ): Promise<PreparedFocusedEvidence | "historical_unavailable" |
+    "route_required" | null> {
+    const historicalRequired = this.dependencies.historicalRequired ??
+      this.dependencies.historical !== undefined;
     const livePromise = this.dependencies.live.searchHotTail({
       maximumCandidates: this.#policy.maximumCandidates,
       meetingId: input.meetingId,
@@ -232,33 +241,32 @@ export class AnswerGroundedMeetingQuestion {
       signal,
       scopeId: context.scopeId,
     });
-    const historicalPromise = this.dependencies.focusedHistorical === undefined ||
-        input.authorizationPrincipalRef === undefined
-      ? Promise.resolve(null)
-      : this.dependencies.focusedHistorical.buildPlan({
+    const historicalPromise: Promise<FocusedHistoricalEvidenceV2Result> =
+      input.authorizationPrincipalRef === undefined ||
+      this.dependencies.historical === undefined
+      ? Promise.resolve(unavailableHistoricalResult())
+      : this.dependencies.historical.retrieve({
           authorizationPrincipalRef: input.authorizationPrincipalRef,
           currentMeetingId: input.meetingId,
+          maximumCandidates: this.#policy.maximumCandidates,
           question: input.question,
           roomId: input.roomId,
           scopeId: context.scopeId,
-          searchEnabled: this.dependencies.historicalSearchEnabled?.() === true,
-          servingAuthorized:
-            this.dependencies.historicalServingAuthorized?.() === true,
           signal,
-          sourceSet: "room",
-        });
-    const [liveResult, historicalResult] = await Promise.all([
+        }).catch(() => unavailableHistoricalResult(signal));
+    const [liveResult, rawHistoricalResult] = await Promise.all([
       livePromise,
       historicalPromise,
     ]);
     signal.throwIfAborted();
-    if (historicalResult?.status === "route_required") {
-      return "route_required";
+    const historicalResult = normalizeHistoricalResult(rawHistoricalResult);
+    if (liveResult.status !== "current" ||
+      (historicalRequired && historicalResult.status === "unavailable")) {
+      return "historical_unavailable";
     }
     const liveTurns: RehydratedEvidenceTurn[] = [];
-    const historicalTurns: RehydratedEvidenceTurn[] = [];
     const generationParts = [context.knowledgeEpoch];
-    if (liveResult.status === "current") {
+    {
       const rehydrated = await this.dependencies.live.rehydrateHotTail({
         candidates: liveResult.candidates,
         expectedGeneration: liveResult.context.sourceGeneration,
@@ -268,50 +276,33 @@ export class AnswerGroundedMeetingQuestion {
         signal,
         scopeId: context.scopeId,
       });
-      if (rehydrated.status === "current") {
-        liveTurns.push(...rehydrated.turns);
-        generationParts.push(rehydrated.context.knowledgeEpoch);
+      if (rehydrated.status !== "current" ||
+        !liveHydrationMatchesCandidates(liveResult.candidates, rehydrated.turns)) {
+        return "historical_unavailable";
       }
+      liveTurns.push(...rehydrated.turns);
+      generationParts.push(rehydrated.context.knowledgeEpoch);
     }
-    if (historicalResult?.status === "ready") {
-      for (const block of historicalResult.plan.blocks) {
-        generationParts.push(
-          block.binding.releaseId,
-          String(block.binding.desiredGeneration),
-          block.candidateLocator,
-        );
-        historicalTurns.push(...block.turns.map((turn) => Object.freeze({
-          ...turn,
-          source: Object.freeze({
-            historicalSource: Object.freeze({
-              candidateLocator: block.candidateLocator,
-              indexGeneration: block.indexGeneration,
-              releaseId: block.binding.releaseId,
-            }),
-            meetingId: block.binding.meetingId,
-            sourceEndCodePoint: turn.sourceEndCodePoint,
-            sourceStartCodePoint: turn.sourceStartCodePoint,
-            transcriptId: block.binding.transcriptId,
-            transcriptVersion: block.binding.transcriptVersion,
-          }),
-          turnHash: this.dependencies.turnHashes.hash(turn),
-        })));
-      }
+    const historicalTurns = historicalResult.status === "current"
+      ? historicalResult.turns
+      : [];
+    if (historicalResult.status !== "unavailable") {
+      generationParts.push(historicalResult.authorityGeneration);
     }
     const fallbackSource = {
       meetingId: input.meetingId,
       transcriptId: `live-memory-v1:${input.meetingId}`,
       transcriptVersion: context.sourceGeneration,
     };
-    const rankedLive = [
+    const canonicalLiveTurns = [
       ...deduplicateEvidenceTurns(liveTurns, fallbackSource).values(),
-    ];
-    const rankedHistorical = [
-      ...deduplicateEvidenceTurns(historicalTurns, fallbackSource).values(),
-    ];
+    ].map((turn) => Object.freeze({
+      ...turn,
+      source: Object.freeze(fallbackSource),
+    }));
     const selected = crossSourceTurns(
-      rankedLive,
-      rankedHistorical,
+      canonicalLiveTurns,
+      [...deduplicateEvidenceTurns(historicalTurns, fallbackSource).values()],
       this.#policy.maximumCandidates,
     );
     if (selected.length === 0) {
@@ -401,8 +392,20 @@ export class AnswerGroundedMeetingQuestion {
     }
     const refreshed = await this.prepareFocused(input, context, signal);
     return refreshed !== null && refreshed !== "route_required" &&
+      refreshed !== "historical_unavailable" &&
       refreshed.authorityGeneration === admittedEvidence.authorityGeneration &&
       refreshed.canonicalEvidenceHash === admittedEvidence.canonicalEvidenceHash &&
       refreshed.knowledgeEpoch === admittedEvidence.knowledgeEpoch;
   }
+}
+
+function liveHydrationMatchesCandidates(
+  candidates: readonly { readonly turnHash: string; readonly turnId: string }[],
+  turns: readonly RehydratedEvidenceTurn[],
+): boolean {
+  return candidates.length === turns.length && candidates.every((candidate, index) => {
+    const turn = turns[index];
+    return turn !== undefined && turn.turnId === candidate.turnId &&
+      turn.turnHash === candidate.turnHash;
+  });
 }

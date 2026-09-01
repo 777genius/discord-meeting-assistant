@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   DiscordGuildSetupAdapter,
   DiscordGuildSetupCommandHandler,
@@ -41,6 +43,8 @@ import { FileParticipantGreetingCueRegistry } from "../adapters/outbound/file-pa
 import { SubscriptionRuntimeFarewellClassifier } from "../adapters/outbound/subscription-runtime-farewell-classifier.js";
 import type { PlatformConfig } from "../config.js";
 import { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
+import { PostgresRecordingPublicationReconciliation } from
+  "../recording-playback/adapters/index.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 import type { PlatformLiveFinalizedMemoryRuntime } from "./live-finalized-memory.js";
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
@@ -83,6 +87,7 @@ export interface PlatformDiscordLiveComposition {
   readonly rawPublisher: SummaryPublicationPort;
 }
 
+// oxlint-disable-next-line max-lines-per-function
 export async function createPlatformDiscordLiveComposition(input: {
   readonly cleanup: PlatformStartupCleanup;
   readonly config: PlatformConfig;
@@ -94,6 +99,10 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly meetings: PostgresLiveMeetingRepository;
   readonly pool: Pool;
   readonly publicationEffects: SummaryPublicationEffectLedger;
+  readonly recordingPlayback?: (meetingId: string) => Promise<
+    | { readonly status: "processing" | "unavailable" }
+    | { readonly status: "ready"; readonly url: string }
+  >;
   readonly recordingPlaybackUrl?: (meetingId: string) => string;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
 }): Promise<PlatformDiscordLiveComposition> {
@@ -177,6 +186,88 @@ export async function createPlatformDiscordLiveComposition(input: {
   });
   if (live !== undefined) {
     input.cleanup.defer("derived live runtime", () => live.close());
+    const stopObservingPlaybackReadiness = craigPlaybackGateway.onSessionReady(
+      (recordingId) => {
+        void live.conversationPlaybackReady(recordingId).catch((error: unknown) => {
+          input.logger.warn(
+            "Conversation playback readiness notification failed",
+            classifyPlatformError(error),
+          );
+        });
+      },
+    );
+    input.cleanup.defer("Craig playback readiness observer", () => {
+      stopObservingPlaybackReadiness();
+    });
+  }
+  const recordingReconciliations = input.recordingPlayback === undefined
+    ? undefined
+    : new PostgresRecordingPublicationReconciliation(input.pool);
+  const rawPublisher = new DiscordSummaryPublicationAdapter(
+    discordPublisher,
+    {
+      finalPublicationMode: input.config.discordFinalPublicationMode,
+      publisherIdentity: input.config.discordApplicationId,
+      ...(input.recordingPlayback === undefined
+        ? {}
+        : { recordingPlayback: input.recordingPlayback }),
+      ...(recordingReconciliations === undefined
+        ? {}
+        : { recordingPlaybackReconciliation: recordingReconciliations }),
+      ...(input.recordingPlaybackUrl === undefined
+        ? {}
+        : { recordingPlaybackUrl: input.recordingPlaybackUrl }),
+    },
+  );
+  if (recordingReconciliations !== undefined) {
+    const reconciliationOwner = `meeting-platform:${randomUUID()}`;
+    let reconciliationRunning = false;
+    const reconcile = async (): Promise<void> => {
+      if (reconciliationRunning) {
+        return;
+      }
+      reconciliationRunning = true;
+      try {
+        for (const obligation of await recordingReconciliations.claim({
+          leaseOwner: reconciliationOwner,
+        })) {
+          try {
+            const outcome = await rawPublisher.reconcileRecordingPlayback({
+              externalPublicationId: obligation.externalPublicationId,
+              request: obligation.request,
+            });
+            if (outcome === "processing") {
+              await recordingReconciliations.release(
+                obligation.meetingId,
+                obligation.leaseOwner,
+              );
+            } else if (!await recordingReconciliations.complete(
+              obligation.meetingId,
+              obligation.leaseOwner,
+              outcome,
+            )) {
+              throw new Error("Recording publication reconciliation lease was lost");
+            }
+          } catch (error) {
+            await recordingReconciliations.release(
+              obligation.meetingId,
+              obligation.leaseOwner,
+            );
+            input.logger.warn(
+              "Recording publication reconciliation failed",
+              classifyPlatformError(error),
+            );
+          }
+        }
+      } catch (error) {
+        input.logger.warn("Recording publication reconciliation failed", classifyPlatformError(error));
+      } finally {
+        reconciliationRunning = false;
+      }
+    };
+    const handle = setInterval(() => { void reconcile(); }, 1_000);
+    input.cleanup.defer("recording publication reconciliation", () => { clearInterval(handle); });
+    void reconcile();
   }
   return {
     ...(conversationRuntime === undefined ? {} : { conversationRuntime }),
@@ -185,16 +276,7 @@ export async function createPlatformDiscordLiveComposition(input: {
     guildSetupHandler,
     installUrls,
     ...(live === undefined ? {} : { live }),
-    rawPublisher: new DiscordSummaryPublicationAdapter(
-      discordPublisher,
-      {
-        finalPublicationMode: input.config.discordFinalPublicationMode,
-        publisherIdentity: input.config.discordApplicationId,
-        ...(input.recordingPlaybackUrl === undefined
-          ? {}
-          : { recordingPlaybackUrl: input.recordingPlaybackUrl }),
-      },
-    ),
+    rawPublisher,
   };
 }
 

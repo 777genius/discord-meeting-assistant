@@ -1,15 +1,15 @@
 export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
-  archiveSha256: "4ce4b9b2319e2015e8a4c9e81263ff23ae024e468bd6ae4523ee8b0ac95eb97c",
-  commit: "249245a98bdae6d357c586aa078374c2a9da728c",
+  archiveSha256: "0da25fdb015ce1eea4e538808d28a661ea674333a2425b4b02282b46502a7e0c",
+  commit: "e685b41a12e630b7e787fb2fa26b08c0eb6137d4",
   developmentPackageLink: "vendor/infinity-context/.upstream/packages/infinity_context_ts_sdk",
-  immutablePackageIntegrity: "sha512-V2RCQKfJ3XMiIXQ7B3F+wvGAu9RJeRYGnDaRIVdT890tLvv0asviGpmsyyM5El7JuNjgPKI+TpdygaoKjxYSDw==",
-  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.1.0-249245a9.tgz",
-  packageLockSha256: "068b3129a4ccd449c50cdc6a72755dbae3d4a977c5a468565e2f3841529cac0e",
-  packageManifestSha256: "020c37993fc2749dd55649b2649d35e79570c1b43757a67ee16618de15be6ccd",
+  immutablePackageIntegrity: "sha512-lCIL90wIF9dSme7qhMVdjN/ey+SAGCrmraKc3mak5oyer6ye7ZxbUBPMaCBBApr3+HTO8HduTtUPtqUPbrhJ/A==",
+  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz",
+  packageLockSha256: "3013b04c996f96925391f52b848ddd0610844fccfe67c74d17140b013775dcbc",
+  packageManifestSha256: "146308a393c2e2f2961da477581b15da900c8b16a6e1ff4530ed8aec6057e70b",
   packageName: "@infinity-context/sdk",
-  packageTarballIntegrity: "sha512-V2RCQKfJ3XMiIXQ7B3F+wvGAu9RJeRYGnDaRIVdT890tLvv0asviGpmsyyM5El7JuNjgPKI+TpdygaoKjxYSDw==",
-  packageTarballSha256: "8727f751aed94769de8e7aec93ea0b927479a4ab501b3b01c31c2472b6cebc7f",
-  packageVersion: "0.1.0",
+  packageTarballIntegrity: "sha512-lCIL90wIF9dSme7qhMVdjN/ey+SAGCrmraKc3mak5oyer6ye7ZxbUBPMaCBBApr3+HTO8HduTtUPtqUPbrhJ/A==",
+  packageTarballSha256: "aae17e2817b198f0f5e4151cdf023fb013370c12a58fe3245ccd92ba5d6b4166",
+  packageVersion: "0.2.1",
   retainedLiveQualificationEvidenceSha256: "4f19e430a465294d020e6dc0eebde4a6320913744201fa60700cb75d148065fe",
   retainedLiveQualificationManifestSha256: "sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207",
   retainedLiveQualificationSourceLogSha256:
@@ -20,8 +20,14 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   retainedExactHeadQualificationManifestPath: "docs/operations/evidence/2026-08-19-infinity-exact-head-249245a9/qualification.json",
   retainedExactHeadQualificationManifestSha256:
     "sha256:c972c35ceeb6abcb37529961dc0c844243627c80a9a792944dd776db7c6ac74b",
+  retainedExactHeadRevision:
+    "249245a98bdae6d357c586aa078374c2a9da728c",
   retainedExactHeadSourceBundleSha256:
     "0168c397b761950e9dd5e7d2586516c773287f0bd101d8900cff961608b358bd",
+  retainedExactHeadSdkTarballSha256:
+    "8727f751aed94769de8e7aec93ea0b927479a4ab501b3b01c31c2472b6cebc7f",
+  retainedExactHeadSdkTree:
+    "a2ed97138f1d52e33aa04de6efe17c4726baf19e",
   retainedPredecessorScopedDocumentsManifestSha256: "sha256:42807626aa1867c8d9663fa4a8c9ad27cc08c0d2eb93adbcea8f138a3f230c43",
   retainedScopedDocumentsParityBaselineSha256: "sha256:d7e58a5d8d1ef010c413d2b76a35ac196ee6f5ba7033573fcab100fca040fa97",
   retainedScopedDocumentsPostgresEvidenceSha256:
@@ -39,7 +45,19 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   sourcePinnedEmbeddingProfileDigestSha256:
     "sha256:b183b9d6350dfaf9f874cab9fef993d3ded5060a4a18d972c45ec97def5faf31",
   sourcePinnedServiceRevision:
-    "249245a98bdae6d357c586aa078374c2a9da728c",
+    "e685b41a12e630b7e787fb2fa26b08c0eb6137d4",
   repository: "https://github.com/777genius/infinity-context.git",
-  tree: "a2ed97138f1d52e33aa04de6efe17c4726baf19e",
+  tree: "d5dc6805c2db3e488a32a4e10c3ae4492ffc59bc",
+});
+
+/** Immutable package identity for the locator-only Retrieval V2 slice. */
+export const INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE = Object.freeze({
+  immutablePackageIntegrity:
+    "sha512-lCIL90wIF9dSme7qhMVdjN/ey+SAGCrmraKc3mak5oyer6ye7ZxbUBPMaCBBApr3+HTO8HduTtUPtqUPbrhJ/A==",
+  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz",
+  packageManifestSha256: "146308a393c2e2f2961da477581b15da900c8b16a6e1ff4530ed8aec6057e70b",
+  packageName: "@infinity-context/sdk",
+  packageTarballSha256: "aae17e2817b198f0f5e4151cdf023fb013370c12a58fe3245ccd92ba5d6b4166",
+  packageVersion: "0.2.1",
+  reviewedSourceCommit: "e685b41a12e630b7e787fb2fa26b08c0eb6137d4",
 });

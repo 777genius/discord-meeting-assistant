@@ -12,7 +12,10 @@ import {
   PinnedMultilingualMiniLmTokenizer,
 } from "../src/index.js";
 import { DisposableInfinityEndpoint } from "./disposable-infinity-endpoint.js";
-import { finalMeeting } from "./historical-e2e-test-kit.js";
+import {
+  finalMeeting,
+  testHistoricalActorKeys,
+} from "./historical-e2e-test-kit.js";
 
 const tokenizer = new PinnedMultilingualMiniLmTokenizer();
 
@@ -54,6 +57,7 @@ function fixture() {
 
 function adapter(endpoint: DisposableInfinityEndpoint) {
   return new InfinityContextHistoricalMemoryAdapter({
+    actorKeys: testHistoricalActorKeys,
     baseUrl: "http://disposable.infinity.invalid",
     embeddingTokenProfile: () => historicalEmbeddingTokenProfile(tokenizer),
     requestTimeoutMs: 1_000,

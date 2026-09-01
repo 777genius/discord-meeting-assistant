@@ -15,6 +15,17 @@ import { HOSTED_CAMPAIGN_TARGET } from "../src/hosted-campaign-target.js";
 import { writeCreateOnlyHostedCampaignReceipt } from "../src/run-hosted-campaign.js";
 
 const digest = (character: string): string => character.repeat(64);
+const mandatoryArtifactPaths = [
+  "campaign-proof.json", "control/campaign-lease-receipt.json", "control/craig-stack-input.json",
+  "control/craig-stack-mutation-start.json", "control/craig-stack-receipt.json",
+  "greeting-ledger.json", "late-greeting.json",
+  "historical-reply.json", "historical-reply-input.json", "live-memory.json", "private-coverage.json",
+  "thin-remediation.json", "run-1/evidence.json", "run-2/evidence.json",
+  "run-3/evidence.json",
+  "run-3/recording-ready.json",
+  "run-3/public-reply-effect.arm.json", "run-3/public-reply-effect.triggered.json",
+  ...Array.from({ length: 6 }, (_, index) => `run-3/capture-${String(index + 1)}.json`),
+];
 const plan = (): HostedCampaignInput => ({
   children: [],
   runs: [
@@ -27,7 +38,13 @@ const plan = (): HostedCampaignInput => ({
 });
 const expectation = (): HostedCampaignPassReceiptExpectation => ({
   admissionReceiptSha256: digest("1"),
+  artifacts: mandatoryArtifactPaths.map((path) => ({
+    byteLength: 1, path, sha256: digest("a"),
+  })),
   bindingsSha256: digest("2"),
+  campaignLease: { campaignRoot: "/private/evidence/campaigns/campaign-1", device: 1, inode: 2,
+    leaseSha256: digest("7"), planSha256: digestCanonical(plan()), receiptSha256: digest("8") },
+  craigStack: { projectName: "craig-e2e-1234567890abcdef1234", receiptSha256: digest("6") },
   definitionSha256: digest("3"),
   plan: plan(),
   release: {
@@ -57,8 +74,11 @@ function evidenceFor(action: HostedCampaignBarrierAction): unknown {
     case "service-level-sources-ready": return { outputPath: "/private/evidence/sources", runId: "run-3", sourcesReady: true };
     case "actor-scenario-playback-completed": return { completed: true };
     case "actor-completed": case "conversation-observer-completed": case "playback-link-seen":
+    case "greeting-ledger-ready": case "historical-reply-input-ready":
+    case "historical-reply-ready": case "live-memory-ready": case "private-coverage-ready": case "remediation-bundle-ready":
     case "recording-ready": case "replay-attestation-ready": case "supplemental-completed":
       return { completed: true, ordinal: action.ordinal, runId: action.runId };
+    default: throw new Error(`Unhandled action: ${JSON.stringify(action)}`);
   }
 }
 
@@ -80,12 +100,14 @@ describe("hosted campaign pass receipt", () => {
     expect(value).toMatchObject({
       admission: { receiptSha256: digest("1") },
       bindingsSha256: digest("2"),
+      campaignLease: { device: 1, inode: 2, leaseSha256: digest("7") },
       definitionSha256: digest("3"),
       kind: "hosted-campaign-pass-receipt",
       planSha256: digestCanonical(plan()),
       release: { releaseBindingSha256: digest("4"), releaseId: "release-1", trustRootSha256: digest("5") },
       schemaVersion: 2,
-      teardown: { campaignLeaseReleased: true, childrenStopped: true },
+      teardown: { campaignLeaseHeldAtVerification: true, childrenStopped: true,
+        destructiveTeardownAuthorized: true },
     });
   });
 

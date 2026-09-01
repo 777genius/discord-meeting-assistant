@@ -6,9 +6,65 @@ import {
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import type { Pool } from "pg";
 
-export interface ReferencedMeetingRow {
+interface ReferencedMeetingRow {
   readonly meeting_id: string;
   readonly snapshot: unknown;
+}
+
+export interface CurrentHistoricalReferenceBatch {
+  readonly rows: readonly ReferencedMeetingRow[];
+  readonly validReferences: ReadonlySet<FocusedMemoryReference>;
+}
+
+/** One bounded snapshot batch; malformed candidates isolate, query failure aborts. */
+export async function loadCurrentHistoricalReferenceBatch(
+  pool: Pool,
+  binding: QuestionBindingSnapshot,
+  references: readonly FocusedMemoryReference[],
+): Promise<CurrentHistoricalReferenceBatch> {
+  const eligible = references.filter((reference) =>
+    reference.historicalSource !== undefined && reference.meetingId !== binding.meetingId
+  );
+  const historicalMeetingIds = [...new Set(eligible.map(({ meetingId }) => meetingId))];
+  const releaseIds = [...new Set(eligible.map((reference) =>
+    reference.historicalSource!.releaseId
+  ))];
+  const [referenced, plansResult] = await Promise.all([
+    historicalMeetingIds.length === 0
+      ? Promise.resolve({ rows: [] as ReferencedMeetingRow[] })
+      : pool.query<ReferencedMeetingRow>(
+          `SELECT meeting.meeting_id, meeting.snapshot
+           FROM meeting_core.meetings AS meeting
+           WHERE meeting.meeting_id = ANY($1::text[])`,
+          [historicalMeetingIds],
+        ),
+    releaseIds.length === 0
+      ? Promise.resolve({ rows: [] as CurrentHistoricalPlanRow[] })
+      : pool.query<CurrentHistoricalPlanRow>(
+          `SELECT historical.meeting_id, historical.release_id,
+                  historical.scope_id, historical.room_id,
+                  historical.transcript_id,
+                  historical.transcript_version::float8 AS transcript_version,
+                  historical.plan
+           FROM meeting_core.historical_memory_sync AS historical
+           WHERE historical.release_id = ANY($1::text[])
+             AND historical.is_current
+             AND historical.operation = 'index'
+             AND historical.state = 'applied'
+             AND historical.plan IS NOT NULL`,
+          [releaseIds],
+        ),
+  ]);
+  const plans = new Map(plansResult.rows.map((row) => [
+    row.release_id,
+    { plan: decodeHistoricalIndexPlanV1(row.plan), row },
+  ]));
+  return Object.freeze({
+    rows: Object.freeze(referenced.rows),
+    validReferences: new Set(eligible.filter((reference) =>
+      historicalReferenceMatches(reference, binding, plans)
+    )),
+  });
 }
 
 interface CurrentHistoricalPlanRow {
@@ -19,63 +75,6 @@ interface CurrentHistoricalPlanRow {
   readonly scope_id: string;
   readonly transcript_id: string;
   readonly transcript_version: number;
-}
-
-export async function loadCurrentHistoricalReferenceRows(
-  pool: Pool,
-  binding: QuestionBindingSnapshot,
-  references: readonly FocusedMemoryReference[],
-): Promise<readonly ReferencedMeetingRow[] | null> {
-  const historicalReferences = references.filter(({ historicalSource }) =>
-    historicalSource !== undefined
-  );
-  if (references.some(({ historicalSource, meetingId }) =>
-    meetingId !== binding.meetingId && historicalSource === undefined
-  )) {
-    return null;
-  }
-  const historicalMeetingIds = [
-    ...new Set(references.flatMap(({ meetingId }) =>
-      meetingId === binding.meetingId ? [] : [meetingId]
-    )),
-  ];
-  const referencedRows = historicalMeetingIds.length === 0
-    ? []
-    : (await pool.query<ReferencedMeetingRow>(
-        `SELECT meeting.meeting_id, meeting.snapshot
-         FROM meeting_core.meetings AS meeting
-         WHERE meeting.meeting_id = ANY($1::text[])`,
-        [historicalMeetingIds],
-      )).rows;
-  const historicalPlans = historicalReferences.length === 0
-    ? []
-    : (await pool.query<CurrentHistoricalPlanRow>(
-        `SELECT historical.meeting_id, historical.release_id,
-                historical.scope_id, historical.room_id,
-                historical.transcript_id,
-                historical.transcript_version::float8 AS transcript_version,
-                historical.plan
-         FROM meeting_core.historical_memory_sync AS historical
-         WHERE historical.release_id = ANY($1::text[])
-           AND historical.is_current
-           AND historical.operation = 'index'
-           AND historical.state = 'applied'
-           AND historical.plan IS NOT NULL`,
-        [[...new Set(historicalReferences.flatMap(({ historicalSource }) =>
-          historicalSource === undefined ? [] : [historicalSource.releaseId]
-        ))]],
-      )).rows;
-  try {
-    const plans = new Map(historicalPlans.map((row) => [
-      row.release_id,
-      { plan: decodeHistoricalIndexPlanV1(row.plan), row },
-    ]));
-    return historicalReferences.every((reference) =>
-      historicalReferenceMatches(reference, binding, plans)
-    ) ? Object.freeze(referencedRows) : null;
-  } catch {
-    return null;
-  }
 }
 
 function historicalReferenceMatches(

@@ -4,17 +4,21 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
   },
   "scripts": {
+    "build": "tsc --project tsconfig.build.json --pretty false",
     "check": "pnpm run typecheck && pnpm run test",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
     "@discord-meeting/meeting-core": "workspace:*",
+    "@grpc/grpc-js": "catalog:",
+    "@grpc/proto-loader": "catalog:",
     "zod": "catalog:"
   },
+  "files": ["dist", "proto", "package.json"],
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:",

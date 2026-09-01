@@ -193,4 +193,19 @@ describe("subscription runtime focused evidence selector", () => {
     })).rejects.toThrow("bounded opaque candidate set");
     expect(runtime.request).toBeUndefined();
   });
+
+  it("rejects 25 qualified candidates before provider execution", async () => {
+    const runtime = new RuntimeFake();
+    const candidate = candidates()[0];
+
+    await expect(adapter(runtime).select({
+      attemptId: "question-1:generation:1:attempt:1",
+      candidates: Array.from({ length: 25 }, (_, index) => ({
+        ...candidate,
+        candidateId: `candidate-${String(index + 1).padStart(6, "0")}`,
+      })),
+      question: "When?",
+    })).rejects.toThrow("bounded opaque candidate set");
+    expect(runtime.request).toBeUndefined();
+  });
 });

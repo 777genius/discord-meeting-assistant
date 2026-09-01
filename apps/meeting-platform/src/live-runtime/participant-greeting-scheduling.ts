@@ -7,7 +7,6 @@ import type { ParticipantGreetingDeadlines } from "./participant-greeting-deadli
 import {
   ParticipantGreetingQueue,
   type ParticipantGreetingPriority,
-  type PendingParticipantGreeting,
 } from "./participant-greeting-queue.js";
 import {
   participantGreetingPlaybackBoundMilliseconds,
@@ -20,6 +19,8 @@ import type { ParticipantGreetingReceipts } from "./participant-greeting-receipt
 
 const maximumFirstAudioStartupMilliseconds = 750;
 const maximumSafeRetries = 3;
+/** One bounded small-call command may finish after the five-second first-audio deadline. */
+const maximumCohortPlaybackMilliseconds = 45_000;
 
 interface GreetingSchedulingDependencies {
   readonly configuration: LiveConversationConfiguration;
@@ -33,6 +34,7 @@ interface GreetingReservationInput {
   readonly nowMilliseconds: () => number;
   readonly participantId: string;
   readonly receipts: ParticipantGreetingReceipts;
+  readonly reclaimActive?: boolean;
 }
 
 interface GreetingOutcomeInput {
@@ -50,14 +52,66 @@ interface GreetingOutcomeInput {
   readonly receipts: ParticipantGreetingReceipts;
 }
 
+export interface GreetingPlaybackAdmission {
+  readonly leaseToken: string;
+  readonly providerCommand?: { readonly locale: "en" | "ru"; readonly prompt: string };
+  readonly providerCommandId: string;
+  readonly providerRecoveryDeadlineMilliseconds?: number;
+}
+
 export async function reserveGreetingPlaybackAdmission(
   input: GreetingReservationInput,
-): Promise<string | undefined> {
+): Promise<GreetingPlaybackAdmission | undefined> {
+  if (input.reclaimActive === true) {
+    const recovered = await input.receipts.reserve(input.participantId, true);
+    if (recovered.status !== "reserved") {
+      input.markGreeted();
+      input.clearTerminal();
+      return undefined;
+    }
+    if (recovered.providerCommand === undefined) {
+      if (!input.deadlines.ensureFresh(input.participantId, input.nowMilliseconds())) {
+        await input.receipts.settle(input.participantId, "suppressed", "stale");
+        input.markGreeted();
+        input.clearTerminal();
+        return undefined;
+      }
+      return {
+        leaseToken: recovered.leaseToken,
+        providerCommandId: recovered.providerCommandId ??
+          `participant-greeting:${input.participantId}`,
+      };
+    }
+    if (!input.deadlines.ensureFresh(input.participantId, input.nowMilliseconds())) {
+      await input.receipts.settle(input.participantId, "suppressed", "stale");
+      input.markGreeted();
+      input.clearTerminal();
+      return undefined;
+    }
+    if (recovered.providerRecoveryRemainingMilliseconds === undefined ||
+      recovered.providerRecoveryRemainingMilliseconds <= 0) {
+      await input.receipts.settle(input.participantId, "suppressed", "ambiguous");
+      input.markGreeted();
+      input.clearTerminal();
+      return undefined;
+    }
+    return {
+      leaseToken: recovered.leaseToken,
+      providerCommand: recovered.providerCommand,
+      providerCommandId: recovered.providerCommandId ??
+        `participant-greeting:${input.participantId}`,
+      providerRecoveryDeadlineMilliseconds: input.nowMilliseconds() +
+        recovered.providerRecoveryRemainingMilliseconds,
+    };
+  }
   if (!input.deadlines.ensureFresh(input.participantId, input.nowMilliseconds())) {
     await input.receipts.fenceOnce(input.participantId);
     return undefined;
   }
-  const reservation = input.receipts.reserve(input.participantId);
+  const reservation = input.receipts.reserve(
+    input.participantId,
+    false,
+  );
   const result = await input.deadlines.race(
     input.participantId,
     reservation,
@@ -72,11 +126,26 @@ export async function reserveGreetingPlaybackAdmission(
     return undefined;
   }
   if (result.value.status !== "reserved") {
-    input.markGreeted();
-    input.clearTerminal();
+    // completed is terminal evidence. in_flight is only an unknown owner/commit
+    // result and must keep the durable derived obligation pending.
+    if (result.value.status === "completed") {
+      input.markGreeted();
+      input.clearTerminal();
+    }
     return undefined;
   }
-  return result.value.leaseToken;
+  return {
+    leaseToken: result.value.leaseToken,
+    ...(result.value.providerCommand === undefined
+      ? {}
+      : { providerCommand: result.value.providerCommand }),
+    ...(result.value.providerRecoveryRemainingMilliseconds === undefined
+      ? {}
+      : { providerRecoveryDeadlineMilliseconds:
+          input.nowMilliseconds() + result.value.providerRecoveryRemainingMilliseconds }),
+    providerCommandId: result.value.providerCommandId ??
+      `participant-greeting:${input.participantId}`,
+  };
 }
 
 /** Owns conservative sequential slots before any durable/provider attempt. */
@@ -87,10 +156,6 @@ export class ParticipantGreetingScheduling {
   private readonly retryCounts = new Map<string, number>();
 
   public constructor(private readonly dependencies: GreetingSchedulingDependencies) {}
-
-  public get isActive(): boolean {
-    return this.activeSlotUntilMilliseconds !== 0;
-  }
 
   public plan(
     participantId: string,
@@ -157,9 +222,15 @@ export class ParticipantGreetingScheduling {
     return false;
   }
 
-  public beginSlot(participantId: string, nowMilliseconds: number): number {
-    const playbackBound = this.playbackBoundsMilliseconds.get(participantId) ??
-      participantGreetingPlaybackBoundMilliseconds(null);
+  public beginSlot(
+    participantId: string,
+    nowMilliseconds: number,
+    dynamicCohort = false,
+  ): number {
+    const playbackBound = dynamicCohort
+      ? maximumCohortPlaybackMilliseconds
+      : this.playbackBoundsMilliseconds.get(participantId) ??
+        participantGreetingPlaybackBoundMilliseconds(null);
     this.activeSlotUntilMilliseconds = nowMilliseconds +
       maximumFirstAudioStartupMilliseconds + playbackBound +
       participantGreetingSettlementSlotMarginMilliseconds;
@@ -186,26 +257,4 @@ export class ParticipantGreetingScheduling {
       nowMilliseconds + maximumFirstAudioStartupMilliseconds < expiresAtMilliseconds;
   }
 
-  public cohortOverflow(
-    pending: readonly PendingParticipantGreeting[],
-    expiresAt: (participantId: string) => number | undefined,
-    nowMilliseconds: number,
-  ): readonly string[] {
-    let slotAvailableAt = Math.max(nowMilliseconds, this.activeSlotUntilMilliseconds);
-    const overflow: string[] = [];
-    for (const greeting of pending) {
-      const playbackBound = this.playbackBoundsMilliseconds.get(greeting.participantId);
-      const firstAudioAt = slotAvailableAt + maximumFirstAudioStartupMilliseconds;
-      if (
-        playbackBound === undefined ||
-        !this.canStartBeforeDeadline(expiresAt(greeting.participantId), slotAvailableAt)
-      ) {
-        overflow.push(greeting.participantId);
-        continue;
-      }
-      slotAvailableAt = firstAudioAt + playbackBound +
-        participantGreetingSettlementSlotMarginMilliseconds;
-    }
-    return overflow;
-  }
 }

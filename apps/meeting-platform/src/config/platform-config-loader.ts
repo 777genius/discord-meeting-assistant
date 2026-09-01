@@ -42,6 +42,36 @@ function resolveLoadOptions(options: PlatformConfigLoadOptions) {
   };
 }
 
+async function loadPlatformSecrets(
+  environment: ParsedPlatformEnvironment,
+  readSecret: SecretFileReader,
+  readBuildProvenance: BuildProvenanceReader,
+) {
+  const optional = async (path: string | undefined): Promise<string | undefined> =>
+    path === undefined ? undefined : readSecret(path);
+  return Promise.all([
+    readSecret(environment.CRAIG_BEARER_TOKEN_FILE),
+    optional(environment.CONVERSATION_ENABLED
+      ? environment.CONVERSATION_RUNTIME_TOKEN_FILE
+      : undefined),
+    readSecret(environment.DISCORD_TOKEN_FILE),
+    optional(environment.INFINITY_CONTEXT_TOKEN_FILE),
+    optional(environment.INFINITY_CONTEXT_TOPOLOGY_KEY_FILE),
+    optional(environment.MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE),
+    optional(environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED ||
+      environment.CONVERSATION_ENABLED
+      ? environment.MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE
+      : undefined),
+    readSecret(environment.POSTGRES_URL_FILE),
+    readSecret(environment.REDIS_URL_FILE),
+    readSecret(environment.S3_ACCESS_KEY_ID_FILE),
+    readSecret(environment.S3_SECRET_ACCESS_KEY_FILE),
+    readSecret(environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE),
+    optional(environment.VOICETEXT_SERVICE_TOKEN_FILE),
+    loadRecordingPlaybackConfig(environment, readSecret),
+    loadProductionBuildProvenance(environment, readBuildProvenance),
+  ]);
+}
 
 export async function loadPlatformConfigWithParser(
   parseEnvironment: (raw: Readonly<Record<string, string | undefined>>) =>
@@ -68,6 +98,7 @@ export async function loadPlatformConfigWithParser(
     discordToken,
     infinityContextToken,
     infinityContextTopologyKey,
+    meetingKnowledgeActorKeyring,
     meetingKnowledgePrincipalKey,
     postgresUrl,
     redisUrl,
@@ -77,35 +108,7 @@ export async function loadPlatformConfigWithParser(
     voicetextServiceToken,
     recordingPlayback,
     buildProvenance,
-  ] = await Promise.all([
-    readSecret(environment.CRAIG_BEARER_TOKEN_FILE),
-    !environment.CONVERSATION_ENABLED ||
-    environment.CONVERSATION_RUNTIME_TOKEN_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.CONVERSATION_RUNTIME_TOKEN_FILE),
-    readSecret(environment.DISCORD_TOKEN_FILE),
-    environment.INFINITY_CONTEXT_TOKEN_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.INFINITY_CONTEXT_TOKEN_FILE),
-    environment.INFINITY_CONTEXT_TOPOLOGY_KEY_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.INFINITY_CONTEXT_TOPOLOGY_KEY_FILE),
-    (!environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED &&
-      !environment.CONVERSATION_ENABLED) ||
-    environment.MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE),
-    readSecret(environment.POSTGRES_URL_FILE),
-    readSecret(environment.REDIS_URL_FILE),
-    readSecret(environment.S3_ACCESS_KEY_ID_FILE),
-    readSecret(environment.S3_SECRET_ACCESS_KEY_FILE),
-    readSecret(environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE),
-    environment.VOICETEXT_SERVICE_TOKEN_FILE === undefined
-      ? Promise.resolve()
-      : readSecret(environment.VOICETEXT_SERVICE_TOKEN_FILE),
-    loadRecordingPlaybackConfig(environment, readSecret),
-    loadProductionBuildProvenance(environment, readBuildProvenance),
-  ]);
+  ] = await loadPlatformSecrets(environment, readSecret, readBuildProvenance);
   const twoHourHistoricalQualification =
     await loadTwoHourHistoricalQualification(
       environment.MEETING_KNOWLEDGE_TWO_HOUR_QUALIFICATION_FILE,
@@ -120,6 +123,9 @@ export async function loadPlatformConfigWithParser(
     discordToken,
     ...(infinityContextToken === undefined ? {} : { infinityContextToken }),
     ...(infinityContextTopologyKey === undefined ? {} : { infinityContextTopologyKey }),
+    ...(meetingKnowledgeActorKeyring === undefined
+      ? {}
+      : { meetingKnowledgeActorKeyring }),
     ...(meetingKnowledgePrincipalKey === undefined
       ? {}
       : { meetingKnowledgePrincipalKey }),

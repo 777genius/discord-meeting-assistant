@@ -4,8 +4,10 @@ import {
   buildResolvedHostedCampaignPlanV1,
   compileHostedCampaignDefinitionV1,
 } from "../src/hosted-campaign-plan-builder.js";
+import { argumentsFor } from "../src/hosted-campaign-child-runtime.js";
 import { parseHostedCampaignPlan } from "../src/hosted-campaign-run-config.js";
 import { validateHostedCampaignOwnedPaths } from "../src/hosted-campaign-plan-paths.js";
+import { parseCampaignArguments } from "../src/verify-campaign.js";
 
 const definition = () => ({
   answerFirstPacketMilliseconds: 4_000,
@@ -13,6 +15,8 @@ const definition = () => ({
   campaignRoot: "/private/e2e/campaigns",
   clockPreflightPath: "/private/e2e/clock/preflight.json",
   fixtureManifestPath: "/private/e2e/fixtures/manifest.json",
+  historicalReplyObservationPolicy: observationPolicy(),
+  privateCoverageSourcePath: "/private/e2e/private/private-coverage.source.json",
   recordingPlaybackOrigin: "https://recordings.test.example",
   remote: {
     composeFile: "/srv/discord-meeting/source/infra/deployment/compose.yaml",
@@ -37,6 +41,15 @@ const bindings = () => ({
   })),
   schemaVersion: 1,
 });
+
+function observationPolicy() {
+  return {
+    archivedThreadVisibilities: ["public", "private"] as const,
+    endedAt: "2026-08-24T00:10:00.000Z", guildId: "1533228590643155034",
+    maximumArchivePagesPerParent: 100, maximumMessagePagesPerSurface: 100,
+    parentChannelIds: ["1533228891827736657"], startedAt: "2026-08-24T00:00:00.000Z",
+  };
+}
 
 describe("hosted campaign strict plan builder", () => {
   it("returns a stable blocked report and no plan until authoritative runtime bindings exist", () => {
@@ -65,12 +78,21 @@ describe("hosted campaign strict plan builder", () => {
       { campaignId: "campaign-2026-08-12", ordinal: 2, retainedCaptureCount: 0, runId: "campaign-run-2", scenario: "overlap" },
       { campaignId: "campaign-2026-08-12", ordinal: 3, retainedCaptureCount: 6, runId: "campaign-run-3", scenario: "reconnect" },
     ]);
+    expect(result.plan.historicalReplyObservationPolicy).toEqual(observationPolicy());
+    const preparer = result.plan.children.find(({ childId }) =>
+      childId === "historical-reply-preparer")!;
+    expect(JSON.parse(preparer.environment.DISCORD_E2E_HISTORICAL_PREP_OBSERVATION_POLICY!))
+      .toEqual(observationPolicy());
     expect(parseHostedCampaignPlan(result.plan)).toEqual(result.plan);
     expect(result.plan.children.map(({ childId }) => childId)).toEqual([
       "actor-1", "actor-2", "actor-3", "provenance-before", "recording-ready-1", "replay-attestation-1", "collector-1",
-      "recording-ready-2", "replay-attestation-2", "collector-2", "conversation-observer", "supplemental-player",
-      "recording-ready-3", "replay-attestation-3", "playback-link-observer", "service-level-sources", "service-levels",
-      "collector-3", "provenance-after", "campaign-verifier",
+      "recording-ready-2", "replay-attestation-2", "collector-2", "conversation-observer",
+      "greeting-ledger-observer", "live-memory-observer", "supplemental-player",
+      "recording-ready-3", "replay-attestation-3",
+      "playback-link-observer", "service-level-sources", "service-levels", "collector-3",
+      "historical-reply-preparer", "historical-reply-observer", "private-coverage-observer",
+      "remediation-bundle",
+      "provenance-after", "campaign-verifier",
     ]);
     const observer = result.plan.children.find(({ childId }) => childId === "conversation-observer")!;
     expect(observer.environment.DISCORD_E2E_CONVERSATION_VOICE_CRAIG_BOT_ID)
@@ -136,6 +158,21 @@ describe("hosted campaign strict plan builder", () => {
       .not.toBe(definition().clockPreflightPath);
   });
 
+  it("compiles a canonical multi-parent allowlist without reducing it to the target parent", () => {
+    const policy = { ...observationPolicy(),
+      parentChannelIds: ["1533228891827736657", "1533228891827736658"] };
+    const plan = buildResolvedHostedCampaignPlanV1({
+      ...definition(), historicalReplyObservationPolicy: policy,
+    }, bindings());
+    expect(plan.historicalReplyObservationPolicy?.parentChannelIds)
+      .toEqual(policy.parentChannelIds);
+    expect(() => buildResolvedHostedCampaignPlanV1({
+      ...definition(), historicalReplyObservationPolicy: {
+        ...policy, parentChannelIds: policy.parentChannelIds.toReversed(),
+      },
+    }, bindings())).toThrow(/canonical/u);
+  });
+
   it("keeps every generated local path under the owned campaign directory", () => {
     const plan = buildResolvedHostedCampaignPlanV1(definition(), bindings());
     const ownedRoot = "/private/e2e/campaigns/campaign-2026-08-12/";
@@ -150,6 +187,22 @@ describe("hosted campaign strict plan builder", () => {
     expect(generated.every((path) => path.startsWith(ownedRoot))).toBe(true);
     expect(new Set(plan.children.flatMap(({ produces }) => produces.map(({ outputPath }) => outputPath))).size)
       .toBe(plan.children.flatMap(({ produces }) => produces).length);
+  });
+
+  it("feeds the exact constructed verifier argv through the real strict parser", () => {
+    const plan = buildResolvedHostedCampaignPlanV1(definition(), bindings());
+    const verifier = plan.children.find(({ childId }) => childId === "campaign-verifier");
+    if (verifier === undefined) { throw new Error("compiled plan has no campaign verifier"); }
+    const parsed = parseCampaignArguments(argumentsFor(verifier));
+    if (verifier.arguments.kind !== "campaign-verifier") {
+      throw new Error("compiled campaign verifier has the wrong argument contract");
+    }
+    expect(parsed).toEqual({
+      evidencePaths: verifier.arguments.evidencePaths,
+      historicalReplyPath: verifier.arguments.historicalReplyPath,
+      manifestPath: verifier.arguments.manifestPath,
+      thinRemediationPath: verifier.arguments.thinRemediationPath,
+    });
   });
 
   it("contains neither commands nor token values and references only an external secret directory", () => {

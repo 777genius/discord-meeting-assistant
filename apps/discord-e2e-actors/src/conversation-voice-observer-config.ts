@@ -84,6 +84,14 @@ const environmentSchema = z.object({
     .default(500),
   DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: snowflakeSchema,
   DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT: absoluteDirectorySchema.optional(),
+  DISCORD_E2E_CONVERSATION_VOICE_LATE_GREETING_LEDGER_INPUT: absoluteOutputPathSchema.optional(),
+  DISCORD_E2E_CONVERSATION_VOICE_LATE_GREETING_OUTPUT: absoluteOutputPathSchema.optional(),
+  DISCORD_E2E_CONVERSATION_VOICE_REMOTE_COMPOSE_FILE: absoluteOutputPathSchema.optional(),
+  DISCORD_E2E_CONVERSATION_VOICE_REMOTE_ENV_FILE: absoluteOutputPathSchema.optional(),
+  DISCORD_E2E_CONVERSATION_VOICE_REMOTE_HOST: z.string().regex(
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$/u,
+  ).optional(),
+  DISCORD_E2E_CONVERSATION_VOICE_REMOTE_SOURCE_ROOT: absoluteDirectorySchema.optional(),
   DISCORD_E2E_HOSTED_CAMPAIGN_ID: correlationIdSchema.optional(),
   DISCORD_E2E_CONVERSATION_VOICE_KEYCHAIN_SERVICE: z.string()
     .trim()
@@ -289,6 +297,8 @@ export interface ConversationVoiceObserverConfig {
   readonly greetingHandshakeRoot?: string;
   readonly hostedCampaignId?: string;
   readonly keychainService: string;
+  readonly lateGreetingLedgerInputPath?: string;
+  readonly lateGreetingOutputPath?: string;
   readonly maxPcmBytes: number;
   readonly meetingId?: string;
   readonly maximumThinkingCueDurationMilliseconds: number;
@@ -299,6 +309,12 @@ export interface ConversationVoiceObserverConfig {
   readonly privateTestGuildConfirmed: true;
   readonly purpose: "addressed-answer" | "farewell" | "greeting";
   readonly readyTimeoutMilliseconds: number;
+  readonly remote?: {
+    readonly composeFile: string;
+    readonly environmentFile: string;
+    readonly host: string;
+    readonly sourceRoot: string;
+  };
   readonly recordingId: string | null;
   readonly runId: string;
   readonly secretDirectory: string | undefined;
@@ -315,6 +331,23 @@ export function loadConversationVoiceObserverConfig(
     throw new Error("Conversation voice observer does not accept bot tokens through environment variables");
   }
   const parsed = environmentSchema.parse(environment);
+  const remoteValues = [
+    parsed.DISCORD_E2E_CONVERSATION_VOICE_REMOTE_COMPOSE_FILE,
+    parsed.DISCORD_E2E_CONVERSATION_VOICE_REMOTE_ENV_FILE,
+    parsed.DISCORD_E2E_CONVERSATION_VOICE_REMOTE_HOST,
+    parsed.DISCORD_E2E_CONVERSATION_VOICE_REMOTE_SOURCE_ROOT,
+  ];
+  if (remoteValues.some((value) => value !== undefined) &&
+    remoteValues.some((value) => value === undefined)) {
+    throw new Error("Late-greeting restart requires the complete remote deployment binding");
+  }
+  const [composeFile, environmentFile, host, sourceRoot] = remoteValues;
+  const remote = composeFile === undefined ? undefined : (() => {
+    if (environmentFile === undefined || host === undefined || sourceRoot === undefined) {
+      throw new Error("Late-greeting restart requires the complete remote deployment binding");
+    }
+    return { composeFile, environmentFile, host, sourceRoot };
+  })();
   const config = Object.freeze({
     additionalCaptures: Object.freeze(
       (parsed.DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON ?? [])
@@ -349,6 +382,12 @@ export function loadConversationVoiceObserverConfig(
     ...(parsed.DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT === undefined
       ? {}
       : { greetingHandshakeRoot: parsed.DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT }),
+    ...(parsed.DISCORD_E2E_CONVERSATION_VOICE_LATE_GREETING_LEDGER_INPUT === undefined
+      ? {}
+      : { lateGreetingLedgerInputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_LATE_GREETING_LEDGER_INPUT }),
+    ...(parsed.DISCORD_E2E_CONVERSATION_VOICE_LATE_GREETING_OUTPUT === undefined
+      ? {}
+      : { lateGreetingOutputPath: parsed.DISCORD_E2E_CONVERSATION_VOICE_LATE_GREETING_OUTPUT }),
     ...(parsed.DISCORD_E2E_HOSTED_CAMPAIGN_ID === undefined
       ? {}
       : { hostedCampaignId: parsed.DISCORD_E2E_HOSTED_CAMPAIGN_ID }),
@@ -370,6 +409,7 @@ export function loadConversationVoiceObserverConfig(
     readyTimeoutMilliseconds:
       parsed.DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS ??
       parsed.DISCORD_E2E_CONVERSATION_VOICE_CAPTURE_TIMEOUT_MS,
+    ...(remote === undefined ? {} : { remote }),
     recordingId: parsed.DISCORD_E2E_CONVERSATION_VOICE_RECORDING_ID ?? null,
     runId: parsed.DISCORD_E2E_CONVERSATION_VOICE_RUN_ID,
     secretDirectory: parsed.DISCORD_E2E_CONVERSATION_VOICE_SECRET_DIRECTORY,

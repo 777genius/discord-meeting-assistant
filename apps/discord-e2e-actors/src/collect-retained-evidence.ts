@@ -30,7 +30,7 @@ import { SshDeploymentEvidenceProbe } from "./ssh-deployment-probe.js";
 import { EvidenceProbeInterruptedError } from "./ssh-deployment-probe-commands.js";
 import {
   deploymentProvenanceDigest,
-  recordingReadyReceiptV1Schema,
+  recordingReadyReceiptSchema,
 } from "./recording-ready-receipt.js";
 import { admitCompiledHostedCampaignReleaseBinding } from
   "./hosted-campaign-release-binding.js";
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
       fixtureManifestV1Schema.parse(value)
     ),
     readJson(config.DISCORD_E2E_READY_RECEIPT_INPUT).then((value) =>
-      recordingReadyReceiptV1Schema.parse(value)
+      recordingReadyReceiptSchema.parse(value)
     ),
     Promise.all((config.DISCORD_E2E_CONVERSATION_VOICE_INPUTS ?? []).map((path) =>
       readJson(path).then((value) => conversationVoiceEvidenceV3Schema.parse(value))

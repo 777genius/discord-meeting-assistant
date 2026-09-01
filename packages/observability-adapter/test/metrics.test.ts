@@ -14,6 +14,7 @@ describe("PrometheusMetrics", () => {
     metrics.observeStage("transcription", "succeeded", 2);
     metrics.observeStage("transcription", "succeeded", 7);
     metrics.recordDiscordPublication("reconciled");
+    metrics.observeLiveMemoryProjection("reconciled", 4.9);
     metrics.setProviderHealth("stt", "healthy");
 
     const exposition = metrics.render();
@@ -46,6 +47,9 @@ describe("PrometheusMetrics", () => {
     );
     expect(exposition).toContain(
       'discord_meeting_discord_publications_total{outcome="reconciled"} 1',
+    );
+    expect(exposition).toContain(
+      'discord_meeting_live_memory_ingest_to_query_seconds_bucket{le="5",outcome="reconciled"} 1',
     );
     expect(exposition).toContain(
       'discord_meeting_provider_health{dependency="stt"} 1',

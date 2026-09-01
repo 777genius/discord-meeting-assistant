@@ -74,6 +74,18 @@ export interface SubscriptionRuntimeExecutionProfile {
     | typeof subscriptionRuntimeReasoningEffort;
 }
 
+export interface KnowledgeAnswerQualificationExecutionBinding {
+  readonly artifactBindingSha256: string;
+  readonly campaignRunId: string;
+  readonly endpointIdentitySha256: string;
+  readonly processIdentitySha256: string;
+  readonly promptMapperSha256: string;
+  readonly serviceGenerationSha256: string;
+  readonly serviceIdentitySha256: string;
+  readonly stableAttemptId: string;
+  readonly tokenizerSha256: string;
+}
+
 export const finalSummaryExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
   maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
   model: subscriptionRuntimeModel,

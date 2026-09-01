@@ -1,33 +1,17 @@
-import {
-  DurableAnswerPublication,
-} from "@discord-meeting/meeting-core/publishing";
-import {
-  LiveFinalizedMemoryWorker,
-  createHistoricalReleaseBinding,
-  createFocusedRetrievalGroundingPlan,
-} from "@discord-meeting/meeting-core/meeting-knowledge";
+import { DurableAnswerPublication } from "@discord-meeting/meeting-core/publishing";
+import { LiveFinalizedMemoryWorker, createHistoricalReleaseBinding,
+  createFocusedRetrievalGroundingPlan } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { LiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
-import type {
-  AnswerPayloadPort,
-} from "@discord-meeting/meeting-core/publishing";
+import type { AnswerPayloadPort } from "@discord-meeting/meeting-core/publishing";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
-import {
-  PostgresAnswerEffectStore,
-  PostgresExhaustiveCoverageStore,
-  PostgresFinalReplyMaintenance,
-  PostgresFinalReplyEvidence,
-  PostgresFocusedMemoryRetrieval,
-  PostgresHistoricalEvidenceAuthority,
-  PostgresLiveFinalizedMemoryLifecycle,
-  PostgresLiveFinalizedMemoryQuery,
-  PostgresLiveFinalizedMemoryStore,
-  PostgresLiveMeetingRepository,
-  PostgresQuestionAdmissionCommit,
-  PostgresQuestionJobStore,
-  canonicalFinalReplyTurnHash,
-} from "../src/index.js";
+import { PostgresAnswerEffectStore, PostgresExhaustiveCoverageStore,
+  PostgresFinalReplyMaintenance, PostgresFinalReplyEvidence, PostgresFocusedMemoryRetrieval,
+  PostgresHistoricalEvidenceAuthority, PostgresLiveFinalizedMemoryLifecycle,
+  PostgresLiveFinalizedMemoryQuery, PostgresLiveFinalizedMemoryStore,
+  PostgresLiveMeetingRepository, PostgresQuestionAdmissionCommit, PostgresQuestionJobStore,
+  canonicalFinalReplyTurnHash } from "../src/index.js";
 import {
   databaseOrSkip,
   evidenceBackedMeeting,
@@ -182,26 +166,29 @@ describe("PostgreSQL Local Final Reply adapters", () => {
     const binding = {
       authorizationDigest: "a".repeat(64),
       authorizationPolicyVersion: "discord.participant-current-results.v1",
-      authorizationPrincipalRef: "opaque-principal",
+      authorizationPrincipalRef: "opaque-principal", bindingProtocolVersion: 2 as const,
       botApplicationIdentity: authority.botApplicationIdentity,
-      canonicalEvidenceHash: authority.canonicalEvidenceHash,
-      deliveryContainerId: channelId,
-      expectedLocale: "en" as const,
-      finalProjectionEpoch: authority.finalProjectionEpoch,
+      canonicalEvidenceHash: authority.canonicalEvidenceHash, deliveryContainerId: channelId,
+      expectedLocale: "en" as const, finalProjectionEpoch: authority.finalProjectionEpoch,
       finalProjectionReceipt: authority.finalProjectionReceipt,
-      humanActorIds: authority.humanActorIds,
-      meetingId: authority.meetingId,
-      meetingRevision: authority.meetingRevision,
-      memoryGeneration: authority.memoryGeneration,
+      humanActorIds: authority.humanActorIds, meetingId: authority.meetingId,
+      meetingRevision: authority.meetingRevision, memoryGeneration: authority.memoryGeneration,
       policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
       projectionTargetContainerId: authority.projectionTargetContainerId,
-      questionHash: "b".repeat(64),
-      questionId,
-      requesterSubject: "c".repeat(64),
-      roomId: authority.roomId,
-      scopeId: authority.scopeId,
-      transcriptId: authority.transcriptId,
-      transcriptVersion: authority.transcriptVersion,
+      questionHash: "b".repeat(64), questionId, requesterSubject: "c".repeat(64),
+      retrievalBinding: {
+        canonicalEvidenceFilters: { relativeTimeInterval: null,
+          requiresSpeakerMatch: false, speakerIds: [] },
+        cutoverEpoch: "cutover-r1",
+        localCurrentIdentity: { algorithmId: "canonical_local_exact_lexical_v1" as const,
+          profileFingerprint: "2".repeat(64),
+          profileId: "meeting-knowledge.local-current.v2" as const },
+        originalQuestion: "When is the first release?", profileFingerprint: "e".repeat(64),
+        provenanceSchemaVersion: 1 as const,
+        retrievalPath: "legacy_downstream_v1" as const,
+      },
+      roomId: authority.roomId, scopeId: authority.scopeId,
+      transcriptId: authority.transcriptId, transcriptVersion: authority.transcriptVersion,
     };
     const authorization = {
       actorId: "speaker-a",
@@ -245,7 +232,12 @@ describe("PostgreSQL Local Final Reply adapters", () => {
 
     const jobs = new PostgresQuestionJobStore(database, questionPolicy);
     const lease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "worker-1" });
-    expect(lease).toMatchObject({ generation: 1, jobId: questionId, state: "running" });
+    expect(lease).toMatchObject({
+      binding: { retrievalBinding: binding.retrievalBinding },
+      generation: 1,
+      jobId: questionId,
+      state: "running",
+    });
     if (lease === null) {
       return;
     }
@@ -254,23 +246,26 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       canonicalEvidenceHash: binding.canonicalEvidenceHash,
       expectedAuthorityGeneration: binding.memoryGeneration,
       finalProjectionReceipt: binding.finalProjectionReceipt,
+      hardFilters: binding.retrievalBinding.canonicalEvidenceFilters,
       maximumCandidates: 24,
       meetingId: binding.meetingId,
       meetingRevision: binding.meetingRevision,
       neighborTurns: 0,
       projectionTargetContainerId: binding.projectionTargetContainerId,
       question: command.questionText,
+      retrievalBinding: binding.retrievalBinding,
       roomId: binding.roomId,
       scopeId: binding.scopeId,
       transcriptId: binding.transcriptId,
       transcriptVersion: binding.transcriptVersion,
     };
-    await expect(retrievalAdapter.retrieve({
+    const compatibilityNeighborRequest = await retrievalAdapter.retrieve({
       ...retrievalInput,
       neighborTurns: 8,
-    })).resolves.toEqual({ schemaVersion: 1, status: "low_coverage" });
+    });
     const retrieval = await retrievalAdapter.retrieve(retrievalInput);
     expect(retrieval.status).toBe("current");
+    expect(compatibilityNeighborRequest).toEqual(retrieval);
     if (retrieval.status !== "current") {
       return;
     }
@@ -293,22 +288,39 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       turns: hydrated.turns,
     });
     expect(await jobs.persistGroundingPlan({
+      attemptAlreadyReserved: false,
+      attemptId: `${lease.jobId}:generation:${lease.generation}:attempt:1`,
+      binding,
       generation: lease.generation,
       jobId: lease.jobId,
+      leaseSeconds: 60,
+      maximumProviderAttempts: 2,
       measurement: { inputTokens: 1_000, requestBytes: 4_000 },
       plan,
+      question: command.questionText,
       runtimeProfile: "sol-medium-test",
       sourceMeetingIds: [binding.meetingId],
     })).toBe(true);
     const providerAttemptId =
       `${lease.jobId}:generation:${lease.generation}:attempt:1`;
+    await expect(database.query(
+      `SELECT grounding_plan IS NOT NULL AS has_grounding_plan,
+              provider_attempt_id, provider_attempt_state
+       FROM meeting_knowledge.question_jobs
+       WHERE question_id = $1`,
+      [lease.jobId],
+    )).resolves.toMatchObject({ rows: [{
+      has_grounding_plan: true,
+      provider_attempt_id: providerAttemptId,
+      provider_attempt_state: "reserved",
+    }] });
     expect(await jobs.reserveProviderAttempt({
       attemptId: providerAttemptId,
       generation: lease.generation,
       jobId: lease.jobId,
       leaseSeconds: 240,
       maximumProviderAttempts: 2,
-    })).toBe(true);
+    })).toBe(false);
     await expect(jobs.leaseNext({
       leaseSeconds: 240,
       maximumProviderAttempts: 2,
@@ -333,7 +345,11 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       [questionId],
     );
     const ready = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "worker-2" });
-    expect(ready).toMatchObject({ generation: 2, state: "ready" });
+    expect(ready).toMatchObject({
+      binding: { retrievalBinding: binding.retrievalBinding },
+      generation: 2,
+      state: "ready",
+    });
     expect(await jobs.settle({
       generation: ready?.generation ?? 0,
       jobId: questionId,
@@ -349,6 +365,18 @@ describe("PostgreSQL Local Final Reply adapters", () => {
       jobId: questionId,
       status: "duplicate",
     });
+    await expect(admissions.commit({
+      ...command,
+      binding: {
+        ...binding,
+        retrievalBinding: {
+          ...binding.retrievalBinding,
+          cutoverEpoch: "rollback-r2",
+          profileFingerprint: "f".repeat(64),
+          retrievalPath: "legacy_downstream_v1" as const,
+        },
+      },
+    })).resolves.toEqual({ status: "conflict" });
     const stored = await database.query(`
       SELECT authorization_principal_ref, question_text, binding, grounding_plan,
              answer_candidate, state, outcome
@@ -574,13 +602,13 @@ describe("PostgreSQL question job cleanup", () => {
     await database.query(
       `
         INSERT INTO meeting_core.answer_effects (
-          effect_id, state, projection_target_container_id,
+          effect_id, state, authority_scope_id, projection_target_container_id,
           delivery_container_id, reply_to_remote_message_id, marker,
           payload_bytes, payload_hash,
           binding_hash, authorization_digest, source_meeting_ids,
           request_started_at
         ) VALUES (
-          $1, 'outcome_unknown', $2, $2, $3, 'marker-1', '{"content":"sensitive"}',
+          $1, 'outcome_unknown', 'scope-1', $2, $2, $3, 'marker-1', '{"content":"sensitive"}',
           $4, $5, $6, ARRAY['source-meeting-1']::text[],
           transaction_timestamp() - interval '90 seconds'
         )
@@ -795,5 +823,6 @@ describe("PostgreSQL live finalized memory", () => {
     })).resolves.toBeNull();
     await lifecycle.finishMeeting(meetingId);
     await expect(lifecycle.registerMeeting(identity)).resolves.toBe("ineligible");
+
   });
 });

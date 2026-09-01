@@ -20,6 +20,8 @@ export {
   type IngressMetrics,
   type LogFields,
   type Logger,
+  type LiveMemoryProjectionMetrics,
+  type LiveMemoryProjectionOutcome,
   type Metrics,
   type ProcessingStage,
   type ProcessingStageMetrics,

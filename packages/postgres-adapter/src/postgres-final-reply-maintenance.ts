@@ -31,20 +31,19 @@ export class PostgresFinalReplyMaintenance
     input: Parameters<FinalReplyMaintenancePort["maintain"]>[0],
   ): ReturnType<FinalReplyMaintenancePort["maintain"]> {
     const maximumJobs = requireMaximumJobs(input.maximumJobs);
-    await this.activatePolicy();
-    const cancelled = input.servingEnabled
-      ? 0
-      : await this.cancelUnservedJobs(maximumJobs);
-    const expired = await this.expireJobs(maximumJobs);
-    return { cancelled, expired };
-  }
-
-  private async activatePolicy(): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await this.policyFence.lockCurrent(client);
+      if (!await this.policyFence.lockCurrent(client)) {
+        throw new Error("final reply maintenance policy is not current");
+      }
+      const cancelled = input.servingEnabled
+        ? 0
+        : await this.cancelUnservedJobs(client, maximumJobs);
+      const expired = await this.expireJobs(client, maximumJobs);
+      await this.deleteExpiredQuestionTombstones(client, maximumJobs);
       await client.query("COMMIT");
+      return { cancelled, expired };
     } catch (error) {
       await rollback(client);
       throw error;
@@ -53,13 +52,25 @@ export class PostgresFinalReplyMaintenance
     }
   }
 
-  private async cancelUnservedJobs(maximumJobs: number): Promise<number> {
-    const result = await this.pool.query<{ readonly cancelled: string }>(
+  private async cancelUnservedJobs(
+    client: PoolClient,
+    maximumJobs: number,
+  ): Promise<number> {
+    const result = await client.query<{ readonly cancelled: string }>(
       `
-        WITH locked_question AS (
-          SELECT question_id
-          FROM meeting_knowledge.question_jobs
-          WHERE state <> 'terminal'
+        WITH current_policy AS (
+          SELECT policy_key
+          FROM meeting_knowledge.current_question_policy
+          WHERE policy_key = 'local-final-reply'
+            AND policy_epoch = $2
+            AND policy_version = $3
+            AND authorization_policy_version = $4
+          FOR SHARE
+        ), locked_question AS (
+          SELECT job.question_id
+          FROM meeting_knowledge.question_jobs AS job
+          CROSS JOIN current_policy
+          WHERE job.state <> 'terminal'
           ORDER BY created_at, question_id
           FOR UPDATE SKIP LOCKED
           LIMIT $1
@@ -96,7 +107,10 @@ export class PostgresFinalReplyMaintenance
                 WHEN effect.state IN ('reserved', 'claimed') THEN 'cancelled'
                 ELSE 'retraction_pending'
               END,
-              payload_bytes = '{}',
+              payload_bytes = CASE
+                WHEN effect.state IN ('reserved', 'claimed') THEN '{}'
+                ELSE effect.payload_bytes
+              END,
               claim_until = NULL,
               retraction_requested_at = CASE
                 WHEN effect.state IN (
@@ -114,9 +128,9 @@ export class PostgresFinalReplyMaintenance
                 ELSE effect.settled_at
               END,
               updated_at = transaction_timestamp()
-          FROM locked_question
+          FROM terminalized
           WHERE effect.effect_id =
-              'meeting-knowledge-answer:v1:' || locked_question.question_id
+              'meeting-knowledge-answer:v1:' || terminalized.question_id
             AND effect.state IN (
               'reserved', 'claimed', 'request_started', 'delivered',
               'outcome_unknown', 'absent_unconfirmed', 'retraction_pending'
@@ -125,19 +139,36 @@ export class PostgresFinalReplyMaintenance
         )
         SELECT count(*)::text AS cancelled FROM terminalized
       `,
-      [maximumJobs],
+      [
+        maximumJobs,
+        this.policyFence.identity.policyEpoch,
+        this.policyFence.identity.policyVersion,
+        this.policyFence.identity.authorizationPolicyVersion,
+      ],
     );
     return Number(result.rows[0]?.cancelled ?? "0");
   }
 
-  private async expireJobs(maximumJobs: number): Promise<number> {
-    const result = await this.pool.query<{ readonly expired: string }>(
+  private async expireJobs(
+    client: PoolClient,
+    maximumJobs: number,
+  ): Promise<number> {
+    const result = await client.query<{ readonly expired: string }>(
       `
-        WITH expired AS (
-          SELECT question_id
-          FROM meeting_knowledge.question_jobs
-          WHERE state <> 'terminal'
-            AND expires_at <= transaction_timestamp()
+        WITH current_policy AS (
+          SELECT policy_key
+          FROM meeting_knowledge.current_question_policy
+          WHERE policy_key = 'local-final-reply'
+            AND policy_epoch = $2
+            AND policy_version = $3
+            AND authorization_policy_version = $4
+          FOR SHARE
+        ), expired AS (
+          SELECT job.question_id
+          FROM meeting_knowledge.question_jobs AS job
+          CROSS JOIN current_policy
+          WHERE job.state <> 'terminal'
+            AND job.expires_at <= transaction_timestamp()
           ORDER BY expires_at, question_id
           FOR UPDATE SKIP LOCKED
           LIMIT $1
@@ -174,7 +205,10 @@ export class PostgresFinalReplyMaintenance
                 WHEN effect.state IN ('reserved', 'claimed') THEN 'cancelled'
                 ELSE 'retraction_pending'
               END,
-              payload_bytes = '{}',
+              payload_bytes = CASE
+                WHEN effect.state IN ('reserved', 'claimed') THEN '{}'
+                ELSE effect.payload_bytes
+              END,
               claim_until = NULL,
               retraction_requested_at = CASE
                 WHEN effect.state IN (
@@ -192,9 +226,9 @@ export class PostgresFinalReplyMaintenance
                 ELSE effect.settled_at
               END,
               updated_at = transaction_timestamp()
-          FROM expired
+          FROM terminalized
           WHERE effect.effect_id =
-              'meeting-knowledge-answer:v1:' || expired.question_id
+              'meeting-knowledge-answer:v1:' || terminalized.question_id
             AND effect.state IN (
               'reserved', 'claimed', 'request_started', 'delivered',
               'outcome_unknown', 'absent_unconfirmed', 'retraction_pending'
@@ -203,9 +237,34 @@ export class PostgresFinalReplyMaintenance
         )
         SELECT count(*)::text AS expired FROM terminalized
       `,
-      [maximumJobs],
+      [
+        maximumJobs,
+        this.policyFence.identity.policyEpoch,
+        this.policyFence.identity.policyVersion,
+        this.policyFence.identity.authorizationPolicyVersion,
+      ],
     );
     return Number(result.rows[0]?.expired ?? "0");
+  }
+
+  private async deleteExpiredQuestionTombstones(
+    client: PoolClient,
+    maximumRows: number,
+  ): Promise<void> {
+    await client.query(
+      `WITH expired AS (
+         SELECT question_id
+         FROM meeting_knowledge.question_message_tombstones
+         WHERE expires_at <= transaction_timestamp()
+         ORDER BY expires_at, question_id
+         FOR UPDATE SKIP LOCKED
+         LIMIT $1
+       )
+       DELETE FROM meeting_knowledge.question_message_tombstones AS tombstone
+       USING expired
+       WHERE tombstone.question_id = expired.question_id`,
+      [maximumRows],
+    );
   }
 }
 

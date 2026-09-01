@@ -220,6 +220,7 @@ boundaries:
       packages:
         - "@discord-meeting/meeting-routing-core"
         - "@discord-meeting/meeting-core"
+        - confusables
         - discord.js
         - zod
       builtins:
@@ -248,10 +249,139 @@ boundaries:
         - node:crypto
         - node:fs/promises
       runtimeReferences: []
+  - id: application.infinity-quality-campaign
+    roots:
+      - packages/infinity-context-adapter/src/quality-campaign
+    entrypoints:
+      - packages/infinity-context-adapter/src/quality-campaign/adjudication.ts
+      - packages/infinity-context-adapter/src/quality-campaign/artifact-policy.ts
+      - packages/infinity-context-adapter/src/quality-campaign/campaign-admission-policy.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical.ts
+      - packages/infinity-context-adapter/src/quality-campaign/cleanup-evidence.ts
+      - packages/infinity-context-adapter/src/quality-campaign/cumulative-spend.ts
+      - packages/infinity-context-adapter/src/quality-campaign/execution.ts
+      - packages/infinity-context-adapter/src/quality-campaign/execute-admitted-qualification-question.ts
+      - packages/infinity-context-adapter/src/quality-campaign/final-admission.ts
+      - packages/infinity-context-adapter/src/quality-campaign/holdout.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-evidence.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-evidence-terminals.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-ports.ts
+      - packages/infinity-context-adapter/src/quality-campaign/qualification-contract.ts
+      - packages/infinity-context-adapter/src/quality-campaign/qualification-corpus-packets.ts
+      - packages/infinity-context-adapter/src/quality-campaign/qualification-metrics.ts
+      - packages/infinity-context-adapter/src/quality-campaign/release.ts
+      - packages/infinity-context-adapter/src/quality-campaign/retention.ts
+    allow:
+      boundaries: []
+      packages: []
+      builtins:
+        - node:crypto
+      runtimeReferences: []
+  - id: composition.infinity-quality-campaign
+    roots:
+      - packages/infinity-context-adapter/src/index.ts
+      - packages/infinity-context-adapter/src/packed-root.ts
+      - packages/infinity-context-adapter/src/quality-campaign/index.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-bootstrap.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-cli.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-composition.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-execution-evidence.ts
+    entrypoints:
+      - packages/infinity-context-adapter/src/index.ts
+      - packages/infinity-context-adapter/src/packed-root.ts
+      - packages/infinity-context-adapter/src/quality-campaign/index.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-bootstrap.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-cli.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-composition.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-entrypoint.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-execution-evidence.ts
+    allow:
+      boundaries:
+        - adapters.infinity-context
+        - adapters.infinity-quality-campaign
+        - application.infinity-quality-campaign
+      packages: []
+      builtins: []
+      runtimeReferences: []
+  - id: adapters.infinity-quality-campaign
+    roots:
+      - packages/infinity-context-adapter/src/quality-campaign/admission.ts
+      - packages/infinity-context-adapter/src/quality-campaign/artifacts.ts
+      - packages/infinity-context-adapter/src/quality-campaign/attempt-budget-ledger.ts
+      - packages/infinity-context-adapter/src/quality-campaign/attempt-journal.ts
+      - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-authentication.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-artifact-validation.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-evidence-store.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-evidence-custody.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-question-chain.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-execution-evidence.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-executor-factory.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-scheduler.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-execution-corpus-custody.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-gold-corpus-custody.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
+    entrypoints:
+      - packages/infinity-context-adapter/src/quality-campaign/admission.ts
+      - packages/infinity-context-adapter/src/quality-campaign/artifacts.ts
+      - packages/infinity-context-adapter/src/quality-campaign/attempt-budget-ledger.ts
+      - packages/infinity-context-adapter/src/quality-campaign/attempt-journal.ts
+      - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-authentication.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-artifact-validation.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-evidence-store.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-evidence-custody.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-question-chain.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-execution-evidence.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-executor-factory.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-scheduler.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-execution-corpus-custody.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-gold-corpus-custody.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
+    allow:
+      boundaries:
+        - adapters.infinity-context
+        - application.infinity-quality-campaign
+        - core.meeting.knowledge
+      packages:
+        - "@discord-meeting/meeting-core"
+        - "@discord-meeting/postgres-adapter"
+        - "@discord-meeting/subscription-runtime-adapter"
+        - "@infinity-context/sdk"
+        - pg
+      builtins:
+        - node:crypto
+        - node:fs/promises
+        - node:path
+      runtimeReferences: []
   - id: adapters.infinity-context
     roots:
       - packages/infinity-context-adapter/src
-    entrypoints: []
+    entrypoints:
+      - packages/infinity-context-adapter/src/cooperative-historical-index-planner.ts
+      - packages/infinity-context-adapter/src/hmac-historical-ids.ts
+      - packages/infinity-context-adapter/src/infinity-context-historical-memory.ts
+      - packages/infinity-context-adapter/src/infinity-context-live-finalized-memory.ts
+      - packages/infinity-context-adapter/src/infinity-context-retrieval-v2.ts
+      - packages/infinity-context-adapter/src/infinity-exact-document-compatibility.ts
+      - packages/infinity-context-adapter/src/infinity-production-qualification.ts
+      - packages/infinity-context-adapter/src/infinity-runtime-provenance.ts
+      - packages/infinity-context-adapter/src/infinity-sdk-provenance.ts
+      - packages/infinity-context-adapter/src/pinned-multilingual-minilm-tokenizer.ts
+      - packages/infinity-context-adapter/src/semantic-quality-v4-runner.ts
     allow:
       boundaries:
         - core.meeting.knowledge
@@ -259,10 +389,13 @@ boundaries:
         - "@discord-meeting/meeting-core"
         - "@huggingface/tokenizers"
         - "@infinity-context/sdk"
+        - "@infinity-context/sdk-v2"
       builtins:
         - node:crypto
         - node:fs
+        - node:fs/promises
         - node:module
+        - node:path
       runtimeReferences: []
   - id: adapters.pipecat-runtime
     roots:
@@ -348,9 +481,12 @@ boundaries:
         - core.meeting.transcription
       packages:
         - "@discord-meeting/meeting-core"
+        - "@grpc/grpc-js"
+        - "@grpc/proto-loader"
         - zod
       builtins:
         - node:crypto
+        - node:url
       runtimeReferences: []
   - id: adapters.voicetext
     roots:
@@ -385,6 +521,7 @@ boundaries:
         - "@discordjs/opus"
         - "@discordjs/voice"
         - discord.js
+        - yaml
         - zod
       builtins:
         - node:child_process
@@ -442,6 +579,7 @@ boundaries:
       - apps/meeting-platform/src/adapters/outbound/subscription-runtime-grpc-transport.ts
       - apps/meeting-platform/src/adapters/outbound/subscription-runtime-farewell-classifier.ts
       - apps/meeting-platform/src/adapters/outbound/system-conversation-delay.ts
+      - apps/meeting-platform/src/adapters/outbound/test-only-answer-delivery-crash-injection.ts
     allow:
       boundaries:
         - adapters.object-storage
@@ -466,11 +604,10 @@ boundaries:
         - "@discord-meeting/speaches-adapter"
         - "@discord-meeting/subscription-runtime-adapter"
         - "@discord-meeting/voicetext-adapter"
-        - "@grpc/grpc-js"
-        - "@grpc/proto-loader"
         - zod
       builtins:
         - node:crypto
+        - node:fs
         - node:fs/promises
         - node:path
         - node:url
@@ -495,11 +632,13 @@ boundaries:
         - adapters.object-storage
         - apps.meeting-platform.recording-playback-application
         - core.meeting.lifecycle
+        - core.meeting.publishing
       packages:
         - "@aws-sdk/client-s3"
         - "@discord-meeting/meeting-core"
         - "@discord-meeting/object-storage-adapter"
         - fastify
+        - pg
       builtins:
         - node:crypto
         - node:stream
@@ -641,8 +780,6 @@ boundaries:
         - "@discord-meeting/speaches-adapter"
         - "@discord-meeting/subscription-runtime-adapter"
         - "@discord-meeting/voicetext-adapter"
-        - "@grpc/grpc-js"
-        - "@grpc/proto-loader"
         - bullmq
         - discord.js
         - pg

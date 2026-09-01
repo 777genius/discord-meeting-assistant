@@ -121,7 +121,20 @@ function actorRun() {
 }
 
 function completion(recordingId: string) {
+  const speakerAudio = {
+    audioLocator: `s3://test/${recordingId}/speaker.ogg`,
+    speakerId: "1533227577286852649",
+    timelineOffsetMs: 0,
+  };
   return {
+    actors: [{ actorId: speakerAudio.speakerId, kind: "human" as const }],
+    authoritativeTracks: [{
+      ...speakerAudio,
+      checksumSha256: "9".repeat(64),
+      sizeBytes: 1_024,
+      trackNumber: 1,
+      uploadId: `${recordingId}:track:1`,
+    }],
     channelId: voiceChannelId,
     events: [
       { digest: "e".repeat(64), eventId: `started-${recordingId}`, occurredAt: "2026-08-12T10:00:00.000Z", type: "meeting.started" },
@@ -133,14 +146,18 @@ function completion(recordingId: string) {
     recording: {
       manifestLocator: `s3://test/${recordingId}/manifest.json`,
       recordingId,
-      speakerAudio: [{
-        audioLocator: `s3://test/${recordingId}/speaker.ogg`,
-        speakerId: "1533227577286852649",
-        timelineOffsetMs: 0,
-      }],
+      speakerAudio: [speakerAudio],
     },
     recordingId,
-    schemaVersion: 2,
+    identityProvenance: {
+      actorObservationState: "consistent" as const,
+      actorSemanticsVersion: 1,
+      producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
+      producerRevision: "a".repeat(40),
+      rosterState: "sealed" as const,
+    },
+    lifecycleSchemaVersion: 3 as const,
+    schemaVersion: 4 as const,
   };
 }
 

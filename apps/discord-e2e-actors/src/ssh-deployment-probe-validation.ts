@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import type { ReplayTargetAttestation } from "./e2e-retained-evidence-contracts.js";
+import { historicalReplyRetrievalV2BindingSchema } from
+  "./historical-reply-mutation-admission.js";
+import { historicalReplyRehydrationProbeOutputV1Schema, trustedLifecycleProvenanceSchema } from
+  "./historical-reply-campaign-contract.js";
 
 const safeHost = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$/u);
 const safeProject = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u);
@@ -10,6 +14,10 @@ const replayAttestationFile = z.string().regex(
   /^\/tmp\/discord-e2e-attestations\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/u,
 );
 export const correlationId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u);
+export const historicalReplyWorkerProcessOutputSchema = z.object({
+  containerId: z.string().regex(/^[a-f\d]{64}$/u),
+  hostProcessId: z.number().int().positive(),
+}).strict();
 export const recordingStartedAtSchema = z.iso.datetime();
 const dockerContainerId = z.string().regex(/^[a-f\d]{64}$/u);
 const dockerImageId = z.string().regex(/^sha256:[a-f\d]{64}$/u);
@@ -104,6 +112,72 @@ export const replayReadinessOutputSchema = z.object({
   state: z.literal("completed"),
 });
 
+export const historicalReplyRehydrationOutputSchema =
+  historicalReplyRehydrationProbeOutputV1Schema;
+
+export const historicalReplyQuestionOutcomeOutputSchema = z.object({
+  observedAt: z.iso.datetime(),
+  outcome: z.enum(["answered", "insufficient_evidence"]),
+  questionId: correlationId,
+  state: z.literal("terminal"),
+}).strict();
+
+export const historicalReplyQuestionAdmissionOutputSchema = z.object({
+  attemptId: z.string().trim().min(1),
+  effectId: z.string().trim().min(1),
+  groundingPlanCanonicalJson: z.string().trim().min(2),
+  jobGeneration: z.number().int().positive(),
+  jobId: correlationId,
+  observedAt: z.iso.datetime(),
+  policyEpoch: z.number().int().positive(),
+  questionId: correlationId,
+  retrievalBinding: historicalReplyRetrievalV2BindingSchema,
+  state: z.literal("ready"),
+  workerProtocolEpoch: z.literal(3),
+  workerProtocolGeneration: z.number().int().positive(),
+}).strict().refine(({ jobGeneration, workerProtocolGeneration }) =>
+  jobGeneration === workerProtocolGeneration);
+
+export const historicalReplySettlementOutputSchema = z.object({
+  attemptId: z.string().trim().min(1),
+  effectId: z.string().trim().min(1),
+  externalReceipt: correlationId,
+  groundingPlanCanonicalJson: z.string().trim().min(2),
+  jobId: correlationId,
+  observedAt: z.iso.datetime(),
+}).strict();
+
+export const greetingLedgerRowsOutputSchema = z.object({
+  rows: z.array(z.object({
+    completedAt: z.iso.datetime(), cueKind: z.literal("greeting"),
+    receiptId: z.string().regex(/^[a-f\d]{64}$/u), state: z.literal("played"),
+  }).strict()).length(4),
+  settlementObservedAt: z.iso.datetime(),
+}).strict();
+
+const liveMemoryTurnBase = z.object({
+  observationState: z.literal("final"), speakerId: z.string().trim().min(1),
+  turnId: z.string().trim().min(1), turnHash: z.string().regex(/^[a-f\d]{64}$/u),
+});
+export const liveMemoryRowsOutputSchema = z.object({
+  canonicalTurns: z.array(z.object({
+    createdAt: z.iso.datetime(), endMs: z.number().int().positive(), speakerId: z.string().trim().min(1),
+    observationState: z.literal("final"), startMs: z.number().int().nonnegative(),
+    turnId: z.string().trim().min(1),
+  }).strict()).max(1_000),
+  hotTail: z.array(liveMemoryTurnBase.extend({
+    identityGeneration: z.number().int().positive(), projectedAt: z.iso.datetime(),
+    sourceGeneration: z.number().int().positive(),
+  }).strict()).max(32),
+  observedAt: z.iso.datetime(),
+  outbox: z.array(liveMemoryTurnBase.extend({
+    identityGeneration: z.number().int().positive(), sourceGeneration: z.number().int().positive(),
+    state: z.enum(["applied", "dead_letter", "in_flight", "pending", "retry_wait"]),
+    updatedAt: z.iso.datetime(),
+  }).strict()).max(1_000),
+  trustedLifecycle: trustedLifecycleProvenanceSchema,
+}).strict();
+
 export const completionReceiptsOutputSchema = z.array(z.unknown());
 
 export interface SshDeploymentProbeOptions {
@@ -146,6 +220,17 @@ export function parseSshDeploymentProbeOptions(
 
 export function parseDockerContainerId(value: unknown): string {
   return dockerContainerId.parse(value);
+}
+
+export function parseReplayMarkerDocument(document: string): unknown {
+  if (Buffer.byteLength(document, "utf8") > 4_096) {
+    throw new Error("Remote replay marker exceeds 4 KiB");
+  }
+  try {
+    return JSON.parse(document) as unknown;
+  } catch {
+    throw new Error("Remote replay marker is not valid JSON");
+  }
 }
 
 export function assertReplayTargetAttestation(

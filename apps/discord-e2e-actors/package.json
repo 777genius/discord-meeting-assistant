@@ -18,16 +18,24 @@
     "fixtures:generate": "./scripts/generate-ru-en-fixtures.sh",
     "generate:compiled-release": "node scripts/generate-hosted-campaign-compiled-release.ts",
     "observe:conversation": "pnpm run build && node dist/observe-conversation-voice.js",
+    "observe:greeting-ledger": "pnpm run build && node dist/observe-greeting-ledger.js",
+    "observe:historical-reply": "pnpm run build && node dist/observe-historical-reply-campaign.js",
+    "observe:live-memory": "pnpm run build && node dist/observe-finalized-live-memory.js",
+    "observe:private-coverage": "pnpm run build && node dist/observe-private-campaign-coverage.js",
     "observe:live": "pnpm run build && node dist/observe-live-discord.js",
     "observe:playback-link": "pnpm run build && node dist/observe-live-discord-playback-link.js",
     "play:supplemental": "pnpm run build && node dist/play-supplemental-voice.js",
+    "prepare:historical-reply": "pnpm run build && node dist/prepare-historical-reply-campaign.js",
+    "assemble:remediation-bundle": "pnpm run build && node dist/assemble-remediation-bundle.js",
     "preflight:hosted-campaign": "pnpm run build && node dist/run-hosted-campaign-admission.js",
-    "run:hosted-campaign": "pnpm run build && node dist/run-hosted-campaign.js",
+    "run:hosted-campaign": "pnpm run build && node dist/run-hosted-campaign-main.js",
+    "recover:craig-stack": "pnpm run build && node dist/recover-craig-failed-campaign-stack.js",
     "start": "pnpm run build && node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",
     "verify:e2e": "pnpm run build && node dist/verify-retained-evidence.js",
     "verify:campaign": "pnpm run build && node dist/verify-campaign.js",
+    "verify:hosted-pass": "pnpm run build && node dist/verify-hosted-campaign-pass.js",
     "check": "pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
@@ -35,6 +43,7 @@
     "@discordjs/opus": "catalog:",
     "@discordjs/voice": "catalog:",
     "discord.js": "catalog:",
+    "yaml": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

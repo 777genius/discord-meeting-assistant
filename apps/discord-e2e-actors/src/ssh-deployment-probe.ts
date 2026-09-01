@@ -22,9 +22,7 @@ import {
   runRemoteProbe,
 } from "./ssh-deployment-probe-commands.js";
 import {
-  containerProvenanceFormat,
   completionReceiptsScript,
-  imageProvenanceFormat,
   postgresEvidenceQuery,
   replayJobScript,
   replayReadinessScript,
@@ -34,12 +32,11 @@ import {
 import {
   assertReplayTargetAttestation,
   assertReplayTargetContainer,
-  containerProvenanceOutputSchema,
   completionReceiptsOutputSchema,
   correlationId,
   databaseOutputSchema,
-  imageProvenanceOutputSchema,
   parseDockerContainerId,
+  parseReplayMarkerDocument,
   parseSshDeploymentProbeOptions,
   replayOutputSchema,
   replayReadinessOutputSchema,
@@ -48,6 +45,14 @@ import {
   type SshDeploymentProbeOptions,
   type SshDeploymentProbeSettings,
 } from "./ssh-deployment-probe-validation.js";
+import { collectServiceProvenance } from "./ssh-deployment-probe-provenance.js";
+import {
+  collectQualificationGreetingRows, collectQualificationHistoricalAdmission,
+  collectQualificationHistoricalReadiness,
+  collectQualificationLiveRows, collectQualificationLogs,
+  collectQualificationQuestionOutcome, collectQualificationSettlement,
+  collectQualificationWorker,
+} from "./ssh-deployment-probe-qualification.js";
 
 export type { SshDeploymentProbeOptions } from "./ssh-deployment-probe-validation.js";
 
@@ -135,6 +140,49 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       postgresEvidenceQuery.replaceAll("__RECORDING_ID__", validatedId),
     ]);
     return databaseOutputSchema.parse(parseLastJsonLine(output));
+  }
+
+  public async collectHistoricalReplyReadiness(meetingId: string) {
+    return collectQualificationHistoricalReadiness(this.#qualificationPorts(), meetingId); }
+
+  public async collectHistoricalReplyQuestionOutcome(questionId: string) {
+    return collectQualificationQuestionOutcome(this.#qualificationPorts(), questionId); }
+
+  public async collectHistoricalReplySettlement(questionId: string) {
+    return collectQualificationSettlement(this.#qualificationPorts(), questionId); }
+
+  public async collectGreetingLedgerRows(receiptIds: readonly [string, string, string, string]) {
+    return collectQualificationGreetingRows(this.#qualificationPorts(), receiptIds); }
+
+  public async collectLiveMemoryRows(meetingId: string) {
+    return collectQualificationLiveRows(this.#qualificationPorts(), meetingId); }
+
+  public async collectMeetingPlatformLogsSince(since: string): Promise<string> {
+    return collectQualificationLogs(this.#qualificationPorts(), since); }
+
+  public async collectMeetingPlatformWorkerProcess() {
+    return collectQualificationWorker(this.#qualificationPorts()); }
+
+  public async restartMeetingPlatformForPrivateTest(): Promise<void> {
+    await this.#qualificationPorts().restartMeetingPlatform();
+  }
+
+  public async collectHistoricalReplyQuestionAdmission(questionId: string) {
+    return collectQualificationHistoricalAdmission(this.#qualificationPorts(), questionId);
+  }
+
+  #qualificationPorts() {
+    return {
+      collectService: () => this.#collectServiceProvenance(this.#options.projectName, "meeting-platform"),
+      dockerExecPostgres: (arguments_: readonly string[]) => this.#dockerExec("postgres", arguments_),
+      findMeetingPlatformContainerId: () => this.#findContainerId(this.#options.projectName, "meeting-platform"),
+      restartMeetingPlatform: () => this.#commands.runRemote(this.#options, [
+        "docker", "compose", "--project-directory", this.#options.sourceRoot,
+        "--env-file", this.#options.envFile, "-f", this.#options.composeFile,
+        "-p", this.#options.projectName, "restart", "--timeout", "30", "meeting-platform",
+      ]),
+      runRemote: (arguments_: readonly string[]) => this.#commands.runRemote(this.#options, arguments_),
+    };
   }
 
   public async collectProcessing(meetingId: string, recordingStartedAt: string) {
@@ -258,37 +306,12 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
     projectName: string,
     serviceName: string,
   ): Promise<DeployedServiceProvenance> {
-    const containerId = await this.#findContainerId(projectName, serviceName);
-    const container = containerProvenanceOutputSchema.parse(parseLastJsonLine(
-      await this.#commands.runRemote(this.#options, [
-        "docker",
-        "inspect",
-        "--format",
-        containerProvenanceFormat,
-        containerId,
-      ]),
-    ));
-    if (container.composeProject !== projectName || container.composeService !== serviceName) {
-      throw new Error("Docker container provenance does not match the requested Compose service");
-    }
-    const image = imageProvenanceOutputSchema.parse(parseLastJsonLine(
-      await this.#commands.runRemote(this.#options, [
-        "docker",
-        "image",
-        "inspect",
-        "--format",
-        imageProvenanceFormat,
-        container.imageId,
-      ]),
-    ));
-    if (image.imageId !== container.imageId) {
-      throw new Error("Running container image differs from inspected immutable image ID");
-    }
-    return {
-      ...container,
-      repositoryDigest: (image.repositoryDigests ?? []).toSorted()[0] ?? null,
-      sourceRevision: image.sourceRevision,
-    };
+    return collectServiceProvenance({
+      findContainerId: (project, service) => this.#findContainerId(project, service),
+      projectName,
+      runRemote: (arguments_) => this.#commands.runRemote(this.#options, arguments_),
+      serviceName,
+    });
   }
 
   async #findContainerId(projectName: string, serviceName: string): Promise<string> {
@@ -364,7 +387,7 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
     ]);
     assertReplayTargetAttestation(
       parseLastJsonLine(containerOutput),
-      parseMarkerDocument(markerDocument),
+      parseReplayMarkerDocument(markerDocument),
       attestation,
       {
         containerId: provenance.containerId,
@@ -407,16 +430,5 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       throw new Error("Replay target attestation file is required for replay operations");
     }
     return attestationFile;
-  }
-}
-
-function parseMarkerDocument(document: string): unknown {
-  if (Buffer.byteLength(document, "utf8") > 4_096) {
-    throw new Error("Remote replay marker exceeds 4 KiB");
-  }
-  try {
-    return JSON.parse(document) as unknown;
-  } catch {
-    throw new Error("Remote replay marker is not valid JSON");
   }
 }

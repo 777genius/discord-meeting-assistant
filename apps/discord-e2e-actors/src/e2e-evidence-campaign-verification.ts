@@ -1,5 +1,12 @@
 import { sameDeploymentProvenance } from "./e2e-evidence-deployment-verification.js";
 import { publicationContainerIdentity } from "./e2e-evidence-publication.js";
+import type { HistoricalReplyCampaignEvidenceV1 } from
+  "./historical-reply-campaign-contract.js";
+import { verifyHistoricalReplyCampaignEvidence } from
+  "./historical-reply-campaign-verification.js";
+import type { ThinRemediationProofV1 } from "./thin-remediation-proof.js";
+import { verifyThinRemediationCampaignEvidence } from
+  "./thin-remediation-campaign-verification.js";
 import type {
   FixtureManifestV1,
   RetainedE2eEvidence,
@@ -12,6 +19,8 @@ import type {
 } from "./e2e-evidence-verification-types.js";
 
 export interface CampaignVerificationOptions {
+  readonly historicalReply?: HistoricalReplyCampaignEvidenceV1;
+  readonly thinRemediation?: ThinRemediationProofV1;
   readonly manifest: FixtureManifestV1;
   readonly runs: readonly RetainedE2eEvidence[];
   readonly verifyRun: (
@@ -27,7 +36,7 @@ const campaignSchemaPolicy = {
 } as const;
 
 export function verifyCampaign(
-  { manifest, runs, verifyRun }: CampaignVerificationOptions,
+  { historicalReply, manifest, runs, thinRemediation, verifyRun }: CampaignVerificationOptions,
 ): CampaignVerificationResult {
   const failures: VerificationFailure[] = [];
   const runResults: Record<string, E2eVerificationResult> = {};
@@ -50,6 +59,18 @@ export function verifyCampaign(
   verifyCurrentVoiceQualification(runs, fail);
   verifyCampaignIsolation(runs, fail);
   verifyCampaignDeploymentProvenance(runs, fail);
+  if (historicalReply !== undefined) {
+    verifyHistoricalReplyCampaignEvidence(historicalReply, runs, fail);
+  }
+  if (thinRemediation !== undefined) {
+    verifyThinRemediationCampaignEvidence(thinRemediation, runs, fail);
+    if (historicalReply === undefined || JSON.stringify(
+      thinRemediation.artifacts.historicalReply.content,
+    ) !== JSON.stringify(historicalReply)) {
+      fail("THIN_REMEDIATION_HISTORICAL_MISMATCH",
+        "thin remediation must contain the exact separately verified historical reply proof");
+    }
+  }
   return {
     failures: Object.freeze(failures),
     passed: failures.length === 0,

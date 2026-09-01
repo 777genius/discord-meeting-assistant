@@ -8,4 +8,26 @@ export const HOSTED_CAMPAIGN_TARGET = {
   botikApplicationId: "1533877611258708230",
 } as const;
 
-export type HostedCampaignTarget = typeof HOSTED_CAMPAIGN_TARGET;
+export type HostedCampaignTarget = Omit<typeof HOSTED_CAMPAIGN_TARGET, "craigProject"> & {
+  readonly craigProject: string;
+};
+
+export function hostedCampaignTargetForCraigProject(craigProject: string): HostedCampaignTarget {
+  if (!/^craig-e2e-[a-f\d]{20}$/u.test(craigProject) && craigProject !== HOSTED_CAMPAIGN_TARGET.craigProject) {
+    throw new Error("Hosted campaign Craig project is not a canonical campaign project");
+  }
+  return Object.freeze({ ...HOSTED_CAMPAIGN_TARGET, craigProject });
+}
+
+export function resolveHostedCampaignCraigProject(definition: Readonly<{
+  campaignId: string;
+  craigProject?: string | undefined;
+  craigRelease?: HostedCampaignReleaseReferenceV1 | undefined;
+}>): string {
+  if (definition.craigRelease !== undefined) {
+    return craigProjectName(definition.campaignId, definition.craigRelease);
+  }
+  return definition.craigProject ?? HOSTED_CAMPAIGN_TARGET.craigProject;
+}
+import { craigProjectName } from "./craig-disposable-campaign-stack.js";
+import type { HostedCampaignReleaseReferenceV1 } from "./hosted-campaign-release-reference.js";

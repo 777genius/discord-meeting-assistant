@@ -17,10 +17,30 @@ interface ContextRow {
   readonly human_actor_ids: unknown;
   readonly identity_generation: number;
   readonly meeting_id: string;
+  readonly oldest_pending_age_ms: number;
+  readonly pending_count: number;
   readonly room_id: string;
   readonly scope_id: string;
   readonly source_generation: number;
   readonly state: "active" | "ended" | "withdrawn";
+}
+
+const maximumHealthyPendingMutations = 128;
+const maximumQualifiedIngestToQueryMs = 5_000;
+
+export function liveMemoryLagStatus(input: {
+  readonly oldestPendingAgeMs: number;
+  readonly pendingCount: number;
+}): "backpressured" | "degraded" | "pending" {
+  if (!Number.isFinite(input.oldestPendingAgeMs) || input.oldestPendingAgeMs < 0 ||
+    !Number.isSafeInteger(input.pendingCount) || input.pendingCount < 0) {
+    throw new RangeError("live memory lag observation is invalid");
+  }
+  return input.pendingCount > maximumHealthyPendingMutations
+    ? "backpressured"
+    : input.oldestPendingAgeMs >= maximumQualifiedIngestToQueryMs
+      ? "degraded"
+      : "pending";
 }
 
 interface TailRow {
@@ -34,7 +54,7 @@ interface ScoredTurn {
 }
 
 const ignoredTerms = new Set([
-  "about", "after", "answer", "could", "does", "from", "have", "please",
+  "about", "after", "answer", "could", "current", "does", "from", "have", "please",
   "tell", "that", "their", "there", "these", "this", "what", "when",
   "where", "which", "who", "would", "were", "was", "какая", "какие",
   "какой", "когда", "ответ", "после", "пожал", "расск", "сказа", "этого",
@@ -206,7 +226,13 @@ export class PostgresLiveFinalizedMemoryQuery
       return { schemaVersion: 1, status: "ineligible" };
     }
     if (row.applied_generation !== row.source_generation) {
-      return { schemaVersion: 1, status: "pending" };
+      return {
+        schemaVersion: 1,
+        status: liveMemoryLagStatus({
+          oldestPendingAgeMs: row.oldest_pending_age_ms,
+          pendingCount: row.pending_count,
+        }),
+      };
     }
     const tail = await queryHistoricalPostgres<TailRow>(this.pool, {
       text: `
@@ -341,13 +367,25 @@ export class PostgresLiveFinalizedMemoryQuery
   ): Promise<ContextRow | null> {
     const result = await queryHistoricalPostgres<ContextRow>(this.pool, {
       text: `
-        SELECT meeting_id, scope_id, room_id, human_actor_ids,
+        SELECT memory.meeting_id, memory.scope_id, memory.room_id,
+               memory.human_actor_ids,
                identity_generation::float8 AS identity_generation,
                source_generation::float8 AS source_generation,
                applied_generation::float8 AS applied_generation,
-               state
-        FROM meeting_knowledge.live_memory_meetings
-        WHERE meeting_id = $1
+               memory.state,
+               coalesce(pending.pending_count, 0)::float8 AS pending_count,
+               coalesce(pending.oldest_pending_age_ms, 0)::float8 AS oldest_pending_age_ms
+        FROM meeting_knowledge.live_memory_meetings AS memory
+        LEFT JOIN LATERAL (
+          SELECT count(*) AS pending_count,
+                 (extract(epoch FROM (
+                   transaction_timestamp() - min(outbox.created_at)
+                 )) * 1000)::float8 AS oldest_pending_age_ms
+          FROM meeting_knowledge.live_memory_outbox AS outbox
+          WHERE outbox.meeting_id = memory.meeting_id
+            AND outbox.state NOT IN ('applied', 'dead_letter')
+        ) AS pending ON true
+        WHERE memory.meeting_id = $1
       `,
       values: [meetingId],
     }, signal, this.cancellation);

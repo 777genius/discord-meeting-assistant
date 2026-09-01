@@ -16,6 +16,11 @@ import type {
   RecordingSource,
 } from "./recording-ingress.js";
 import { RecordingIngressRejectedError } from "./recording-ingress.js";
+import {
+  deriveGreetingObligationPlan,
+  DerivedGreetingObligationDispatcher,
+  type DerivedGreetingObligationPort,
+} from "./derived-greeting-obligations.js";
 
 interface RecordedMeetingOutbox {
   recordAndSchedule(
@@ -52,7 +57,9 @@ interface PostCallOutboxDispatcherPort {
 }
 
 interface DerivedLiveIngressPort {
-  acceptLifecycle(event: DerivedLiveLifecycleEvent): void | Promise<void>;
+  acceptLifecycle(
+    event: DerivedLiveLifecycleEvent,
+  ): void | "accepted" | "retry" | Promise<void | "accepted" | "retry">;
   /**
    * Resolves after bounded derived admission. It must not reject the durable
    * durable ingress request when live captions are degraded.
@@ -79,17 +86,33 @@ export interface PlatformRecordingIngressDependencies {
   readonly dispatcher: PostCallOutboxDispatcherPort;
   readonly failureClassifier: RecordingIngressFailureClassifier;
   readonly ingress: RecordingDurabilityPort;
+  readonly greetingObligations?: DerivedGreetingObligationPort;
   readonly live?: DerivedLiveIngressPort;
   readonly logger: ApplicationLogger;
+  /** Monotonic Unix-shaped observation clock supplied by composition. */
+  readonly nowMilliseconds?: () => number;
   readonly outbox: RecordedMeetingOutbox;
   readonly metrics: IngressMetricsPort;
   readonly publicationTargets: PublicationTargetResolverPort;
 }
 
 export class PlatformRecordingIngress {
+  private readonly greetingDispatcher: DerivedGreetingObligationDispatcher | null;
   public constructor(
     private readonly dependencies: PlatformRecordingIngressDependencies,
-  ) {}
+  ) {
+    this.greetingDispatcher = dependencies.greetingObligations === undefined ||
+      dependencies.live === undefined || dependencies.nowMilliseconds === undefined
+      ? null
+      : new DerivedGreetingObligationDispatcher({
+          live: dependencies.live,
+          nowMilliseconds: dependencies.nowMilliseconds,
+          obligations: dependencies.greetingObligations,
+          recordFailure: (recordingId, error) => {
+            this.recordDerivedFailure("lifecycle", recordingId, error);
+          },
+        });
+  }
 
   public async ingestAuthoritativeTrack(
     metadata: AuthoritativeSpeakerTrackUpload,
@@ -155,7 +178,34 @@ export class PlatformRecordingIngress {
     const result = await this.acceptDurably(() =>
       this.dependencies.ingress.ingestLifecycleEvent(event),
     );
-    await this.acceptDerivedLifecycle(event);
+    const greetingPlan = this.dependencies.live === undefined
+      ? null
+      : deriveGreetingObligationPlan(event);
+    if (greetingPlan === null || greetingPlan.obligations.length === 0) {
+      await this.acceptDerivedLifecycle(event);
+    } else {
+      const obligations = this.dependencies.greetingObligations;
+      if (obligations === undefined) {
+        throw new Error("durable greeting obligation store is unavailable");
+      }
+      // This commit is part of HTTP admission: a 202 never acknowledges an
+      // effect that can only survive in the live process heap.
+      for (const obligation of greetingPlan.obligations) {
+        await obligations.accept(obligation);
+      }
+      if (this.greetingDispatcher === null) {
+        throw new Error("durable greeting obligation dispatcher is unavailable");
+      }
+      // The initial roster is presence at meeting-start observation time. Start
+      // the derived owner only after every human obligation is durable, then
+      // deliver those observations through the ordinary receipt/deadline path.
+      if (event.type === "meeting.started") {
+        await this.acceptDerivedLifecycle(event, greetingPlan.initialHumanParticipantIds);
+      }
+      for (const obligation of greetingPlan.obligations) {
+        await this.greetingDispatcher.deliver(obligation);
+      }
+    }
     this.dependencies.metrics.recordIngress("accepted", "accepted");
     if (result.kind !== "finalized") {
       return;
@@ -199,6 +249,15 @@ export class PlatformRecordingIngress {
     );
   }
 
+  public dispatchPendingGreetings(): Promise<{
+    readonly delivered: number;
+    readonly expired: number;
+    readonly failed: number;
+  }> {
+    return this.greetingDispatcher?.dispatchPending() ??
+      Promise.resolve({ delivered: 0, expired: 0, failed: 0 });
+  }
+
   private async acceptDurably<Result>(operation: () => Promise<Result>): Promise<Result> {
     try {
       return await operation();
@@ -213,12 +272,13 @@ export class PlatformRecordingIngress {
 
   private async acceptDerivedLifecycle(
     event: RecordingLifecycleCommand,
+    initialHumanParticipantIds: readonly string[] | null = null,
   ): Promise<void> {
     if (this.dependencies.live === undefined) {
       return;
     }
     try {
-      const derived = this.toDerivedLifecycleEvent(event);
+      const derived = this.toDerivedLifecycleEvent(event, initialHumanParticipantIds);
       if (derived === null) {
         return;
       }
@@ -232,6 +292,7 @@ export class PlatformRecordingIngress {
 
   private toDerivedLifecycleEvent(
     event: RecordingLifecycleCommand,
+    initialHumanParticipantIds: readonly string[] | null,
   ): DerivedLiveLifecycleEvent | null {
     const common = {
       occurredAt: event.occurredAt,
@@ -240,11 +301,9 @@ export class PlatformRecordingIngress {
     if (event.type === "meeting.started") {
       return {
         ...common,
-        participantIds: event.schemaVersion === 1
-          ? [...event.participantIds]
-          : event.actors
-              .filter((actor) => actor.kind === "human")
-              .map((actor) => actor.actorId),
+        // V1 carries identifiers without actor semantics. Proactive V1 voice
+        // admission fails closed instead of cohorting an automation as human.
+        participantIds: initialHumanParticipantIds ?? [],
         publicationTarget: {
           resolve: () => this.resolvePublicationTarget(event.source),
         },
@@ -270,7 +329,7 @@ export class PlatformRecordingIngress {
       };
     }
     if (event.type === "participant.joined" || event.type === "participant.left") {
-      if (event.schemaVersion !== 1 && event.actor.kind !== "human") {
+      if (event.schemaVersion === 1 || event.actor.kind !== "human") {
         return null;
       }
       return {
@@ -283,9 +342,7 @@ export class PlatformRecordingIngress {
                 producerRevision: event.producerRevision,
               },
             }),
-        participantId: event.schemaVersion === 1
-          ? event.participantId
-          : event.actor.actorId,
+        participantId: event.actor.actorId,
         type: event.type,
       };
     }

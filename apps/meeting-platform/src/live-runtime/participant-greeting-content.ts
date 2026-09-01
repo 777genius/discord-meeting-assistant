@@ -26,6 +26,68 @@ export interface ResolvedParticipantGreeting {
   readonly prompt: string;
 }
 
+const maximumPersonalizedNamesPerCohort = 7;
+
+/** Bounded cohort copy: configured names are literal and every other human is counted. */
+export function resolveParticipantGreetingCohort(
+  configuration: LiveConversationConfiguration,
+  participantIds: readonly string[],
+): ResolvedParticipantGreeting {
+  const representedNamedParticipantIds = new Set(
+    participantIds
+      .filter((participantId) =>
+        participantGreetingProfile(configuration, participantId) !== undefined
+      )
+      .slice(0, maximumPersonalizedNamesPerCohort),
+  );
+  const groups = (["ru", "en"] as const).flatMap((locale) => {
+    const members = participantIds.filter((participantId) =>
+      resolveParticipantGreeting(configuration, participantId)?.locale === locale
+    );
+    if (members.length === 0) {
+      return [];
+    }
+    const names = members.flatMap((participantId) => {
+      const profile = participantGreetingProfile(configuration, participantId);
+      return profile === undefined || !representedNamedParticipantIds.has(participantId)
+        ? []
+        : [profile.spokenName];
+    });
+    const anonymousCount = members.length - names.length;
+    const represented = [
+      ...names,
+      ...(anonymousCount === 0
+        ? []
+        : [locale === "ru"
+            ? russianGuestCount(anonymousCount)
+            : anonymousCount === 1 ? "one guest" : `${anonymousCount} guests`]),
+    ].join(", ");
+    return [locale === "ru" ? `Привет, ${represented}!` : `Hi, ${represented}!`];
+  });
+  const locale = participantIds.some((participantId) =>
+    resolveParticipantGreeting(configuration, participantId)?.locale === "ru"
+  ) ? "ru" : "en";
+  return {
+    locale,
+    prompt: groups.join(" "),
+  };
+}
+
+function russianGuestCount(count: number): string {
+  if (count === 1) {
+    return "один гость";
+  }
+  const finalTwoDigits = count % 100;
+  const finalDigit = count % 10;
+  if (finalTwoDigits >= 11 && finalTwoDigits <= 14) {
+    return `${count} гостей`;
+  }
+  if (finalDigit >= 2 && finalDigit <= 4) {
+    return `${count} гостя`;
+  }
+  return `${count} гостей`;
+}
+
 export function participantGreetingProfile(
   configuration: LiveConversationConfiguration,
   participantId: string,

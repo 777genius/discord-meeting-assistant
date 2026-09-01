@@ -32,8 +32,8 @@ const parentContainerId = "111111111111111111";
 const threadContainerId = "222222222222222222";
 const upgradedQuestionPolicy = Object.freeze({
   authorizationPolicyVersion: "discord.participant-current-results.v2",
-  policyEpoch: 1,
-  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+  policyEpoch: 3,
+  policyVersion: "meeting-knowledge.focused-memory-final-reply.v3",
 });
 
 function sha256(value: string): string {
@@ -56,7 +56,7 @@ function canonical(value: unknown): string {
 function legacyBinding(questionId: string, receipt: string) {
   return {
     authorizationDigest: "a".repeat(64),
-    authorizationPolicyVersion: "discord.participant-current-results.v2",
+    authorizationPolicyVersion: upgradedQuestionPolicy.authorizationPolicyVersion,
     authorizationPrincipalRef: `opaque-${questionId}`,
     botApplicationIdentity: "333333333333333333",
     canonicalEvidenceHash: "b".repeat(64),
@@ -67,7 +67,7 @@ function legacyBinding(questionId: string, receipt: string) {
     meetingId: "meeting-upgrade",
     meetingRevision: 1,
     memoryGeneration: `focused-memory:v1:${"b".repeat(64)}`,
-    policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
+    policyVersion: upgradedQuestionPolicy.policyVersion,
     projectionTargetContainerId: parentContainerId,
     questionHash: "c".repeat(64),
     questionId,
@@ -217,7 +217,7 @@ describe("schema 17 answer-delivery upgrade", () => {
       }
 
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
+        appliedVersions: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
         version: requiredPostgresSchemaVersion,
       });
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
@@ -263,7 +263,7 @@ describe("schema 17 answer-delivery upgrade", () => {
       const firstLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
       const readyLease = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
       const noMoreLeases = await jobs.leaseNext({ leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "upgrade-worker" });
-      expect(firstLease?.binding.deliveryContainerId).toBe(parentContainerId);
+      expect(firstLease).toMatchObject({ binding: { deliveryContainerId: parentContainerId }, jobId: queued.questionId });
       expect(readyLease).toMatchObject({
         binding: { deliveryContainerId: threadContainerId },
         jobId: ready.questionId,
@@ -347,6 +347,7 @@ describe("schema 17 answer-delivery upgrade", () => {
       };
       const publication = new DurableAnswerPublication({ delivery, payloads, store: effects });
       await expect(effects.reserve({
+        authorityScopeId: ready.scopeId,
         authorizationDigest: ready.authorizationDigest,
         bindingHash: sha256(canonical({
           ...currentReadyBinding,
@@ -416,9 +417,9 @@ describe("schema 17 answer-delivery upgrade", () => {
   }, 30_000);
 });
 
-describe("schema 21 withdrawal upgrade", () => {
+describe("pre-0035 answer reconciliation quarantine upgrade", () => {
 
-  it("backfills durable source withdrawals and scrubs pending answer payloads", async (context) => {
+  it("quarantines legacy scrubbed pending and absent rows without inventing bytes", async (context) => {
     databaseOrSkip(context);
     const isolated = await createIsolatedDatabase();
     try {
@@ -491,12 +492,107 @@ describe("schema 21 withdrawal upgrade", () => {
           payload_hash: sha256(payload),
         }],
       });
+      await isolated.pool.query(
+        `INSERT INTO meeting_core.answer_effects (
+           effect_id, state, projection_target_container_id,
+           delivery_container_id, reply_to_remote_message_id, marker,
+           payload_bytes, payload_hash, binding_hash, authorization_digest,
+           source_meeting_ids, request_started_at
+         ) VALUES (
+           'meeting-knowledge-answer:v1:legacy-absent', 'absent_unconfirmed',
+           $1, $1, 'legacy-absent-question', 'legacy-absent-marker',
+           '{}', $2, $3, $4, ARRAY['legacy-absent-source']::text[],
+           transaction_timestamp()
+         )`,
+        [parentContainerId, sha256('{"lost":"payload"}'), "d".repeat(64), "e".repeat(64)],
+      );
+      for (const [suffix, state, receipt] of [
+        ["request-started", "request_started", null],
+        ["outcome-unknown", "outcome_unknown", null],
+        ["delivered", "delivered", "legacy-delivered-receipt"],
+      ] as const) {
+        await isolated.pool.query(
+          `INSERT INTO meeting_core.answer_effects (
+             effect_id, state, projection_target_container_id,
+             delivery_container_id, reply_to_remote_message_id, marker,
+             payload_bytes, payload_hash, binding_hash, authorization_digest,
+             source_meeting_ids, request_started_at, external_receipt, settled_at
+           ) VALUES (
+             $1, $2, $3, $3, $4, $5, '{}', $6, $7, $8,
+             ARRAY[$9]::text[], transaction_timestamp(), $10,
+             CASE WHEN $2 = 'delivered' THEN transaction_timestamp() ELSE NULL END
+           )`,
+          [
+            `meeting-knowledge-answer:v1:legacy-${suffix}`,
+            state,
+            parentContainerId,
+            `legacy-${suffix}-question`,
+            `legacy-${suffix}-marker`,
+            sha256(`lost-${suffix}-payload`),
+            "a".repeat(64),
+            "b".repeat(64),
+            `legacy-${suffix}-source`,
+            receipt,
+          ],
+        );
+      }
       await expect(new PostgresMigrationRunner(isolated.pool).migrate()).resolves.toEqual({
-        appliedVersions: [23, 24, 25, 26, 27, 28, 29, 30, 31],
+        appliedVersions: [23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
         version: requiredPostgresSchemaVersion,
       });
+      await expect(isolated.pool.query(
+        `SELECT effect.effect_id, effect.state, effect.payload_bytes,
+                quarantine.prior_state, quarantine.payload_hash, quarantine.reason
+         FROM meeting_core.answer_effects AS effect
+         JOIN meeting_core.answer_effect_reconciliation_quarantine AS quarantine
+           USING (effect_id)
+         ORDER BY effect.effect_id`,
+      )).resolves.toMatchObject({
+        rows: [
+          {
+            effect_id: "meeting-knowledge-answer:v1:legacy-absent",
+            payload_bytes: "{}",
+            payload_hash: sha256('{"lost":"payload"}'),
+            prior_state: "absent_unconfirmed",
+            reason: "legacy_payload_scrubbed_before_0035",
+            state: "quarantined_unrecoverable",
+          },
+          {
+            effect_id: "meeting-knowledge-answer:v1:legacy-delivered",
+            payload_bytes: "{}",
+            payload_hash: sha256("lost-delivered-payload"),
+            prior_state: "delivered",
+            reason: "legacy_payload_scrubbed_before_0035",
+            state: "quarantined_unrecoverable",
+          },
+          {
+            effect_id: "meeting-knowledge-answer:v1:legacy-outcome-unknown",
+            payload_bytes: "{}",
+            payload_hash: sha256("lost-outcome-unknown-payload"),
+            prior_state: "outcome_unknown",
+            reason: "legacy_payload_scrubbed_before_0035",
+            state: "quarantined_unrecoverable",
+          },
+          {
+            effect_id: "meeting-knowledge-answer:v1:legacy-pending",
+            payload_bytes: "{}",
+            payload_hash: sha256(payload),
+            prior_state: "retraction_pending",
+            reason: "legacy_payload_scrubbed_before_0035",
+            state: "quarantined_unrecoverable",
+          },
+          {
+            effect_id: "meeting-knowledge-answer:v1:legacy-request-started",
+            payload_bytes: "{}",
+            payload_hash: sha256("lost-request-started-payload"),
+            prior_state: "request_started",
+            reason: "legacy_payload_scrubbed_before_0035",
+            state: "quarantined_unrecoverable",
+          },
+        ],
+      });
       await expect(new PostgresSchemaReadiness(isolated.pool).assertReady())
-        .resolves.toBeUndefined();
+        .rejects.toThrow("unrecoverable answer reconciliation effects require operator quarantine");
     } finally {
       await isolated.dispose();
     }
@@ -511,22 +607,22 @@ describe("late answer-effect receipt reconciliation", () => {
     await database.query(
       `
         INSERT INTO meeting_core.answer_effects (
-          effect_id, state, projection_target_container_id,
+          effect_id, state, authority_scope_id, projection_target_container_id,
           delivery_container_id, reply_to_remote_message_id, marker,
           payload_bytes, payload_hash, binding_hash, authorization_digest,
           source_meeting_ids, request_started_at, settled_at, updated_at
         ) VALUES
           (
-            $1, 'outcome_unknown', $3, $3, '666666666666666661',
-            'marker-fair-unknown', '{}', $4, $5, $6,
+            $1, 'outcome_unknown', $3, $3, $3, '666666666666666661',
+            'marker-fair-unknown', '{"request":"unknown"}', $4, $5, $6,
             ARRAY['meeting-fair']::text[],
             transaction_timestamp() - interval '11 minutes',
             NULL,
             transaction_timestamp() - interval '10 minutes'
           ),
           (
-            $2, 'absent_unconfirmed', $3, $3, '666666666666666662',
-            'marker-fair-absent', '{}', $4, $5, $6,
+            $2, 'absent_unconfirmed', $3, $3, $3, '666666666666666662',
+            'marker-fair-absent', '{"request":"absent"}', $4, $5, $6,
             ARRAY['meeting-fair']::text[],
             transaction_timestamp() - interval '21 minutes',
             transaction_timestamp() - interval '20 minutes',
@@ -558,15 +654,15 @@ describe("late answer-effect receipt reconciliation", () => {
     await database.query(
       `
         INSERT INTO meeting_core.answer_effects (
-          effect_id, state, projection_target_container_id,
+          effect_id, state, authority_scope_id, projection_target_container_id,
           delivery_container_id, reply_to_remote_message_id, marker,
           payload_bytes, payload_hash, binding_hash, authorization_digest,
           source_meeting_ids, request_started_at, settled_at, updated_at
         ) VALUES (
-          $1, 'absent_unconfirmed', $2, $3, $4, 'marker-late-receipt',
-          '{}', $5, $6, $7, ARRAY['meeting-late-receipt']::text[],
+          $1, 'outcome_unknown', $2, $2, $3, $4, 'marker-late-receipt',
+          $5, $6, $7, $8, ARRAY['meeting-late-receipt']::text[],
           transaction_timestamp() - interval '3 minutes',
-          transaction_timestamp(),
+          NULL,
           transaction_timestamp() - interval '6 minutes'
         )
       `,
@@ -575,6 +671,7 @@ describe("late answer-effect receipt reconciliation", () => {
         parentContainerId,
         threadContainerId,
         "666666666666666666",
+        '{"exact":"immutable request bytes"}',
         "a".repeat(64),
         "b".repeat(64),
         "c".repeat(64),
@@ -582,9 +679,23 @@ describe("late answer-effect receipt reconciliation", () => {
     );
     const effects = new PostgresAnswerEffectStore(database, upgradedQuestionPolicy);
 
+    await expect(effects.markAbsentUnconfirmed(effectId)).resolves.toBe(true);
+    await expect(effects.findById(effectId)).resolves.toMatchObject({
+      payloadBytes: '{"exact":"immutable request bytes"}',
+      payloadHash: "a".repeat(64),
+      state: "absent_unconfirmed",
+    });
+    await database.query(
+      `UPDATE meeting_core.answer_effects
+       SET updated_at = transaction_timestamp() - interval '6 minutes'
+       WHERE effect_id = $1`,
+      [effectId],
+    );
     await expect(effects.listOutcomeUnknown(10)).resolves.toEqual([
       expect.objectContaining({
         effectId,
+        payloadBytes: '{"exact":"immutable request bytes"}',
+        payloadHash: "a".repeat(64),
         state: "absent_unconfirmed",
       }),
     ]);
@@ -594,7 +705,7 @@ describe("late answer-effect receipt reconciliation", () => {
     })).resolves.toBe(true);
     await expect(effects.findById(effectId)).resolves.toMatchObject({
       externalReceipt: "777777777777777777",
-      payloadBytes: "{}",
+      payloadBytes: '{"exact":"immutable request bytes"}',
       state: "delivered",
     });
   });

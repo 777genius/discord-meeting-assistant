@@ -8,6 +8,9 @@ import {
   type HostedCampaignSharedMountExpectationV1,
   verifyHostedCampaignSharedMountReceiptV1,
 } from "../src/hosted-campaign-shared-mount.js";
+import { HOSTED_CAMPAIGN_TARGET } from "../src/hosted-campaign-target.js";
+
+const campaignBotikApplicationId = "1533877611258708230";
 
 const expectation: HostedCampaignSharedMountExpectationV1 = {
   campaignId: "campaign-1",
@@ -120,6 +123,26 @@ describe("test-only campaign compose override", () => {
     const base = await readFile(new URL("../../../infra/deployment/compose.yaml", import.meta.url), "utf8");
     expect(base).not.toContain("data/e2e-playback-readiness");
     expect(base).not.toContain("discord-e2e-campaign-runner:");
+    expect(base).toContain(
+      "DISCORD_BOTIK_APPLICATION_ID: ${DISCORD_BOTIK_APPLICATION_ID:-1534231284467896512}",
+    );
+  });
+
+  it("pins one fixed private-guild Botik identity across overlay, target, and fixture", async () => {
+    const overlay = await readFile(
+      new URL("../../../infra/deployment/compose.e2e-campaign.yaml", import.meta.url), "utf8",
+    );
+    const fixture = JSON.parse(await readFile(
+      new URL("./fixtures/manifest.v1.json", import.meta.url), "utf8",
+    )) as { allowedBotSpeakerIds: string[]; conversationVoiceExpectation: { botSpeakerId: string } };
+
+    expect(campaignBotikApplicationId).not.toBe("1534231284467896512");
+    expect(HOSTED_CAMPAIGN_TARGET.botikApplicationId).toBe(campaignBotikApplicationId);
+    expect(fixture.conversationVoiceExpectation.botSpeakerId).toBe(campaignBotikApplicationId);
+    expect(fixture.allowedBotSpeakerIds).toContain(campaignBotikApplicationId);
+    expect(overlay.match(/^\s+DISCORD_BOTIK_APPLICATION_ID: "\d+"$/gmu)).toEqual([
+      `      DISCORD_BOTIK_APPLICATION_ID: "${campaignBotikApplicationId}"`,
+    ]);
   });
 
   it("mounts only the exact campaign root into Meeting Platform and keeps the coordinator host-side", async () => {

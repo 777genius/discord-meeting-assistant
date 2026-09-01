@@ -12,10 +12,32 @@ import type { QuestionBindingSnapshot } from "../domain/question-job.js";
 import { admittedHumanActors } from "./admitted-human-evidence.js";
 import type {
   CurrentFinalReplyBinding,
+  CanonicalFinalReplyEvidenceResult,
   FinalReplyEvidencePort,
   FocusedMemoryRetrievalPort,
   QuestionAuthorizationObservation,
+  QuestionJobLease,
 } from "./ports/final-reply.js";
+
+export function effectMarker(jobId: string): string {
+  return `meeting-knowledge-answer:v1:${jobId}`;
+}
+
+export function sourceMeetingsForPlan(
+  lease: QuestionJobLease,
+  plan: GroundingPlan,
+): readonly string[] {
+  return Object.freeze([...new Set([
+    lease.binding.meetingId,
+    ...plan.evidence.map((turn) => turn.source?.meetingId ?? lease.binding.meetingId),
+  ])].toSorted());
+}
+
+export async function fenceIsCurrent(
+  fence: (() => Promise<boolean>) | undefined,
+): Promise<boolean> {
+  return fence === undefined || await fence();
+}
 
 export function authorityMatchesBinding(
   authority: CurrentFinalReplyBinding,
@@ -57,15 +79,42 @@ export function authorizedForJob(
     authority.humanActorIds.includes(observation.actorId);
 }
 
+export function authorizationObservationUnavailable(
+  observation: QuestionAuthorizationObservation,
+): boolean {
+  return observation.status === "denied" &&
+    (observation.reason === "partial" || observation.reason === "unavailable");
+}
+
+export function requireAuthorizedObservation(
+  observation: QuestionAuthorizationObservation,
+): Extract<QuestionAuthorizationObservation, { readonly status: "authorized" }> {
+  if (observation.status !== "authorized") {
+    throw new Error("authorized question observation is unavailable");
+  }
+  return observation;
+}
+
+export async function recheckAbsenceAuthority(
+  evidence: FinalReplyEvidencePort,
+  binding: QuestionBindingSnapshot,
+): Promise<CanonicalFinalReplyEvidenceResult> {
+  const current = await evidence.recheckCurrentBinding(binding);
+  return current.status === "current"
+    ? { binding: current.binding, status: "current", turns: [] }
+    : current;
+}
+
 export function referencesFromPlan(
   binding: QuestionBindingSnapshot,
   plan: GroundingPlan,
 ): readonly FocusedMemoryReference[] {
-  return Object.freeze(plan.evidence.map(({ source, turnHash, turnId }) => Object.freeze({
+  return Object.freeze(plan.evidence.map(({ retrievalAudit, source, turnHash, turnId }) => Object.freeze({
     ...(source?.historicalSource === undefined
       ? {}
       : { historicalSource: source.historicalSource }),
     meetingId: source?.meetingId ?? binding.meetingId,
+    ...(retrievalAudit === undefined ? {} : { retrievalAudit }),
     ...(source?.sourceEndCodePoint === undefined
       ? {}
       : {
@@ -97,7 +146,8 @@ function sameEvidenceItem(left: GroundingEvidence, right: GroundingEvidence): bo
     left.speakerId === right.speakerId &&
     left.startMs === right.startMs &&
     left.endMs === right.endMs &&
-    left.text === right.text;
+    left.text === right.text &&
+    JSON.stringify(left.retrievalAudit) === JSON.stringify(right.retrievalAudit);
 }
 
 function sameEvidenceSource(

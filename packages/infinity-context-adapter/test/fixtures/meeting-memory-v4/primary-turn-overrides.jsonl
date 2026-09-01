@@ -1,0 +1,16 @@
+{"speakerId":"mark","text":"The early Cobalt incident note still assigns ownership to Mark; this is a stale draft, not the final assignment.","turnId":"quality-turn-115"}
+{"speakerId":"maria","text":"Correction for Cobalt: Mark is not the owner. Maria accepted incident ownership, and this supersedes the earlier draft.","turnId":"quality-turn-116"}
+{"speakerId":"maria","text":"For this meeting, Masha is an unambiguous alias for Maria; the alias does not change her canonical speaker identity.","turnId":"quality-turn-121"}
+{"speakerId":"vitalii","text":"The team uses Vitya for Vitalii in this call; V alone is ambiguous and must not resolve to a participant.","turnId":"quality-turn-122"}
+{"speakerId":"nazar","text":"A stale Granite plan named 15 September as the rollback cutoff; the team had not accepted it.","turnId":"quality-turn-123"}
+{"speakerId":"mark","text":"Granite correction: replace 15 September with 18 September. The later date is final.","turnId":"quality-turn-124"}
+{"speakerId":"nazar","text":"Naz means Nazar in this meeting; the shorter N is ambiguous and is not a usable participant alias.","turnId":"quality-turn-125"}
+{"speakerId":"mark","text":"Markus is the configured alias for Mark here; Mar is ambiguous and must remain unresolved.","turnId":"quality-turn-126"}
+{"speakerId":"mark","text":"The first Prairie draft allowed three thousand queued events before backpressure; that number is stale.","turnId":"quality-turn-127"}
+{"speakerId":"nazar","text":"Prairie numeric correction: use two thousand events, not three thousand, before backpressure.","turnId":"quality-turn-128"}
+{"speakerId":"vitalii","text":"An old Willow mobile outline included editing in version one; nobody should treat that outline as current.","turnId":"quality-turn-129"}
+{"speakerId":"maria","text":"Willow scope correction: version one is read-only and editing is explicitly excluded.","turnId":"quality-turn-130"}
+{"speakerId":"mark","text":"A rumor says Umber selected Northwind Analytics. The room explicitly rejects that claim as false.","turnId":"quality-turn-131"}
+{"speakerId":"vitalii","text":"Umber remains without an analytics vendor until privacy review; no provider was selected.","turnId":"quality-turn-132"}
+{"speakerId":"maria","text":"M is an ambiguous shorthand that could refer to Maria or Mark, so questions using only M require clarification.","turnId":"quality-turn-133"}
+{"speakerId":"mark","text":"Configured aliases remain exact: Masha maps to Maria and Markus maps to Mark; neither mapping authorizes fuzzy initials.","turnId":"quality-turn-134"}

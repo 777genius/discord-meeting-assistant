@@ -236,6 +236,76 @@
       "id": "ADR-0048",
       "path": "docs/decisions/0048-exact-head-infinity-deletion-qualification.md",
       "immutableDigest": "sha256:87d3934bea1fd34f31afedb698b53691fb176ddde2f808b32c0c6687b877e0f5"
+    },
+    {
+      "id": "ADR-0049",
+      "path": "docs/decisions/0049-locator-only-upstream-retrieval.md",
+      "immutableDigest": "sha256:a82dd63f2ae47b1b9ac071726eac82dded98c74a39bc8c3048f070a101cd4840"
+    },
+    {
+      "id": "ADR-0050",
+      "path": "docs/decisions/0050-persisted-retrieval-v2-serving-binding.md",
+      "immutableDigest": "sha256:93108b77830e38d1e65bf3261a50cb5e50addf2b3f3fca16bee1cd9c90a209ad"
+    },
+    {
+      "id": "ADR-0051",
+      "path": "docs/decisions/0051-greeting-playback-and-recording-readiness.md",
+      "immutableDigest": "sha256:3ce44eccffb3c99bef5c9bdfe3c64a9b3aa444c635c659ba4c6883285a6009aa"
+    },
+    {
+      "id": "ADR-0052",
+      "path": "docs/decisions/0052-production-faithful-meeting-memory-qualification.md",
+      "immutableDigest": "sha256:3b44d37f9eddea75903b6eef7beb6446f40bfbf90f79dcdd3c40a9e365007ce9"
+    },
+    {
+      "id": "ADR-0053",
+      "path": "docs/decisions/0053-v2-only-meeting-retrieval.md",
+      "immutableDigest": "sha256:cc73cd5b6a245b0b43c75acb5d1a61ecb629f8362c39d66458de37fe9c0cc382"
+    },
+    {
+      "id": "ADR-0054",
+      "path": "docs/decisions/0054-official-sdk-live-memory-projection.md",
+      "immutableDigest": "sha256:ded5c7dd3363857ceecb27808ab154ff634e5700b304fc00bf77e4e11ccc889f"
+    },
+    {
+      "id": "ADR-0055",
+      "path": "docs/decisions/0055-deadline-bound-durable-participant-greetings.md",
+      "immutableDigest": "sha256:502e5155674c5f3535b9ad40ef74495abe0893d0793f0945d46b886147153de2"
+    },
+    {
+      "id": "ADR-0056",
+      "path": "docs/decisions/0056-terminal-evidence-greeting-reconciliation.md",
+      "immutableDigest": "sha256:2ac50a56e85b9eaae0c98a318ec51c07d760e8bd4937760cebe56e26c40a13fb"
+    },
+    {
+      "id": "ADR-0058",
+      "path": "docs/decisions/0058-exact-craig-hosted-stack-recovery.md",
+      "immutableDigest": "sha256:a74101ddb986c8d9f9c16a45fb149177aef35c90ae738ae9d3ce9d20844e9040"
+    },
+    {
+      "id": "ADR-0059",
+      "path": "docs/decisions/0059-closed-craig-recovery-authority.md",
+      "immutableDigest": "sha256:c5135c931aa44fd528cdcf57d745b9509cddc4321be498b153438f5305e9561a"
+    },
+    {
+      "id": "ADR-0060",
+      "path": "docs/decisions/0060-authenticated-quality-campaign-runner-boundaries.md",
+      "immutableDigest": "sha256:000d005068739e9e819cd0c88b0766d7b5277269f4b38f0dea079323d2994bbd"
+    },
+    {
+      "id": "ADR-0061",
+      "path": "docs/decisions/0061-atomic-quality-evidence-and-holdout-repetition.md",
+      "immutableDigest": "sha256:69b2ffd4a8bfac179a5d43c4e45c7e726c8da74fa8f70d99c36cc031e50e6821"
+    },
+    {
+      "id": "ADR-0062",
+      "path": "docs/decisions/0062-initial-roster-durable-greetings.md",
+      "immutableDigest": "sha256:17777764bb85b233f2b9e3b01eba227e8cc17f70b741e291a0c560d4d073b232"
+    },
+    {
+      "id": "ADR-0064",
+      "path": "docs/decisions/0064-composite-retrieval-authority-fence.md",
+      "immutableDigest": "sha256:cf24d83fe00173de2186ddfab2affb26f6a59a28d997ffee26c134f98068c7c3"
     }
   ]
 }

@@ -13,12 +13,13 @@ import {
 export function makeConversationObserver(context: HostedCampaignChildContext): HostedCampaignExecutableSpec {
   const {
     answerFirstPacket, answerIntent, answerObserverReady, barrierPath, captures, conversationCompleted,
-    definition, observerSubscribed, paths, reconnect, runVerified, voicePaths,
+    definition, greetingLedgerReady, observerSubscribed, paths, reconnect, remote, runVerified,
+    voicePaths,
   } = context;
   return {
     arguments: { kind: "environment" }, childId: "conversation-observer", entrypoint: "conversation-observer",
-    completion: { action: conversationCompleted.action, kind: "conversation-observer", outputPaths: voicePaths, runId: reconnect.runId },
-    completionAfter: captures[5]!,
+    completion: { action: conversationCompleted.action, kind: "conversation-observer", outputPaths: [...voicePaths, paths.lateGreeting], runId: reconnect.runId },
+    completionAfter: greetingLedgerReady,
     environment: {
       DISCORD_E2E_CONVERSATION_VOICE_ADDITIONAL_CAPTURES_JSON: JSON.stringify([
         { attemptId: `${reconnect.runId}:capture-2`, expectedDuration: { maximumMilliseconds: 1_250, minimumMilliseconds: 750 }, outputPath: voicePaths[1], purpose: "greeting", turnId: `participant-greeting:${HOSTED_CAMPAIGN_TARGET.speakerAApplicationId}` },
@@ -34,9 +35,15 @@ export function makeConversationObserver(context: HostedCampaignChildContext): H
       DISCORD_E2E_CONVERSATION_VOICE_EXPECTED_DURATION_MS: "500",
       DISCORD_E2E_CONVERSATION_VOICE_GUILD_ID: HOSTED_CAMPAIGN_TARGET.guildId,
       DISCORD_E2E_CONVERSATION_VOICE_GREETING_HANDSHAKE_ROOT: paths.run(3, "greeting-handshakes"),
+      DISCORD_E2E_CONVERSATION_VOICE_LATE_GREETING_LEDGER_INPUT: paths.greetingLedger,
+      DISCORD_E2E_CONVERSATION_VOICE_LATE_GREETING_OUTPUT: paths.lateGreeting,
       DISCORD_E2E_CONVERSATION_VOICE_OBSERVER_APPLICATION_ID: HOSTED_CAMPAIGN_TARGET.observerApplicationId,
       DISCORD_E2E_CONVERSATION_VOICE_OUTPUT: voicePaths[0],
       DISCORD_E2E_CONVERSATION_VOICE_PRIVATE_TEST_GUILD: "private-test-guild",
+      DISCORD_E2E_CONVERSATION_VOICE_REMOTE_COMPOSE_FILE: remote.DISCORD_E2E_REMOTE_COMPOSE_FILE,
+      DISCORD_E2E_CONVERSATION_VOICE_REMOTE_ENV_FILE: remote.DISCORD_E2E_REMOTE_ENV_FILE,
+      DISCORD_E2E_CONVERSATION_VOICE_REMOTE_HOST: remote.DISCORD_E2E_REMOTE_HOST,
+      DISCORD_E2E_CONVERSATION_VOICE_REMOTE_SOURCE_ROOT: remote.DISCORD_E2E_REMOTE_SOURCE_ROOT,
       DISCORD_E2E_CONVERSATION_VOICE_PURPOSE: "greeting",
       DISCORD_E2E_CONVERSATION_VOICE_READY_TIMEOUT_MS: "120000",
       DISCORD_E2E_CONVERSATION_VOICE_RUN_ID: reconnect.runId,

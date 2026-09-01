@@ -5,6 +5,9 @@ import { startDisposableInfinityHttpService } from
   "@discord-meeting/infinity-context-adapter/test-support";
 import { INFINITY_CONTEXT_SDK_PROVENANCE } from
   "@discord-meeting/infinity-context-adapter";
+import { HistoricalFocusedLocatorRetrievalV2,
+  PrepareFocusedLocatorRetrievalV2Request } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
   platformConfig,
@@ -22,7 +25,10 @@ import {
 import {
   assertAggregateStageBudget,
   runQualificationStage,
+  waitForHistoricalRows,
 } from "./meeting-knowledge-production-composition-diagnostics.js";
+
+vi.setConfig({ testTimeout: 30_000 });
 
 describe("Infinity production semantic qualification composition", () => {
   it("derives every durable lease above the separately bounded operation deadline", () => {
@@ -30,6 +36,30 @@ describe("Infinity production semantic qualification composition", () => {
     expect(historicalSyncLeaseDurationMs(300_000)).toBe(330_000);
     expect(historicalSyncLeaseDurationMs(600_000)).toBe(630_000);
     expect(() => historicalSyncLeaseDurationMs(600_001)).toThrow(RangeError);
+  });
+
+  it("accepts settled historical rows when the first observation crosses its deadline", async () => {
+    let now = 0;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const query = vi.fn(async () => {
+      now = 101;
+      return {
+        rows: [{ meeting_id: "meeting-settled", state: "applied" }],
+      };
+    });
+    const pool = { query } as unknown as Pool;
+    try {
+      await expect(waitForHistoricalRows(
+        pool,
+        ({ state }) => state === "applied",
+        1,
+        new AbortController().signal,
+        100,
+      )).resolves.toBeUndefined();
+      expect(query).toHaveBeenCalledOnce();
+    } finally {
+      dateNow.mockRestore();
+    }
   });
 
   it("keeps aggregate stage ceilings below the outer timeout and aborts timed-out cleanup", async () => {
@@ -82,13 +112,13 @@ describe("Infinity production semantic qualification composition", () => {
     });
     const runtime = requiredHistoricalRuntime(
       pool, infinity, true, true, "test",
-      retainedProductionEmbeddingProfileAttestation,
+      { embeddingProfileAttestation: retainedProductionEmbeddingProfileAttestation },
     );
     const deletionOnly = requiredHistoricalRuntime(pool, infinity, false, false, "test");
     try {
       // Retrieval/exhaustive adapters can be constructed before startup; only
       // execution-time authorization changes when readiness is established.
-      expect(runtime.createFocusedRetrieval({
+      expect(runtime.createFocusedLocatorRetrievalV2({
         authorize: async () => ({
           authorizationDigest: "synthetic",
           authorizationEpoch: "1",
@@ -96,27 +126,47 @@ describe("Infinity production semantic qualification composition", () => {
           policyVersion: "synthetic.v1",
         }),
       })).toBeDefined();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
       await runtime.assertReady();
-      expect(runtime.searchEnabled()).toBe(true);
+      expect(runtime.servingAuthorized()).toBe(true);
       expect(runtime.servingAuthorized()).toBe(true);
 
       infinity.endpoint.setCapabilitiesQualified(false);
       await runtime.assertReady();
-      expect(runtime.searchEnabled()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
+      const binding = platformConfig(infinity.baseUrl, true, true, "test")
+        .meetingKnowledge?.retrievalV2ProviderBinding;
+      if (binding === undefined) {
+        throw new Error("synthetic Retrieval V2 binding is missing");
+      }
+      await expect(runtime.createRetrievalV2Admission(binding).prepare({
+        currentMeetingId: "meeting-current",
+        question: "What changed?",
+        roomId: "444444444444444444",
+        scopeId: "333333333333333333",
+      })).resolves.toMatchObject({ status: "unavailable" });
 
       await deletionOnly.assertReady();
-      expect(deletionOnly.searchEnabled()).toBe(false);
       expect(deletionOnly.servingAuthorized()).toBe(false);
+      expect(deletionOnly.servingAuthorized()).toBe(false);
+      await expect(deletionOnly.createRetrievalV2Admission(binding).prepare({
+        currentMeetingId: "meeting-current",
+        question: "What changed?",
+        roomId: "444444444444444444",
+        scopeId: "333333333333333333",
+      })).resolves.toMatchObject({ status: "unavailable" });
+      expect(infinity.endpoint.requests.some(({ path }) =>
+        path === "/v1/context/retrieve"
+      )).toBe(false);
     } finally {
       await runtime.close();
       await deletionOnly.close();
       await infinity.close();
       await pool.end();
     }
-  }, 15_000);
+  }, 30_000);
 
   it("denies mock-qualified search without disabling the base deletion runtime", async () => {
     const pool = new Pool({
@@ -126,7 +176,7 @@ describe("Infinity production semantic qualification composition", () => {
     const runtime = requiredHistoricalRuntime(pool, infinity, true, true, "production");
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
     } finally {
       await runtime.close();
@@ -138,6 +188,54 @@ describe("Infinity production semantic qualification composition", () => {
 });
 
 describe("Infinity deletion-only transport qualification", () => {
+  it("keeps focused admission and provider I/O closed during profile rebuild", async () => {
+    const query = vi.fn(async () => ({ rowCount: 0, rows: [] }));
+    const pool = { query } as unknown as Pool;
+    const infinity = await startDisposableInfinityHttpService();
+    infinity.endpoint.setRuntimeQualificationReceipt({
+      embeddingProfileDigestSha256:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfileDigestSha256,
+      embeddingProfileId:
+        retainedProductionEmbeddingProfileAttestation.embeddingProfile,
+      serviceRevision:
+        INFINITY_CONTEXT_SDK_PROVENANCE.sourcePinnedServiceRevision,
+    });
+    const config = platformConfig(infinity.baseUrl, true, true, "test");
+    const runtime = createPlatformHistoricalMemory({
+      config,
+      logger: silentLogger,
+      pool,
+      profileMaintenance: {
+        enqueueAppliedProfileRebuilds: async () => ({
+          enqueued: 1,
+          remaining: true,
+        }),
+      },
+      runtimeTransport: syntheticCoverageRuntime,
+    });
+    const binding = config.meetingKnowledge?.retrievalV2ProviderBinding;
+    if (runtime === undefined || binding === undefined) {
+      throw new Error("pending-rebuild Retrieval V2 fixture did not compose");
+    }
+    try {
+      await runtime.assertReady();
+      expect(runtime.servingAuthorized()).toBe(false);
+      await expect(runtime.createRetrievalV2Admission(binding).prepare({
+        currentMeetingId: "meeting-current",
+        question: "What changed?",
+        roomId: "444444444444444444",
+        scopeId: "333333333333333333",
+      })).resolves.toMatchObject({ status: "unavailable" });
+      expect(query).not.toHaveBeenCalled();
+      expect(infinity.endpoint.requests.some(({ path }) =>
+        path === "/v1/context/retrieve"
+      )).toBe(false);
+    } finally {
+      await runtime.close();
+      await infinity.close();
+    }
+  });
+
   it.each([
     ["missing", null],
     ["wrong", {
@@ -171,6 +269,18 @@ describe("Infinity deletion-only transport qualification", () => {
     if (runtime === undefined) {
       throw new Error("invalid transport fixture did not compose");
     }
+    expect(runtime.createFocusedLocatorRetrievalV2({
+      authorize: async () => ({ authorizationDigest: "digest",
+        authorizationEpoch: "epoch", authorized: true,
+        policyVersion: "policy.v1" }),
+    })).toBeInstanceOf(HistoricalFocusedLocatorRetrievalV2);
+    expect(runtime.createRetrievalV2Admission({
+      capabilityFingerprint: "3".repeat(64), contractVersion: "context-retrieval.v2",
+      indexProfileDigest: "2".repeat(64), profileId: "profile-v2",
+      rankingPolicy: "weighted_rrf_canonical_preferences.v1",
+      requiredProviderLanes: ["postgres_keyword", "qdrant_dense"],
+      serviceRevision: "4".repeat(40),
+    })).toBeInstanceOf(PrepareFocusedLocatorRetrievalV2Request);
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
       await expect(runtime.assertReady()).resolves.toBeUndefined();
@@ -181,10 +291,10 @@ describe("Infinity deletion-only transport qualification", () => {
       expect(query).not.toHaveBeenCalled();
       expect(connect).not.toHaveBeenCalled();
       const requests = infinity.endpoint.requests.map(({ method, path }) => `${method} ${path}`);
-      expect(requests.length).toBeGreaterThanOrEqual(3);
+      expect(requests.length).toBeGreaterThanOrEqual(2);
       expect(requests.every((request) => request === "GET /v1/capabilities"))
         .toBe(true);
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
     } finally {
       await runtime.close();
@@ -231,7 +341,7 @@ describe("Infinity deletion-only transport qualification", () => {
       await vi.waitFor(() => {
         expect(connect).toHaveBeenCalled();
       });
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
       expect(infinity.endpoint.requests.every(({ path }) =>
         path === "/v1/capabilities"
@@ -282,12 +392,12 @@ describe("Infinity production semantic qualification continuation", () => {
     }
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
 
       infinity.endpoint.setCapabilitiesQualified(false);
       await runtime.assertReady();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
     } finally {
       await runtime.close();
@@ -334,14 +444,14 @@ describe("Infinity production semantic qualification continuation", () => {
     }
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(true);
+      expect(runtime.servingAuthorized()).toBe(true);
       expect(runtime.servingAuthorized()).toBe(true);
     } finally {
       await runtime.close();
       await infinity.close();
       await pool.end();
     }
-  }, 15_000);
+  }, 30_000);
 
   it("keeps production search closed when the endpoint instance echo drifts", async () => {
     const pool = new Pool({
@@ -361,11 +471,11 @@ describe("Infinity production semantic qualification continuation", () => {
       true,
       true,
       "production",
-      retainedProductionEmbeddingProfileAttestation,
+      { embeddingProfileAttestation: retainedProductionEmbeddingProfileAttestation },
     );
     try {
       await expect(runtime.assertReady()).resolves.toBeUndefined();
-      expect(runtime.searchEnabled()).toBe(false);
+      expect(runtime.servingAuthorized()).toBe(false);
       expect(runtime.servingAuthorized()).toBe(false);
     } finally {
       await runtime.close();

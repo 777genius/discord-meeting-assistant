@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdir, open, readdir, rm, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
@@ -21,11 +21,13 @@ interface ActionArtifact {
 
 export class HostedCampaignArtifactStore {
   readonly #campaignId: string;
+  readonly #planSha256: string;
   readonly #rootPath: string;
 
-  constructor(rootPath: string, campaignId: string) {
+  constructor(rootPath: string, campaignId: string, planSha256 = "0".repeat(64)) {
     this.#rootPath = rootPath;
     this.#campaignId = campaignId;
+    this.#planSha256 = planSha256;
   }
 
   async initialize(): Promise<void> {
@@ -69,16 +71,56 @@ export class HostedCampaignArtifactStore {
       0o600,
     );
     try {
-      await handle.writeFile(`${this.#campaignId}\n`, "utf8");
+      const content = `${JSON.stringify({ campaignId: this.#campaignId,
+        campaignRoot: dirname(this.#rootPath), planSha256: this.#planSha256 })}\n`;
+      await handle.writeFile(content, "utf8");
       await handle.sync();
+      const status = await handle.stat();
+      return { campaignId: this.#campaignId, campaignRoot: dirname(this.#rootPath),
+        device: status.dev, inode: status.ino,
+        leaseSha256: createHash("sha256").update(content).digest("hex"),
+        planSha256: this.#planSha256 } as HostedCampaignLeaseHandle;
     } finally {
       await handle.close();
     }
-    return { campaignId: this.#campaignId } as HostedCampaignLeaseHandle;
   }
 
-  async releaseLease(): Promise<void> {
-    await rm(join(this.#rootPath, "campaign.lease"));
+  async releaseLease(expected: HostedCampaignLeaseHandle): Promise<Readonly<{
+    campaignId: string; campaignRoot: string; deleted: true; device: number; inode: number;
+    leasePath: string; leaseSha256: string; planSha256: string;
+  }>> {
+    const leasePath = join(this.#rootPath, "campaign.lease");
+    if (expected.campaignId !== this.#campaignId || expected.campaignRoot !== dirname(this.#rootPath)
+      || expected.planSha256 !== this.#planSha256) {
+      throw new Error("Hosted campaign lease cleanup handle does not match its exact path and plan");
+    }
+    const handle = await open(leasePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const before = await handle.stat();
+      const contents = await handle.readFile();
+      const after = await handle.stat();
+      const digest = createHash("sha256").update(contents).digest("hex");
+      if (!before.isFile() || before.nlink !== 1 || before.dev !== after.dev || before.ino !== after.ino
+        || before.size !== after.size || before.mtimeMs !== after.mtimeMs
+        || after.dev !== expected.device || after.ino !== expected.inode || digest !== expected.leaseSha256) {
+        throw new Error("Hosted campaign lease cleanup identity changed before deletion");
+      }
+      await rm(leasePath);
+      const deleted = await handle.stat();
+      if (deleted.dev !== expected.device || deleted.ino !== expected.inode || deleted.nlink !== 0) {
+        throw new Error("Hosted campaign lease deletion did not unlink the exact opened identity");
+      }
+      try {
+        await lstat(leasePath);
+        throw new Error("Hosted campaign lease remained present after deletion");
+      } catch (error) {
+        if (errorCode(error) !== "ENOENT") { throw error; }
+      }
+    } finally { await handle.close(); }
+    await syncDirectory(this.#rootPath);
+    return Object.freeze({ campaignId: expected.campaignId, campaignRoot: expected.campaignRoot,
+      deleted: true as const, device: expected.device, inode: expected.inode, leasePath,
+      leaseSha256: expected.leaseSha256, planSha256: expected.planSha256 });
   }
 
   async awaitAction<Action extends HostedCampaignBarrierAction>(

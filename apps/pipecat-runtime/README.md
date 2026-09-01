@@ -14,7 +14,7 @@ The checked-in gRPC code is generated from the repository-owned contract:
 Local commands:
 
 ```text
-uv sync --frozen --all-groups
+uv sync --frozen --all-groups --reinstall
 uv run python tools/generate_contract.py
 uv run ruff check .
 uv run pyright
@@ -22,6 +22,10 @@ uv run lint-imports
 uv run python tools/check_no_suppressions.py
 uv run pytest
 ```
+
+The full reinstall is intentional: the lockfile remains the only resolver input,
+and stale or partially populated wheel metadata cannot make the mandatory
+composed-voice E2E appear reproducible when its Pipecat modules are absent.
 
 The production entrypoint requires `PIPECAT_RUNTIME_BEARER_TOKEN_FILE`. The
 `deterministic-e2e` profile is intentionally rejected when the runtime

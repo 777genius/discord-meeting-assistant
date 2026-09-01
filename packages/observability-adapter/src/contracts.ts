@@ -66,6 +66,15 @@ export interface DiscordPublicationMetrics {
   recordDiscordPublication(outcome: DiscordPublicationOutcome): void;
 }
 
+export type LiveMemoryProjectionOutcome = "applied" | "reconciled";
+
+export interface LiveMemoryProjectionMetrics {
+  observeLiveMemoryProjection(
+    outcome: LiveMemoryProjectionOutcome,
+    ingestToQuerySeconds: number,
+  ): void;
+}
+
 export interface IngressMetrics {
   recordIngress(outcome: IngressOutcome, reason: IngressReason): void;
   recordDerivedLiveFailure(phase: DerivedLiveFailurePhase): void;
@@ -87,6 +96,7 @@ export interface Metrics
   extends DeadLetterMetrics,
     DiscordPublicationMetrics,
     IngressMetrics,
+    LiveMemoryProjectionMetrics,
     ProcessingStageMetrics,
     ProviderHealthMetrics,
     QueueMetrics {}

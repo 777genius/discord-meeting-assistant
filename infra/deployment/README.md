@@ -68,6 +68,33 @@ the official bot application, write an independently generated 32-byte base64 or
 encrypts short-lived authorization principals and derives non-reversible dedupe
 subjects; it is not a provider or Discord credential.
 
+Migration 0032 is a stop-only boundary for older Local Final Reply binaries. It
+monotonically activates question policy epoch 3 before enabling protocol-2
+retrieval bindings; PostgreSQL then rejects epoch-2 admission and rejects an
+old worker lease for a bound job in either `running` or `ready`. Rollback uses
+the binding-aware epoch-3 release with locator admission still at zero or under
+a new named cutover epoch. Do not code-revert to an epoch-2 image after this
+migration.
+
+Retrieval V2 answer serving is unavailable in the default deployment:
+`infinityRolloutBasisPoints` is `0` and no production V2 provider binding is
+composed. Do not add a binding or raise rollout until the exact release/profile
+qualification manifest contains three real production-model repetitions and
+accepted human receipts. Shadow retrieval must never reach the answer
+publication state machine. Retraction and scoped deletion continue while
+search and answer serving are disabled.
+
+A V2-selected protocol-2 job persists its complete locator request, including
+capability/profile/service/lane/ranking pins, opaque room and source-generation
+scope, queries, filters/preferences, and retrieval/evidence/time bounds.
+Restarted workers use that JSON binding verbatim. Capability, profile, lane,
+policy, source, permission, or authoritative transcript drift fails closed; do
+not repair a queued job by editing its binding or changing environment values.
+
+The old downstream generic selector is migration-only
+(`legacyRetrievalMigration.enabled`) and is scheduled for deletion no earlier
+than 2026-10-31, after ADR-0049's full V1 drain and rollback gates pass.
+
 ## VoiceText provider profiles
 
 VoiceText batch and live recognition are selected independently in Compose:

@@ -1,0 +1,2 @@
+ALTER TABLE meeting_knowledge.question_jobs
+  VALIDATE CONSTRAINT question_jobs_reconciliation_quarantine_is_consistent;

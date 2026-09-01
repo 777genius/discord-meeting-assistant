@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
-
 import {
   AdmitCurrentFinalReply,
   ProcessFinalReplyJob,
   SelectFocusedEvidence,
   createFocusedRetrievalGroundingPlan,
-  decodeFocusedMemoryRetrievalResult,
   focusedMemoryGeneration,
   type AnswerPublicationPort,
   type ExhaustiveMemoryRetrievalPort,
@@ -17,28 +15,17 @@ import {
   type GroundedAnswerGenerator,
   type LocalFinalReplyPolicy,
   type QuestionAdmissionCommitPort,
+  type QuestionBindingSnapshot,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-
+import { authorizationPolicyVersion, authority, AuthorizationFake, binding,
+  EvidenceFake, fixedReplyText, MemoryFake, references, selectedTurns } from
+  "./local-final-reply-application-fixtures.test.js";
 import { QuestionJobStoreFake } from "./question-job-store.fake.test.js";
-import {
-  authorizationPolicyVersion,
-  authority,
-  AuthorizationFake,
-  binding,
-  EvidenceFake,
-  MemoryFake,
-  references,
-  selectedTurns,
-} from "./local-final-reply-application-fixtures.test.js";
-
-const policy: LocalFinalReplyPolicy = {
-  admission: {
-    guildQuestionsPerHour: 100,
-    jobTtlSeconds: 900,
-    requesterQuestionsPerHour: 10,
-  },
-  answerMessageMaximumCharacters: 2_000,
-  authorizationPolicyVersion,
+import { compositeProfile, retrievalProvenance, retrievalV2Request } from
+  "./retrieval-v2-application-fixtures.test.js";
+const policy: LocalFinalReplyPolicy = { admission: { guildQuestionsPerHour: 100, jobTtlSeconds: 900,
+    requesterQuestionsPerHour: 10 },
+  answerMessageMaximumCharacters: 2_000, authorizationPolicyVersion,
   groundingSafety: {
     maximumRequestBytes: 100_000,
     modelContextTokens: 128_000,
@@ -47,12 +34,15 @@ const policy: LocalFinalReplyPolicy = {
     safeInputTokens: 100_000,
     tokenDriftReserve: 8_192,
   },
-  jobLeaseSeconds: 60,
-  maximumProviderAttempts: 2,
+  jobLeaseSeconds: 60, maximumProviderAttempts: 2,
   policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
   retrieval: { maximumCandidates: 24, neighborTurns: 2 },
+  retrievalAdmission: {
+    compositeProfileFingerprint: "e".repeat(64),
+    cutoverEpoch: "test-cutover-r1", infinityProfileFingerprint: "e".repeat(64),
+    localProfileFingerprint: "f".repeat(64),
+  },
 };
-
 const renderer: FinalReplyRendererPort = {
   renderAnswer: ({ answer, evidence, maximumCharacters }) => {
     const evidenceById = new Map(evidence.map((item) => [item.evidenceId, item]));
@@ -67,20 +57,11 @@ const renderer: FinalReplyRendererPort = {
     }
     return content;
   },
-  renderFixed: ({ outcome }) => ({
-    insufficient_evidence: "There is not enough confirmed meeting evidence.",
-    not_a_question: "This reply is not a question.",
-    processing: "The meeting evidence is still being processed.",
-    unavailable: "A grounded answer is currently unavailable.",
-    unsupported_size: "This meeting is too large.",
-  })[outcome],
+  renderFixed: ({ outcome }) => fixedReplyText[outcome],
 };
-
-
 class ExhaustiveMemoryFake implements ExhaustiveMemoryRetrievalPort {
   public rechecks = 0;
   public retrievals = 0;
-
   public retrieve() {
     this.retrievals += 1;
     return Promise.resolve({
@@ -100,30 +81,33 @@ class ExhaustiveMemoryFake implements ExhaustiveMemoryRetrievalPort {
       status: "current" as const,
     });
   }
-
   public recheck(): Promise<boolean> {
     this.rechecks += 1;
     return Promise.resolve(true);
   }
 }
-
 class AdmissionFake implements QuestionAdmissionCommitPort {
   commits: Parameters<QuestionAdmissionCommitPort["commit"]>[0][] = [];
   result: Awaited<ReturnType<QuestionAdmissionCommitPort["commit"]>> = {
     jobId: "question-1",
     status: "committed",
   };
-
   commit(input: Parameters<QuestionAdmissionCommitPort["commit"]>[0]) {
     this.commits.push(input);
     return Promise.resolve(this.result);
   }
-
   withdrawProjection(): Promise<readonly string[]> {
     return Promise.resolve([]);
   }
 }
 
+function admissionWithRollout(admissions: AdmissionFake,
+  retrievalAdmission: LocalFinalReplyPolicy["retrievalAdmission"]) {
+  return new AdmitCurrentFinalReply(new EvidenceFake(), new AuthorizationFake(),
+    admissions, { ...policy, retrievalAdmission }, { retrievalV2Admission: {
+      prepare: () => Promise.resolve({ ...retrievalV2Request,
+        status: "prepared" as const }) } });
+}
 
 class GeneratorFake implements GroundedAnswerGenerator {
   requests: GroundedAnswerGenerationRequest[] = [];
@@ -144,7 +128,6 @@ class GeneratorFake implements GroundedAnswerGenerator {
     },
     status: "completed",
   };
-
   measure(request: GroundedAnswerGenerationRequest) {
     this.requests.push(request);
     return Promise.resolve(this.measurement);
@@ -160,6 +143,9 @@ class PublicationFake implements AnswerPublicationPort {
   cancellations: Parameters<AnswerPublicationPort["cancelBeforeRequest"]>[0][] = [];
   reservations: Parameters<AnswerPublicationPort["reserve"]>[0][] = [];
   sends: Parameters<AnswerPublicationPort["send"]>[0][] = [];
+  deliveryResult: Awaited<ReturnType<AnswerPublicationPort["send"]>> = {
+    externalReceipt: "answer-message-1", status: "delivered",
+  };
 
   reserve(input: Parameters<AnswerPublicationPort["reserve"]>[0]) {
     this.reservations.push(input);
@@ -168,7 +154,7 @@ class PublicationFake implements AnswerPublicationPort {
 
   send(input: Parameters<AnswerPublicationPort["send"]>[0]) {
     this.sends.push(input);
-    return Promise.resolve({ externalReceipt: "answer-message-1", status: "delivered" } as const);
+    return Promise.resolve(this.deliveryResult);
   }
 
   cancelBeforeRequest(input: Parameters<AnswerPublicationPort["cancelBeforeRequest"]>[0]) {
@@ -182,7 +168,10 @@ describe("AdmitCurrentFinalReply", () => {
     const evidence = new EvidenceFake();
     const authorization = new AuthorizationFake();
     const admissions = new AdmissionFake();
-    const useCase = new AdmitCurrentFinalReply(evidence, authorization, admissions, policy);
+    const useCase = new AdmitCurrentFinalReply(evidence, authorization, admissions,
+      policy, { retrievalV2Admission: {
+        prepare: () => Promise.resolve({ ...retrievalV2Request,
+          status: "prepared" as const }) } });
 
     await expect(useCase.execute({
       authorizationPrincipalRef: "principal:v1:opaque",
@@ -197,11 +186,50 @@ describe("AdmitCurrentFinalReply", () => {
       scopeId: authority.scopeId,
     })).resolves.toEqual({ jobId: "question-1", status: "accepted" });
 
+    expect(admissions.commits).toHaveLength(1);
     expect(admissions.commits[0]?.binding).toMatchObject({
       authorizationPolicyVersion,
+      bindingProtocolVersion: 2,
       expectedLocale: "en",
       memoryGeneration: authority.memoryGeneration,
+      retrievalBinding: {
+        cutoverEpoch: "test-cutover-r1",
+        profileFingerprint: "e".repeat(64),
+        request: retrievalV2Request,
+        retrievalPath: "infinity_locator_v2",
+      },
       transcriptId: authority.transcriptId,
+    });
+  });
+
+  it("persists the V2 epoch active at admission", async () => {
+    const firstAdmissions = new AdmissionFake();
+    const first = admissionWithRollout(firstAdmissions, {
+      ...policy.retrievalAdmission,
+    });
+    const rollbackAdmissions = new AdmissionFake();
+    rollbackAdmissions.result = { jobId: "question-2", status: "committed" };
+    const rollback = admissionWithRollout(rollbackAdmissions, {
+      ...policy.retrievalAdmission, cutoverEpoch: "next-epoch-r2",
+    });
+    const base = {
+      authorizationPrincipalRef: "principal:v1:opaque",
+      deliveryContainerId: "question-thread-1",
+      finalProjectionReceipt: authority.finalProjectionReceipt,
+      projectionTargetContainerId: authority.projectionTargetContainerId,
+      questionHash: "c".repeat(64), questionText: "Question?",
+      requesterSubject: "d".repeat(64), schemaVersion: 2 as const,
+      scopeId: authority.scopeId,
+    };
+    await first.execute({ ...base, questionId: "question-1" });
+    await rollback.execute({ ...base, questionId: "question-2" });
+    expect(firstAdmissions.commits[0]?.binding.retrievalBinding).toMatchObject({
+      cutoverEpoch: "test-cutover-r1", profileFingerprint: "e".repeat(64),
+      request: retrievalV2Request, retrievalPath: "infinity_locator_v2",
+    });
+    expect(rollbackAdmissions.commits[0]?.binding.retrievalBinding).toMatchObject({
+      cutoverEpoch: "next-epoch-r2", profileFingerprint: "e".repeat(64),
+      request: retrievalV2Request, retrievalPath: "infinity_locator_v2",
     });
   });
 
@@ -232,6 +260,24 @@ describe("AdmitCurrentFinalReply", () => {
       reason: "authorization_denied",
       status: "ignored",
     });
+    expect(admissions.commits).toEqual([]);
+  });
+
+  it("reports admission transport unavailability separately from denial", async () => {
+    const authorization = new AuthorizationFake();
+    authorization.unavailableAt = "admission";
+    const admissions = new AdmissionFake();
+    const useCase = new AdmitCurrentFinalReply(new EvidenceFake(), authorization,
+      admissions, policy);
+    await expect(useCase.execute({
+      authorizationPrincipalRef: "principal:v1:opaque",
+      deliveryContainerId: "question-thread-1",
+      finalProjectionReceipt: authority.finalProjectionReceipt,
+      projectionTargetContainerId: authority.projectionTargetContainerId,
+      questionHash: "c".repeat(64), questionId: "question-unavailable",
+      questionText: "What changed?", requesterSubject: "d".repeat(64),
+      schemaVersion: 2, scopeId: authority.scopeId,
+    })).resolves.toEqual({ reason: "authorization_unavailable", status: "ignored" });
     expect(admissions.commits).toEqual([]);
   });
 
@@ -281,59 +327,6 @@ describe("AdmitCurrentFinalReply", () => {
   });
 });
 
-describe("focused-memory boundary contract", () => {
-  const valid = {
-    authorityGeneration: authority.memoryGeneration,
-    candidates: references,
-    schemaVersion: 1,
-    status: "current",
-  } as const;
-
-  it("accepts only the versioned reference-only result shape", () => {
-    expect(decodeFocusedMemoryRetrievalResult(valid)).toEqual(valid);
-    expect(() => decodeFocusedMemoryRetrievalResult({
-      ...valid,
-      schemaVersion: 2,
-    })).toThrow("version is unsupported");
-    expect(() => decodeFocusedMemoryRetrievalResult({
-      ...valid,
-      candidates: [{ ...references[0], text: "provider-owned transcript text" }],
-    })).toThrow("unknown field");
-    expect(() => decodeFocusedMemoryRetrievalResult({
-      ...valid,
-      candidates: [references[0], references[0]],
-    })).toThrow("must be unique");
-    expect(decodeFocusedMemoryRetrievalResult({
-      ...valid,
-      candidates: [{ ...references[0], relevanceScore: 0.75 }],
-    })).toMatchObject({ candidates: [{ relevanceScore: 0.75 }] });
-    expect(() => decodeFocusedMemoryRetrievalResult({
-      ...valid,
-      candidates: [{ ...references[0], relevanceScore: 1.01 }],
-    })).toThrow("finite normalized score");
-    const historical = {
-      ...references[0],
-      historicalSource: {
-        candidateLocator: "candidate-1",
-        indexGeneration: "generation-1",
-        releaseId: "release-1",
-      },
-      meetingId: "historical-meeting",
-    };
-    expect(decodeFocusedMemoryRetrievalResult({
-      ...valid,
-      candidates: [historical],
-    })).toMatchObject({ candidates: [historical] });
-    expect(() => decodeFocusedMemoryRetrievalResult({
-      ...valid,
-      candidates: [{
-        ...historical,
-        historicalSource: { releaseId: "release-1" },
-      }],
-    })).toThrow();
-  });
-});
-
 function focusedSelector(
   result?: FocusedEvidenceSelectionResultV1,
   onSelect: () => void = () => {},
@@ -357,13 +350,14 @@ function focusedSelector(
 function processingFixture(
   exhaustiveMemory?: ExhaustiveMemoryRetrievalPort,
   selector = focusedSelector(),
+  processorPolicy: LocalFinalReplyPolicy = policy,
 ) {
   const evidence = new EvidenceFake();
   const authorization = new AuthorizationFake();
   const jobs = new QuestionJobStoreFake({
     answerCandidate: null,
     attempts: 0,
-    binding: binding(),
+    binding: v2Binding(binding(), processorPolicy),
     generation: 1,
     groundingPlan: null,
     jobId: "question-1",
@@ -381,7 +375,7 @@ function processingFixture(
     generator,
     jobs,
     memory,
-    policy,
+    policy: processorPolicy,
     selector,
     renderer,
     workerId: "worker-1",
@@ -394,6 +388,25 @@ function processingFixture(
     memory,
     processor,
     publication,
+  };
+}
+
+function v2Binding(
+  base: QuestionBindingSnapshot,
+  processorPolicy: LocalFinalReplyPolicy,
+): QuestionBindingSnapshot {
+  return {
+    ...base,
+    bindingProtocolVersion: 2,
+    retrievalBinding: {
+      ...retrievalProvenance(),
+      compositeProfile,
+      cutoverEpoch: processorPolicy.retrievalAdmission.cutoverEpoch,
+      profileFingerprint:
+        processorPolicy.retrievalAdmission.infinityProfileFingerprint,
+      request: retrievalV2Request,
+      retrievalPath: "infinity_locator_v2",
+    },
   };
 }
 
@@ -413,9 +426,7 @@ async function executeFocusedPlanFixture() {
 
   await expect(processor.executeOnce()).resolves.toMatchObject({ outcome: "answered" });
   const plan = generator.requests[0]?.plan;
-  if (plan === undefined) {
-    throw new Error("focused fixture produced no grounding plan");
-  }
+  if (plan === undefined) {throw new Error("focused fixture produced no grounding plan");}
   return plan;
 }
 
@@ -486,40 +497,13 @@ describe("ProcessFinalReplyJob", () => {
     expect(publication.sends).toHaveLength(1);
   });
 
-  it("abstains before answer generation when focused selection finds no support", async () => {
-    const selector = focusedSelector({
-      schemaVersion: 1,
-      selectedCandidateIds: [],
-      status: "insufficient_evidence",
-    });
-    const { generator, jobs, processor, publication } = processingFixture(
-      undefined,
-      selector,
-    );
-
-    await expect(processor.executeOnce()).resolves.toMatchObject({
-      outcome: "insufficient_evidence",
-      status: "settled",
-    });
-    expect(generator.generationCalls).toBe(0);
-    expect(generator.requests).toEqual([]);
-    expect(jobs.providerReservations).toHaveLength(1);
-    expect(jobs.providerCompletions).toEqual([]);
-    expect(jobs.providerFailures).toEqual([]);
-    expect(publication.reservations[0]?.content).toContain(
-      "not enough confirmed",
-    );
-  });
-
 });
 
 describe("ProcessFinalReplyJob answer generation", () => {
   it("uses checkpointed every-block coverage and rechecks it before an exhaustive answer", async () => {
     const exhaustive = new ExhaustiveMemoryFake();
     const { generator, jobs, memory, processor } = processingFixture(exhaustive);
-    if (jobs.lease === null) {
-      throw new Error("fixture lease is missing");
-    }
+    if (jobs.lease === null) {throw new Error("fixture lease is missing");}
     jobs.lease = {
       ...jobs.lease,
       questionText: "List every release-date decision",
@@ -622,7 +606,7 @@ describe("ProcessFinalReplyJob answer generation", () => {
     })]);
   });
 
-  it("does not call the provider when the durable attempt reservation loses its fence", async () => {
+  it("does not classify a failed atomic plan reservation as a provider attempt", async () => {
     let selectorCalls = 0;
     const selector = focusedSelector(undefined, () => {
       selectorCalls += 1;
@@ -635,14 +619,20 @@ describe("ProcessFinalReplyJob answer generation", () => {
     );
     expect(generator.generationCalls).toBe(0);
     expect(selectorCalls).toBe(0);
-    expect(jobs.providerReservations).toHaveLength(1);
+    expect(jobs.plans).toHaveLength(1);
+    expect(jobs.providerReservations).toEqual([]);
+  });
+
+  it("blocks provider input when the atomic evidence fence sees supersession", async () => {
+    const { generator, jobs, processor } = processingFixture(); jobs.groundingFenceResult = false;
+    await expect(processor.executeOnce()).resolves.toMatchObject({ status: "stale_generation" });
+    expect([jobs.plans.length, generator.generationCalls]).toEqual([1, 0]);
+    expect(jobs.providerReservations).toEqual([]);
   });
 
   it("enforces the provider-attempt maximum before calling the provider", async () => {
     const { generator, jobs, processor } = processingFixture();
-    if (jobs.lease === null) {
-      throw new Error("fixture lease is missing");
-    }
+    if (jobs.lease === null) {throw new Error("fixture lease is missing");}
     jobs.lease = { ...jobs.lease, attempts: policy.maximumProviderAttempts };
 
     await expect(processor.executeOnce()).resolves.toMatchObject(
@@ -684,6 +674,39 @@ describe("ProcessFinalReplyJob answer generation", () => {
 });
 
 describe("ProcessFinalReplyJob publication fences", () => {
+  it("settles the job when request start observes reconciliation already delivered",
+    async () => {
+      const { jobs, processor, publication } = processingFixture();
+      publication.deliveryResult = {
+        externalReceipt: "answer-message-from-reconciliation", status: "delivered",
+      };
+
+      await expect(processor.executeOnce()).resolves.toEqual({
+        jobId: "question-1", outcome: "answered", status: "settled",
+      });
+      expect(publication.sends).toHaveLength(1);
+      expect(jobs.settlements).toEqual(["answered"]);
+    });
+
+  it.each(["before_retrieval", "before_hydration", "before_generation",
+    "before_effect_reservation", "before_send_cas"] as const)(
+    "defers without scrubbing when Discord is unavailable at %s",
+    async (checkpoint) => {
+      const { authorization, jobs, processor, publication } = processingFixture();
+      authorization.unavailableAt = checkpoint;
+
+      await expect(processor.executeOnce()).resolves.toEqual({
+        jobId: "question-1", status: "deferred",
+      });
+      expect(jobs.settlements).toEqual([]);
+      expect(publication.cancellations).toEqual([]);
+      if (checkpoint === "before_send_cas") {
+        expect(publication.reservations).toHaveLength(1);
+        expect(publication.sends).toEqual([]);
+      }
+    },
+  );
+
   it("cancels a reserved effect when fresh authorization drifts before send", async () => {
     const { authorization, jobs, processor, publication } = processingFixture();
     authorization.denyAt = "before_send_cas";
@@ -781,6 +804,17 @@ describe("ProcessFinalReplyJob publication fences", () => {
     expect(publication.reservations).toEqual([]);
   });
 
+  it("reads a persisted legacy binding but fails it closed before retrieval", async () => {
+    const legacy = processingFixture();
+    legacy.jobs.lease = { ...legacy.jobs.lease!, binding: binding() };
+
+    await expect(legacy.processor.executeOnce()).resolves.toMatchObject({
+      outcome: "stale_binding",
+    });
+    expect(legacy.memory.calls).toEqual([]);
+    expect(legacy.publication.reservations).toEqual([]);
+  });
+
   it("rejects sealed-roster drift before any answer effect", async () => {
     const { evidence, processor, publication } = processingFixture();
     evidence.currentResult = {
@@ -794,11 +828,16 @@ describe("ProcessFinalReplyJob publication fences", () => {
 
   it("resumes a durable ready job from selected canonical references without another provider call", async () => {
     const { generator, jobs, memory, processor } = processingFixture();
+    const auditedTurns = selectedTurns.map((turn) => {
+      const retrievalAudit = references.find(({ turnId }) => turnId === turn.turnId)
+        ?.retrievalAudit;
+      if (retrievalAudit === undefined) {throw new Error("missing retrieval audit");}
+      return Object.freeze({ ...turn, retrievalAudit });
+    });
     const plan = createFocusedRetrievalGroundingPlan({
-      authorityGeneration: authority.memoryGeneration,
-      coverage: "sufficient",
+      authorityGeneration: authority.memoryGeneration, coverage: "sufficient",
       humanActorIds: authority.humanActorIds,
-      turns: selectedTurns,
+      turns: auditedTurns,
     });
     jobs.lease = {
       ...jobs.lease!,

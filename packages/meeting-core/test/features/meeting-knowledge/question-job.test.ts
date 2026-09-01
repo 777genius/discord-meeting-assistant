@@ -32,18 +32,62 @@ const bindingInput = {
   transcriptVersion: 1,
 };
 
+const retrievalBinding = Object.freeze({
+  canonicalEvidenceFilters: Object.freeze({ relativeTimeInterval: null,
+    requiresSpeakerMatch: false, speakerIds: Object.freeze([]) }),
+  cutoverEpoch: "cutover-r1",
+  localCurrentIdentity: Object.freeze({
+    algorithmId: "canonical_local_exact_lexical_v1" as const,
+    profileFingerprint: "f".repeat(64),
+    profileId: "meeting-knowledge.local-current.v2" as const,
+  }),
+  originalQuestion: "What changed?",
+  profileFingerprint: "e".repeat(64),
+  provenanceSchemaVersion: 1 as const,
+  retrievalPath: "infinity_locator_v1" as const,
+});
+
 describe("QuestionJob vocabulary and immutable binding", () => {
   it("normalizes, freezes, and compares an immutable binding", () => {
-    const first = QuestionBinding.create(bindingInput);
-    const same = QuestionBinding.create({ ...bindingInput });
-    const changed = QuestionBinding.create({ ...bindingInput, meetingRevision: 9 });
+    const currentInput = {
+      ...bindingInput,
+      bindingProtocolVersion: 2 as const,
+      retrievalBinding,
+    };
+    const first = QuestionBinding.create(currentInput);
+    const same = QuestionBinding.create({ ...currentInput });
+    const changed = QuestionBinding.create({ ...currentInput, meetingRevision: 9 });
+    const retrievalDrift = QuestionBinding.create({
+      ...currentInput,
+      retrievalBinding: { ...retrievalBinding, cutoverEpoch: "rollback-r2" },
+    });
     expect(questionBindingsEqual(first, same)).toBe(true);
     expect(questionBindingsEqual(first, changed)).toBe(false);
+    expect(questionBindingsEqual(first, retrievalDrift)).toBe(false);
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.humanActorIds)).toBe(true);
+    expect(Object.isFrozen(first.retrievalBinding)).toBe(true);
     expect(first.humanActorIds).toEqual(["speaker-a", "speaker-b"]);
     expect(first.deliveryContainerId).toBe("question-thread-1");
     expect(first.projectionTargetContainerId).toBe("results-channel-1");
+    expect(first.toSnapshot()).toMatchObject({
+      bindingProtocolVersion: 2,
+      retrievalBinding,
+    });
+  });
+
+  it("keeps an explicit pre-cutover binding shape but fails closed for partial v2", () => {
+    const legacy = QuestionBinding.create(bindingInput).toSnapshot();
+    expect(legacy).not.toHaveProperty("bindingProtocolVersion");
+    expect(legacy).not.toHaveProperty("retrievalBinding");
+    expect(() => QuestionBinding.create({
+      ...bindingInput,
+      bindingProtocolVersion: 2,
+    } as never)).toThrow("retrieval binding");
+    expect(() => QuestionBinding.create({
+      ...bindingInput,
+      retrievalBinding,
+    } as never)).toThrow("protocol and retrieval binding");
   });
 
   it("rejects invalid hashes, locale, and revisions", () => {

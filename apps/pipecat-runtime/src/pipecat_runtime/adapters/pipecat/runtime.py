@@ -8,7 +8,6 @@ import hmac
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from uuid import uuid4
 
 from pipecat_runtime.adapters.pipecat.events import ConversationEventStream
 from pipecat_runtime.adapters.pipecat.persistent_pipeline import PersistentConversationPipeline
@@ -75,7 +74,7 @@ class PipecatConversationRuntime(ConversationRuntime):
         self._pipelines: OrderedDict[PipelineKey, PersistentConversationPipeline] = OrderedDict()
         self._pipeline_close_failures: list[Exception] = []
         self._pipeline_close_tasks: set[asyncio.Task[None]] = set()
-        self._attempt_id_factory = attempt_id_factory or _new_attempt_id
+        self._attempt_id_factory = attempt_id_factory
         self._attestation_key = _derive_tts_attestation_key(attestation_secret)
         self._deployment = deployment
         self._source_revision = source_revision
@@ -89,7 +88,11 @@ class PipecatConversationRuntime(ConversationRuntime):
             self._evict_completed_idempotency_key_if_required()
             if request.meeting_id in self._active_meeting_ids:
                 raise RuntimeInputError("meeting conversation pipeline is busy")
-            attempt_id = self._attempt_id_factory()
+            attempt_id = (
+                self._attempt_id_factory()
+                if self._attempt_id_factory is not None
+                else _stable_attempt_id(request.idempotency_key)
+            )
             if not attempt_id.strip():
                 raise RuntimeInputError("attempt id factory returned an empty identifier")
             events = ConversationEventStream(
@@ -163,9 +166,14 @@ class PipecatConversationRuntime(ConversationRuntime):
             raise RuntimeInputError("request voice_profile_id is not enabled by this runtime")
         existing_request = self._idempotency_requests.get(request.idempotency_key)
         if existing_request is not None:
-            if existing_request != request:
+            if not _same_idempotent_command(existing_request, request):
                 raise RuntimeInputError("idempotency key was reused for a different request")
-            raise RuntimeInputError("conversation request was already admitted")
+            if request.idempotency_key in self._active_idempotency_keys:
+                raise RuntimeInputError("conversation request was already admitted")
+            # A boundary owner can disappear after admission but before it durably
+            # observes audio. Re-run the identical command with the same stable
+            # attempt ID; Craig's required durable attempt dedupe owns audible-once.
+            self._idempotency_requests.pop(request.idempotency_key)
 
     def _pipeline_for(
         self, turn: ActivePipelineTurn
@@ -318,8 +326,35 @@ class PipecatConversationSession(ConversationSession):
             self._on_finished()
 
 
-def _new_attempt_id() -> str:
-    return f"attempt-{uuid4().hex}"
+def _stable_attempt_id(idempotency_key: str) -> str:
+    """Provider command identity survives runtime/process restart without exposing input."""
+    digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    return f"attempt-{digest}"
+
+
+def _same_idempotent_command(left: StartTurn, right: StartTurn) -> bool:
+    """Bind a key to audible content while permitting a new coordinator retry ID."""
+    return (
+        left.meeting_id,
+        left.recording_id,
+        left.speaker_id,
+        left.system_prompt,
+        left.prompt,
+        left.literal_speech,
+        left.locale,
+        left.voice_profile_id,
+        left.schema_version,
+    ) == (
+        right.meeting_id,
+        right.recording_id,
+        right.speaker_id,
+        right.system_prompt,
+        right.prompt,
+        right.literal_speech,
+        right.locale,
+        right.voice_profile_id,
+        right.schema_version,
+    )
 
 
 def _derive_tts_attestation_key(secret: str) -> bytes:

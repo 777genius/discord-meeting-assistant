@@ -52,6 +52,21 @@ focused and exhaustive generation plans, late-corpus evidence beyond 256 turns,
 supersession, ambiguous deletes, cross-room denial, and deletion with serving
 and indexing disabled.
 
+The multilingual V4 quality scorer measures only opaque upstream seed locators
+before neighbor expansion. Recall@5 and complete final-answer recall gate
+overall and independently for EN, RU, and mixed. A frozen set of 25
+codename-free questions must achieve at least 23/25 Recall@5 and remain within
+five percentage points of the named-anchor stratum. Citation admission is
+reconstructed from exact canonical turns rehydrated locally; finalized
+citation entailment is a separate 1/1 gate. Static fixture checks reject turn
+IDs, long digest tokens, synthetic marker vocabulary, and gold identifiers.
+Each outcome binds the canonical question ID, locale, and evaluation-text digest;
+local evidence must come from its retrieved seed-or-neighbor locators, and prompt,
+evidence-byte, and whole-transcript accounting is independently reconstructed.
+Independent adjudication, not the generator, classifies factual claims. Every
+target fact family freezes question-specific same-codename stale, contradictory,
+wrong-room, and wrong-scope negatives.
+
 Application tests use a controllable delay and preloaded staged PCM cue registry
 to prove the 1.3-second neutral acknowledgement, the 3.2-second complex-request
 cue, omission for simple prompts and unsupported locales, immediate cue
@@ -112,6 +127,13 @@ That receipt has four explicit sections: deployment safety, Discord identity,
 Voicetext canary, and clock preflight. Operator-authored capability files are
 retained declarations only and cannot authorize a campaign; an absent probe
 always leaves admission blocked.
+
+Disposable Craig qualification covers the zero-effect complete preflight,
+container-to-host `INPUT` escape denial, crash/retry firewall uninstall, exact
+post-down Docker absence, and the explicit retained-failure recovery command.
+The real local profile uses only synthetic credentials and disposable
+Docker/PostgreSQL projects, and must prove no container, network, volume, or
+firewall delta after both a fresh lifecycle and a failed-stack recovery.
 
 ## Summary-first E2E
 

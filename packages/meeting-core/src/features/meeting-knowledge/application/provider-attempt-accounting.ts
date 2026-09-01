@@ -16,21 +16,6 @@ export function providerAttemptAvailable(
   return lease.attempts < policy.maximumProviderAttempts;
 }
 
-export function reserveProviderAttempt(
-  jobs: QuestionJobStore,
-  lease: QuestionJobLease,
-  policy: LocalFinalReplyPolicy,
-  attemptId: string,
-): Promise<boolean> {
-  return jobs.reserveProviderAttempt({
-    attemptId,
-    generation: lease.generation,
-    jobId: lease.jobId,
-    leaseSeconds: policy.jobLeaseSeconds,
-    maximumProviderAttempts: policy.maximumProviderAttempts,
-  });
-}
-
 export function completeProviderAttempt(
   jobs: QuestionJobStore,
   lease: QuestionJobLease,

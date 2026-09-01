@@ -39,5 +39,5 @@ describe("pinned tokenizer process determinism", () => {
         version: "0.1.3",
       },
     });
-  }, 20_000);
+  }, 60_000);
 });

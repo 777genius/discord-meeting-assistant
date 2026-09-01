@@ -59,6 +59,38 @@ async def _collect(events: AsyncIterator[ConversationEvent]) -> list[Conversatio
     return [event async for event in events]
 
 
+@pytest.mark.asyncio
+async def test_provider_attempt_identity_is_stable_across_runtime_restart() -> None:
+    settings = deterministic_runtime_settings()
+    request = sample_start_turn()
+    first = PipecatConversationRuntime(profile=create_profile(settings.profile))
+    first_session = await first.start(request)
+    first_attempt_id = first_session.attempt_id
+    await _collect(first_session.events())
+    await first.close()
+
+    restarted = PipecatConversationRuntime(profile=create_profile(settings.profile))
+    restarted_session = await restarted.start(request)
+    assert restarted_session.attempt_id == first_attempt_id
+    await _collect(restarted_session.events())
+    await restarted.close()
+
+
+@pytest.mark.asyncio
+async def test_completed_command_retries_with_the_same_provider_attempt_identity() -> None:
+    settings = deterministic_runtime_settings()
+    request = sample_start_turn()
+    runtime = PipecatConversationRuntime(profile=create_profile(settings.profile))
+    first = await runtime.start(request)
+    first_attempt_id = first.attempt_id
+    await _collect(first.events())
+
+    retry = await runtime.start(replace(request, turn_id="turn-retry"))
+    assert retry.attempt_id == first_attempt_id
+    await _collect(retry.events())
+    await runtime.close()
+
+
 class _PlaybackLifecycleProbe(FrameProcessor):
     def __init__(self) -> None:
         super().__init__()
@@ -631,6 +663,32 @@ async def test_runtime_rejects_duplicate_idempotency_without_starting_a_second_p
 
     with pytest.raises(RuntimeInputError, match="already admitted"):
         await runtime.start(request)
+
+    events = session.events()
+    accepted = await anext(events)
+    await session.cancel(
+        CancelTurn(
+            turn_id=accepted.turn_id,
+            attempt_id=accepted.attempt_id,
+            reason=CancellationReason.RUNTIME_SHUTDOWN,
+        )
+    )
+    await _collect(events)
+    await session.wait()
+    await runtime.close()
+
+
+async def test_runtime_rejects_idempotency_reuse_for_a_conflicting_speaker() -> None:
+    """One audible command key cannot be rebound to another speaker."""
+    settings = deterministic_runtime_settings(
+        DeterministicPipelineOptions(text_delay_seconds=0.5)
+    )
+    runtime = PipecatConversationRuntime(profile=create_profile(settings.profile))
+    request = sample_start_turn()
+    session = await runtime.start(request)
+
+    with pytest.raises(RuntimeInputError, match="different request"):
+        await runtime.start(replace(request, speaker_id="speaker-conflict"))
 
     events = session.events()
     accepted = await anext(events)

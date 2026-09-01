@@ -30,9 +30,29 @@ export class PostgresQuestionPolicyTransaction {
     staleResult: Result,
     operation: (client: PoolClient) => Promise<Result>,
   ): Promise<Result> {
+    return this.executeWithBegin("BEGIN", staleResult, operation);
+  }
+
+  /** Stable MVCC snapshot for evidence fences spanning several bounded reads. */
+  public async executeConsistent<Result>(
+    staleResult: Result,
+    operation: (client: PoolClient) => Promise<Result>,
+  ): Promise<Result> {
+    return this.executeWithBegin(
+      "BEGIN ISOLATION LEVEL REPEATABLE READ",
+      staleResult,
+      operation,
+    );
+  }
+
+  private async executeWithBegin<Result>(
+    begin: string,
+    staleResult: Result,
+    operation: (client: PoolClient) => Promise<Result>,
+  ): Promise<Result> {
     const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
+      await client.query(begin);
       if (!await this.fence.lockCurrent(client)) {
         await client.query("COMMIT");
         return staleResult;

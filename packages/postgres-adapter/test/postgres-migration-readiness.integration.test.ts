@@ -3,6 +3,7 @@ import {
   expect,
   it,
 } from "vitest";
+import type { Pool } from "pg";
 
 import {
   createIsolatedDatabase,
@@ -17,6 +18,103 @@ import {
   requiredPostgresSchemaVersion,
   sha256,
 } from "../src/index.js";
+
+async function seedLegacyQuestionPolicyDrain(database: Pool): Promise<void> {
+  await database.query(
+    `INSERT INTO meeting_knowledge.current_question_policy (
+       policy_key, policy_epoch, policy_version, authorization_policy_version
+     ) VALUES (
+       'local-final-reply', 2,
+       'meeting-knowledge.focused-memory-final-reply.v3',
+       'discord.participant-current-results.v2'
+     );
+     INSERT INTO meeting_knowledge.question_jobs (
+       question_id, requester_subject, question_hash, scope_id,
+       final_projection_receipt, authorization_principal_ref,
+       authorization_digest, locale, question_text, binding, binding_hash,
+       policy_epoch, expires_at
+     ) VALUES (
+       'legacy-policy-drain', repeat('a', 64), repeat('b', 64), 'scope-1',
+       'receipt-1', 'principal-1', repeat('c', 64), 'en', 'Question?',
+       '{"policyVersion":"meeting-knowledge.focused-memory-final-reply.v3","authorizationPolicyVersion":"discord.participant-current-results.v2"}'::jsonb,
+       repeat('d', 64), 2, transaction_timestamp() + interval '10 minutes'
+     );`,
+  );
+}
+
+async function expectBindingAwareQuestionPolicy(database: Pool): Promise<void> {
+  const questionPolicy = await database.query(
+    `SELECT policy_epoch::int AS policy_epoch, policy_version,
+            authorization_policy_version
+     FROM meeting_knowledge.current_question_policy
+     WHERE policy_key = 'local-final-reply'`,
+  );
+  expect(questionPolicy.rows).toEqual([{
+    authorization_policy_version: "discord.participant-current-results.v2",
+    policy_epoch: 3,
+    policy_version: "meeting-knowledge.focused-memory-final-reply.v3",
+  }]);
+  await expect(database.query(
+    `SELECT policy_epoch::int AS policy_epoch
+     FROM meeting_knowledge.question_jobs
+     WHERE question_id = 'legacy-policy-drain'`,
+  )).resolves.toMatchObject({ rows: [{ policy_epoch: 3 }] });
+}
+
+async function waitForAnswerEffectMigrationFence(database: Pool): Promise<void> {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const result = await database.query<{ readonly waiting: boolean }>(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_locks
+        WHERE locktype = 'relation'
+          AND relation = 'meeting_core.answer_effects'::regclass
+          AND mode = 'ShareRowExclusiveLock'
+          AND NOT granted
+      ) AS waiting
+    `);
+    if (result.rows[0]?.waiting === true) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10);
+    });
+  }
+  throw new Error("migration did not reach the pre-scan answer-effect fence");
+}
+
+const canonicalAnswerPayloadTrigger = `
+  CREATE TRIGGER answer_effects_unresolved_payload_is_immutable
+  BEFORE UPDATE OF state, payload_bytes, payload_hash
+  ON meeting_core.answer_effects
+  FOR EACH ROW
+  EXECUTE FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+`;
+
+async function expectAnswerPayloadTriggerWiringDrift(
+  database: Pool,
+  driftedTrigger: string,
+): Promise<void> {
+  await database.query(`
+    DROP TRIGGER answer_effects_unresolved_payload_is_immutable
+    ON meeting_core.answer_effects
+  `);
+  await database.query(driftedTrigger);
+  try {
+    await expect(new PostgresSchemaReadiness(database).assertReady()).rejects.toThrow(
+      "answer reconciliation payload trigger wiring does not match v1",
+    );
+  } finally {
+    await database.query(`
+      DROP TRIGGER IF EXISTS answer_effects_unresolved_payload_is_immutable
+      ON meeting_core.answer_effects;
+      DROP TRIGGER IF EXISTS answer_effects_unresolved_payload_is_immutable
+      ON meeting_core.answer_effect_reconciliation_quarantine;
+    `);
+    await database.query(canonicalAnswerPayloadTrigger);
+  }
+  await expect(new PostgresSchemaReadiness(database).assertReady()).resolves.toBeUndefined();
+}
 
 usePostgresIntegrationDatabase();
 
@@ -222,7 +320,112 @@ describe("Postgres concurrent index recovery", () => {
 
 });
 
+// oxlint-disable-next-line max-lines-per-function
 describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () => {
+  it("quarantines an old-worker scrub committed at the pre-scan fence", async (context) => {
+    databaseOrSkip(context);
+    const isolated = await createIsolatedDatabase();
+    const migrations = await loadPostgresMigrations();
+    const oldWorker = await isolated.pool.connect();
+    try {
+      await new PostgresMigrationRunner(isolated.pool, {
+        migrations: migrations.slice(0, 34),
+      }).migrate();
+      await isolated.pool.query(`
+        INSERT INTO meeting_knowledge.question_jobs (
+          question_id, requester_subject, question_hash, scope_id,
+          final_projection_receipt, authorization_principal_ref,
+          authorization_digest, locale, question_text, binding, binding_hash,
+          state, expires_at
+        ) VALUES (
+          'migration-race-effect', repeat('a', 64), repeat('b', 64),
+          '77777777777777777', 'projection-race', 'opaque-race',
+          repeat('c', 64), 'en', 'Question?', '{}'::jsonb, repeat('d', 64),
+          'queued', transaction_timestamp() + interval '10 minutes'
+        );
+        INSERT INTO meeting_core.answer_effects (
+          effect_id, state, projection_target_container_id,
+          delivery_container_id, reply_to_remote_message_id, marker,
+          payload_bytes, payload_hash, binding_hash, authorization_digest,
+          source_meeting_ids, request_started_at
+        ) VALUES (
+          'meeting-knowledge-answer:v1:migration-race-effect',
+          'outcome_unknown', '88888888888888888', '88888888888888888',
+          '99999999999999999', 'migration-race-marker',
+          '{"request":"immutable"}', repeat('e', 64), repeat('d', 64),
+          repeat('c', 64), ARRAY['migration-race-source']::text[],
+          transaction_timestamp()
+        )
+      `);
+      await oldWorker.query("BEGIN");
+      await oldWorker.query(`
+        UPDATE meeting_core.answer_effects SET updated_at = updated_at
+        WHERE effect_id = 'meeting-knowledge-answer:v1:migration-race-effect'
+      `);
+      const migration = new PostgresMigrationRunner(isolated.pool).migrate();
+      await waitForAnswerEffectMigrationFence(isolated.pool);
+      await oldWorker.query(`
+        UPDATE meeting_core.answer_effects
+        SET state = 'absent_unconfirmed', payload_bytes = '{}'
+        WHERE effect_id = 'meeting-knowledge-answer:v1:migration-race-effect'
+      `);
+      await oldWorker.query("COMMIT");
+      await expect(migration).resolves.toMatchObject({
+        appliedVersions: [35, 36, 37, 38, 39, 40, 41, 42, 43],
+      });
+      await expect(isolated.pool.query(`
+        SELECT effect.state, quarantine.prior_state, quarantine.reason
+        FROM meeting_core.answer_effects AS effect
+        JOIN meeting_core.answer_effect_reconciliation_quarantine AS quarantine
+          USING (effect_id)
+        WHERE effect.effect_id = 'meeting-knowledge-answer:v1:migration-race-effect'
+      `)).resolves.toMatchObject({ rows: [{
+        prior_state: "absent_unconfirmed",
+        reason: "legacy_payload_scrubbed_before_0035",
+        state: "quarantined_unrecoverable",
+      }] });
+    } finally {
+      await oldWorker.query("ROLLBACK").catch(() => {});
+      oldWorker.release();
+      await isolated.dispose();
+    }
+  }, 30_000);
+
+  it("fails closed on legacy played greetings instead of fabricating provider start", async (context) => {
+    databaseOrSkip(context);
+    const isolated = await createIsolatedDatabase();
+    const migrations = await loadPostgresMigrations();
+    try {
+      await new PostgresMigrationRunner(isolated.pool, {
+        migrations: migrations.slice(0, 32),
+      }).migrate();
+      await isolated.pool.query(`
+        INSERT INTO meeting_core.conversation_one_shot_receipts (
+          receipt_id, cue_kind, state, completed_at
+        ) VALUES (repeat('a', 64), 'greeting', 'played', transaction_timestamp())
+      `);
+
+      const failure = await new PostgresMigrationRunner(isolated.pool, { migrations }).migrate()
+        .then(() => null, (error: unknown) => error);
+      expect(failure).toBeInstanceOf(Error);
+      if (!(failure instanceof Error)) {
+        throw new TypeError("Expected migration failure");
+      }
+      expect(failure.message).toBe("PostgreSQL migration failed");
+      expect(failure.cause).toBeInstanceOf(Error);
+      if (!(failure.cause instanceof Error)) {
+        throw new TypeError("Expected migration failure cause");
+      }
+      expect(failure.cause.message).toContain("ambiguous or unattested legacy receipts");
+      await expect(isolated.pool.query(`
+        SELECT provider_started_at
+        FROM meeting_core.conversation_one_shot_receipts
+      `)).rejects.toThrow("provider_started_at");
+    } finally {
+      await isolated.dispose();
+    }
+  });
+
   it("migrates existing Discord routing snapshots without changing route meaning", async (context) => {
     databaseOrSkip(context);
     const isolated = await createIsolatedDatabase();
@@ -250,10 +453,16 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
           },
         ],
       );
+      await seedLegacyQuestionPolicyDrain(isolated.pool);
 
       await expect(new PostgresMigrationRunner(isolated.pool, {
         migrations,
-      }).migrate()).resolves.toEqual({ appliedVersions: [30, 31], version: 31 });
+      }).migrate()).resolves.toEqual({
+        appliedVersions: [30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
+          43],
+        version: 43,
+      });
+      await expectBindingAwareQuestionPolicy(isolated.pool);
       const migrated = await isolated.pool.query(
         "SELECT source_id, revision::float8 AS revision, snapshot FROM meeting_routing.source_configurations",
       );
@@ -274,7 +483,7 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
     } finally {
       await isolated.dispose();
     }
-  });
+  }, 30_000);
 
   it("records the exact migration ledger and accepts a fully validated schema", async (context) => {
     const database = databaseOrSkip(context);
@@ -300,6 +509,157 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
       await database.query(`
         ALTER TABLE meeting_core.post_call_outbox
         ENABLE TRIGGER post_call_outbox_transcription_execution_binding_is_immutable
+      `);
+    }
+  });
+
+  it("rejects trigger-body drift even when the required trigger name remains enabled", async (context) => {
+    const database = databaseOrSkip(context);
+    const original = await database.query<{ readonly definition: string }>(`
+      SELECT pg_get_functiondef(
+        'meeting_core.prevent_unresolved_answer_payload_mutation_v1()'::regprocedure
+      ) AS definition
+    `);
+    const definition = original.rows[0]?.definition;
+    if (definition === undefined) {
+      throw new Error("answer payload fence definition is unavailable");
+    }
+    await database.query(`
+      CREATE OR REPLACE FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$
+    `);
+    try {
+      await expect(new PostgresSchemaReadiness(database).assertReady()).rejects.toThrow(
+        "trigger function definition/version does not match v1",
+      );
+    } finally {
+      await database.query(definition);
+    }
+    await expect(new PostgresSchemaReadiness(database).assertReady()).resolves.toBeUndefined();
+  });
+
+  it("rejects a retained-answer-payload trigger wired to the wrong function OID", async (context) => {
+    const database = databaseOrSkip(context);
+    await database.query(`
+      CREATE OR REPLACE FUNCTION meeting_core.wrong_answer_payload_trigger_v1()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$
+    `);
+    try {
+      await expectAnswerPayloadTriggerWiringDrift(database, `
+        CREATE TRIGGER answer_effects_unresolved_payload_is_immutable
+        BEFORE UPDATE OF state, payload_bytes, payload_hash
+        ON meeting_core.answer_effects FOR EACH ROW
+        EXECUTE FUNCTION meeting_core.wrong_answer_payload_trigger_v1()
+      `);
+    } finally {
+      await database.query("DROP FUNCTION meeting_core.wrong_answer_payload_trigger_v1()");
+    }
+  });
+
+  it("rejects a disabled retained-answer-payload trigger", async (context) => {
+    const database = databaseOrSkip(context);
+    await database.query(`
+      ALTER TABLE meeting_core.answer_effects
+      DISABLE TRIGGER answer_effects_unresolved_payload_is_immutable
+    `);
+    try {
+      await expect(new PostgresSchemaReadiness(database).assertReady()).rejects.toThrow(
+        "answer reconciliation payload trigger wiring does not match v1",
+      );
+    } finally {
+      await database.query(`
+        ALTER TABLE meeting_core.answer_effects
+        ENABLE TRIGGER answer_effects_unresolved_payload_is_immutable
+      `);
+    }
+  });
+
+  it("rejects retained-answer-payload trigger timing, level, event, mask, and relation drift", async (context) => {
+    const database = databaseOrSkip(context);
+    const driftedTriggers = [
+    ["AFTER timing", `
+      CREATE TRIGGER answer_effects_unresolved_payload_is_immutable
+      AFTER UPDATE OF state, payload_bytes, payload_hash
+      ON meeting_core.answer_effects FOR EACH ROW
+      EXECUTE FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+    `],
+    ["FOR EACH STATEMENT level", `
+      CREATE TRIGGER answer_effects_unresolved_payload_is_immutable
+      BEFORE UPDATE OF state, payload_bytes, payload_hash
+      ON meeting_core.answer_effects FOR EACH STATEMENT
+      EXECUTE FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+    `],
+    ["INSERT event", `
+      CREATE TRIGGER answer_effects_unresolved_payload_is_immutable
+      BEFORE INSERT ON meeting_core.answer_effects FOR EACH ROW
+      EXECUTE FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+    `],
+    ["missing UPDATE OF column", `
+      CREATE TRIGGER answer_effects_unresolved_payload_is_immutable
+      BEFORE UPDATE OF state, payload_bytes
+      ON meeting_core.answer_effects FOR EACH ROW
+      EXECUTE FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+    `],
+    ["extra UPDATE OF column", `
+      CREATE TRIGGER answer_effects_unresolved_payload_is_immutable
+      BEFORE UPDATE OF state, payload_bytes, payload_hash, updated_at
+      ON meeting_core.answer_effects FOR EACH ROW
+      EXECUTE FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+    `],
+    ["unmasked UPDATE event", `
+      CREATE TRIGGER answer_effects_unresolved_payload_is_immutable
+      BEFORE UPDATE ON meeting_core.answer_effects FOR EACH ROW
+      EXECUTE FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+    `],
+    ["wrong relation", `
+      CREATE TRIGGER answer_effects_unresolved_payload_is_immutable
+      BEFORE UPDATE OF prior_state, payload_hash
+      ON meeting_core.answer_effect_reconciliation_quarantine FOR EACH ROW
+      EXECUTE FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+    `],
+    ] as const;
+    for (const [_label, driftedTrigger] of driftedTriggers) {
+      await expectAnswerPayloadTriggerWiringDrift(database, driftedTrigger);
+    }
+  });
+
+  it("rejects trigger-function execution attribute drift", async (context) => {
+    const database = databaseOrSkip(context);
+    await database.query(`
+      ALTER FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+      SECURITY DEFINER
+    `);
+    try {
+      await expect(new PostgresSchemaReadiness(database).assertReady()).rejects.toThrow(
+        "trigger function definition/version does not match v1",
+      );
+    } finally {
+      await database.query(`
+        ALTER FUNCTION meeting_core.prevent_unresolved_answer_payload_mutation_v1()
+        SECURITY INVOKER
+      `);
+    }
+    await expect(new PostgresSchemaReadiness(database).assertReady()).resolves.toBeUndefined();
+  });
+
+  it("rejects any non-bijective operator quarantine record", async (context) => {
+    const database = databaseOrSkip(context);
+    await database.query(`
+      INSERT INTO meeting_core.answer_effect_reconciliation_quarantine (
+        effect_id, prior_state, payload_hash, reason
+      ) VALUES (
+        'orphaned-operator-quarantine', 'outcome_unknown', repeat('a', 64),
+        'legacy_payload_scrubbed_before_0035'
+      )
+    `);
+    try {
+      await expect(new PostgresSchemaReadiness(database).assertReady()).rejects.toThrow(
+        "quarantine is not bijective with quarantined effects",
+      );
+    } finally {
+      await database.query(`
+        DELETE FROM meeting_core.answer_effect_reconciliation_quarantine
+        WHERE effect_id = 'orphaned-operator-quarantine'
       `);
     }
   });
@@ -338,7 +698,7 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
 
     await database.query(`
       INSERT INTO meeting_core.answer_effects (
-        effect_id, state, projection_target_container_id,
+        effect_id, state, authority_scope_id, projection_target_container_id,
         delivery_container_id, reply_to_remote_message_id, marker,
         payload_bytes, payload_hash, binding_hash, authorization_digest,
         source_meeting_ids, request_started_at
@@ -346,11 +706,12 @@ describe("PostgresMigrationRunner and PostgresSchemaReadiness validation", () =>
       SELECT
         'meeting-knowledge-answer:v1:invalid-index-' || sequence,
         'outcome_unknown',
+        'scope-invalid-index',
         'projection-invalid-index',
         'delivery-invalid-index',
         '66666666666666666' || sequence,
         'marker-invalid-index-' || sequence,
-        '{}',
+        '{"request":"index-readiness"}',
         repeat('a', 64),
         repeat('b', 64),
         repeat('c', 64),

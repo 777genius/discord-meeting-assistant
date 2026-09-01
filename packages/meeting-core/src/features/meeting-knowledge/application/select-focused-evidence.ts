@@ -14,9 +14,10 @@ import type {
   FocusedEvidenceSelectionResultV1,
   FocusedEvidenceSelectorPort,
 } from "./ports/focused-evidence-selector.js";
+import { qualifiedFocusedEvidenceCandidateLimit } from
+  "./ports/focused-evidence-selector.js";
 import type { FinalReplyEvidencePort } from "./ports/final-reply.js";
 
-const MAX_CANDIDATES = 40;
 const MAX_SELECTED = 5;
 const MAX_SNIPPET_BYTES = 1_600;
 const MAX_QUESTION_BYTES = 4_096;
@@ -95,11 +96,10 @@ export async function prepareSelectedFocusedEvidence(input: {
   if (!authorityMatchesBinding(refreshed.binding, input.binding)) {
     return { status: "stale_binding" };
   }
-  if (!focusedHydrationMatchesReferences(
-    input.binding,
-    references,
-    refreshed.turns,
-  )) {
+  const survivors = alignFocusedHydrationSurvivors(
+    input.binding, references, refreshed.turns,
+  );
+  if (survivors === null || survivors.turns.length < 1) {
     return { status: "unavailable" };
   }
   return {
@@ -108,7 +108,7 @@ export async function prepareSelectedFocusedEvidence(input: {
       authorityGeneration: input.authorityGeneration,
       coverage: "sufficient",
       humanActorIds: admittedHumanActors(refreshed),
-      turns: refreshed.turns,
+      turns: survivors.turns,
     }),
     status: "prepared",
   };
@@ -190,8 +190,10 @@ export class SelectFocusedEvidence {
 function buildCandidates(
   turns: readonly RehydratedEvidenceTurn[],
 ): readonly FocusedEvidenceSelectionCandidateV1[] {
-  if (turns.length < 1 || turns.length > MAX_CANDIDATES) {
-    throw new RangeError("focused selection requires 1..40 canonical turns");
+  if (turns.length < 1 || turns.length > qualifiedFocusedEvidenceCandidateLimit) {
+    throw new RangeError(
+      `focused selection requires 1..${qualifiedFocusedEvidenceCandidateLimit} canonical turns`,
+    );
   }
   const speakers = new Map<string, string>();
   return Object.freeze(turns.map((turn, index) => {
@@ -332,33 +334,58 @@ function isReference(
   return value !== undefined;
 }
 
-export function focusedHydrationMatchesReferences(
+function focusedHydrationReferenceMatchesTurn(
+  binding: QuestionBindingSnapshot,
+  reference: FocusedMemoryReference,
+  turn: RehydratedEvidenceTurn,
+): boolean {
+  if (turn.turnId !== reference.turnId || turn.turnHash !== reference.turnHash) {
+    return false;
+  }
+  if (turn.source === undefined) {
+    return reference.meetingId === binding.meetingId &&
+      reference.historicalSource === undefined &&
+      reference.transcriptId === binding.transcriptId &&
+      reference.transcriptVersion === binding.transcriptVersion &&
+      reference.sourceStartCodePoint === undefined &&
+      reference.sourceEndCodePoint === undefined;
+  }
+  return turn.source.meetingId === reference.meetingId &&
+    historicalEvidenceSourceKey(turn.source.historicalSource) ===
+      historicalEvidenceSourceKey(reference.historicalSource) &&
+    turn.source.transcriptId === reference.transcriptId &&
+    turn.source.transcriptVersion === reference.transcriptVersion &&
+    turn.source.sourceStartCodePoint === reference.sourceStartCodePoint &&
+    turn.source.sourceEndCodePoint === reference.sourceEndCodePoint;
+}
+
+export function alignFocusedHydrationSurvivors(
   binding: QuestionBindingSnapshot,
   references: readonly FocusedMemoryReference[],
   turns: readonly RehydratedEvidenceTurn[],
-): boolean {
-  return references.length === turns.length && references.every((reference, index) => {
-    const turn = turns[index];
-    if (turn === undefined ||
-        turn.turnId !== reference.turnId ||
-        turn.turnHash !== reference.turnHash) {
-      return false;
+): { readonly references: readonly FocusedMemoryReference[];
+  readonly turns: readonly RehydratedEvidenceTurn[] } | null {
+  if (turns.length > references.length) {
+    return null;
+  }
+  const survivorReferences: FocusedMemoryReference[] = [];
+  let previousReferenceIndex = -1;
+  for (const turn of turns) {
+    const matchingIndices = references.flatMap((reference, index) =>
+      focusedHydrationReferenceMatchesTurn(binding, reference, turn)
+        ? [index]
+        : []
+    );
+    if (matchingIndices.length !== 1 ||
+      matchingIndices[0]! <= previousReferenceIndex) {
+      return null;
     }
-    if (turn.source === undefined) {
-      return reference.meetingId === binding.meetingId &&
-        reference.historicalSource === undefined &&
-        reference.transcriptId === binding.transcriptId &&
-        reference.transcriptVersion === binding.transcriptVersion &&
-        reference.sourceStartCodePoint === undefined &&
-        reference.sourceEndCodePoint === undefined;
-    }
-    return turn.source.meetingId === reference.meetingId &&
-      historicalEvidenceSourceKey(turn.source.historicalSource) ===
-        historicalEvidenceSourceKey(reference.historicalSource) &&
-      turn.source.transcriptId === reference.transcriptId &&
-      turn.source.transcriptVersion === reference.transcriptVersion &&
-      turn.source.sourceStartCodePoint === reference.sourceStartCodePoint &&
-      turn.source.sourceEndCodePoint === reference.sourceEndCodePoint;
+    previousReferenceIndex = matchingIndices[0]!;
+    survivorReferences.push(references[previousReferenceIndex]!);
+  }
+  return Object.freeze({
+    references: Object.freeze(survivorReferences),
+    turns: Object.freeze([...turns]),
   });
 }
 

@@ -70,7 +70,7 @@ export async function inspectCraigNetworkPolicy(input: Readonly<{
   });
 }
 
-interface FirewallRule {
+export interface CraigParsedFirewallRule {
   readonly chain: string;
   readonly destination?: string;
   readonly destinationPort?: string;
@@ -82,6 +82,8 @@ interface FirewallRule {
   readonly target?: string;
   readonly unsupported?: readonly string[];
 }
+
+type FirewallRule = CraigParsedFirewallRule;
 
 export function proveCraigFirewallPolicy(input: Readonly<{
   bridgeInterface: string;
@@ -95,12 +97,14 @@ export function proveCraigFirewallPolicy(input: Readonly<{
   if (input.bridgeInterface !== input.policy.bridgeInterface) {
     throw new Error("Craig firewall proof selected the wrong bridge");
   }
-  const rules = parseFilterRules(input.firewall);
+  const rules = parseCraigFilterRulesForOwnership(input.firewall);
   const policyRules = rules.filter(({ chain }) => chain === input.policy.chain);
   if (policyRules.some(({ unsupported }) => unsupported !== undefined && unsupported.length > 0)) {
     throw new Error("Craig firewall policy chain contains an unsupported match");
   }
   const required = [
+    { destination: `${input.policy.databaseIpv4}/32`, input: input.bridgeInterface, protocol: "tcp",
+      source: `${address}/32`, destinationPort: "5432", states: ["ESTABLISHED", "NEW"], target: "ACCEPT" },
     { input: input.bridgeInterface, protocol: "tcp", source: `${address}/32`,
       destinationPort: String(input.policy.tcpDestinationPort), states: ["ESTABLISHED", "NEW"], target: "ACCEPT" },
     { input: input.bridgeInterface, protocol: "udp", source: `${address}/32`,
@@ -112,7 +116,7 @@ export function proveCraigFirewallPolicy(input: Readonly<{
   const accepted = policyRules.filter(({ target }) => target === "ACCEPT");
   if (accepted.length !== required.length || required.some((expected) =>
     !accepted.some((actual) => sameMatch(actual, expected)))) {
-    throw new Error("Craig firewall policy lacks the exact TCP 443, UDP, or established return rule");
+    throw new Error("Craig firewall policy lacks the exact TCP 443, PostgreSQL 5432, UDP, or established return rule");
   }
   if (policyRules.some((rule) => rule.target !== "ACCEPT" && rule.target !== "DROP")) {
     throw new Error("Craig firewall policy chain contains an unreviewed semantic rule");
@@ -142,6 +146,7 @@ export function proveCraigFirewallPolicy(input: Readonly<{
       throw new Error("Craig firewall policy is bypassed by an earlier effective rule");
     }
   }
+  const inputDispatch = proveInputHostFence(rules, input.bridgeInterface, address, input.policy.inputChain);
   const semantics = required.map((rule) => withoutUndefined({ chain: input.policy.chain, ...rule }))
     .toSorted((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
   const terminalDisposition = {
@@ -156,11 +161,29 @@ export function proveCraigFirewallPolicy(input: Readonly<{
   };
   return Object.freeze({
     ...proof,
-    semanticPolicySha256: digest({ proof, semantics, terminalDisposition }),
+    semanticPolicySha256: digest({ hostFence: { chain: input.policy.inputChain, target: "DROP" },
+      inputDispatch, proof, semantics, terminalDisposition }),
   });
 }
 
-function parseFilterRules(value: string): readonly FirewallRule[] {
+function proveInputHostFence(rules: readonly FirewallRule[], bridge: string, address: string,
+  inputChain: string): Omit<FirewallRule, "chain"> {
+  const inputRules = rules.filter(({ chain }) => chain === "INPUT");
+  const inputDispatch = { input: bridge, source: `${address}/32`, target: inputChain };
+  const inputDispatchIndex = inputRules.findIndex((rule) => sameMatch(rule, inputDispatch));
+  if (inputDispatchIndex < 0 || inputRules.slice(0, inputDispatchIndex).some((rule) =>
+    rule.target !== "LOG" && overlaps(rule, inputDispatch))) {
+    throw new Error("Craig host-escape fence is absent or bypassed in INPUT");
+  }
+  const hostFence = rules.filter(({ chain }) => chain === inputChain);
+  if (hostFence.length !== 1 || hostFence[0]?.target !== "DROP"
+    || Object.keys(withoutUndefined(hostFence[0])).length !== 2) {
+    throw new Error("Craig INPUT host-escape chain must be one unconditional terminal drop with no accept");
+  }
+  return inputDispatch;
+}
+
+export function parseCraigFilterRulesForOwnership(value: string): readonly CraigParsedFirewallRule[] {
   if (!value.split("\n").some((line) => line.trim() === "*filter")
     || !value.split("\n").some((line) => line.trim() === "COMMIT")) {
     throw new Error("iptables-save did not return one complete filter table");

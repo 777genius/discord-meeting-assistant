@@ -5,8 +5,13 @@ import {
   requireKnowledgeText,
   requireSha256,
 } from "./errors.js";
+import {
+  RetrievalBinding,
+  sameFocusedLocatorRetrievalV2Value,
+  type RetrievalBindingSnapshot,
+} from "./retrieval-admission.js";
 
-export interface QuestionBindingSnapshot {
+interface QuestionBindingBaseSnapshot {
   readonly authorizationDigest: string;
   readonly authorizationPolicyVersion: string;
   readonly authorizationPrincipalRef: string;
@@ -31,6 +36,17 @@ export interface QuestionBindingSnapshot {
   readonly transcriptVersion: number;
 }
 
+export type QuestionBindingSnapshot = QuestionBindingBaseSnapshot & (
+  | {
+      readonly bindingProtocolVersion: 2;
+      readonly retrievalBinding: RetrievalBindingSnapshot;
+    }
+  | {
+      readonly bindingProtocolVersion?: never;
+      readonly retrievalBinding?: never;
+    }
+);
+
 const bindingTextFields = [
   "authorizationPolicyVersion",
   "authorizationPrincipalRef",
@@ -48,7 +64,7 @@ const bindingTextFields = [
   "transcriptId",
 ] as const;
 
-export class QuestionBinding implements QuestionBindingSnapshot {
+export class QuestionBinding implements QuestionBindingBaseSnapshot {
   public readonly authorizationDigest: string;
   public readonly authorizationPolicyVersion: string;
   public readonly authorizationPrincipalRef: string;
@@ -71,6 +87,8 @@ export class QuestionBinding implements QuestionBindingSnapshot {
   public readonly scopeId: string;
   public readonly transcriptId: string;
   public readonly transcriptVersion: number;
+  public readonly bindingProtocolVersion?: 2;
+  public readonly retrievalBinding?: RetrievalBindingSnapshot;
 
   private constructor(input: QuestionBindingSnapshot) {
     Object.assign(this, input);
@@ -96,6 +114,10 @@ export class QuestionBinding implements QuestionBindingSnapshot {
     this.scopeId = input.scopeId;
     this.transcriptId = input.transcriptId;
     this.transcriptVersion = input.transcriptVersion;
+    if (input.bindingProtocolVersion === 2) {
+      this.bindingProtocolVersion = 2;
+      this.retrievalBinding = Object.freeze({ ...input.retrievalBinding });
+    }
     Object.freeze(this);
   }
 
@@ -158,11 +180,31 @@ export class QuestionBinding implements QuestionBindingSnapshot {
         "binding.expectedLocale is unsupported",
       );
     }
+    if (input.bindingProtocolVersion === 2) {
+      const retrievalBinding: unknown = Reflect.get(input, "retrievalBinding");
+      if (retrievalBinding === undefined) {
+        throw new MeetingKnowledgeInvariantError(
+          "INVALID_BINDING",
+          "binding protocol 2 requires an immutable retrieval binding",
+        );
+      }
+      normalized.retrievalBinding = RetrievalBinding.create(
+        retrievalBinding as RetrievalBindingSnapshot,
+      ).toSnapshot();
+    } else if (
+      "bindingProtocolVersion" in input ||
+      "retrievalBinding" in input
+    ) {
+      throw new MeetingKnowledgeInvariantError(
+        "INVALID_BINDING",
+        "binding protocol and retrieval binding must be present together",
+      );
+    }
     return new QuestionBinding(normalized);
   }
 
   public toSnapshot(): QuestionBindingSnapshot {
-    return {
+    const snapshot = {
       authorizationDigest: this.authorizationDigest,
       authorizationPolicyVersion: this.authorizationPolicyVersion,
       authorizationPrincipalRef: this.authorizationPrincipalRef,
@@ -186,6 +228,13 @@ export class QuestionBinding implements QuestionBindingSnapshot {
       transcriptId: this.transcriptId,
       transcriptVersion: this.transcriptVersion,
     };
+    return this.bindingProtocolVersion === 2 && this.retrievalBinding !== undefined
+      ? {
+          ...snapshot,
+          bindingProtocolVersion: 2,
+          retrievalBinding: Object.freeze({ ...this.retrievalBinding }),
+        }
+      : snapshot;
   }
 }
 
@@ -193,16 +242,69 @@ export function questionBindingsEqual(
   left: QuestionBindingSnapshot,
   right: QuestionBindingSnapshot,
 ): boolean {
-  return Object.keys(left).every((key) =>
-    key === "humanActorIds"
-      ? sameOpaqueRoster(left.humanActorIds, right.humanActorIds)
-      : left[key as keyof QuestionBindingSnapshot] ===
-        right[key as keyof QuestionBindingSnapshot]
-  ) && Object.keys(left).length === Object.keys(right).length;
+  return Object.keys(left).every((key) => {
+    if (key === "humanActorIds") {
+      return sameOpaqueRoster(left.humanActorIds, right.humanActorIds);
+    }
+    if (key === "retrievalBinding") {
+      return sameRetrievalBinding(left.retrievalBinding, right.retrievalBinding);
+    }
+    return left[key as keyof QuestionBindingSnapshot] ===
+      right[key as keyof QuestionBindingSnapshot];
+  }) && Object.keys(left).length === Object.keys(right).length;
+}
+
+export function isLegacyQuestionBinding(
+  binding: QuestionBindingSnapshot,
+): binding is QuestionBindingBaseSnapshot & {
+  readonly bindingProtocolVersion?: never;
+  readonly retrievalBinding?: never;
+} {
+  return binding.bindingProtocolVersion === undefined;
 }
 
 function sameOpaqueRoster(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameRetrievalBinding(
+  left: RetrievalBindingSnapshot | undefined,
+  right: RetrievalBindingSnapshot | undefined,
+): boolean {
+  return left !== undefined && right !== undefined &&
+    left.provenanceSchemaVersion === right.provenanceSchemaVersion &&
+    left.cutoverEpoch === right.cutoverEpoch &&
+    left.originalQuestion === right.originalQuestion &&
+    left.profileFingerprint === right.profileFingerprint &&
+    left.retrievalPath === right.retrievalPath &&
+    JSON.stringify(left.localCurrentIdentity) ===
+      JSON.stringify(right.localCurrentIdentity) &&
+    JSON.stringify(left.retrievalPath === "infinity_locator_v2"
+      ? left.compositeProfile : null) ===
+      JSON.stringify(right.retrievalPath === "infinity_locator_v2"
+        ? right.compositeProfile : null) &&
+    sameCanonicalEvidenceFilters(
+      left.canonicalEvidenceFilters,
+      right.canonicalEvidenceFilters,
+    ) &&
+    (left.retrievalPath !== "infinity_locator_v2" || (
+      right.retrievalPath === "infinity_locator_v2" &&
+      sameFocusedLocatorRetrievalV2Value(left.request, right.request)
+    ));
+}
+
+function sameCanonicalEvidenceFilters(
+  left: RetrievalBindingSnapshot["canonicalEvidenceFilters"],
+  right: RetrievalBindingSnapshot["canonicalEvidenceFilters"],
+): boolean {
+  if (left === undefined || right === undefined) {return left === right;}
+  return left.requiresSpeakerMatch === right.requiresSpeakerMatch &&
+    left.speakerIds.length === right.speakerIds.length &&
+    left.speakerIds.every((speakerId, index) => speakerId === right.speakerIds[index]) &&
+    (left.relativeTimeInterval === null || right.relativeTimeInterval === null
+      ? left.relativeTimeInterval === right.relativeTimeInterval
+      : left.relativeTimeInterval.startMs === right.relativeTimeInterval.startMs &&
+        left.relativeTimeInterval.endMs === right.relativeTimeInterval.endMs);
 }
 
 export type QuestionJobState = "queued" | "ready" | "running" | "terminal";

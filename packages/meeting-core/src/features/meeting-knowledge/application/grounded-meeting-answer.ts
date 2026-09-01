@@ -11,6 +11,7 @@ import type {
 import type { GroundingSafetyLimits } from "../domain/grounding-plan.js";
 
 export type GroundedMeetingAnswerCheckpoint =
+  | "authorization_unavailable"
   | "continue"
   | "stale_authorization"
   | "stale_binding"
@@ -55,6 +56,7 @@ export class GroundedMeetingAnswer {
     request: GroundedAnswerGenerationRequest,
     options: {
       readonly beforeGenerate?: (
+        measurement: GroundedAnswerMeasurement,
       ) => Promise<GroundedMeetingAnswerCheckpoint>;
       readonly onMeasured?: (
         measurement: GroundedAnswerMeasurement,
@@ -90,7 +92,7 @@ export class GroundedMeetingAnswer {
       return { status: "rejected" };
     }
     if (options.beforeGenerate !== undefined) {
-      const checkpoint = await options.beforeGenerate();
+      const checkpoint = await options.beforeGenerate(measurement);
       if (checkpoint !== "continue") {
         return { checkpoint, measurement, status: "stopped" };
       }

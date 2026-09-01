@@ -12,6 +12,13 @@ const definition = {
   campaignRoot: "/private/evidence/campaigns",
   clockPreflightPath: "/private/evidence/clock-preflight.json",
   fixtureManifestPath: "/private/evidence/fixture-manifest.json",
+  historicalReplyObservationPolicy: {
+    archivedThreadVisibilities: ["public", "private"],
+    endedAt: "2026-08-24T00:10:00.000Z", guildId: "1533228590643155034",
+    maximumArchivePagesPerParent: 100, maximumMessagePagesPerSurface: 100,
+    parentChannelIds: ["1533228891827736657"], startedAt: "2026-08-24T00:00:00.000Z",
+  },
+  privateCoverageSourcePath: "/private/evidence/private-coverage.source.json",
   recordingPlaybackOrigin: "https://recordings.test.example",
   remote: {
     composeFile: "/srv/discord-meeting/compose.yaml",

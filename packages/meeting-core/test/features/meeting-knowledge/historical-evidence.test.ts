@@ -177,6 +177,15 @@ describe("historical evidence admission and block identity", () => {
     expect(first.documents[0]?.remoteText).toContain("accepted human evidence");
     expect(JSON.stringify(first.topology)).not.toContain("private-id");
     expect(decodeHistoricalIndexPlanV1(JSON.parse(JSON.stringify(first)))).toEqual(first);
+    const legacyTopology = Object.fromEntries(Object.entries(first.topology).filter(
+      ([key]) => key !== "projectionContractVersion",
+    ));
+    expect(decodeHistoricalIndexPlanV1({
+      ...first,
+      topology: legacyTopology,
+    }).topology.projectionContractVersion).toBe(
+      "legacy.document-retrieval-projection.none",
+    );
     expect(() => decodeHistoricalIndexPlanV1({ ...first, unexpected: true }))
       .toThrow("unknown field");
     expect(() => decodeHistoricalIndexPlanV1({

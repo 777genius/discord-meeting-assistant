@@ -3,28 +3,68 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "discord-meeting-quality-campaign": "./dist/quality-campaign/production-entrypoint.js"
+  },
   "exports": {
-    ".": "./src/index.ts",
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./quality-campaign": {
+      "types": "./src/quality-campaign/index.ts",
+      "import": "./dist/quality-campaign/index.js"
+    },
+    "./quality-campaign/cli": {
+      "types": "./src/quality-campaign/production-cli.ts",
+      "import": "./dist/quality-campaign/production-cli.js"
+    },
+    "./quality-campaign/canonical-chain": {
+      "types": "./src/quality-campaign/production-canonical-question-chain.ts",
+      "import": "./dist/quality-campaign/production-canonical-question-chain.js"
+    },
+    "./quality-campaign/gold-custody": {
+      "types": "./src/quality-campaign/production-gold-corpus-custody.ts",
+      "import": "./dist/quality-campaign/production-gold-corpus-custody.js"
+    },
     "./test-support": "./test/test-support.ts"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
+    "build": "node scripts/clean-dist.mjs && tsc --project tsconfig.build.json --pretty false",
     "check": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared && pnpm run test:prepared",
     "prepare:official-sdk": "node ../../vendor/infinity-context/prepare-official-sdk.mjs",
+    "prepack": "pnpm run build && node scripts/packed-manifest.mjs prepare",
+    "postpack": "node scripts/packed-manifest.mjs restore",
+    "quality-campaign": "pnpm run build && node dist/quality-campaign/production-entrypoint.js",
     "test": "pnpm run prepare:official-sdk && pnpm run test:prepared",
-    "test:real-service": "INFINITY_CONTEXT_REAL_E2E=1 pnpm run prepare:official-sdk && INFINITY_CONTEXT_REAL_E2E=1 vitest run test/infinity-context-real-service.e2e.test.ts",
-    "test:semantic-service": "INFINITY_CONTEXT_SEMANTIC_E2E=1 pnpm run prepare:official-sdk && INFINITY_CONTEXT_SEMANTIC_E2E=1 vitest run test/infinity-context-semantic-service.e2e.test.ts",
-    "test:semantic-quality": "INFINITY_CONTEXT_SEMANTIC_QUALITY_E2E=1 pnpm run prepare:official-sdk && INFINITY_CONTEXT_SEMANTIC_QUALITY_E2E=1 vitest run test/infinity-context-semantic-quality.e2e.test.ts",
-    "test:prepared": "vitest run --no-file-parallelism",
+    "test:quality-campaign:production-runner": "pnpm run build && NODE_OPTIONS=--max-old-space-size=4096 vitest run test/quality-campaign-production-runner-structural.test.ts -t 'runs 3x240' --no-file-parallelism --pool=threads --test-timeout=600000 && vitest run test/quality-campaign-production-runner-structural.test.ts -t 'durably blocks' --no-file-parallelism --pool=threads --test-timeout=180000 && vitest run test/quality-campaign-production-runner-structural.test.ts -t 'rejects substituted custody' --no-file-parallelism --pool=threads --test-timeout=180000 && vitest run test/quality-campaign-installed-package.test.ts --no-file-parallelism --pool=threads --test-timeout=180000",
+    "test:semantic-quality-v4:gate": "vitest run test/semantic-quality-v4-evaluation.test.ts test/semantic-quality-v4-p0.test.ts test/semantic-quality-v4-qualification-tooling.test.ts test/semantic-quality-v4-workflow.test.ts --no-file-parallelism --test-timeout=30000",
+    "test:semantic-quality-v4": "node --import tsx/esm test/run-semantic-quality-v4.ts",
+    "test:semantic-quality-v4:real-preflight": "pnpm run quality-campaign preflight",
+    "test:semantic-quality-v4:real-execute": "pnpm run quality-campaign execute",
+    "test:semantic-quality-v4:real-adjudicate": "pnpm run quality-campaign adjudicate",
+    "test:semantic-quality-v4:real-retention": "pnpm run quality-campaign retention",
+    "test:semantic-quality-v4:real-cleanup": "pnpm run quality-campaign cleanup-absence",
+    "test:semantic-quality-v4:real-final-admission": "pnpm run quality-campaign final-admission",
+    "test:semantic-quality-v4:real-status": "pnpm run quality-campaign status",
+    "test:prepared": "pnpm run build && vitest run --no-file-parallelism",
     "typecheck": "pnpm run prepare:official-sdk && pnpm run typecheck:prepared",
-    "typecheck:prepared": "tsc --project tsconfig.json --noEmit --pretty false"
+    "typecheck:prepared": "pnpm run build && tsc --project tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
     "@discord-meeting/meeting-core": "workspace:*",
+    "@discord-meeting/postgres-adapter": "workspace:*",
+    "@discord-meeting/subscription-runtime-adapter": "workspace:*",
     "@huggingface/tokenizers": "catalog:",
-    "@infinity-context/sdk": "catalog:"
+    "@infinity-context/sdk": "catalog:",
+    "pg": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/pg": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

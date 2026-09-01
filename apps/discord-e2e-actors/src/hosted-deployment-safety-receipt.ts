@@ -111,7 +111,10 @@ const deploymentSafetyEvidenceSchema = z.object({
 export const hostedCraigNetworkPolicyV1Schema = z.object({
   bridgeInterface: linuxInterfaceSchema,
   chain: iptablesChainSchema,
+  databaseIpv4: ipv4Schema,
+  inputChain: iptablesChainSchema,
   networkName: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,62}$/u),
+  projectName: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/u),
   tcpDestinationPort: z.literal(443),
   udpDestinationPorts: z.object({ end: z.number().int().min(1).max(65_535),
     start: z.number().int().min(1).max(65_535) }).strict()
@@ -228,7 +231,9 @@ function assertCraigNetwork(
   if (actual.containerId !== craig.containerId
     || actual.bridgeInterface !== expected.bridgeInterface
     || actual.chain !== expected.chain
+    || actual.databaseIpv4 !== expected.databaseIpv4
     || actual.networkName !== expected.networkName
+    || actual.projectName !== expected.projectName
     || actual.udpDestinationPorts.start !== expected.udpDestinationPorts.start
     || actual.udpDestinationPorts.end !== expected.udpDestinationPorts.end) {
     throw new Error("Hosted Craig network proof does not match the exact release policy");

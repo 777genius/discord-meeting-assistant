@@ -7,11 +7,11 @@
   "current": {
     "schemaVersion": 1,
     "contractId": "meeting-platform-rpc",
-    "publicContractVersion": "0.1.0",
+    "publicContractVersion": "0.2.0",
     "bufVersion": "1.72.0",
     "bufConfigDigest": "sha256:4206f76049031d5f0182a10bce67d1f39ab488727f5e28cf41ffd3ce882ed47d",
-    "descriptorImageDigest": "sha256:fd8c7e2fc0a551b7c6c4cd85db0630f962cc437e5840c30b10651ac8edabd23b",
-    "releasedDescriptorImageDigest": "sha256:fd8c7e2fc0a551b7c6c4cd85db0630f962cc437e5840c30b10651ac8edabd23b",
+    "descriptorImageDigest": "sha256:de7c6c950e8fa26ce4e1ed471822290c0d55a2df278768870ad154034bf97dc9",
+    "releasedDescriptorImageDigest": "sha256:de7c6c950e8fa26ce4e1ed471822290c0d55a2df278768870ad154034bf97dc9",
     "generatorVersions": [],
     "generationDrift": {
       "expectedGeneratedOutputDigest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -19,7 +19,7 @@
     },
     "breaking": {
       "status": "compatible",
-      "fingerprint": "sha256:3b9f7e1de3f56c4ac1fe43afb62a460d7d083504ae3c2f019cb613908e4b8960"
+      "fingerprint": "sha256:4a2549b78e0999c1ea003eb91c50593d9ef00327bc8a5a8718a6b19d21d3dd19"
     }
   }
 }

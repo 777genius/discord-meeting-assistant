@@ -12,9 +12,10 @@ import type {
   FocusedMemoryRetrievalResult,
   QuestionJobTerminalOutcome,
 } from "./final-reply.js";
+import { decodeFocusedRetrievalAudit, retrievalAuditsBindInput } from
+  "./focused-retrieval-provenance.js";
 
 export const focusedMemoryContractVersion = 1 as const;
-
 function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
   return [
     reference.historicalSource?.releaseId ?? "current",
@@ -29,31 +30,24 @@ function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
     reference.sourceEndCodePoint ?? "whole",
   ].join("\u0000");
 }
-
 export function mergeFocusedHydrationReferences(
   references: readonly FocusedMemoryReference[],
 ): readonly FocusedMemoryReference[] {
   const merged = new Map<string, FocusedMemoryReference>();
   for (const reference of references) {
     const key = focusedMemoryReferenceKey(reference);
-    const previous = merged.get(key);
-    if (
-      previous === undefined ||
-      (reference.relevanceScore ?? 0) > (previous.relevanceScore ?? 0)
-    ) {
+    if (!merged.has(key)) {
       merged.set(key, reference);
     }
   }
   return Object.freeze([...merged.values()]);
 }
-
 const terminalStatuses = new Set([
   "low_coverage",
   "pending",
   "stale",
   "unavailable",
 ]);
-
 function record(value: unknown, field: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new MeetingKnowledgeInvariantError(
@@ -63,7 +57,6 @@ function record(value: unknown, field: string): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
-
 function assertOnlyKeys(
   input: Record<string, unknown>,
   allowed: ReadonlySet<string>,
@@ -153,18 +146,15 @@ export async function retrieveFocusedMemory(
 ): Promise<FocusedMemoryRetrievalResult> {
   try {
     const result = decodeFocusedMemoryRetrievalResult(await memory.retrieve(input));
-    if (result.status !== "current") {
-      return result;
-    }
+    if (result.status !== "current") {return result;}
     if (
-      result.candidates.length > input.maximumCandidates
-    ) {
-      return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };
-    }
+      result.candidates.length > input.maximumCandidates ||
+      !await retrievalAuditsBindInput(
+        result.candidates, input.retrievalBinding, input.question,
+      )
+    ) {return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };}
     return result;
-  } catch {
-    return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };
-  }
+  } catch {return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };}
 }
 
 export function fixedOutcomeForFocusedRetrieval(
@@ -193,7 +183,7 @@ function decodeCandidates(
       new Set([
         "historicalSource",
         "meetingId",
-        "relevanceScore",
+        "retrievalAudit",
         "sourceEndCodePoint",
         "sourceStartCodePoint",
         "transcriptId",
@@ -208,9 +198,9 @@ function decodeCandidates(
       candidate.historicalSource,
       `${field}[${index}].historicalSource`,
     );
-    const relevanceScore = decodeRelevanceScore(
-      candidate.relevanceScore,
-      `${field}[${index}].relevanceScore`,
+    const retrievalAudit = decodeFocusedRetrievalAudit(
+      candidate.retrievalAudit,
+      `${field}[${index}].retrievalAudit`,
     );
     return Object.freeze({
       ...(historicalSource === undefined ? {} : { historicalSource }),
@@ -219,7 +209,7 @@ function decodeCandidates(
         `${field}[${index}].meetingId`,
         1_024,
       ),
-      ...(relevanceScore === undefined ? {} : { relevanceScore }),
+      ...(retrievalAudit === undefined ? {} : { retrievalAudit }),
       ...range,
       transcriptId: requireKnowledgeText(
         candidate.transcriptId as string,
@@ -281,22 +271,6 @@ function decodeHistoricalSource(
       1_024,
     ),
   });
-}
-
-function decodeRelevanceScore(
-  value: unknown,
-  field: string,
-): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
-    throw new MeetingKnowledgeInvariantError(
-      "INVALID_GROUNDING_PLAN",
-      `${field} must be a finite normalized score`,
-    );
-  }
-  return value;
 }
 
 function decodeCandidateSourceRange(

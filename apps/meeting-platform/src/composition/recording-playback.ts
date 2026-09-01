@@ -11,6 +11,10 @@ import {
 } from "../recording-playback/adapters/index.js";
 
 export interface PlatformRecordingPlaybackComposition {
+  readonly recordingPlayback?: (meetingId: string) => Promise<
+    | { readonly status: "processing" | "unavailable" }
+    | { readonly status: "ready"; readonly url: string }
+  >;
   readonly recordingPlaybackUrl?: (meetingId: string) => string;
   readonly routes?: ReturnType<typeof createRecordingPlaybackRoutesPlugin>;
 }
@@ -32,8 +36,9 @@ export function createPlatformRecordingPlaybackComposition(input: {
     publicBaseUrl: playbackConfig.publicBaseUrl,
     secret,
   });
+  const catalog = new PostgresRecordingPlaybackCatalog(input.meetings);
   const playback = new GetRecordingPlayback(
-    new PostgresRecordingPlaybackCatalog(input.meetings),
+    catalog,
     new S3RecordingPlaybackAudioReader({
       accessPolicy: {
         bucket: input.config.s3.bucket,
@@ -43,6 +48,12 @@ export function createPlatformRecordingPlaybackComposition(input: {
     }),
   );
   return {
+    recordingPlayback: async (meetingId) => {
+      const snapshot = await catalog.findByMeetingId(meetingId);
+      return snapshot.status === "ready"
+        ? { status: "ready", url: access.issueUrl(meetingId) }
+        : { status: snapshot.status };
+    },
     recordingPlaybackUrl: (meetingId) => access.issueUrl(meetingId),
     routes: createRecordingPlaybackRoutesPlugin({
       access,

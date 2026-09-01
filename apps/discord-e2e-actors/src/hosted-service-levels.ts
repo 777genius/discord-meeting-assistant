@@ -12,7 +12,7 @@ import { conversationVoiceCampaignLifecycleIssue,
 import { conversationVoiceCampaignProofIssue,
   conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js";
 import { liveDiscordPlaybackLinkProofSchema } from "./live-discord-playback-link-observer.js";
-import { recordingReadyReceiptV1Schema } from "./recording-ready-receipt.js";
+import { recordingReadyReceiptSchema } from "./recording-ready-receipt.js";
 import { parseConversationLifecycleEvidenceLogs } from "./e2e-processing-log-parser.js";
 import { assertExactDatabaseCounts, alignS3TracksToSnapshot, normalizeDatabase } from
   "./e2e-retained-evidence-snapshot.js";
@@ -125,7 +125,7 @@ export async function hostedServiceLevelClockBindingRequest(
 
 async function prepareSources(raw: HostedServiceLevelSourceInput): Promise<PreparedSources> {
   try {
-    const ready = recordingReadyReceiptV1Schema.parse(raw.readyReceipt);
+    const ready = recordingReadyReceiptSchema.parse(raw.readyReceipt);
     if (ready.runId !== raw.runId || ready.meetingId !== ready.recordingId) {
       fail("SOURCE_IDENTITY_MISMATCH", "Recording-ready receipt does not match the requested run");
     }

@@ -26,8 +26,8 @@ if (actualSha256 !== expectedSha256) {
   throw new Error("Reviewed trust-root digest does not match --expected-sha256");
 }
 const generatedRelease = {
-  generatorVersion: 2,
-  schemaVersion: 2,
+  generatorVersion: 3,
+  schemaVersion: 3,
   status: "admitted",
   trustRoot: canonicalTrustRoot,
   trustRootSha256: actualSha256,

@@ -20,7 +20,10 @@ const supportedMethods = new Set<HttpMethod>([
   "PUT",
 ]);
 
-export { DisposableInfinityEndpoint } from "./disposable-infinity-endpoint.js";
+export {
+  DISPOSABLE_RETRIEVAL_V2_BINDING,
+  DisposableInfinityEndpoint,
+} from "./disposable-infinity-endpoint.js";
 
 export interface DisposableInfinityHttpService {
   readonly baseUrl: string;
@@ -91,6 +94,11 @@ async function serve(
   });
   try {
     const bytes = await readBoundedBody(incoming);
+    endpoint.recordExactHttpRequest(
+      method,
+      new URL(incoming.url ?? "/", "http://127.0.0.1").pathname,
+      bytes,
+    );
     const headers = new Headers();
     for (const [name, value] of Object.entries(incoming.headers)) {
       if (value !== undefined) {

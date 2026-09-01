@@ -27,6 +27,9 @@ import type {
   VerificationFailure,
   VerificationFailureReporter,
 } from "./e2e-evidence-verification-types.js";
+import type { HistoricalReplyCampaignEvidenceV1 } from
+  "./historical-reply-campaign-contract.js";
+import type { ThinRemediationProofV1 } from "./thin-remediation-proof.js";
 
 export {
   actorRunEvidenceV1Schema,
@@ -48,6 +51,8 @@ export {
   unboundActorRunEvidenceV1Schema,
 } from "./e2e-evidence-schema.js";
 export { supplementalPlaybackEvidenceV1Schema } from "./conversation-retained-evidence-schema.js";
+export { historicalReplyCampaignEvidenceV1Schema } from
+  "./historical-reply-campaign-contract.js";
 export { conversationVoiceCampaignProofV1Schema } from "./conversation-voice-campaign-proof.js";
 export {
   e2eServiceLevelsV1Schema,
@@ -137,10 +142,20 @@ export function verifyE2eCampaign(
   runs: readonly RetainedE2eEvidence[],
   expectedRevisions: DeploymentRevisionExpectation,
   serviceLevelThresholds?: ServiceLevelThresholds,
+  options: Readonly<{
+    historicalReply?: HistoricalReplyCampaignEvidenceV1;
+    thinRemediation?: ThinRemediationProofV1;
+  }> = {},
 ) {
   return verifyCampaign({
+    ...(options.historicalReply === undefined ? {} : {
+      historicalReply: options.historicalReply,
+    }),
     manifest,
     runs,
+    ...(options.thinRemediation === undefined ? {} : {
+      thinRemediation: options.thinRemediation,
+    }),
     verifyRun: (runManifest, evidence) =>
       verifyRetainedE2eEvidence(runManifest, evidence, expectedRevisions, serviceLevelThresholds),
   });

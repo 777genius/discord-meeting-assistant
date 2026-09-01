@@ -28,17 +28,45 @@ export interface FocusedMemoryReference {
   readonly historicalSource?: HistoricalEvidenceSource;
   readonly meetingId: string;
   /**
-   * Deterministic, normalized retrieval relevance. This is ranking metadata,
-   * never evidence authority; canonical text and identity are still reloaded
-   * locally before generation.
+   * Text-free retrieval accounting aligned to this canonical local reference.
+   * It is retained only for audit continuity and is never evidence or model input.
    */
-  readonly relevanceScore?: number;
+  readonly retrievalAudit?: FocusedRetrievalAudit;
   readonly sourceEndCodePoint?: number;
   readonly sourceStartCodePoint?: number;
   readonly transcriptId: string;
   readonly transcriptVersion: number;
   readonly turnHash: string;
   readonly turnId: string;
+}
+
+/** Consumer-owned, provider-neutral accounting for an upstream ranking decision. */
+export interface FocusedRetrievalAudit {
+  readonly contributions: readonly {
+    readonly contributionScorePicos: number;
+    readonly providerLaneId: string;
+    readonly providerRank: number;
+    readonly queryId: string;
+    readonly rawScoreKind: "bm25" | "distance" | "relevance" | "similarity" | null;
+    readonly rawScoreValue: number | null;
+  }[];
+  readonly fusedScore: number;
+  readonly laneIdentity?:
+    | {
+        readonly algorithmId: "canonical_local_exact_lexical_v1";
+        readonly lane: "local_current";
+        readonly profileFingerprint: string;
+        readonly profileId: "meeting-knowledge.local-current.v2";
+      }
+    | {
+        readonly capabilityFingerprint: string;
+        readonly lane: "historical";
+        readonly profileId: string;
+      };
+  readonly locator: string;
+  readonly providerRank: number;
+  readonly requestDigest: string;
+  readonly responseDigest: string;
 }
 
 /** Canonical text loaded locally after focused retrieval selected a reference. */
@@ -56,6 +84,7 @@ export interface RehydratedEvidenceTurn extends CanonicalEvidenceTurn {
     readonly transcriptId: string;
     readonly transcriptVersion: number;
   };
+  readonly retrievalAudit?: FocusedRetrievalAudit;
   readonly turnHash: string;
 }
 

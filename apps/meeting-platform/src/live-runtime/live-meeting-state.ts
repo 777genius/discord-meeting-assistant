@@ -50,7 +50,7 @@ export interface CreateActiveLiveMeetingInput {
   readonly sessionAdmission: LiveSessionAdmission;
   readonly speakerIdleFinalizeMs: number;
   readonly startedAtMs: number;
-  readonly suppressInitialParticipantGreetings: boolean;
+  readonly recoverInFlightGreetings: boolean;
   readonly timer: LiveRuntimeTimer;
 }
 
@@ -88,6 +88,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
         isMeetingFinishing: () => state.finishing,
         logger: input.dependencies.logger,
         meetingId,
+        recoverInFlight: input.recoverInFlightGreetings,
         timer: input.timer,
       });
   const farewell = input.dependencies.conversation?.farewells === undefined
@@ -134,6 +135,9 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     transcriptionFenceClosed: false,
   };
   farewell?.participantsPresent(input.event.participantIds);
-  greetings?.participantsPresent(input.event.participantIds, input.event.occurredAt);
+  // Meeting start establishes presence only. The ingress-owned per-human
+  // obligations deliver the same observation afterward through participant
+  // lifecycle admission, so receipt/deadline recovery stays on one path.
+  greetings?.observeParticipants(input.event.participantIds);
   return state;
 }
