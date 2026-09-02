@@ -16,7 +16,7 @@ import {
 
 const deploymentRoot = new URL("./", import.meta.url);
 const repositoryRoot = new URL("../../", import.meta.url);
-const gatewayRevision = "2d9b7b29a60e2fdecc8a5ac4d89e05ec2c98b793";
+const gatewayRevision = "a32ea2ad2caa23fd74a9389ea232fd29e21aa4c3";
 const craigRevision = "37b86a958b567cb7fcff75946e94fe5e7ee38f42";
 
 async function deploymentFile(name) {
