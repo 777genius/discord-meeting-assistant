@@ -89,7 +89,10 @@ export interface CompletedRecordingState {
     readonly manifestLocator: string;
     readonly recordingId: string;
     readonly speakerAudio: readonly {
+      readonly artifactRevision?: string;
       readonly audioLocator: string;
+      readonly checksumSha256?: string;
+      readonly sizeBytes?: number;
       readonly speakerId: string;
       readonly timelineOffsetMs: number;
     }[];
@@ -327,13 +330,40 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
       "completion lifecycle generation and identity provenance do not match",
     );
   }
-  const speakerAudio = recording.speakerAudio.map((value) => {
+  const storedSpeakerAudio = recording.speakerAudio.map((value) => {
     const reference = objectValue(value);
     if (!Number.isSafeInteger(reference.timelineOffsetMs) || (reference.timelineOffsetMs as number) < 0) {
       throw new RecordingIngressError("corrupt-spool", "invalid completion timeline offset");
     }
+    const artifactRevision = optionalString(reference.artifactRevision, "artifactRevision");
+    const checksumSha256 = optionalString(reference.checksumSha256, "checksumSha256");
+    const sizeBytes = reference.sizeBytes;
+    const immutableIdentityFields = [artifactRevision, checksumSha256, sizeBytes]
+      .filter((field) => field !== undefined).length;
+    if (immutableIdentityFields !== 0 && immutableIdentityFields !== 3) {
+      throw new RecordingIngressError(
+        "corrupt-spool",
+        "completion receipt has a partial immutable track identity",
+      );
+    }
+    if (
+      artifactRevision !== undefined &&
+      (artifactRevision === "null" ||
+        /[\u0000-\u001f\u007f]/u.test(artifactRevision) ||
+        !/^[0-9a-f]{64}$/u.test(checksumSha256 as string) ||
+        !Number.isSafeInteger(sizeBytes) ||
+        (sizeBytes as number) <= 0)
+    ) {
+      throw new RecordingIngressError(
+        "corrupt-spool",
+        "completion receipt has an invalid immutable track identity",
+      );
+    }
     return {
+      ...(artifactRevision === undefined ? {} : { artifactRevision }),
       audioLocator: stringValue(reference.audioLocator, "audioLocator"),
+      ...(checksumSha256 === undefined ? {} : { checksumSha256 }),
+      ...(sizeBytes === undefined ? {} : { sizeBytes }),
       speakerId: stringValue(reference.speakerId, "speakerId"),
       timelineOffsetMs: reference.timelineOffsetMs as number,
     };
@@ -346,7 +376,8 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
   if (recording.recordingId !== recordingId) {
     throw new RecordingIngressError("corrupt-spool", "completion recording identity does not match");
   }
-  assertCompletedTrackIdentity(authoritativeTracks, speakerAudio);
+  assertCompletedTrackIdentity(authoritativeTracks, storedSpeakerAudio);
+  const speakerAudio = storedSpeakerAudio;
   assertTrackActors(actors, speakerAudio);
   return {
     authoritativeTracks,
@@ -390,7 +421,10 @@ function assertTrackActors(
 function assertCompletedTrackIdentity(
   tracks: readonly StoredAuthoritativeTrack[],
   speakerAudio: readonly {
+    readonly artifactRevision?: string;
     readonly audioLocator: string;
+    readonly checksumSha256?: string;
+    readonly sizeBytes?: number;
     readonly speakerId: string;
     readonly timelineOffsetMs: number;
   }[],
@@ -420,7 +454,12 @@ function assertCompletedTrackIdentity(
     if (
       reference === undefined ||
       reference.audioLocator !== track.audioLocator ||
-      reference.timelineOffsetMs !== track.timelineOffsetMs
+      reference.timelineOffsetMs !== track.timelineOffsetMs ||
+      (reference.artifactRevision !== undefined &&
+        track.artifactVersionId !== null &&
+        reference.artifactRevision !== track.artifactVersionId) ||
+      (reference.checksumSha256 !== undefined && reference.checksumSha256 !== track.checksumSha256) ||
+      (reference.sizeBytes !== undefined && reference.sizeBytes !== track.sizeBytes)
     ) {
       throw new RecordingIngressError(
         "corrupt-spool",

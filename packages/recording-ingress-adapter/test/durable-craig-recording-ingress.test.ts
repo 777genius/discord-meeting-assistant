@@ -345,7 +345,14 @@ describe("authoritative Craig recording durability", () => {
           uploadId: track.metadata.uploadId,
         },
       ],
-      recording: { authoritativeDurationMs: 299_000 },
+      recording: {
+        authoritativeDurationMs: 299_000,
+        speakerAudio: [{
+          artifactRevision: accepted.versionId,
+          checksumSha256: track.metadata.checksumSha256,
+          sizeBytes: track.metadata.sizeBytes,
+        }],
+      },
       schemaVersion: 5,
     });
 
