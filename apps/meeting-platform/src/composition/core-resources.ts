@@ -180,7 +180,7 @@ export function createPlatformSubscriptionRuntimeResources(
   };
 }
 
-export function requirePlatformSubscriptionRuntime(
+function requirePlatformSubscriptionRuntime(
   runtime: PlatformSubscriptionRuntimeResources | undefined,
 ): PlatformSubscriptionRuntimeResources {
   if (runtime === undefined) {
