@@ -19,7 +19,7 @@ export class SocketMessages {
       if (isBinary) {
         throw new Error("gateway sent an unexpected binary server frame");
       }
-      const parsed = asObject(JSON.parse(data.toString()) as unknown);
+      const parsed = asObject(JSON.parse(rawDataToString(data)) as unknown);
       const waiter = this.#waiters.shift();
       if (waiter === undefined) {
         this.#queue.push(parsed);
@@ -87,7 +87,7 @@ export async function expectUnauthenticatedWebSocketRejection(endpoint: URL): Pr
 
 export async function sendSocket(socket: WebSocket, payload: string | Buffer): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    socket.send(payload, (error) => {
+    socket.send(payload, (error: Error | null | undefined) => {
       if (error === undefined || error === null) {
         resolve();
       } else {
@@ -131,7 +131,7 @@ export async function expectBoundedSocketRejection(socket: WebSocket): Promise<v
   ]);
   if (outcome.type === "message") {
     expect(outcome.isBinary).toBe(false);
-    const message = asObject(JSON.parse(outcome.data.toString()) as unknown);
+    const message = asObject(JSON.parse(rawDataToString(outcome.data)) as unknown);
     expect(message).toEqual({
       code: "TRANSPORT_CLOSED",
       message: "Live transport closed",
@@ -209,6 +209,13 @@ export function expectPositiveNumber(value: unknown): void {
 export function expectNonNegativeNumber(value: unknown): void {
   expect(typeof value).toBe("number");
   expect(value as number).toBeGreaterThanOrEqual(0);
+}
+
+function rawDataToString(data: RawData): string {
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString("utf8");
+  }
+  return (Buffer.isBuffer(data) ? data : Buffer.from(data)).toString("utf8");
 }
 
 async function timeoutResult(milliseconds: number): Promise<void> {

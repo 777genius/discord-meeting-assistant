@@ -246,10 +246,10 @@ export class LiveSession implements VoicetextLiveSession {
     }
     await this.closeTransport();
     if (this.terminalError !== undefined) {
-      throw this.terminalError;
+      throw asLiveSessionError(this.terminalError, "Voicetext live session receive failed");
     }
     if (terminalFailure !== undefined) {
-      throw terminalFailure;
+      throw asLiveSessionError(terminalFailure, "Voicetext live finalize validation failed");
     }
   }
 

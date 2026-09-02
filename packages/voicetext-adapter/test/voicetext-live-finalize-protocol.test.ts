@@ -36,9 +36,9 @@ describe("VoiceText live finalize terminal evidence", () => {
     [{ sawResult: false, status: "flushed", type: "finalize_complete" }],
     [{ sawResult: true, status: "no_provider", type: "finalize_complete" }],
   ] as const)("rejects inconsistent terminal evidence %j", (evidence) => {
-    expect(() => validateLiveSessionFinalizeStatus(evidence, 0)).toThrow(
-      VoicetextAdapterError,
-    );
+    expect(() => {
+      validateLiveSessionFinalizeStatus(evidence, 0);
+    }).toThrow(VoicetextAdapterError);
     try {
       validateLiveSessionFinalizeStatus(evidence, 0);
     } catch (error) {
@@ -52,10 +52,12 @@ describe("VoiceText live finalize terminal evidence", () => {
       status: "no_provider",
       type: "finalize_complete",
     } as const;
-    expect(() => validateLiveSessionFinalizeStatus(evidence, 0)).not.toThrow();
-    expect(() => validateLiveSessionFinalizeStatus(evidence, 1)).toThrow(
-      "Voicetext did not create a provider session for acknowledged audio",
-    );
+    expect(() => {
+      validateLiveSessionFinalizeStatus(evidence, 0);
+    }).not.toThrow();
+    expect(() => {
+      validateLiveSessionFinalizeStatus(evidence, 1);
+    }).toThrow("Voicetext did not create a provider session for acknowledged audio");
   });
 
   it("preserves timeout evidence while classifying the terminal as retryable", () => {
@@ -169,9 +171,10 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
       if (this.behavior === "synchronous") {
         this.enqueue(terminal);
       } else if (this.behavior === "later-task") {
-        void nextTask().then(() => {
-          return this.enqueue(terminal);
-        });
+        void (async () => {
+          await nextTask();
+          this.enqueue(terminal);
+        })();
       }
       return;
     }
@@ -192,7 +195,9 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
       return frame;
     }
     return await new Promise((resolve, reject) => {
-      const abort = () => reject(signal.reason);
+      const abort = () => {
+        reject(signal.reason);
+      };
       signal.addEventListener("abort", abort, { once: true });
       this.waiter = (next) => {
         signal.removeEventListener("abort", abort);

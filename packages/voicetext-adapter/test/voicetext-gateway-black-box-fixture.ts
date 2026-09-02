@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { WebSocketServer } from "ws";
+import { WebSocketServer, type RawData } from "ws";
 
 export const LOOPBACK_TOKEN = "loopback-contract-token-32-bytes-0001";
 
@@ -41,13 +41,11 @@ export async function startLoopbackGateway(): Promise<LoopbackGateway> {
   const fixturePath = join(directory, "synthetic.ogg");
   await writeFile(fixturePath, Buffer.concat([Buffer.from("OggS"), Buffer.alloc(24), Buffer.from("OpusHead")]));
 
-  const server = createServer(async (request, response) => {
-    try {
-      await routeHttp(request, response, jobs, counters);
-    } catch (error) {
+  const server = createServer((request, response) => {
+    void routeHttp(request, response, jobs, counters).catch((error: unknown) => {
       response.writeHead(500, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: String(error) }));
-    }
+    });
   });
   const websocketServer = new WebSocketServer({ maxPayload: 64 * 1_024, noServer: true });
   server.on("upgrade", (request, socket, head) => {
@@ -88,7 +86,7 @@ export async function startLoopbackGateway(): Promise<LoopbackGateway> {
         }
         return;
       }
-      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      const message = JSON.parse(rawDataToString(data)) as Record<string, unknown>;
       if (message.type === "config") {
         const provider = message.provider as Provider;
         counters[`${provider}_live`] += 1;
@@ -242,10 +240,24 @@ function batchJob(provider: Provider, jobId: string): BatchJob {
 
 async function readBody(request: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  for await (const receivedChunk of request) {
+    const chunk: unknown = receivedChunk;
+    if (Buffer.isBuffer(chunk) || chunk instanceof Uint8Array) {
+      chunks.push(Buffer.from(chunk));
+    } else if (typeof chunk === "string") {
+      chunks.push(Buffer.from(chunk));
+    } else {
+      throw new Error("received an unsupported HTTP request body chunk");
+    }
   }
   return Buffer.concat(chunks);
+}
+
+function rawDataToString(data: RawData): string {
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString("utf8");
+  }
+  return (Buffer.isBuffer(data) ? data : Buffer.from(data)).toString("utf8");
 }
 
 function json(
