@@ -88,7 +88,11 @@ describe.skipIf(!integrationEnabled)("S3 adapter against disposable SeaweedFS", 
       expect(receipt).toMatchObject({ checksumSha256, locator, sizeBytes: bytes.byteLength });
       expect(receipt.versionId).toEqual(expect.any(String));
       expect(receipt.versionId).not.toBe("null");
-      writtenVersions.push(receipt.versionId as string);
+      if (receipt.versionId === undefined) {
+        throw new Error("SeaweedFS did not return an immutable version ID");
+      }
+      const versionId = receipt.versionId;
+      writtenVersions.push(versionId);
 
       const changedBytes = bytes.slice();
       changedBytes[0] = (changedBytes[0] ?? 0) + 1;
@@ -101,7 +105,7 @@ describe.skipIf(!integrationEnabled)("S3 adapter against disposable SeaweedFS", 
         sizeBytes: changedBytes.byteLength,
       });
       expect(changedReceipt.versionId).toEqual(expect.any(String));
-      expect(changedReceipt.versionId).not.toBe(receipt.versionId);
+      expect(changedReceipt.versionId).not.toBe(versionId);
       writtenVersions.push(changedReceipt.versionId as string);
 
       const artifact = await reader.read({
@@ -111,7 +115,7 @@ describe.skipIf(!integrationEnabled)("S3 adapter against disposable SeaweedFS", 
           sizeBytes: bytes.byteLength,
         },
         locator,
-        revision: receipt.versionId,
+        revision: versionId,
       });
 
       await expect(collect(artifact.body)).resolves.toEqual(bytes);
