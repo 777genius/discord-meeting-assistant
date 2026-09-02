@@ -38,10 +38,16 @@ playback is enabled.
 | Grounded meeting Q&A | Reply to the current final Botik post, or ask by voice when enabled, for an answer tied to accepted transcript evidence. Botik abstains when evidence or authorization is insufficient. | Optional, rollout-gated |
 | Historical meeting memory | Ground answers in authorized previous meetings from the same configured room. | Optional, requires qualified memory serving |
 | Recording playback | Open a private signed link to a synchronized browser player. | Optional deployment feature |
-| Localized output | Final Discord summaries and transcripts have English, Russian, and Ukrainian presentation. Voice flows are qualified in English and Russian. | Depends on the feature |
+| Output presentation | Discord summaries, transcript labels, and attachments can be presented in English, Russian, or Ukrainian. | Depends on the feature |
+| Speech recognition | Recognition languages depend on the selected provider and model. Deepgram and ElevenLabs batch/live profiles are qualified here with English and Russian fixtures; this is not a claim that those providers support only those languages. | Provider/model-dependent |
 
 Optional capabilities are enabled independently by each deployment. The core
 post-call flow does not depend on live voice, historical memory, or playback.
+Meeting Platform talks only to the versioned VoiceText contract; Deepgram and
+ElevenLabs are tested adapters behind the self-hosted gateway. The Rust
+domain/application ports are provider-agnostic, while exposing another public
+V1 profile still requires an explicit identity/config addition in gateway
+composition and the Discord consumer.
 
 ## How it works
 

@@ -101,6 +101,16 @@ describe("VoiceText gateway deployment overlay", () => {
     expect(guide).toMatch(/acceptance; that remains pending/iu);
   });
 
+  it("separates output presentation from provider-dependent recognition", async () => {
+    const readme = await readFile(new URL("README.md", repositoryRoot), "utf8");
+
+    expect(readme).toMatch(/Output presentation[\s\S]*English, Russian, or Ukrainian/iu);
+    expect(readme).toMatch(/Speech recognition[\s\S]*provider and model/iu);
+    expect(readme).toMatch(/not a claim that those providers support only those languages/iu);
+    expect(readme).toMatch(/domain\/application ports are provider-agnostic/iu);
+    expect(readme).toMatch(/new public\s+V1 profile[\s\S]*Discord consumer/iu);
+  });
+
   it("documents a private-SaaS-free OSS topology and one safe smoke path", async () => {
     const guide = await readDeploymentFile("oss-meeting-topology.md");
 
