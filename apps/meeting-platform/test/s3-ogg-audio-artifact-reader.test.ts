@@ -31,15 +31,11 @@ function artifactReader(
 
 function inImmutableScope<Value>(scope: ImmutableArtifactReadScope, locator: string, sizeBytes: number, operation: () => Promise<Value>): Promise<Value> {
   return scope.run({
-    manifestLocator: "s3://meeting/recordings/manifest.json",
-    recordingId: "recording-1",
     speakerAudio: [{
       artifactRevision: "version-1",
       audioLocator: locator,
       checksumSha256: "a".repeat(64),
       sizeBytes,
-      speakerId: "speaker-1",
-      timelineOffsetMs: 0,
     }],
   }, operation);
 }

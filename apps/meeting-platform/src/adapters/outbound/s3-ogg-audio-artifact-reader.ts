@@ -27,7 +27,6 @@ type ImmutableArtifactExpectation = {
 
 interface ImmutableRecordingArtifactIdentity {
   readonly speakerAudio: readonly {
-    readonly [key: string]: unknown;
     readonly artifactRevision?: string;
     readonly audioLocator: string;
     readonly checksumSha256?: string;
