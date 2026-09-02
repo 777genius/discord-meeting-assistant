@@ -16,6 +16,7 @@ import {
 } from "./config/participant-greeting-profiles.js";
 import { validateInfinityContextEnvironment } from "./config/infinity-context-environment.js";
 import {
+  validateConversationEnvironment,
   validateConversationReadinessEnvironment,
   validateMeetingKnowledgeEnvironment,
 } from "./config/environment-validations.js";
@@ -287,75 +288,7 @@ const environmentSchema = z
     validateConversationReadinessEnvironment(environment, context);
   })
   .superRefine((environment, context) => {
-    const playbackReadinessParts = [
-      environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT,
-      environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID,
-      environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS,
-    ];
-    const configuredPlaybackReadinessParts = playbackReadinessParts
-      .filter((value) => value !== undefined).length;
-    if (configuredPlaybackReadinessParts !== 0 && configuredPlaybackReadinessParts !== 3) {
-      context.addIssue({
-        code: "custom",
-        message: "conversation E2E playback readiness root, run ID and timeout must be configured together",
-        path: ["CONVERSATION_E2E_PLAYBACK_READINESS_ROOT"],
-      });
-    }
-    if (configuredPlaybackReadinessParts > 0 && !environment.E2E_TEST_ONLY_LABEL) {
-      context.addIssue({
-        code: "custom",
-        message: "conversation playback readiness is permitted only in an explicitly test-only deployment",
-        path: ["E2E_TEST_ONLY_LABEL"],
-      });
-    }
-    if (configuredPlaybackReadinessParts > 0 && !environment.CONVERSATION_ENABLED) {
-      context.addIssue({
-        code: "custom",
-        message: "conversation playback readiness requires live conversation to be enabled",
-        path: ["CONVERSATION_ENABLED"],
-      });
-    }
-    if (participantProfilesHaveNoConsumer(environment)) {
-      context.addIssue({
-        code: "custom",
-        message:
-          "participant greeting profiles require live conversation or local final reply to be enabled",
-        path: ["PARTICIPANT_GREETING_PROFILES_JSON"],
-      });
-    }
-    if (environment.CONVERSATION_ENABLED) {
-      if (environment.TRANSCRIPTION_PROVIDER !== "voicetext") {
-        context.addIssue({
-          code: "custom",
-          message: "live conversation requires Voicetext streaming transcription",
-          path: ["TRANSCRIPTION_PROVIDER"],
-        });
-      }
-      if (environment.CONVERSATION_RUNTIME_ADDRESS === undefined) {
-        context.addIssue({
-          code: "custom",
-          message: "CONVERSATION_RUNTIME_ADDRESS is required when conversation is enabled",
-          path: ["CONVERSATION_RUNTIME_ADDRESS"],
-        });
-      }
-      if (environment.CONVERSATION_RUNTIME_TOKEN_FILE === undefined) {
-        context.addIssue({
-          code: "custom",
-          message: "CONVERSATION_RUNTIME_TOKEN_FILE is required when conversation is enabled",
-          path: ["CONVERSATION_RUNTIME_TOKEN_FILE"],
-        });
-      }
-      if (
-        environment.NODE_ENV === "production" &&
-        environment.CONVERSATION_VOICE_PROFILE_ID.startsWith("deterministic-e2e")
-      ) {
-        context.addIssue({
-          code: "custom",
-          message: "deterministic E2E voice profiles are forbidden in production",
-          path: ["CONVERSATION_VOICE_PROFILE_ID"],
-        });
-      }
-    }
+    validateConversationEnvironment(environment, context);
     const legacyRouteParts = [
       environment.DISCORD_LEGACY_GUILD_ID,
       environment.DISCORD_LEGACY_VOICE_CHANNEL_ID,
@@ -406,16 +339,6 @@ const environmentSchema = z
       });
     }
   });
-
-function participantProfilesHaveNoConsumer(environment: {
-  readonly CONVERSATION_ENABLED: boolean;
-  readonly MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: boolean;
-  readonly PARTICIPANT_GREETING_PROFILES_JSON: Readonly<Record<string, unknown>>;
-}): boolean {
-  return Object.keys(environment.PARTICIPANT_GREETING_PROFILES_JSON).length > 0 &&
-    !environment.CONVERSATION_ENABLED &&
-    !environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED;
-}
 
 export type ParsedPlatformEnvironment = z.infer<typeof environmentSchema>;
 
