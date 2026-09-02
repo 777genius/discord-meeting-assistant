@@ -229,7 +229,10 @@ function initialMeeting(): MeetingSnapshot {
       manifestLocator: "recordings/recording-e2e/manifest.json",
       recordingId: "recording-e2e",
       speakerAudio: [{
+        artifactRevision: "version-1",
         audioLocator: "recordings/recording-e2e/speaker-a.ogg",
+        checksumSha256: "a".repeat(64),
+        sizeBytes: 27,
         speakerId: "speaker-a",
         timelineOffsetMs: 0,
       }],
@@ -253,12 +256,18 @@ function initialTwoSpeakerMeeting(): MeetingSnapshot {
       ...snapshot.recording,
       speakerAudio: [
         {
+          artifactRevision: "version-1",
           audioLocator: "recordings/recording-e2e/speaker-a.ogg",
+          checksumSha256: "a".repeat(64),
+          sizeBytes: 27,
           speakerId: "speaker-a",
           timelineOffsetMs: 0,
         },
         {
+          artifactRevision: "version-1",
           audioLocator: "recordings/recording-e2e/speaker-b.ogg",
+          checksumSha256: "b".repeat(64),
+          sizeBytes: 27,
           speakerId: "speaker-b",
           timelineOffsetMs: 1_000,
         },
