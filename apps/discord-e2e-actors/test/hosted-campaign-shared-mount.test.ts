@@ -124,7 +124,7 @@ describe("test-only campaign compose override", () => {
     expect(base).not.toContain("data/e2e-playback-readiness");
     expect(base).not.toContain("discord-e2e-campaign-runner:");
     expect(base).toContain(
-      "DISCORD_BOTIK_APPLICATION_ID: ${DISCORD_BOTIK_APPLICATION_ID:-1534231284467896512}",
+      "DISCORD_BOTIK_APPLICATION_ID: ${DISCORD_PUBLICATION_APPLICATION_ID:?set the publication bot application ID}",
     );
   });
 
