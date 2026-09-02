@@ -101,7 +101,7 @@ export interface CompletedRecordingState {
     }[];
   };
   readonly recordingId: string;
-  readonly schemaVersion: 6;
+  readonly schemaVersion: 5 | 6;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -438,7 +438,7 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
       speakerAudio,
     },
     recordingId,
-    schemaVersion: 6,
+    schemaVersion: record.schemaVersion === 6 ? 6 : 5,
   };
 }
 function reconstructCompletedTrackIdentity(
@@ -452,19 +452,19 @@ function reconstructCompletedTrackIdentity(
     readonly timelineOffsetMs: number;
   }[],
 ): readonly {
-  readonly artifactRevision: string;
+  readonly artifactRevision?: string;
   readonly audioLocator: string;
-  readonly checksumSha256: string;
-  readonly sizeBytes: number;
+  readonly checksumSha256?: string;
+  readonly sizeBytes?: number;
   readonly speakerId: string;
   readonly timelineOffsetMs: number;
 }[] {
   const tracksBySpeaker = new Map<string, StoredAuthoritativeTrack>();
   for (const track of tracks) {
     if (
-      track.artifactVersionId === null ||
       track.artifactVersionId === "null" ||
-      controlCharacterPattern.test(track.artifactVersionId) ||
+      (track.artifactVersionId !== null &&
+        controlCharacterPattern.test(track.artifactVersionId)) ||
       tracksBySpeaker.has(track.speakerId)
     ) {
       throw new RecordingIngressError(
@@ -494,10 +494,11 @@ function reconstructCompletedTrackIdentity(
     }
     const artifactRevision = track.artifactVersionId;
     if (artifactRevision === null) {
-      throw new RecordingIngressError(
-        "corrupt-spool",
-        "completion receipt track is missing immutable artifact identity",
-      );
+      return {
+        audioLocator: reference.audioLocator,
+        speakerId: reference.speakerId,
+        timelineOffsetMs: reference.timelineOffsetMs,
+      };
     }
     if (
       reference.artifactRevision !== undefined &&

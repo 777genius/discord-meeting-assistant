@@ -353,7 +353,7 @@ describe("authoritative Craig recording durability", () => {
           sizeBytes: track.metadata.sizeBytes,
         }],
       },
-      schemaVersion: 5,
+      schemaVersion: 6,
     });
 
     await adapter.close();

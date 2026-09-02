@@ -223,7 +223,7 @@ describe("recording identity spool", () => {
       actors,
       lifecycleSchemaVersion: 2,
       recording: { authoritativeDurationMs: 299_000 },
-      schemaVersion: 5,
+      schemaVersion: 6,
     });
   });
 
@@ -360,7 +360,7 @@ describe("trusted recording identity spool", () => {
       identityProvenance: { producerCapabilityId, producerRevision, rosterState: "sealed" },
       lifecycleSchemaVersion: 3,
       recording: { authoritativeDurationMs: 299_000 },
-      schemaVersion: 5,
+      schemaVersion: 6,
     });
     await recovered.close();
   });
