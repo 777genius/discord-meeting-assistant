@@ -246,6 +246,15 @@ async function createPlatformKnowledgeComposition(input: {
     ...(groundedAnswerUseCase === undefined ? {} : { groundedAnswerUseCase }),
     ...(historicalMemory === undefined ? {} : { historicalMemory }),
     logger,
+    markLivePacketDelivered: (packetId) => core.recordings.markLivePacketDelivered(packetId).then(() => undefined),
+    pendingLivePackets: async (recordingId) => {
+      const packets = await core.recordings.pendingLivePackets(recordingId);
+      return packets.map((packet) => ({
+        mediaTimestamp: packet.mediaTimestamp, payloadBase64: packet.payloadBase64,
+        receivedAtMs: packet.receivedAtMs, recordingId: packet.recordingId,
+        relativeTimeMs: packet.relativeTimeMs, sequenceNumber: packet.sequenceNumber, speakerId: packet.speakerId,
+      }));
+    },
     ...(liveFinalizedMemory === undefined ? {} : { liveFinalizedMemory }),
     meetings: core.liveMeetings,
     pool: core.pool,

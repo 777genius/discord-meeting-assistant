@@ -325,6 +325,8 @@ export interface LiveMeetingRuntimeDependencies {
     synchronizeMeeting(meetingId: string): Promise<void>;
   };
   readonly logger: LiveRuntimeLogger;
+  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
+  readonly pendingLivePackets?: (recordingId: string) => Promise<readonly LiveVoicePacket[]>;
   readonly packetFlowControl?: LivePacketFlowControl;
   readonly packetInspector?: LivePacketInspector;
   readonly refreshMeeting: LiveMeetingRefresher;

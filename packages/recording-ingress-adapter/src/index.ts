@@ -8,6 +8,9 @@ export {
   type RecordingIngressFailure,
 } from "./errors.js";
 export {
+  type DurableLiveVoicePacket,
+} from "./live-delivery-outbox.js";
+export {
   compileOggOpus,
   opusPacketDurationSamples,
   validateOggOpus,

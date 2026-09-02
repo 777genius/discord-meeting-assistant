@@ -144,6 +144,16 @@ export class LiveSession implements VoicetextLiveSession {
         this.timeline.reserve(packet.relativeTimeMs, packet.durationSamples48Khz);
         await this.socket.sendBinary(packet.opus, this.abortController.signal);
         this.nextSequence = sequence;
+        try {
+          await withLiveSessionTimeout(
+            waiter.promise,
+            this.options.audioAckTimeoutMs,
+            "Voicetext live packet acknowledgement timed out",
+          );
+        } catch (error) {
+          this.closeAfterReceiveFailure(error);
+          throw error;
+        }
         rememberLiveSessionPacketId(this.packetIds, this.packetIdOrder, packet.packetId);
         return "accepted";
       } catch (error) {

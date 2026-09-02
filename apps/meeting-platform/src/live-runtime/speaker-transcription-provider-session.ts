@@ -20,7 +20,6 @@ interface SpeakerTranscriptionProviderSessionDependencies {
 
 /** Owns the provider session, its admission lease and segment identity. */
 export class SpeakerTranscriptionProviderSession {
-  private nextSegment = 1;
   private openingAbortController: AbortController | null = null;
   private session: LiveTranscriptionSession | null = null;
   private sessionLease: LiveSessionRelease | null = null;
@@ -49,14 +48,11 @@ export class SpeakerTranscriptionProviderSession {
     const openingAbortController = new AbortController();
     this.openingAbortController = openingAbortController;
     try {
-      const segment = this.nextSegment;
-      this.nextSegment += 1;
       const session = await this.dependencies.transcriber.openSession({
         idempotencyKey: [
-          "live-transcription:v2",
+          "live-transcription:v3",
           this.dependencies.meetingId,
           this.dependencies.speakerId,
-          segment,
         ].join("|"),
         meetingId: this.dependencies.meetingId,
         onTranscript: this.dependencies.onTranscript,

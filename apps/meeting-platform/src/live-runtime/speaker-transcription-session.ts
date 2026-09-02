@@ -28,6 +28,7 @@ export interface SpeakerTranscriptionSessionDependencies {
   readonly isMeetingFinishing: () => boolean;
   readonly ledger: LivePacketDeliveryLedger;
   readonly logger: LiveRuntimeLogger;
+  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
   readonly maximumQueuedPackets: number;
   readonly meetingId: string;
   readonly onTranscript: (event: LiveTranscriptionEvent) => void;
@@ -45,6 +46,7 @@ export interface SpeakerTranscriptionSessionDependencies {
 /** Owns one speaker's provider session and its bounded packet delivery. */
 export class SpeakerTranscriptionSession {
   private admissionChain: Promise<void> = Promise.resolve();
+  private admissionClosed = false;
   private backpressureDegraded = false;
   private chain: Promise<void> = Promise.resolve();
   private inactivityTimer: LiveRuntimeTimerHandle | null = null;
@@ -76,6 +78,7 @@ export class SpeakerTranscriptionSession {
     packets: readonly LiveVoicePacket[],
     deadlineMs: number,
   ): Promise<void> {
+    if (this.admissionClosed) return;
     const globallyReserved = await this.dependencies.packetAdmission.reserve(
       packets.length,
       deadlineMs,
@@ -108,8 +111,7 @@ export class SpeakerTranscriptionSession {
 
   public beginFinish(): void {
     this.cancelIdleFinalization();
-    this.packetFlow.cancel();
-    this.providerSession.abortOpening();
+    this.admissionClosed = true;
   }
 
   public async finish(): Promise<void> {
@@ -215,11 +217,11 @@ export class SpeakerTranscriptionSession {
           packetId: input.packetId,
           relativeTimeMs: input.packet.relativeTimeMs,
         });
-        this.commitDelivery(input, sendStartedAtMs);
+        await this.commitDelivery(input, sendStartedAtMs);
         return;
       } catch (error) {
         this.providerSession.terminate();
-        if (this.dependencies.isMeetingFinishing() || this.packetFlow.signal.aborted) {
+        if (this.packetFlow.signal.aborted) {
           return;
         }
         if (attempt === maximumLivePacketDeliveryAttempts) {
@@ -230,7 +232,7 @@ export class SpeakerTranscriptionSession {
     }
   }
 
-  private commitDelivery(
+  private async commitDelivery(
     input: {
       readonly durationSamples48Khz: number;
       readonly earliestPacketAtMs: number;
@@ -238,7 +240,7 @@ export class SpeakerTranscriptionSession {
       readonly packetId: string;
     },
     sendStartedAtMs: number,
-  ): void {
+  ): Promise<void> {
     this.pacer.recordPacketSent(
       input.earliestPacketAtMs,
       input.durationSamples48Khz,
@@ -262,12 +264,10 @@ export class SpeakerTranscriptionSession {
         this.logFields(),
       );
     }
+    await this.dependencies.markLivePacketDelivered?.(input.packetId);
   }
 
   private isSuppressed(packet: LiveVoicePacket, packetId?: string): boolean {
-    if (this.dependencies.isMeetingFinishing()) {
-      return true;
-    }
     const identity = packetId ?? livePacketIdentity(packet);
     if (this.dependencies.ledger.isDelivered(identity)) {
       return true;
@@ -331,7 +331,7 @@ export class SpeakerTranscriptionSession {
   private rememberRetryablePacket(
     packet: LiveVoicePacket,
     packetId: string,
-  ): void {
+  ): Promise<void> {
     if (!this.dependencies.ledger.markRetryable(packetId)) {
       return;
     }
@@ -350,7 +350,7 @@ export class SpeakerTranscriptionSession {
       | "LIVE_PACKET_ADMISSION_BACKLOG_FULL"
       | "LIVE_PACKET_GLOBAL_BACKLOG_FULL"
       | "LIVE_PACKET_BACKPRESSURE_TIMEOUT",
-  ): void {
+  ): Promise<void> {
     if (this.backpressureDegraded) {
       return;
     }

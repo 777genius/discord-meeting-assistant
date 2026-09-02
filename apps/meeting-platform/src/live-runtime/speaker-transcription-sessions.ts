@@ -20,6 +20,7 @@ export interface SpeakerTranscriptionSessionsDependencies {
   readonly clock: LiveRuntimeClock;
   readonly isMeetingFinishing: () => boolean;
   readonly logger: LiveRuntimeLogger;
+  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
   readonly maximumQueuedPackets: number;
   readonly meetingId: string;
   readonly onTranscript: (event: LiveTranscriptionEvent) => void;

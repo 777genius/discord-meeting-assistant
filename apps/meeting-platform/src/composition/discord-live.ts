@@ -95,6 +95,8 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly groundedAnswerUseCase?: GroundedMeetingAnswer;
   readonly historicalMemory?: PlatformHistoricalMemoryRuntime;
   readonly logger: Logger;
+  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
+  readonly pendingLivePackets?: (recordingId: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly pool: Pool;
@@ -177,6 +179,8 @@ export async function createPlatformDiscordLiveComposition(input: {
       : { greetingCues: conversation.greetingCues }),
     isPlaybackReady: (recordingId) => craigPlaybackGateway.hasSession(recordingId),
     logger: input.logger,
+    ...(input.markLivePacketDelivered === undefined ? {} : { markLivePacketDelivered: input.markLivePacketDelivered }),
+    ...(input.pendingLivePackets === undefined ? {} : { pendingLivePackets: input.pendingLivePackets }),
     ...(input.liveFinalizedMemory === undefined
       ? {}
       : { liveFinalizedMemory: input.liveFinalizedMemory }),
@@ -323,6 +327,8 @@ function createLiveRuntime(input: {
   readonly greetingCues?: FileParticipantGreetingCueRegistry;
   readonly isPlaybackReady: (recordingId: string) => boolean;
   readonly logger: Logger;
+  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
+  readonly pendingLivePackets?: (recordingId: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly oneShotReceipts: PostgresConversationOneShotReceiptStore;
@@ -356,6 +362,8 @@ function createLiveRuntime(input: {
       ? {}
       : { finalizedMemory: input.liveFinalizedMemory }),
     logger: input.logger,
+    ...(input.markLivePacketDelivered === undefined ? {} : { markLivePacketDelivered: input.markLivePacketDelivered }),
+    ...(input.pendingLivePackets === undefined ? {} : { pendingLivePackets: input.pendingLivePackets }),
     meetings: input.meetings,
     packetFlowControl: {
       maximumConcurrentSessions:

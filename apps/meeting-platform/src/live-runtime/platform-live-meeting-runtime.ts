@@ -240,6 +240,10 @@ export class PlatformLiveMeetingRuntime {
     });
     state.projection.restoreFinalCaptions(result.finalizedTurns);
     this.meetings.set(state.meetingId, state);
+    const pending = await this.dependencies.pendingLivePackets?.(state.meetingId);
+    if (pending !== undefined && pending.length > 0) {
+      await this.acceptPackets(state.meetingId, pending);
+    }
     this.dependencies.logger.info("Derived live meeting started", {
       meetingId: state.meetingId,
       reused: result.status === "reused",

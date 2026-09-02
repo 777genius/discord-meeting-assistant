@@ -13,6 +13,11 @@ import type {
 import { ingestAuthoritativeTrack } from "./recording-ingress-authoritative.js";
 import { ingestLifecycleEvent } from "./recording-ingress-lifecycle.js";
 import { ingestPacketBatch } from "./recording-ingress-packet-ingest.js";
+import {
+  markLivePacketDelivered,
+  pendingLivePackets,
+  type DurableLiveVoicePacket,
+} from "./live-delivery-outbox.js";
 import { RecordingIngressRuntime } from "./recording-ingress-runtime.js";
 
 export { DEFAULT_RECORDING_INGRESS_LIMITS } from "./recording-ingress-invariants.js";
@@ -48,6 +53,14 @@ export class DurableCraigRecordingIngress {
       () => ingestPacketBatch(this.#runtime, batch, options),
       options.signal,
     );
+  }
+
+  public pendingLivePackets(recordingId: string): Promise<readonly DurableLiveVoicePacket[]> {
+    return pendingLivePackets(this.#runtime, recordingId);
+  }
+
+  public markLivePacketDelivered(packetId: string): Promise<"marked" | "reused"> {
+    return markLivePacketDelivered(this.#runtime, packetId);
   }
 
   public ingestLifecycleEvent(
