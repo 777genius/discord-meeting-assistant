@@ -128,7 +128,7 @@ describe("test-only campaign compose override", () => {
     );
   });
 
-  it("pins one fixed private-guild Botik identity across overlay, target, and fixture", async () => {
+  it("binds the user-owned publication identity while retaining the qualified fixture", async () => {
     const overlay = await readFile(
       new URL("../../../infra/deployment/compose.e2e-campaign.yaml", import.meta.url), "utf8",
     );
@@ -140,8 +140,8 @@ describe("test-only campaign compose override", () => {
     expect(HOSTED_CAMPAIGN_TARGET.botikApplicationId).toBe(campaignBotikApplicationId);
     expect(fixture.conversationVoiceExpectation.botSpeakerId).toBe(campaignBotikApplicationId);
     expect(fixture.allowedBotSpeakerIds).toContain(campaignBotikApplicationId);
-    expect(overlay.match(/^\s+DISCORD_BOTIK_APPLICATION_ID: "\d+"$/gmu)).toEqual([
-      `      DISCORD_BOTIK_APPLICATION_ID: "${campaignBotikApplicationId}"`,
+    expect(overlay.match(/^\s+DISCORD_BOTIK_APPLICATION_ID: \$\{[^}]+\}$/gmu)).toEqual([
+      "      DISCORD_BOTIK_APPLICATION_ID: ${DISCORD_PUBLICATION_APPLICATION_ID:?set user-owned publication application ID}",
     ]);
   });
 
