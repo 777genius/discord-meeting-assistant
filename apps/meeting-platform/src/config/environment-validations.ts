@@ -20,6 +20,12 @@ interface ConversationEnvironment extends ConversationReadinessEnvironment {
   readonly TRANSCRIPTION_PROVIDER: "speaches" | "voicetext";
 }
 
+interface DiscordApplicationEnvironment {
+  readonly DISCORD_APPLICATION_ID: string;
+  readonly DISCORD_BOTIK_APPLICATION_ID?: string | undefined;
+  readonly DISCORD_CRAIG_APPLICATION_ID: string;
+}
+
 interface MeetingKnowledgeEnvironment {
   readonly CONVERSATION_ENABLED: boolean;
   readonly DISCORD_APPLICATION_ID: string;
@@ -138,6 +144,22 @@ export function validateConversationEnvironment(
       code: "custom",
       message: "deterministic E2E voice profiles are forbidden in production",
       path: ["CONVERSATION_VOICE_PROFILE_ID"],
+    });
+  }
+}
+
+export function validateDiscordApplicationEnvironment(
+  environment: DiscordApplicationEnvironment,
+  context: RefinementCtx,
+): void {
+  if (
+    environment.DISCORD_BOTIK_APPLICATION_ID !== undefined &&
+    environment.DISCORD_APPLICATION_ID === environment.DISCORD_CRAIG_APPLICATION_ID
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "publication and Craig application IDs must be distinct",
+      path: ["DISCORD_CRAIG_APPLICATION_ID"],
     });
   }
 }

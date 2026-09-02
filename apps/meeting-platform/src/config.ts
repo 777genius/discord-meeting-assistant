@@ -18,6 +18,7 @@ import { validateInfinityContextEnvironment } from "./config/infinity-context-en
 import {
   validateConversationEnvironment,
   validateConversationReadinessEnvironment,
+  validateDiscordApplicationEnvironment,
   validateMeetingKnowledgeEnvironment,
 } from "./config/environment-validations.js";
 
@@ -289,6 +290,7 @@ const environmentSchema = z
   })
   .superRefine((environment, context) => {
     validateConversationEnvironment(environment, context);
+    validateDiscordApplicationEnvironment(environment, context);
     const legacyRouteParts = [
       environment.DISCORD_LEGACY_GUILD_ID,
       environment.DISCORD_LEGACY_VOICE_CHANNEL_ID,

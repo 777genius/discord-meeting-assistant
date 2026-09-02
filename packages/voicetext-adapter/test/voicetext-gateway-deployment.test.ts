@@ -166,6 +166,13 @@ describe("VoiceText gateway deployment overlay", () => {
     expect(platform.environment.DISCORD_CRAIG_APPLICATION_ID).toBe("222222222222222222");
   });
 
+  it("keeps the checked-in deployment example free of host-specific paths", async () => {
+    const environment = await readDeploymentFile(".env.example");
+
+    expect(environment).toContain("DEPLOY_ROOT=/srv/discord-meeting-assistant");
+    expect(environment).not.toMatch(/^DEPLOY_ROOT=\/mnt\//mu);
+  });
+
   it("documents the exact one-command workflow and honest default capability boundary", async () => {
     const guide = await readDeploymentFile("oss-meeting-topology.md");
     expect(guide.match(/config >\/dev\/null && docker compose/gu)).toHaveLength(1);

@@ -269,6 +269,15 @@ describe("platform configuration defaults and publication", () => {
     );
   });
 
+  it("rejects one application identity for the canonical publication and Craig bots", async () => {
+    await expect(loadPlatformConfig({
+      ...environment,
+      DISCORD_CRAIG_APPLICATION_ID: environment.DISCORD_APPLICATION_ID,
+    }, async () => "value")).rejects.toThrow(
+      "publication and Craig application IDs must be distinct",
+    );
+  });
+
   it("publishes final summaries separately by default and accepts live replacement opt-in", async () => {
     const separate = await loadPlatformConfig(environment, async () => "value");
     const replacement = await loadPlatformConfig(

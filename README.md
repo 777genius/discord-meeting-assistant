@@ -45,9 +45,9 @@ Optional capabilities are enabled independently by each deployment. The core
 post-call flow does not depend on live voice, historical memory, or playback.
 Meeting Platform talks only to the versioned VoiceText contract; Deepgram and
 ElevenLabs are tested adapters behind the self-hosted gateway. The Rust
-domain/application ports are provider-agnostic, while exposing another public
-V1 profile still requires an explicit identity/config addition in gateway
-composition and the Discord consumer.
+domain/application ports are provider-agnostic. A new public V1 profile still
+requires an explicit identity/config addition in gateway composition and the
+Discord consumer.
 
 ## How it works
 
