@@ -306,6 +306,11 @@
       "id": "ADR-0064",
       "path": "docs/decisions/0064-composite-retrieval-authority-fence.md",
       "immutableDigest": "sha256:cf24d83fe00173de2186ddfab2affb26f6a59a28d997ffee26c134f98068c7c3"
+    },
+    {
+      "id": "ADR-0065",
+      "path": "docs/decisions/0065-two-application-self-hosting-topology.md",
+      "immutableDigest": "sha256:c1da4aa4d8ea5cc7967a209a150ba52ac23e0eee0061f655137315ce7f0d29ba"
     }
   ]
 }

@@ -1,105 +1,179 @@
-# OSS VoiceText meeting topology
+# Pinned OSS meeting topology
 
-This is the clean-checkout ownership contract for the self-hosted recording and
-transcription path. Its core is Discord, a user-owned Craig voice gateway,
-Meeting Platform, PostgreSQL, Redis, object storage, and the separately pinned
-OSS VoiceText gateway. It has no private VoiceText SaaS, Infinity Context,
-subscription-runtime, or Pipecat dependency.
+This is the one supported clean-checkout Compose workflow for the core
+self-hosted lane. It runs Meeting Platform, a user-owned Craig bot with its own
+PostgreSQL, Redis, and recording custody, and the OSS VoiceText gateway with its
+own PostgreSQL and Caddy TLS edge. It never uses the public hosted Craig bot or
+private VoiceText SaaS.
 
-## Version and identity prerequisites
+## Immutable sources and identities
 
-Craig is an explicit versioned prerequisite because this repository does not
-publish a Craig image. Build a user-owned Craig checkout at an immutable commit
-and retain its source revision and image digest. It must implement lifecycle
-contract `craig-lifecycle-v3` and reproduce the consumer-pinned bundle:
+The overlays pin source three ways: remote repository URL, exact Git ref plus
+BuildKit `checksum`, and the same 40-character commit as image tag and OCI
+revision label.
 
-- checksum-manifest SHA-256
-  `43b58c2661b22039fa432199227318b0d91fbbe1faa669bc0e62a68ddff8f940`;
-- bundle-file SHA-256
-  `9ecdba8ebe3dd7e5ca4d67be0d540a66d07c3a66e0536dcd9c929099249f72a9`;
-- authoritative-track upload v1 and voice-packet batch v1 from
-  `@discord-meeting/craig-gateway-contracts` in this checkout.
+| Component | Repository | Exact ref and checksum |
+| --- | --- | --- |
+| Craig Meeting Gateway (ISC) | `https://github.com/777genius/craig-meeting-gateway.git` | `37b86a958b567cb7fcff75946e94fe5e7ee38f42` |
+| OSS VoiceText gateway (Apache-2.0) | `https://github.com/777genius/voicetext-gateway.git` | `17dcc80851327e8ff287aba4632f4638fdf087b1` |
 
-Do not substitute the public Craig bot or an unversioned image. Create two
-official Discord applications in the Developer Portal: one user-owned Craig
-voice bot and one Meeting Platform publication bot. Enable only the intents
-their documented routes need, install them into a private guild owned by the
-operator, and use test-only channels and synthetic identities for smoke/E2E.
-Never use a user token, self-bot, public guild, or a real user project.
+The Craig pin implements `craig-lifecycle-v3`; its retained contract manifest
+SHA-256 is `43b58c2661b22039fa432199227318b0d91fbbe1faa669bc0e62a68ddff8f940`
+and bundle SHA-256 is
+`9ecdba8ebe3dd7e5ca4d67be0d540a66d07c3a66e0536dcd9c929099249f72a9`.
 
-## Custody and network topology
+Do not replace either context with a mutable branch, an unversioned image, a
+local source directory, or the public Craig service. BuildKit must be 0.28.0 or
+newer so the Git-context checksum is enforced. The Meeting Platform image label
+comes from `MEETING_PLATFORM_SOURCE_REVISION`; set it to the exact commit of the
+clean Discord checkout being deployed.
 
-PostgreSQL is authoritative for meeting state; SeaweedFS S3 stores derived
-recording artifacts; Craig's original multitrack recording remains separately
-authoritative. Redis is a durable work queue, not evidence. Persist all four
-under one operator-owned `DEPLOY_ROOT`, back them up independently, and never
-delete the Craig original after a transcription or publication failure.
+Create exactly two official Discord applications owned by the operator:
 
-Caddy owns public TLS for the OSS VoiceText origin. Only its exact health,
-batch, and WebSocket paths route inward; all other paths return 404. Craig and
-Meeting Platform communicate only on the internal network with their shared
-Craig bearer. Discord bot tokens are separate files. The VoiceText machine
-token is one shared file mounted read-only into Meeting Platform and the OSS
-gateway. PostgreSQL URLs, S3 keys, Redis URL, Discord tokens, Craig bearer, and
-provider API keys are regular non-symlink secret files, mode `0400`, held by the
-UID that reads them. Provider keys mount only into the OSS gateway.
+1. the **Craig application**, whose token is mounted only into `craig-bot` and
+   which has the voice permissions required to record;
+2. the **publication application**, whose token is mounted only into
+   `meeting-platform` and which publishes commands, results, and transcript
+   attachments.
 
-The VoiceText gateway source ref and exact 40/64-character commit are mandatory
-BuildKit checksum inputs. DNS and ACME state belong to the operator. For an
-offline source build, mirror the exact Git objects and retain the same ref and
-commit check. See [voicetext-gateway.md](voicetext-gateway.md) for exact paths.
+Their application IDs and tokens must be different. There is no combined bot
+identity and no user token. Install both only in an operator-owned private guild,
+grant only the documented channel permissions, use test-only voice/results
+channels and synthetic participants for qualification, and never use a public
+guild, self-bot, customer recording, or real user project.
 
-## Core and optional services
+Use Meeting Platform's logged `/discord/install` URL for the publication
+application. Install Craig separately with its Discord OAuth URL (application
+ID `DISCORD_CRAIG_APPLICATION_ID`, permissions `68176896`, scopes `bot` and
+`applications.commands`).
+Confirm both application IDs in the private guild, then run
+`/setup-voice-bot` as a `Manage Server` administrator to select the test-only
+voice channel and results channel. Do not widen either application to
+Administrator permission.
 
-Core meeting evidence is Craig recording plus final VoiceText transcription.
-The default `transcript-outline` summary reports only the authoritative turn
-count and attaches the transcript; it infers no decisions, actions, or topics
-and needs no generation provider. Discord live captions are derived and off by
-default (`VOICETEXT_LIVE_ENABLED=false`). Infinity Context (historical memory),
-subscription-runtime (hosted generation through
-`compose.hosted-summary.yaml --profile hosted-summary`), Pipecat/TTS
-(conversation), Speaches (alternate STT), and recording playback are non-core
-profiles. Keep them off for this topology. Pipecat remains future-only here.
+## Operator-owned configuration and custody
 
-## One safe `up -> ready -> synthetic smoke` path
+Copy `infra/deployment/.env.example` to `/secure/oss-meeting.env` outside the
+checkout. Set `DEPLOY_ROOT`, `MEETING_PLATFORM_SOURCE_REVISION` (the output of
+`git rev-parse HEAD` in this clean checkout), the two distinct application IDs,
+the private results channel ID, `VOICETEXT_PUBLIC_HOST`, and the selected batch
+and live profiles. The Craig and VoiceText source pins are deliberately not
+environment overrides.
 
-From a clean checkout, copy `.env.example` outside Git, fill immutable source
-revisions and IDs, provision the files above, and pin the Craig and gateway
-images. First render without starting containers:
+Create these persistent roots under the one operator-owned `DEPLOY_ROOT`:
 
-```sh
-docker compose --env-file /secure/oss-meeting.env \
-  -f infra/deployment/compose.yaml \
-  -f infra/deployment/compose.voicetext-gateway.yaml config
+```text
+data/postgres                  Meeting Platform state (authoritative)
+data/redis                     Meeting Platform durable work queue
+data/object-storage            derived accepted artifacts
+data/spool                     Meeting Platform durable ingress spool
+data/craig/postgres            Craig metadata
+data/craig/redis               Craig durable runtime state
+data/craig/recordings          original multitrack recordings (authoritative)
+data/voicetext/postgres        VoiceText job state
+data/voicetext/spool           accepted VoiceText audio spool
+data/voicetext/caddy-config    Caddy configuration state
+data/voicetext/caddy-data      TLS/ACME state
 ```
 
-Bring up the operator-pinned Craig prerequisite and the rendered core stack,
-then wait for both readiness endpoints:
+Provision the base Platform files documented in [README.md](README.md),
+including `postgres-password`, `redis.conf`, `s3-config.json`, and these files
+under `${DEPLOY_ROOT}/secrets/platform`: `postgres-url`, `redis-url`,
+`s3-access-key-id`, `s3-secret-access-key`, `discord-sut-token` (publication
+bot), `craig-bearer-token`, and `voicetext-service-token`. Then add:
 
-```sh
-docker compose --env-file /secure/oss-meeting.env \
-  -f infra/deployment/compose.yaml \
-  -f infra/deployment/compose.voicetext-gateway.yaml up -d
-curl --fail --silent https://voice.example.com/health/ready
-docker compose --env-file /secure/oss-meeting.env \
-  -f infra/deployment/compose.yaml \
-  -f infra/deployment/compose.voicetext-gateway.yaml \
-  exec -T meeting-platform node -e \
-  "fetch('http://127.0.0.1:4310/readyz').then(async r=>{console.log(await r.text());process.exit(r.ok?0:1)})"
+```text
+secrets/craig/postgres-password
+secrets/craig/database-url
+secrets/craig/discord-bot-token
+secrets/voicetext/postgres-password
+secrets/voicetext/postgres-url
+secrets/voicetext/providers/deepgram-api-key       # when a Deepgram profile is selected
+secrets/voicetext/providers/elevenlabs-api-key    # when an ElevenLabs profile is selected
+config/voicetext-gateway.env
 ```
 
-Do not join Discord for the smoke. Run the providerless, unauthenticated
-cross-head fixture against the deployed origin; it checks health routing,
-authentication rejection, and the closed 404 fallback without audio, provider,
-Discord, or live side effects:
+`craig/database-url` is
+`postgresql://craig_meeting:<url-escaped-password>@craig-postgres:5432/craig_meeting`.
+The VoiceText equivalent uses host `voicetext-postgres`, user/database
+`voicetext`, and its own password. `voicetext-gateway.env` contains only the
+selected provider key-file paths under `/run/voicetext-provider-secrets`; key
+values never enter an env file.
+
+All credentials are user-owned. Generate independent random PostgreSQL/Redis/S3
+credentials and at least 32 random bytes for each machine bearer. Secret files
+must be regular, non-symlink files, mode `0400`, owned by the container UID that
+reads them. Craig bot and VoiceText gateway/config files use UID/GID `10001`;
+the two PostgreSQL password files use the image's PostgreSQL UID (`70` for the
+pinned Alpine image). Follow the base README for Platform Redis and SeaweedFS
+ownership. The same
+`platform/craig-bearer-token` file is mounted read-only into Platform and Craig,
+and the same `platform/voicetext-service-token` file into Platform and VoiceText.
+The two Discord token files remain separate.
+
+## One config, up, and wait command
+
+From the repository root of a clean Discord checkout, after DNS for
+`VOICETEXT_PUBLIC_HOST` points to this host and TCP 80/443 plus UDP 443 are
+available, run this one exact command:
 
 ```sh
-VOICETEXT_GATEWAY_BLACK_BOX_ORIGIN=https://voice.example.com \
-VOICETEXT_CADDY_BIN=/usr/local/bin/caddy \
-pnpm --filter @discord-meeting/voicetext-adapter run test:gateway-exact-head
+node tooling/generate-build-provenance.mjs >/dev/null && docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml config >/dev/null && docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml up --build --detach --wait
 ```
 
-Only after this smoke passes may an operator schedule the separate private-guild
-qualification with official test bots, synthetic Ogg/Opus fixtures, test-only
-provider keys, and retained exact image/source evidence. That campaign is not a
-startup probe and is never part of the safe default workflow.
+The provenance step fails if the checkout is dirty. Compose config then fails
+before creation on an incomplete interpolation. The final step builds only the
+pinned remote sources, starts migrations and dependencies, and waits for service
+health without invoking Discord commands, joining voice, or calling a speech
+provider. Do not enable any Compose profile for this workflow.
+In particular, Infinity Context, subscription-runtime/`hosted-summary`, the
+Pipecat `conversation` profile, `local-stt`, the E2E campaign/controller, and
+recording playback remain excluded.
+
+After startup, inspect health and prove every container has restart count zero:
+
+```sh
+docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml ps
+docker inspect --format '{{.Name}} restart={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}}' $(docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml ps --quiet)
+```
+
+Every long-running service must be `healthy` (or have its documented one-shot
+status) and every `restart=` value must be `0` before private-guild setup.
+
+## Default output and optional features
+
+The default `SUMMARY_PROVIDER=transcript-outline` is deliberately minimal: it
+reports the authoritative transcript turn count and attaches the transcript. It
+does not generate an overview, topics, decisions, actions, owners, deadlines, or
+open questions. Rich generation is optional and hosted separately; it is not a
+claim of this self-hosted default.
+
+The repository contains an implemented Discord Pipecat conversation profile,
+but that profile is default-off and non-core. There is no implemented
+Pipecat-to-VoiceText provider adapter; that adapter remains future work. The OSS
+topology uses VoiceText only for final batch transcription (and optional derived
+live captions when explicitly enabled), never as a Pipecat provider.
+
+Craig's original multitrack files, the final accepted transcript, and Meeting
+Platform PostgreSQL are authoritative. Redis, live captions, outlines,
+generated summaries, VoiceText spool entries, and object-store renditions are
+derived or operational state. A transcription or publication failure must never
+delete the original Craig recording.
+
+## Stop, backup, restore, and teardown
+
+For a consistent backup, stop the project, snapshot/copy every data root above
+and the external secret/config files, then restart with the same command. Back
+up `data/craig/recordings`, `data/craig/postgres`, and `data/postgres` first and
+retain their source revision labels with the backup. Test restores into a new
+private deployment before relying on them.
+
+To tear down containers and networks while retaining all bind-mounted evidence:
+
+```sh
+docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml down
+```
+
+Do not add `--volumes` and do not delete `DEPLOY_ROOT`. Erasing an original
+recording, database, TLS state, or secret is a separate destructive retention
+operation, never normal teardown.

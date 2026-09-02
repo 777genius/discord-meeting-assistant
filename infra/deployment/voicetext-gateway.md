@@ -12,26 +12,19 @@ revision label.
 
 ## Pin the source
 
-Set these non-secret values in the deployment environment:
+The overlay fixes the source identity and accepts only the public hostname from
+the deployment environment:
 
 ```text
 VOICETEXT_GATEWAY_GIT_URL=https://github.com/777genius/voicetext-gateway.git
-VOICETEXT_GATEWAY_GIT_REF=refs/tags/v1.2.3
-VOICETEXT_GATEWAY_SOURCE_REVISION=<exact 40- or 64-character Git commit>
+VOICETEXT_GATEWAY_GIT_REF=17dcc80851327e8ff287aba4632f4638fdf087b1
+VOICETEXT_GATEWAY_SOURCE_REVISION=17dcc80851327e8ff287aba4632f4638fdf087b1
 VOICETEXT_PUBLIC_HOST=voice.example.com
 ```
 
-BuildKit resolves `VOICETEXT_GATEWAY_GIT_REF` and verifies it with the
-`checksum=VOICETEXT_GATEWAY_SOURCE_REVISION` Git-context query before executing
-the gateway Dockerfile. A moved tag or branch fails the build instead of
-silently relabelling different source. This requires Docker Buildx 0.28.0 or
-newer and Dockerfile syntax 1.18 or newer.
-
-For an offline deployment, first mirror the exact repository and objects onto
-the deployment host, verify the checkout with Git, and use a local bare or
-non-bare repository URL such as
-`file:///srv/git/voicetext-gateway/.git`. Keep the exact ref and commit settings;
-do not replace the Git URL with an unverified directory build context.
+BuildKit resolves that exact ref and verifies it with the identical `checksum`
+Git-context query before executing the gateway Dockerfile. This requires Docker
+Buildx 0.28.0 or newer and Dockerfile syntax 1.18 or newer.
 
 Point public DNS for `VOICETEXT_PUBLIC_HOST` to the host and allow inbound TCP
 80/443 and UDP 443. The overlay derives Meeting Platform's sole VoiceText URL
@@ -109,9 +102,10 @@ provider account configuration; the gateway contract does not broaden them.
 Only English and Russian provider flows are qualified recognition fixtures.
 Ukrainian may be selected
 for presentation of already accepted text, but is not a qualified STT language
-and must not be inferred from presentation behavior. Pipecat is future/optional
-conversation infrastructure and is not part of this gateway or the core OSS
-meeting topology.
+and must not be inferred from presentation behavior. The implemented Discord
+Pipecat conversation profile is optional, default-off, and non-core. A
+Pipecat-to-VoiceText provider adapter is future/unimplemented; it is not part of
+this gateway or the core OSS meeting topology.
 
 The adapter and gateway contract checks do not establish final private-guild
 acceptance; that remains pending until the live Discord campaign passes with an

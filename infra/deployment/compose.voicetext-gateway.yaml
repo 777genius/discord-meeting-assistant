@@ -23,14 +23,17 @@ services:
 
   voicetext-gateway:
     build:
-      # BuildKit resolves GIT_REF, then refuses the build unless that checkout
-      # has the exact SOURCE_REVISION checksum. The image tag and revision label
-      # therefore cannot bless arbitrary caller-supplied source.
-      context: "${VOICETEXT_GATEWAY_GIT_URL:?set gateway Git URL}?ref=${VOICETEXT_GATEWAY_GIT_REF:?set gateway Git ref}&checksum=${VOICETEXT_GATEWAY_SOURCE_REVISION:?set exact gateway Git commit}"
+      # BuildKit resolves the immutable ref and independently verifies the same
+      # commit checksum before executing the remote Dockerfile.
+      context: "https://github.com/777genius/voicetext-gateway.git?ref=17dcc80851327e8ff287aba4632f4638fdf087b1&checksum=17dcc80851327e8ff287aba4632f4638fdf087b1"
       dockerfile: Dockerfile
-    image: discord-meeting/voicetext-gateway:${VOICETEXT_GATEWAY_SOURCE_REVISION:?set exact gateway Git commit}
+      labels:
+        org.opencontainers.image.revision: 17dcc80851327e8ff287aba4632f4638fdf087b1
+        org.opencontainers.image.source: https://github.com/777genius/voicetext-gateway
+    image: discord-meeting/voicetext-gateway:17dcc80851327e8ff287aba4632f4638fdf087b1
     labels:
-      org.opencontainers.image.revision: ${VOICETEXT_GATEWAY_SOURCE_REVISION:?set exact gateway Git commit}
+      org.opencontainers.image.revision: 17dcc80851327e8ff287aba4632f4638fdf087b1
+      org.opencontainers.image.source: https://github.com/777genius/voicetext-gateway
     init: true
     restart: unless-stopped
     read_only: true
@@ -55,6 +58,12 @@ services:
     cap_drop: [ALL]
     depends_on:
       voicetext-postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "http://127.0.0.1:8080/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
     networks: [meeting-internal, meeting-egress]
     security_opt: [no-new-privileges:true]
     cpus: ${VOICETEXT_GATEWAY_CPUS:-2.0}

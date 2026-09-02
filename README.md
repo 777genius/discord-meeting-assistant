@@ -2,9 +2,11 @@
 
 **Turn every Discord voice meeting into clear, reliable team memory.**
 
-Botik records your meeting and publishes the final notes directly to Discord.
-Your team gets decisions, action items, open questions, and an attached
-speaker-attributed transcript without moving the conversation to another app.
+Botik records your meeting and publishes the result directly to Discord. The
+default self-hosted `transcript-outline` reports only the authoritative turn
+count and attaches the speaker-attributed transcript. Rich decisions, action
+items, open questions, and narrative summaries require optional hosted
+generation and are not part of that default.
 Optional live features add captions, an evolving summary, voice conversation,
 grounded Q&A, historical meeting memory, and private recording playback.
 
@@ -28,7 +30,8 @@ playback is enabled.
 | Capability | What your team gets | Availability |
 | --- | --- | --- |
 | Automatic recording | Recording starts when people join the configured voice channel. | Core flow |
-| Final summary | A concise overview, key details, decisions, action items with owners and deadlines, and unresolved questions. | Core flow |
+| Transcript outline | Authoritative turn count plus the complete transcript attachment; no inferred decisions or actions. | Core self-hosted flow |
+| Rich final summary | Overview, decisions, action items, owners, deadlines, and unresolved questions. | Optional hosted generation |
 | Full transcript | Every final result attaches a complete Markdown transcript with speakers and timestamps. | Core flow |
 | Live captions and brief | One Discord post follows the conversation and updates key topics, decisions, actions, and questions during the call. | Optional live mode |
 | Voice assistant | Address Botik for a spoken answer that can be interrupted. Optional greetings and farewells make the assistant present throughout the call. | Optional live mode |
@@ -50,15 +53,16 @@ post-call flow does not depend on live voice, historical memory, or playback.
    mode is enabled, captions and the meeting brief stay in one Discord post
    instead of flooding the channel.
 3. **Leave with a complete handoff.** After the call, Botik reconciles the live
-   draft, when present, with the full recording, publishes the final summary,
-   and attaches the complete transcript without duplicate messages.
-   Playback-enabled deployments also include a private recording link.
+   draft, when present, with the full recording, publishes the minimal outline
+   or an optionally hosted rich summary, and attaches the complete transcript
+   without duplicate messages. Playback-enabled deployments also include a
+   private recording link.
 
 ## Built for trustworthy meeting notes
 
-- **Claims stay connected to the conversation.** Decisions and action items
-  must reference real transcript turns. The attached full summary includes the
-  supporting evidence.
+- **Generated claims stay connected to the conversation.** When optional rich
+  generation is enabled, decisions and action items must reference real
+  transcript turns. The default outline makes no such inferred claims.
 - **The recording remains the source of truth.** Live captions are useful during
   the call, but the final transcript is produced from the original per-speaker
   recording.
@@ -77,17 +81,17 @@ post-call flow does not depend on live voice, historical memory, or playback.
 3. Select the voice channel to record and the text channel that should receive
    final results and, when enabled, live updates.
 
-The current Meeting Platform and isolated Craig Voice Gateway share one official
-bot identity, so the standard deployment needs only one installation. A
-deployment with a separate Craig identity exposes its own explicit second
-installation step.
+The canonical deployment uses two official applications and two installations:
+one user-owned Craig voice bot and one Meeting Platform publication bot. Their
+application IDs and token files are always distinct.
 
 ## Current status
 
 This repository contains the executable V1 vertical slice and production
-packages. The complete recording-to-summary flow is implemented. Live voice,
-grounded Q&A, historical memory, and playback are separately enabled,
-fail-closed capabilities while the project remains under active development.
+packages. The complete recording-to-transcript-outline flow is self-hostable;
+rich generation is implemented as an optional hosted lane. Live voice, grounded
+Q&A, historical memory, and playback are separately enabled, fail-closed
+capabilities while the project remains under active development.
 
 ## Technical overview
 
@@ -96,7 +100,7 @@ original multitrack recording
   -> checksummed per-speaker audio
   -> final transcription
   -> speaker-attributed transcript
-  -> evidence-backed summary
+  -> minimal transcript outline (default) or evidence-backed summary (optional)
   -> idempotent Discord publication
 ```
 

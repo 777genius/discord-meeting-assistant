@@ -228,10 +228,11 @@ new queue writes under pressure rather than dropping BullMQ state. Meeting
 Platform continuously checks these runtime settings; an invalid policy makes
 the queue readiness probe fail closed.
 
-Set `DISCORD_APPLICATION_ID` and `DISCORD_CRAIG_APPLICATION_ID` to the official
-application identities. They are intentionally equal in the current one-install
-deployment while the code and process boundaries remain separate. Give them
-different values only for an explicit two-install deployment. `DISCORD_LEGACY_GUILD_ID` and
+Create two official applications. Set `DISCORD_PUBLICATION_APPLICATION_ID` to
+the publication bot identity and `DISCORD_CRAIG_APPLICATION_ID` to the separate
+user-owned Craig identity; the values and bot-token files must differ. The
+publication application never records voice, and Craig never publishes Meeting
+Platform results. `DISCORD_LEGACY_GUILD_ID` and
 `DISCORD_LEGACY_VOICE_CHANNEL_ID` are a temporary pair-scoped compatibility
 route for the existing private E2E guild; omit both in a new self-service
 deployment. After Discord login, Meeting Platform fails closed if its configured
@@ -275,7 +276,10 @@ host at `recording-edge:8080` and keep TLS termination at that host proxy.
 
 ## Live conversation profile
 
-Live conversation is disabled by default. To enable the provider-neutral path,
+Live conversation is disabled by default and is non-core. The repository has an
+implemented Discord Pipecat conversation profile, but no Pipecat-to-VoiceText
+provider adapter; that adapter remains future/unimplemented. To enable the
+existing provider-neutral conversation path,
 create `${DEPLOY_ROOT}/secrets/platform/conversation-runtime-token`, create an
 empty `${DEPLOY_ROOT}/secrets/pipecat` directory owned by UID `10001`, and start
 this Compose project with `--profile conversation` plus
