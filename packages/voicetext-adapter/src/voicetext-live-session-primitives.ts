@@ -5,6 +5,7 @@ import type { VoicetextLivePacket } from "./voicetext-live-transcription-configu
 import type { VoicetextFinalizeComplete } from "./protocol.js";
 
 const maximumOpusPacketBytes = 65_536;
+const maximumRememberedPacketIds = 4_096;
 
 export interface LiveSessionDeferred<Value> {
   readonly promise: Promise<Value>;
@@ -39,6 +40,27 @@ export function validateLiveSessionPacket(packet: VoicetextLivePacket): void {
     packet.opus.byteLength > maximumOpusPacketBytes
   ) {
     throw new VoicetextAdapterError("invalid_input", "Live Opus packet is invalid", false);
+  }
+}
+
+export function rememberLiveSessionPacketId(
+  packetIds: Set<string>,
+  packetIdOrder: string[],
+  packetId: string,
+): void {
+  packetIds.add(packetId);
+  packetIdOrder.push(packetId);
+  if (packetIdOrder.length > maximumRememberedPacketIds) {
+    const evicted = packetIdOrder.shift();
+    if (evicted !== undefined) {
+      packetIds.delete(evicted);
+    }
+  }
+}
+
+export function requireLiveSessionActive(state: string): void {
+  if (state !== "active") {
+    throw new VoicetextAdapterError("protocol_error", "Live session is not active", false);
   }
 }
 

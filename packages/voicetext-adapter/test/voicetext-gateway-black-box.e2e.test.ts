@@ -1,14 +1,28 @@
 import { readFile } from "node:fs/promises";
-import { once } from "node:events";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type Server } from "node:http";
 
-import { WebSocket, type RawData } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { LOOPBACK_TOKEN, startLoopbackGateway } from "./voicetext-gateway-black-box-fixture.js";
+import {
+  SocketMessages,
+  asObject,
+  boundedFetch,
+  closeSocket,
+  expectBoundedSocketRejection,
+  expectExactKeys,
+  expectNonNegativeNumber,
+  expectPositiveNumber,
+  expectTimestampPair,
+  expectUnauthenticatedWebSocketRejection,
+  openWebSocket,
+  readJson,
+  requiredArray,
+  requiredObject,
+  requiredString,
+  sendSocket,
+} from "./voicetext-gateway-black-box-support.js";
 
-const FETCH_TIMEOUT_MS = 5_000;
-const FRAME_TIMEOUT_MS = 5_000;
 const POLL_ATTEMPTS = 50;
 const POLL_INTERVAL_MS = 20;
 const LOCAL_TOKEN = "local-routing-token-32-bytes-long-0001";
@@ -76,6 +90,7 @@ describe("VoiceText gateway black-box cross-head fixture", () => {
   });
 
   it("executes all four profiles against a deterministic loopback contract gateway", async () => {
+    expect(Buffer.byteLength(LOOPBACK_TOKEN)).toBeGreaterThanOrEqual(32);
     const gateway = await startLoopbackGateway();
     try {
       try {
@@ -166,6 +181,59 @@ async function assertHealthAndClosedBoundaries(configuration: ExternalConfigurat
   const unknown = await boundedFetch(new URL("/__voicetext_cross_head_unknown__", configuration.httpOrigin));
   expect(unknown.status).toBe(404);
   await expectUnauthenticatedWebSocketRejection(streamEndpoint(configuration.wsOrigin));
+  await assertResourceBounds(configuration);
+}
+
+async function assertResourceBounds(configuration: ExternalConfiguration): Promise<void> {
+  const form = new FormData();
+  form.set("contract_version", "2");
+  form.set("provider", "deepgram");
+  form.set("model", "nova-3");
+  form.set("language", "multi");
+  form.set("keyterms", "[]");
+  form.set(
+    "file",
+    new Blob([new Uint8Array(1_024 * 1_024 + 1)], { type: "audio/ogg" }),
+    "oversized.ogg",
+  );
+  const oversized = await boundedFetch(
+    new URL("/api/v1/transcribe/batch", configuration.httpOrigin),
+    {
+      body: form,
+      headers: {
+        authorization: `Bearer ${configuration.token}`,
+        "x-idempotency-key": "resource-bound".padEnd(64, "0"),
+      },
+      method: "POST",
+    },
+  );
+  expect(oversized.status).toBe(400);
+  expect(oversized.headers.get("x-voicetext-error-code")).toBe("MULTIPART_FIELD_TOO_LARGE");
+
+  // The provider-wire qualification freezes exactly two live effects per
+  // provider. The Rust head owns its separate live-frame bound test, so do not
+  // open a third provider session in that accounting mode.
+  if (configuration.providerWire) {
+    return;
+  }
+  const socket = await openWebSocket(streamEndpoint(configuration.wsOrigin), configuration.token);
+  await sendSocket(socket, JSON.stringify({
+    type: "config",
+    provider: "deepgram",
+    model: "nova-3",
+    language: "multi",
+    capabilities: ["finalize_ack"],
+    channels: 1,
+    protocol_v: 2,
+    client_session_id: "123e4567-e89b-42d3-a456-426614174999",
+    encoding: "opus",
+    sample_rate: 48_000,
+  }));
+  const messages = new SocketMessages(socket);
+  expect((await messages.nextJson()).type).toBe("ready");
+  messages.dispose();
+  await sendSocket(socket, Buffer.alloc(64 * 1_024 + 1));
+  await expectBoundedSocketRejection(socket);
 }
 
 async function assertBatchProfile(
@@ -387,118 +455,6 @@ function assertTranscript(
   };
 }
 
-class SocketMessages {
-  readonly #queue: Array<Record<string, unknown>> = [];
-  readonly #waiters: Array<(message: Record<string, unknown>) => void> = [];
-  readonly #socket: WebSocket;
-  readonly #listener: (data: RawData, isBinary: boolean) => void;
-
-  constructor(socket: WebSocket) {
-    this.#socket = socket;
-    this.#listener = (data, isBinary) => {
-      if (isBinary) {
-        throw new Error("gateway sent an unexpected binary server frame");
-      }
-      const parsed = asObject(JSON.parse(data.toString()) as unknown);
-      const waiter = this.#waiters.shift();
-      if (waiter === undefined) {
-        this.#queue.push(parsed);
-      } else {
-        waiter(parsed);
-      }
-    };
-    socket.on("message", this.#listener);
-  }
-
-  async nextJson(): Promise<Record<string, unknown>> {
-    const queued = this.#queue.shift();
-    if (queued !== undefined) {
-      return queued;
-    }
-    return new Promise((resolve, reject) => {
-      const waiter = (message: Record<string, unknown>) => {
-        clearTimeout(timer);
-        resolve(message);
-      };
-      const timer = setTimeout(() => {
-        const index = this.#waiters.indexOf(waiter);
-        if (index >= 0) {
-          this.#waiters.splice(index, 1);
-        }
-        reject(new Error("timed out waiting for a gateway WebSocket frame"));
-      }, FRAME_TIMEOUT_MS);
-      this.#waiters.push(waiter);
-    });
-  }
-
-  dispose(): void {
-    this.#socket.off("message", this.#listener);
-  }
-}
-
-async function openWebSocket(endpoint: URL, token: string): Promise<WebSocket> {
-  const socket = new WebSocket(endpoint, { headers: { authorization: `Bearer ${token}` }, handshakeTimeout: FRAME_TIMEOUT_MS });
-  await once(socket, "open", { signal: AbortSignal.timeout(FRAME_TIMEOUT_MS) });
-  return socket;
-}
-
-async function expectUnauthenticatedWebSocketRejection(endpoint: URL): Promise<void> {
-  const socket = new WebSocket(endpoint, { handshakeTimeout: FRAME_TIMEOUT_MS });
-  const status = await Promise.race([
-    once(socket, "unexpected-response").then(([, response]) => {
-      const incoming = response as IncomingMessage;
-      incoming.resume();
-      return incoming.statusCode ?? 0;
-    }),
-    once(socket, "open").then(() => {
-      socket.terminate();
-      throw new Error("unauthenticated WebSocket unexpectedly opened");
-    }),
-    timeoutResult(FRAME_TIMEOUT_MS).then(() => {
-      socket.terminate();
-      throw new Error("unauthenticated WebSocket did not fail boundedly");
-    }),
-  ]);
-  expect(status).toBe(401);
-}
-
-async function sendSocket(socket: WebSocket, payload: string | Buffer): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    socket.send(payload, (error) => {
-      if (error === undefined || error === null) {
-        resolve();
-      } else {
-        reject(error);
-      }
-    });
-  });
-}
-
-async function closeSocket(socket: WebSocket): Promise<void> {
-  if (socket.readyState === WebSocket.CLOSED) {
-    return;
-  }
-  socket.close(1000);
-  const outcome = await Promise.race([
-    new Promise<"closed">((resolve) => {
-      socket.once("close", () => {
-        resolve("closed");
-      });
-    }),
-    new Promise<"error">((resolve) => {
-      socket.once("error", () => {
-        resolve("error");
-      });
-    }),
-    timeoutResult(FRAME_TIMEOUT_MS).then(() => "timeout" as const),
-  ]);
-  if (outcome === "timeout") {
-    socket.terminate();
-  } else if (outcome === "error") {
-    throw new Error("gateway WebSocket failed during orderly close");
-  }
-}
-
 function loadExternalConfiguration(): ExternalConfiguration | undefined {
   const variables = {
     httpOrigin: process.env.VOICETEXT_GATEWAY_E2E_HTTP_ORIGIN,
@@ -549,64 +505,8 @@ function streamEndpoint(origin: URL): URL {
   return new URL("/api/v1/transcribe/stream", origin);
 }
 
-async function boundedFetch(input: URL, init: RequestInit = {}): Promise<Response> {
-  return fetch(input, { ...init, redirect: "error", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-}
-
-async function readJson(response: Response): Promise<Record<string, unknown>> {
-  expect(response.headers.get("content-type")).toMatch(/^application\/json(?:;|$)/);
-  return asObject(await response.json());
-}
-
 function assertIdentity(body: Record<string, unknown>, profile: BatchProfile): void {
   expect(body).toMatchObject({ contract_version: profile.contractVersion, language: "multi", model: profile.model, provider: profile.provider });
-}
-
-function expectExactKeys(value: Record<string, unknown>, keys: readonly string[]): void {
-  expect(Object.keys(value).toSorted()).toEqual(keys.toSorted());
-}
-
-function asObject(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("expected JSON object");
-  }
-  return value as Record<string, unknown>;
-}
-
-function requiredObject(value: Record<string, unknown>, key: string): Record<string, unknown> {
-  return asObject(value[key]);
-}
-
-function requiredArray(value: Record<string, unknown>, key: string): unknown[] {
-  const member = value[key];
-  if (!Array.isArray(member)) {
-    throw new Error(`expected ${key} to be an array`);
-  }
-  return member;
-}
-
-function requiredString(value: Record<string, unknown>, key: string): string {
-  const member = value[key];
-  if (typeof member !== "string") {
-    throw new Error(`expected ${key} to be a string`);
-  }
-  return member;
-}
-
-function expectTimestampPair(value: Record<string, unknown>, start: string, end: string): void {
-  expectNonNegativeNumber(value[start]);
-  expectPositiveNumber(value[end]);
-  expect(value[end] as number).toBeGreaterThanOrEqual(value[start] as number);
-}
-
-function expectPositiveNumber(value: unknown): void {
-  expect(typeof value).toBe("number");
-  expect(value as number).toBeGreaterThan(0);
-}
-
-function expectNonNegativeNumber(value: unknown): void {
-  expect(typeof value).toBe("number");
-  expect(value as number).toBeGreaterThanOrEqual(0);
 }
 
 function idempotencyKey(run: number, profile: number): string {
@@ -616,12 +516,6 @@ function idempotencyKey(run: number, profile: number): string {
 async function delay(milliseconds: number): Promise<void> {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, milliseconds);
-  });
-}
-
-async function timeoutResult(milliseconds: number): Promise<void> {
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, milliseconds).unref();
   });
 }
 

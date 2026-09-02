@@ -2,6 +2,8 @@ import { VoicetextAdapterError } from "./errors.js";
 import {
   asLiveSessionError,
   createLiveSessionDeferred,
+  rememberLiveSessionPacketId,
+  requireLiveSessionActive,
   stableLiveSessionUuid,
   validateLiveSessionFinalizeStatus,
   validateLiveSessionPacket,
@@ -26,7 +28,6 @@ import { VoicetextLiveTranscriptEmitter } from "./voicetext-live-transcript-emit
 import type { VoicetextWebSocketConnection } from "./websocket-connector.js";
 
 const maximumOutstandingPacketAcks = 256;
-const maximumRememberedPacketIds = 4_096;
 
 export class LiveSession implements VoicetextLiveSession {
   private readonly ackWaiters = new Map<number, LiveSessionDeferred<void>>();
@@ -36,6 +37,8 @@ export class LiveSession implements VoicetextLiveSession {
   private finalizeWaiter: LiveSessionDeferred<VoicetextFinalizeComplete> | undefined;
   private finalizePromise: Promise<void> | undefined;
   private finalizeResultReceived = false;
+  private closeState: "failed" | "idle" | "initiated" = "idle";
+  private readonly closeWaiter = createLiveSessionDeferred<void>();
   private nextSequence = 0;
   private pump: Promise<void> | undefined;
   private sending = false;
@@ -119,7 +122,7 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   public async sendPacket(packet: VoicetextLivePacket): Promise<"accepted" | "reused"> {
-    this.requireActive();
+    requireLiveSessionActive(this.state);
     validateVoicetextLiveIdentity(packet.packetId, "packetId");
     if (this.packetIds.has(packet.packetId)) {
       return "reused";
@@ -135,7 +138,7 @@ export class LiveSession implements VoicetextLiveSession {
     this.sending = true;
     try {
       await this.waitForAckCapacity();
-      this.requireActive();
+      requireLiveSessionActive(this.state);
       const sequence = this.nextSequence + 1;
       const waiter = createLiveSessionDeferred<void>();
       this.ackWaiters.set(sequence, waiter);
@@ -144,7 +147,7 @@ export class LiveSession implements VoicetextLiveSession {
         this.timeline.reserve(packet.relativeTimeMs, packet.durationSamples48Khz);
         await this.socket.sendBinary(packet.opus, this.abortController.signal);
         this.nextSequence = sequence;
-        this.rememberPacketId(packet.packetId);
+        rememberLiveSessionPacketId(this.packetIds, this.packetIdOrder, packet.packetId);
         return "accepted";
       } catch (error) {
         this.ackWaiters.delete(sequence);
@@ -165,7 +168,7 @@ export class LiveSession implements VoicetextLiveSession {
         ? Promise.resolve()
         : Promise.reject(this.terminalError);
     }
-    this.requireActive();
+    requireLiveSessionActive(this.state);
     if (this.sending) {
       return Promise.reject(new VoicetextAdapterError(
         "protocol_error",
@@ -197,69 +200,82 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   private async finalizeOnce(): Promise<void> {
-    const finalizeError = await this.finalizeProvider();
-    const closeError = await this.closeTransport();
-    if (finalizeError !== undefined) {
-      throw asLiveSessionError(finalizeError, "Voicetext live session finalization failed");
-    }
-    if (closeError !== undefined) {
-      throw asLiveSessionError(closeError, "Voicetext live session close failed");
-    }
-  }
-
-  private async finalizeProvider(): Promise<unknown> {
+    let failure: unknown;
     try {
       await this.waitForOutstandingAcks();
-      if (this.state !== "finalizing") {
-        throw new VoicetextAdapterError(
-          "cancelled",
-          "Voicetext live session finalization was cancelled",
-          true,
-        );
-      }
-      this.finalizeWaiter = createLiveSessionDeferred();
-      await this.socket.sendText(JSON.stringify({ type: "finalize" }), this.abortController.signal);
-      const result = await withLiveSessionTimeout(
-        this.finalizeWaiter.promise,
+      await withLiveSessionTimeout(
+        this.finalizeProviderAndClose(),
         this.options.finalizeTimeoutMs,
-        "Voicetext live finalize timed out",
+        "Voicetext live finalize timed out before the terminal close boundary",
       );
-      validateLiveSessionFinalizeStatus(result, this.nextSequence);
-      // Let the receive pump surface an already-buffered second terminal before
-      // the client begins the close handshake. The first terminal must not hide
-      // contradictory or duplicate evidence already delivered by the gateway.
-      await Promise.resolve();
-      if (this.terminalError !== undefined) {
-        throw this.terminalError;
-      }
     } catch (error) {
-      return error;
-    }
-    return undefined;
-  }
-
-  private async closeTransport(): Promise<unknown> {
-    let closeError: unknown;
-    try {
-      await this.socket.sendText(JSON.stringify({ type: "close" }), this.abortController.signal);
-    } catch (error) {
-      closeError = error;
-    }
-    this.state = "closed";
-    try {
-      await this.socket.close(1_000, "finalized");
-      this.transportClosed = true;
-    } catch (error) {
-      closeError ??= error;
+      failure = error;
     } finally {
-      this.abortController.abort();
-      await this.pump?.catch(() => {});
-      if (closeError !== undefined || !this.transportClosed) {
+      if (this.closeState === "idle") {
+        await this.closeAfterFailure();
+      }
+      if (this.closeState === "failed" || !this.transportClosed) {
         this.socket.terminate();
         this.transportClosed = true;
       }
+      this.state = "closed";
+      this.abortController.abort(failure);
+      await this.pump?.catch(() => {});
     }
-    return closeError;
+    if (failure !== undefined) {
+      throw asLiveSessionError(failure, "Voicetext live session finalization failed");
+    }
+  }
+
+  private async finalizeProviderAndClose(): Promise<void> {
+    if (this.state !== "finalizing") {
+      throw new VoicetextAdapterError(
+        "cancelled",
+        "Voicetext live session finalization was cancelled",
+        true,
+      );
+    }
+    this.finalizeWaiter = createLiveSessionDeferred();
+    await this.socket.sendText(JSON.stringify({ type: "finalize" }), this.abortController.signal);
+    const result = await this.finalizeWaiter.promise;
+    let terminalFailure: unknown;
+    try {
+      validateLiveSessionFinalizeStatus(result, this.nextSequence);
+    } catch (error) {
+      terminalFailure = error;
+    }
+    await this.closeTransport();
+    if (this.terminalError !== undefined) {
+      throw this.terminalError;
+    }
+    if (terminalFailure !== undefined) {
+      throw terminalFailure;
+    }
+  }
+
+  private async closeTransport(): Promise<void> {
+    // The ordered transport close proves terminal quiescence.
+    this.closeState = "initiated";
+    await this.socket.sendText(JSON.stringify({ type: "close" }), this.abortController.signal);
+    try {
+      await Promise.all([
+        this.socket.close(1_000, "finalized"),
+        this.closeWaiter.promise,
+      ]);
+    } catch (error) {
+      this.closeState = "failed";
+      throw error;
+    }
+  }
+
+  private async closeAfterFailure(): Promise<void> {
+    this.closeState = "initiated";
+    try {
+      await this.socket.sendText(JSON.stringify({ type: "close" }), this.abortController.signal);
+      await this.socket.close(1_000, "finalized");
+    } catch {
+      this.closeState = "failed";
+    }
   }
 
   private async receiveLoop(): Promise<void> {
@@ -268,6 +284,11 @@ export class LiveSession implements VoicetextLiveSession {
         const frame = await this.socket.receive(this.abortController.signal);
         if (frame.type === "close") {
           this.transportClosed = true;
+          if (this.closeState !== "idle" && this.finalizeResultReceived) {
+            this.state = "closed";
+            this.closeWaiter.resolve();
+            return;
+          }
           throw new VoicetextAdapterError(
             "transport_error",
             "Voicetext closed live session with code " + frame.code,
@@ -358,17 +379,6 @@ export class LiveSession implements VoicetextLiveSession {
     }
   }
 
-  private rememberPacketId(packetId: string): void {
-    this.packetIds.add(packetId);
-    this.packetIdOrder.push(packetId);
-    if (this.packetIdOrder.length > maximumRememberedPacketIds) {
-      const evicted = this.packetIdOrder.shift();
-      if (evicted !== undefined) {
-        this.packetIds.delete(evicted);
-      }
-    }
-  }
-
   private rejectOutstanding(error: unknown): void {
     const acknowledgements = [...this.ackWaiters.values()];
     this.ackWaiters.clear();
@@ -378,6 +388,7 @@ export class LiveSession implements VoicetextLiveSession {
       waiter.reject(error);
     }
     finalizeWaiter?.reject(error);
+    this.closeWaiter.reject(error);
   }
 
   private async waitForAckCapacity(): Promise<void> {
@@ -405,9 +416,4 @@ export class LiveSession implements VoicetextLiveSession {
     );
   }
 
-  private requireActive(): void {
-    if (this.state !== "active") {
-      throw new VoicetextAdapterError("protocol_error", "Live session is not active", false);
-    }
-  }
 }

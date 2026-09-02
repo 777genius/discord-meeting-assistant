@@ -49,7 +49,7 @@ export async function startLoopbackGateway(): Promise<LoopbackGateway> {
       response.end(JSON.stringify({ error: String(error) }));
     }
   });
-  const websocketServer = new WebSocketServer({ noServer: true });
+  const websocketServer = new WebSocketServer({ maxPayload: 64 * 1_024, noServer: true });
   server.on("upgrade", (request, socket, head) => {
     if (request.url !== "/api/v1/transcribe/stream") {
       socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
@@ -64,6 +64,10 @@ export async function startLoopbackGateway(): Promise<LoopbackGateway> {
     });
   });
   websocketServer.on("connection", (socket) => {
+    socket.on("error", () => {
+      // Resource-bound rejections are asserted by the client; the fixture must
+      // not turn ws's expected 1009 path into an uncaught process error.
+    });
     let sequence = 0;
     let transcriptSent = false;
     socket.on("message", (data, isBinary) => {
@@ -152,6 +156,16 @@ async function routeHttp(
     return;
   }
   if (request.method === "POST" && request.url === "/api/v1/transcribe/batch") {
+    if (Number(request.headers["content-length"] ?? 0) > 1_024 * 1_024) {
+      request.resume();
+      json(
+        response,
+        400,
+        { error_code: "MULTIPART_FIELD_TOO_LARGE" },
+        { "x-voicetext-error-code": "MULTIPART_FIELD_TOO_LARGE" },
+      );
+      return;
+    }
     const key = request.headers["x-idempotency-key"];
     if (typeof key !== "string") {
       throw new Error("missing idempotency key");
