@@ -15,7 +15,7 @@ revision label.
 | Component | Repository | Exact ref and checksum |
 | --- | --- | --- |
 | Craig Meeting Gateway (ISC) | `https://github.com/777genius/craig-meeting-gateway.git` | `37b86a958b567cb7fcff75946e94fe5e7ee38f42` |
-| OSS VoiceText gateway (Apache-2.0) | `https://github.com/777genius/voicetext-gateway.git` | `6453e2c24fc733700fbd71166aa9a46ac68c8028` |
+| OSS VoiceText gateway (Apache-2.0) | `https://github.com/777genius/voicetext-gateway.git` | `3ed5123b26f75c6b7f0117ccb70019e40a5b2789` |
 
 The Craig pin implements `craig-lifecycle-v3`; its retained contract manifest
 SHA-256 is `43b58c2661b22039fa432199227318b0d91fbbe1faa669bc0e62a68ddff8f940`

@@ -60,7 +60,7 @@ describe("VoiceText gateway deployment overlay", () => {
   it("binds the build checkout, local image identity and OCI label to one verified commit", async () => {
     const compose = await readDeploymentFile("compose.voicetext-gateway.yaml");
 
-    const revision = "6453e2c24fc733700fbd71166aa9a46ac68c8028";
+    const revision = "3ed5123b26f75c6b7f0117ccb70019e40a5b2789";
     expect(compose).toContain(`https://github.com/777genius/voicetext-gateway.git?ref=${revision}&checksum=${revision}`);
     expect(compose).toContain(`image: discord-meeting/voicetext-gateway:${revision}`);
     expect(compose).toContain(`org.opencontainers.image.revision: ${revision}`);
