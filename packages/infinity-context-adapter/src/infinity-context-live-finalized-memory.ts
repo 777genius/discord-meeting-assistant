@@ -55,7 +55,7 @@ export class InfinityContextLiveFinalizedMemoryAdapter
   readonly #actorKeys: HistoricalRetrievalActorKeyMapper;
   readonly #ids: HistoricalOpaqueIdPort;
   readonly #index: InfinityContextClientV2;
-  readonly #exactDocuments: InfinityExactDocumentSdkV1;
+  readonly #exactDocuments?: InfinityExactDocumentSdkV1;
   readonly #operationTimeoutMs: number;
   readonly #requestTimeoutMs: number;
 
@@ -75,7 +75,12 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     this.#ids = config.ids;
     this.#operationTimeoutMs = config.operationTimeoutMs;
     this.#requestTimeoutMs = config.requestTimeoutMs;
-    this.#exactDocuments = requireInfinityExactDocumentSdk(config.exactDocuments);
+    // Exact reconciliation is optional at composition time. Do not make
+    // process startup depend on a capability that has not been explicitly
+    // established; production composition omits this projection in that case.
+    this.#exactDocuments = config.exactDocuments === undefined
+      ? undefined
+      : requireInfinityExactDocumentSdk(config.exactDocuments);
     const common = {
       baseUrl: config.baseUrl,
       retryPolicy: { maxAttempts: 1 as const },
@@ -96,6 +101,9 @@ export class InfinityContextLiveFinalizedMemoryAdapter
   ): Promise<LiveFinalizedMemoryProjectionResultV1> {
     if (!validProjection(projection)) {
       return rejected("memory.invalid_live_projection");
+    }
+    if (this.#exactDocuments === undefined) {
+      return rejected("memory.live_exact_reconciliation_unavailable");
     }
     const topology = this.topology(projection);
     const operation = new InfinityOperationDeadline(
@@ -146,6 +154,9 @@ export class InfinityContextLiveFinalizedMemoryAdapter
   ): Promise<LiveFinalizedMemoryProjectionResultV1> {
     if (!validProjection(projection)) {
       return rejected("memory.invalid_live_projection");
+    }
+    if (this.#exactDocuments === undefined) {
+      return rejected("memory.live_exact_reconciliation_unavailable");
     }
     const topology = this.topology(projection);
     const operation = new InfinityOperationDeadline(
@@ -235,6 +246,9 @@ export class InfinityContextLiveFinalizedMemoryAdapter
   ): Promise<LiveFinalizedMemoryProjectionResultV1> {
     if (!validProjection(projection)) {
       return rejected("memory.invalid_live_projection");
+    }
+    if (this.#exactDocuments === undefined) {
+      return rejected("memory.live_exact_reconciliation_unavailable");
     }
     const topology = this.topology(projection);
     const operation = new InfinityOperationDeadline(

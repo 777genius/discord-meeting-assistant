@@ -1,5 +1,6 @@
 import {
   InfinityContextLiveFinalizedMemoryAdapter,
+  type InfinityExactDocumentSdkV1,
 } from "@discord-meeting/infinity-context-adapter";
 import {
   LiveFinalizedMemoryWorker,
@@ -39,6 +40,8 @@ export function createPlatformLiveFinalizedMemory(input: {
   readonly logger: Logger;
   readonly metrics: LiveMemoryProjectionMetrics;
   readonly pool: Pool;
+  /** Qualified official exact-document capability; absent means omission. */
+  readonly exactDocuments?: InfinityExactDocumentSdkV1;
 }): PlatformLiveFinalizedMemoryRuntime | undefined {
   if (
     input.config.meetingKnowledge?.localFinalReply !== true &&
@@ -55,7 +58,8 @@ export function createPlatformLiveFinalizedMemory(input: {
         input.config,
         requireHistoricalRuntimeSecrets(input.config).topologyKey,
       );
-  const projection = infinity?.activation.indexingEnabled === true && custody !== undefined
+  const projection = infinity?.activation.indexingEnabled === true &&
+    custody !== undefined && input.exactDocuments !== undefined
     ? new InfinityContextLiveFinalizedMemoryAdapter({
         actorKeys: custody.actorKeys,
         baseUrl: infinity.baseUrl,
@@ -63,6 +67,7 @@ export function createPlatformLiveFinalizedMemory(input: {
         operationTimeoutMs: infinity.operationTimeoutMs,
         requestTimeoutMs: infinity.requestTimeoutMs,
         schemaVersion: 1,
+        exactDocuments: input.exactDocuments,
         token: requireHistoricalRuntimeSecrets(input.config).token,
       })
     : undefined;

@@ -60,18 +60,16 @@ function adapter(endpoint: DisposableInfinityEndpoint) {
 }
 
 describe("Infinity finalized-live-memory ACL", () => {
-  it("fails the explicit external release gate when the published SDK lacks exact reconciliation",
-    () => {
-      expect(() => new InfinityContextLiveFinalizedMemoryAdapter({
+  it("starts without exact reconciliation and fails closed on projection calls", async () => {
+      const memory = new InfinityContextLiveFinalizedMemoryAdapter({
         actorKeys: { activeActorKey: () => "dactor1.r1.opaque-human" },
-        baseUrl: "http://disposable.infinity.invalid",
-        ids,
-        operationTimeoutMs: 2_000,
-        requestTimeoutMs: 1_000,
-        schemaVersion: 1,
-        token: "test-token",
+        baseUrl: "http://disposable.infinity.invalid", ids, operationTimeoutMs: 2_000,
+        requestTimeoutMs: 1_000, schemaVersion: 1, token: "test-token",
         transport: new DisposableInfinityEndpoint(),
-      })).toThrow(/externally released official exact-document SDK/u);
+      });
+      await expect(memory.upsert(projection())).resolves.toEqual({
+        code: "memory.live_exact_reconciliation_unavailable", retryable: false, status: "rejected",
+      });
     });
 
   it("rejects an unsupported runtime configuration schema", () => {
