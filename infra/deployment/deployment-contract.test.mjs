@@ -240,3 +240,15 @@ test("publishes immutable remote gateway constants outside environment settings"
 function resolvePathForTest(path) {
   return fileURLToPath(new URL(path, repositoryRoot));
 }
+
+test("readiness-gates Meeting Platform on versioned object storage bootstrap", async () => {
+  const [compose, bootstrap] = await Promise.all([
+    deploymentFile("compose.yaml"),
+    readFile(new URL("../../apps/meeting-platform/src/composition/object-storage-bootstrap.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(compose, /object-storage:[\s\S]*?healthcheck:[\s\S]*?cluster\/status/u);
+  assert.match(compose, /object-storage-bootstrap:[\s\S]*?object-storage: \{ condition: service_healthy \}/u);
+  assert.match(compose, /object-storage-bootstrap: \{ condition: service_completed_successfully \}/u);
+  assert.match(bootstrap, /PutBucketVersioningCommand/u);
+  assert.match(bootstrap, /object storage did not return an immutable version ID/u);
+});

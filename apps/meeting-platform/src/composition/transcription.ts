@@ -18,7 +18,12 @@ import {
 } from "@discord-meeting/voicetext-adapter";
 
 import type { PlatformConfig } from "../config.js";
-import { S3CompleteOggArtifactReader, S3OggAudioArtifactReader } from "../adapters/outbound/s3-ogg-audio-artifact-reader.js";
+import {
+  ImmutableArtifactIdentityError,
+  ImmutableArtifactReadScope,
+  S3CompleteOggArtifactReader,
+  S3OggAudioArtifactReader,
+} from "../adapters/outbound/s3-ogg-audio-artifact-reader.js";
 import { InProcessFinalTranscriptionAdmissionPort } from "../application/final-transcription-admission-port.js";
 import { meetingVocabulary } from "./meeting-vocabulary.js";
 
@@ -128,6 +133,36 @@ export class DurableFinalTranscriptionRouter implements FinalTranscriptionPort {
   }
 }
 
+class ImmutableArtifactFinalTranscriber implements FinalTranscriptionPort {
+  public constructor(
+    private readonly delegate: FinalTranscriptionPort,
+    private readonly scope: ImmutableArtifactReadScope,
+  ) {}
+
+  public async transcribe(
+    request: FinalTranscriptionRequest,
+  ): Promise<FinalTranscriptionResult<GeneratedTranscript>> {
+    try {
+      return await this.scope.run(
+        request.recording,
+        async () => await this.delegate.transcribe(request),
+      );
+    } catch (error) {
+      if (error instanceof ImmutableArtifactIdentityError) {
+        return {
+          failure: {
+            code: "IMMUTABLE_ARTIFACT_IDENTITY_REQUIRED",
+            message: error.message,
+            retryable: false,
+          },
+          ok: false,
+        };
+      }
+      throw error;
+    }
+  }
+}
+
 export function createVoicetextBatchFinalTranscriptionOptions(
   config: NonNullable<PlatformConfig["voicetext"]>,
 ): VoicetextBatchFinalTranscriptionOptions {
@@ -153,27 +188,29 @@ export function createFinalTranscriber(
   artifactReader: ReturnType<typeof createS3BinaryArtifactReader>,
   bindings: TranscriptionExecutionBindingReader,
 ): FinalTranscriptionPort {
-  if (config.transcriptionProvider === "speaches") {
-    return new DurableFinalTranscriptionRouter(
-      bindings,
-      new Map([
-        [
-          speachesFinalTranscriptionExecutionBinding,
-          createSpeachesFinalTranscriber(config, artifactReader),
-        ],
-      ]),
-    );
-  }
-  return createVoicetextFinalTranscriber(config, artifactReader, bindings);
+  const scope = new ImmutableArtifactReadScope();
+  const delegate = config.transcriptionProvider === "speaches"
+    ? new DurableFinalTranscriptionRouter(
+        bindings,
+        new Map([
+          [
+            speachesFinalTranscriptionExecutionBinding,
+            createSpeachesFinalTranscriber(config, artifactReader, scope),
+          ],
+        ]),
+      )
+    : createVoicetextFinalTranscriber(config, artifactReader, bindings, scope);
+  return new ImmutableArtifactFinalTranscriber(delegate, scope);
 }
 
 function createSpeachesFinalTranscriber(
   config: PlatformConfig,
   artifactReader: ReturnType<typeof createS3BinaryArtifactReader>,
+  scope: ImmutableArtifactReadScope,
 ): FinalTranscriptionPort {
   return new SpeachesFinalTranscriptionAdapter(
     new FetchSpeachesTranscriptionClient(config.speaches.baseUrl),
-    new S3OggAudioArtifactReader(artifactReader),
+    new S3OggAudioArtifactReader(artifactReader, scope),
     {
       language: "ru",
       maxBytesPerSpeaker: 64 * 1_024 * 1_024,
@@ -188,6 +225,7 @@ function createVoicetextFinalTranscriber(
   config: PlatformConfig,
   artifactReader: ReturnType<typeof createS3BinaryArtifactReader>,
   bindings: TranscriptionExecutionBindingReader,
+  scope: ImmutableArtifactReadScope,
 ): FinalTranscriptionPort {
   if (
     config.voicetext === undefined ||
@@ -198,11 +236,11 @@ function createVoicetextFinalTranscriber(
   const delegates = new Map<FinalTranscriptionExecutionBinding, FinalTranscriptionPort>([
     [
       legacyVoicetextBatchExecutionBinding,
-      createVoicetextBatchDelegate("deepgram-nova-3", config, artifactReader),
+      createVoicetextBatchDelegate("deepgram-nova-3", config, artifactReader, scope),
     ],
     [
       elevenLabsVoicetextBatchExecutionBinding,
-      createVoicetextBatchDelegate("elevenlabs-scribe-v2", config, artifactReader),
+      createVoicetextBatchDelegate("elevenlabs-scribe-v2", config, artifactReader, scope),
     ],
   ]);
   const router = new DurableFinalTranscriptionRouter(bindings, delegates);
@@ -216,6 +254,7 @@ function createVoicetextBatchDelegate(
   profile: VoicetextBatchProfile,
   config: PlatformConfig,
   artifactReader: ReturnType<typeof createS3BinaryArtifactReader>,
+  scope: ImmutableArtifactReadScope,
 ): FinalTranscriptionPort {
   if (
     config.voicetext === undefined ||
@@ -229,7 +268,7 @@ function createVoicetextBatchDelegate(
       profile,
       token: config.secrets.voicetextServiceToken,
     }),
-    new S3CompleteOggArtifactReader(artifactReader),
+    new S3CompleteOggArtifactReader(artifactReader, scope),
     createVoicetextBatchFinalTranscriptionOptions(config.voicetext),
   );
 }

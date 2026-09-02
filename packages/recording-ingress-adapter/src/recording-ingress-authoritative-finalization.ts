@@ -109,6 +109,7 @@ function createManifestRequest(
     },
     startedAt: state.startedAt,
     tracks: tracks.map((track) => ({
+      artifactRevision: requireTrackRevision(track),
       checksumSha256: track.checksumSha256,
       locator: track.audioLocator,
       sizeBytes: track.sizeBytes,
@@ -143,11 +144,28 @@ function createRecordingSnapshot(
     manifestLocator,
     recordingId: state.recordingId,
     speakerAudio: tracks.map((track) => ({
+      artifactRevision: requireTrackRevision(track),
       audioLocator: track.audioLocator,
+      checksumSha256: track.checksumSha256,
+      sizeBytes: track.sizeBytes,
       speakerId: track.speakerId,
       timelineOffsetMs: track.timelineOffsetMs,
     })),
   };
+}
+
+function requireTrackRevision(track: StoredAuthoritativeTrack): string {
+  if (
+    typeof track.artifactVersionId !== "string" ||
+    track.artifactVersionId.length === 0 ||
+    track.artifactVersionId === "null"
+  ) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "authoritative track has no immutable artifact revision",
+    );
+  }
+  return track.artifactVersionId;
 }
 
 function authoritativeDurationMs(state: RecordingSpoolState): number {

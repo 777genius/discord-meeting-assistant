@@ -93,7 +93,13 @@ export function assertRenderedDeployment(input) {
   assertEqual(platform.image, `discord-meeting/meeting-platform:${input.provenance.releaseRevision}`, "platform image revision");
   assertEqual(platform.build?.labels?.["org.opencontainers.image.revision"], input.provenance.releaseRevision, "platform build revision");
   assertEqual(platform.build?.labels?.["org.opencontainers.image.source-tree"], input.provenance.sourceTree, "platform source tree");
-  for (const name of ["meeting-platform", "postgres-migrations", "subscription-runtime-sidecar", "pipecat-runtime"]) {
+  for (const name of [
+    "meeting-platform",
+    "object-storage-bootstrap",
+    "postgres-migrations",
+    "subscription-runtime-sidecar",
+    "pipecat-runtime",
+  ]) {
     if (input.rendered.services?.[name] !== undefined) assertLocalBuildContext(input.rendered, name, input.contextPath, input.provenance);
   }
   if (input.rendered.services?.["recording-edge"] !== undefined) assertLocalBuildContext(input.rendered, "recording-edge", input.contextPath);

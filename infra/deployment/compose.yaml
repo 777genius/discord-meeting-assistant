@@ -82,6 +82,42 @@ services:
     volumes:
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/object-storage:/data
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/s3-config.json:/run/secrets/s3-config.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:9333/cluster/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    networks: [meeting-internal]
+    security_opt: [no-new-privileges:true]
+
+
+  object-storage-bootstrap:
+    build:
+      context: ../../.build/docker-context
+      dockerfile: apps/meeting-platform/Dockerfile
+      labels:
+        org.opencontainers.image.revision: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
+        org.opencontainers.image.source-tree: ${MEETING_PLATFORM_SOURCE_TREE:?run the verified Compose wrapper}
+    image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
+    init: true
+    restart: "on-failure:10"
+    read_only: true
+    entrypoint:
+      ["/app/apps/meeting-platform/node_modules/.bin/tsx", "/app/apps/meeting-platform/src/composition/object-storage-bootstrap.ts"]
+    environment:
+      NODE_ENV: production
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3-access-key-id
+      S3_BUCKET: meeting-artifacts
+      S3_ENDPOINT: http://object-storage:8333
+      S3_REGION: us-east-1
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3-secret-access-key
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform:/run/secrets:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=10001,gid=10001
+    depends_on:
+      object-storage: { condition: service_healthy }
     networks: [meeting-internal]
     security_opt: [no-new-privileges:true]
 
@@ -323,7 +359,8 @@ services:
       postgres: { condition: service_healthy }
       postgres-migrations: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
-      object-storage: { condition: service_started }
+      object-storage: { condition: service_healthy }
+      object-storage-bootstrap: { condition: service_completed_successfully }
     healthcheck:
       test:
         [

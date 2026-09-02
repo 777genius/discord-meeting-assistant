@@ -11,7 +11,11 @@ import {
 } from "./identifiers.js";
 
 export interface SpeakerAudioReferenceSnapshot {
+  /** Opaque storage-provider identity for this immutable object version. */
+  readonly artifactRevision?: string;
   readonly audioLocator: string;
+  readonly checksumSha256?: string;
+  readonly sizeBytes?: number;
   readonly speakerId: string;
   readonly timelineOffsetMs: number;
 }
@@ -28,9 +32,48 @@ export interface RecordingArtifactSnapshot {
 }
 
 export interface SpeakerAudioReference {
+  readonly artifactRevision?: string;
   readonly audioLocator: string;
+  readonly checksumSha256?: string;
+  readonly sizeBytes?: number;
   readonly speakerId: SpeakerId;
   readonly timelineOffsetMs: number;
+}
+
+function immutableIdentity(
+  reference: SpeakerAudioReferenceSnapshot,
+): Pick<SpeakerAudioReference, "artifactRevision" | "checksumSha256" | "sizeBytes"> {
+  const values = [reference.artifactRevision, reference.checksumSha256, reference.sizeBytes];
+  const present = values.filter((value) => value !== undefined).length;
+  if (present === 0) return {};
+  if (present !== values.length) {
+    throw new DomainInvariantError(
+      "INVALID_NUMBER",
+      "recording speaker audio immutable identity must be complete",
+    );
+  }
+  const artifactRevision = requireNonEmpty(
+    reference.artifactRevision as string,
+    "recording.speakerAudio.artifactRevision",
+  );
+  const checksumSha256 = requireNonEmpty(
+    reference.checksumSha256 as string,
+    "recording.speakerAudio.checksumSha256",
+  );
+  const sizeBytes = reference.sizeBytes as number;
+  if (
+    artifactRevision === "null" ||
+    /[\u0000-\u001f\u007f]/u.test(artifactRevision) ||
+    !/^[0-9a-f]{64}$/u.test(checksumSha256) ||
+    !Number.isSafeInteger(sizeBytes) ||
+    sizeBytes <= 0
+  ) {
+    throw new DomainInvariantError(
+      "INVALID_NUMBER",
+      "recording speaker audio immutable identity is invalid",
+    );
+  }
+  return { artifactRevision, checksumSha256, sizeBytes };
 }
 
 export class RecordingArtifact {
@@ -54,6 +97,7 @@ export class RecordingArtifact {
 
     const references = snapshot.speakerAudio.map((reference) =>
       Object.freeze({
+        ...immutableIdentity(reference),
         audioLocator: requireNonEmpty(
           reference.audioLocator,
           "recording.speakerAudio.audioLocator",
@@ -89,6 +133,13 @@ export class RecordingArtifact {
       manifestLocator: this.manifestLocator,
       recordingId: this.recordingId,
       speakerAudio: this.speakerAudio.map((reference) => ({
+        ...(reference.artifactRevision === undefined
+          ? {}
+          : {
+              artifactRevision: reference.artifactRevision,
+              checksumSha256: reference.checksumSha256 as string,
+              sizeBytes: reference.sizeBytes as number,
+            }),
         audioLocator: reference.audioLocator,
         speakerId: reference.speakerId,
         timelineOffsetMs: reference.timelineOffsetMs,
@@ -110,7 +161,10 @@ export class RecordingArtifact {
       const candidate = other.speakerAudio[index];
       return (
         candidate !== undefined &&
+        reference.artifactRevision === candidate.artifactRevision &&
         reference.audioLocator === candidate.audioLocator &&
+        reference.checksumSha256 === candidate.checksumSha256 &&
+        reference.sizeBytes === candidate.sizeBytes &&
         reference.speakerId === candidate.speakerId &&
         reference.timelineOffsetMs === candidate.timelineOffsetMs
       );

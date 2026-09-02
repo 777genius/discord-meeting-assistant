@@ -36,7 +36,10 @@ const recordingArtifactSnapshot = record({
   recordingId: token,
   speakerAudio: uniqueArray(
     record({
+      artifactRevision: token.map((value) => `revision-${value}`),
       audioLocator: token.map((value) => `recordings/tracks/${value}.ogg`),
+      checksumSha256: constantFrom("a".repeat(64), "b".repeat(64)),
+      sizeBytes: nat({ max: Number.MAX_SAFE_INTEGER - 1 }).map((value) => value + 1),
       speakerId: token,
       timelineOffsetMs: nat({ max: Number.MAX_SAFE_INTEGER }),
     }),
@@ -77,5 +80,28 @@ describe("RecordingArtifact properties", () => {
     };
 
     expect(RecordingArtifact.create(snapshot).toSnapshot()).toEqual(snapshot);
+  });
+
+  it("rejects partial or mutable artifact identities", () => {
+    const base = {
+      audioLocator: "recordings/track.ogg",
+      speakerId: "speaker-1",
+      timelineOffsetMs: 0,
+    };
+    expect(() => RecordingArtifact.create({
+      manifestLocator: "recordings/manifest.json",
+      recordingId: "recording-1",
+      speakerAudio: [{ ...base, artifactRevision: "revision-1" }],
+    })).toThrow("immutable identity must be complete");
+    expect(() => RecordingArtifact.create({
+      manifestLocator: "recordings/manifest.json",
+      recordingId: "recording-1",
+      speakerAudio: [{
+        ...base,
+        artifactRevision: "null",
+        checksumSha256: "a".repeat(64),
+        sizeBytes: 10,
+      }],
+    })).toThrow("immutable identity is invalid");
   });
 });

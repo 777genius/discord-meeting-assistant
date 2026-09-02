@@ -120,6 +120,17 @@ function ensureExpectedMetadata(
   }
 }
 
+function requireRevision(revision: string): string {
+  if (
+    revision.length === 0 ||
+    revision === "null" ||
+    /[\u0000-\u001f\u007f]/u.test(revision)
+  ) {
+    throw new ArtifactIntegrityError("invalid-metadata");
+  }
+  return revision;
+}
+
 async function* verifiedReadBody(
   body: unknown,
   descriptor: { readonly checksumSha256: string; readonly sizeBytes: number },
@@ -158,6 +169,9 @@ export class S3BinaryArtifactReader implements BinaryArtifactReader {
     request: BinaryArtifactReadRequest,
   ): Promise<BinaryArtifactReadResult> {
     const locator = parseS3ArtifactLocator(request.locator, this.#accessPolicy);
+    const revision = request.revision === undefined
+      ? undefined
+      : requireRevision(request.revision);
     const signal = createOperationSignal(
       request.signal,
       this.#operationTimeoutMs,
@@ -168,6 +182,7 @@ export class S3BinaryArtifactReader implements BinaryArtifactReader {
         Bucket: locator.bucket,
         ChecksumMode: "ENABLED",
         Key: locator.key,
+        ...(revision === undefined ? {} : { VersionId: revision }),
         ...(this.#expectedBucketOwner === undefined
           ? {}
           : { ExpectedBucketOwner: this.#expectedBucketOwner }),
@@ -179,6 +194,9 @@ export class S3BinaryArtifactReader implements BinaryArtifactReader {
 
       const descriptor = readRequiredMetadata(output);
       ensureExpectedMetadata(descriptor, request.expected);
+      if (revision !== undefined && output.VersionId !== revision) {
+        throw new ArtifactIntegrityError("revision-mismatch");
+      }
       if (
         output.ChecksumType === "FULL_OBJECT" &&
         output.ChecksumSHA256 !== undefined &&

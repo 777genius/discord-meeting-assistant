@@ -7,6 +7,8 @@ export interface BinaryArtifactExpectation {
 export interface BinaryArtifactReadRequest {
   readonly expected?: BinaryArtifactExpectation;
   readonly locator: string;
+  /** Opaque storage-provider object version to read. */
+  readonly revision?: string;
   readonly signal?: AbortSignal;
 }
 
