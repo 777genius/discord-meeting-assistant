@@ -85,8 +85,11 @@ export const retainedE2eEvidenceV2Schema = z.object({
     s3: z.object({
       manifestChecksumSha256: sha256Schema,
       manifestLocator: identifierSchema,
+      manifestRevision: identifierSchema.optional(),
+      manifestSizeBytes: z.number().int().positive().optional(),
       sourceChecksumSha256: sha256Schema,
       tracks: z.array(z.object({
+        artifactRevision: identifierSchema.optional(),
         checksumSha256: sha256Schema,
         durationMs: z.number().int().positive(),
         locator: identifierSchema,
@@ -332,6 +335,16 @@ export const retainedE2eEvidenceV10Schema = z.union([
   retainedPostCallE2eEvidenceV10Schema,
   retainedVoiceE2eEvidenceV10Schema,
 ]).superRefine((value, context) => {
+  if (
+    value.recording.s3.manifestRevision === undefined ||
+    value.recording.s3.manifestSizeBytes === undefined ||
+    value.recording.s3.tracks.some((track) => track.artifactRevision === undefined)
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "V10 recording evidence requires immutable manifest and track revisions",
+    });
+  }
   if (JSON.stringify(value.release) !== JSON.stringify(value.durabilityQualification.release)) {
     context.addIssue({ code: "custom", message: "V10 durability proof is bound to another release" });
   }

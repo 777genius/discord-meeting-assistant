@@ -12,6 +12,24 @@ import {
 } from "../src/recording-playback/adapters/s3-recording-playback-audio-reader.js";
 
 const locator = "s3://meeting-artifacts/recordings/private/a.ogg";
+const artifact = {
+  artifactRevision: "version-1",
+  audioLocator: locator,
+  checksumSha256: "a".repeat(64),
+  sizeBytes: 10,
+  timelineOffsetMs: 0,
+};
+const metadata = {
+  "artifact-sha256": artifact.checksumSha256,
+  "artifact-size-bytes": String(artifact.sizeBytes),
+};
+const head = {
+  ContentLength: 10,
+  ContentType: "audio/ogg",
+  ETag: '"etag-1"',
+  Metadata: metadata,
+  VersionId: artifact.artifactRevision,
+};
 
 function readerWith(send: ReturnType<typeof vi.fn>) {
   return new S3RecordingPlaybackAudioReader({
@@ -29,105 +47,101 @@ async function collect(body: AsyncIterable<Uint8Array>): Promise<number[]> {
 }
 
 describe("S3RecordingPlaybackAudioReader", () => {
-  it("uses a conditional single-range request and streams its bytes", async () => {
+  it("binds HEAD and ranged GET to the DB-pinned version", async () => {
     const send = vi.fn(async (command: unknown) => {
       if (command instanceof HeadObjectCommand) {
-        return { ContentLength: 10, ContentType: "audio/ogg", ETag: '"etag-1"' };
+        return head;
       }
       if (command instanceof GetObjectCommand) {
         return {
-          Body: (async function* () { yield Uint8Array.of(2, 3, 4, 5); })(),
+          Body: (async function* () {
+            yield Uint8Array.of(2, 3, 4, 5);
+          })(),
           ContentLength: 4,
+          ContentRange: "bytes 2-5/10",
+          ContentType: "audio/ogg",
+          Metadata: metadata,
+          VersionId: "version-1",
         };
       }
       throw new Error("unexpected command");
     });
     const reader = readerWith(send);
 
-    const result = await reader.read({ locator, range: { end: 5, start: 2 } });
+    const result = await reader.read({ artifact, range: { end: 5, start: 2 } });
 
-    expect(result).toMatchObject({
-      contentLength: 4,
-      contentType: "audio/ogg",
-      range: { end: 5, start: 2 },
-      sizeBytes: 10,
-    });
     expect(await collect(result.body)).toEqual([2, 3, 4, 5]);
-    const get = send.mock.calls[1]?.[0];
-    expect(get).toBeInstanceOf(GetObjectCommand);
-    expect((get as GetObjectCommand).input).toMatchObject({
+    expect((send.mock.calls[0]?.[0] as HeadObjectCommand).input).toMatchObject({
+      ChecksumMode: "ENABLED",
+      VersionId: "version-1",
+    });
+    expect((send.mock.calls[1]?.[0] as GetObjectCommand).input).toMatchObject({
       IfMatch: '"etag-1"',
       Range: "bytes=2-5",
+      VersionId: "version-1",
     });
   });
 
-  it("resolves suffix ranges and rejects positions after the object", async () => {
-    const send = vi.fn(async (command: unknown) => {
+  it("keeps serving the pinned version after the mutable key is overwritten", async () => {
+    const requestedVersions: (string | undefined)[] = [];
+    const send = vi.fn(async (command: HeadObjectCommand | GetObjectCommand) => {
+      requestedVersions.push(command.input.VersionId);
       if (command instanceof HeadObjectCommand) {
-        return {
-          ContentLength: 10,
-          ContentType: "application/ogg",
-          ETag: '"etag-1"',
-        };
+        return head;
       }
       return {
-        Body: (async function* () { yield Uint8Array.of(8, 9); })(),
-        ContentLength: 2,
+        Body: (async function* () {
+          yield Uint8Array.from({ length: 10 }, () => 1);
+        })(),
+        ContentLength: 10,
+        ContentType: "audio/ogg",
+        Metadata: metadata,
+        VersionId: "version-1",
       };
     });
     const reader = readerWith(send);
 
-    await expect(reader.read({ locator, range: { start: 10 } }))
+    await collect((await reader.read({ artifact })).body);
+
+    expect(requestedVersions).toEqual(["version-1", "version-1"]);
+  });
+
+  it.each([
+    ["revision", { ...head, VersionId: "version-2" }],
+    ["checksum", { ...head, Metadata: { ...metadata, "artifact-sha256": "b".repeat(64) } }],
+    ["metadata size", { ...head, Metadata: { ...metadata, "artifact-size-bytes": "9" } }],
+    ["exact size", { ...head, ContentLength: 9 }],
+    ["missing identity", { ContentLength: 10, ContentType: "audio/ogg", ETag: '"etag-1"' }],
+  ])("fails closed on %s mismatch", async (_reason, descriptor) => {
+    const reader = readerWith(vi.fn(async () => descriptor));
+    await expect(reader.describe({ artifact }))
+      .rejects.toBeInstanceOf(RecordingPlaybackAudioUnavailableError);
+  });
+
+  it("fails closed when GET returns another version or incomplete identity", async () => {
+    const send = vi.fn(async (command: unknown) => command instanceof HeadObjectCommand
+      ? head
+      : {
+          Body: (async function* () {
+            yield Uint8Array.of(1);
+          })(),
+          ContentLength: 10,
+          ContentType: "audio/ogg",
+          Metadata: metadata,
+          VersionId: "version-2",
+        });
+    await expect(readerWith(send).read({ artifact }))
+      .rejects.toBeInstanceOf(RecordingPlaybackAudioUnavailableError);
+  });
+
+  it("resolves ranges against the DB-bound exact size", async () => {
+    const send = vi.fn(async () => head);
+    const reader = readerWith(send);
+    await expect(reader.read({ artifact, range: { start: 10 } }))
       .rejects.toEqual(expect.objectContaining({
         name: RecordingPlaybackRangeNotSatisfiableError.name,
         sizeBytes: 10,
       }));
-    expect(send).toHaveBeenCalledTimes(1);
-    const suffix = await reader.read({ locator, range: { suffixLength: 2 } });
-    expect(suffix.range).toEqual({ end: 9, start: 8 });
-    const get = send.mock.calls[2]?.[0];
-    expect(get).toBeInstanceOf(GetObjectCommand);
-    expect((get as GetObjectCommand).input).toMatchObject({
-      IfMatch: '"etag-1"',
-      Range: "bytes=8-9",
-    });
-    expect(await collect(suffix.body)).toEqual([8, 9]);
-  });
-
-  it.each([
-    {
-      descriptor: { ContentLength: 0, ContentType: "audio/ogg", ETag: '"etag-1"' },
-      reason: "empty",
-    },
-    {
-      descriptor: { ContentLength: 10, ContentType: "text/plain", ETag: '"etag-1"' },
-      reason: "non-audio",
-    },
-    {
-      descriptor: { ContentLength: 10, ContentType: "audio/ogg" },
-      reason: "missing an ETag",
-    },
-  ])("fails closed for an object that is $reason", async ({ descriptor }) => {
-    const send = vi.fn(async () => descriptor);
-    const reader = readerWith(send);
-
-    await expect(reader.describe({ locator }))
-      .rejects.toBeInstanceOf(RecordingPlaybackAudioUnavailableError);
     expect(send).toHaveBeenCalledOnce();
-  });
-
-  it("does not issue GetObject when the descriptor has no ETag", async () => {
-    const send = vi.fn(async (command: unknown) => {
-      if (command instanceof HeadObjectCommand) {
-        return { ContentLength: 10, ContentType: "audio/ogg" };
-      }
-      throw new Error("GetObject must not be called without an ETag");
-    });
-    const reader = readerWith(send);
-
-    await expect(reader.read({ locator }))
-      .rejects.toBeInstanceOf(RecordingPlaybackAudioUnavailableError);
-    expect(send).toHaveBeenCalledOnce();
-    expect(send.mock.calls[0]?.[0]).toBeInstanceOf(HeadObjectCommand);
   });
 });

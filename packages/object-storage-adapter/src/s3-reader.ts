@@ -120,11 +120,21 @@ function ensureExpectedMetadata(
   }
 }
 
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit < 32 || codeUnit === 127) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function requireRevision(revision: string): string {
   if (
     revision.length === 0 ||
     revision === "null" ||
-    /[\u0000-\u001f\u007f]/u.test(revision)
+    containsControlCharacter(revision)
   ) {
     throw new ArtifactIntegrityError("invalid-metadata");
   }

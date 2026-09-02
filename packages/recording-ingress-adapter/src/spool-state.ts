@@ -86,7 +86,10 @@ export interface CompletedRecordingState {
   readonly lifecycleSchemaVersion: 1 | 2 | 3;
   readonly recording: {
     readonly authoritativeDurationMs?: number;
+    readonly manifestChecksumSha256?: string;
     readonly manifestLocator: string;
+    readonly manifestRevision?: string;
+    readonly manifestSizeBytes?: number;
     readonly recordingId: string;
     readonly speakerAudio: readonly {
       readonly artifactRevision?: string;
@@ -98,7 +101,7 @@ export interface CompletedRecordingState {
     }[];
   };
   readonly recordingId: string;
-  readonly schemaVersion: 5;
+  readonly schemaVersion: 6;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -307,7 +310,8 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
     (record.schemaVersion !== 2 &&
       record.schemaVersion !== 3 &&
       record.schemaVersion !== 4 &&
-      record.schemaVersion !== 5) ||
+      record.schemaVersion !== 5 &&
+      record.schemaVersion !== 6) ||
     !Array.isArray(record.events) ||
     !Array.isArray(record.authoritativeTracks) ||
     !Array.isArray(recording.speakerAudio)
@@ -349,7 +353,7 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
     if (
       artifactRevision !== undefined &&
       (artifactRevision === "null" ||
-        /[\u0000-\u001f\u007f]/u.test(artifactRevision) ||
+        containsControlCharacter(artifactRevision) ||
         !/^[0-9a-f]{64}$/u.test(checksumSha256 as string) ||
         !Number.isSafeInteger(sizeBytes) ||
         (sizeBytes as number) <= 0)
@@ -368,6 +372,36 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
       timelineOffsetMs: reference.timelineOffsetMs as number,
     };
   });
+  const speakerAudio = reconstructCompletedTrackIdentity(
+    authoritativeTracks,
+    storedSpeakerAudio,
+  );
+  const manifestRevision = optionalString(recording.manifestRevision, "manifestRevision");
+  const manifestChecksumSha256 = optionalString(
+    recording.manifestChecksumSha256,
+    "manifestChecksumSha256",
+  );
+  const manifestSizeBytes = recording.manifestSizeBytes;
+  const manifestIdentityCount = [
+    manifestRevision,
+    manifestChecksumSha256,
+    manifestSizeBytes,
+  ].filter((field) => field !== undefined).length;
+  if (
+    (manifestIdentityCount !== 0 && manifestIdentityCount !== 3) ||
+    (record.schemaVersion === 6 && manifestIdentityCount !== 3) ||
+    manifestRevision === "null" ||
+    (manifestRevision !== undefined && containsControlCharacter(manifestRevision)) ||
+    (manifestChecksumSha256 !== undefined &&
+      !/^[0-9a-f]{64}$/u.test(manifestChecksumSha256)) ||
+    (manifestSizeBytes !== undefined &&
+      (!Number.isSafeInteger(manifestSizeBytes) || (manifestSizeBytes as number) <= 0))
+  ) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "completion receipt has an invalid immutable manifest identity",
+    );
+  }
   const authoritativeDurationMs = parseCompletedAuthoritativeDuration(
     recording.authoritativeDurationMs,
     record.schemaVersion === 5,
@@ -376,8 +410,7 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
   if (recording.recordingId !== recordingId) {
     throw new RecordingIngressError("corrupt-spool", "completion recording identity does not match");
   }
-  assertCompletedTrackIdentity(authoritativeTracks, storedSpeakerAudio);
-  const speakerAudio = storedSpeakerAudio;
+  assertCompletedTrackIdentity(authoritativeTracks, speakerAudio);
   assertTrackActors(actors, speakerAudio);
   return {
     authoritativeTracks,
@@ -393,13 +426,103 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
       ...(authoritativeDurationMs === undefined
         ? {}
         : { authoritativeDurationMs }),
+      ...(manifestRevision === undefined
+        ? {}
+        : {
+            manifestChecksumSha256: manifestChecksumSha256 as string,
+            manifestRevision,
+            manifestSizeBytes: manifestSizeBytes as number,
+          }),
       manifestLocator: stringValue(recording.manifestLocator, "manifestLocator"),
       recordingId: stringValue(recording.recordingId, "recording.recordingId"),
       speakerAudio,
     },
     recordingId,
-    schemaVersion: 5,
+    schemaVersion: 6,
   };
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit < 32 || codeUnit === 127) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function reconstructCompletedTrackIdentity(
+  tracks: readonly StoredAuthoritativeTrack[],
+  references: readonly {
+    readonly artifactRevision?: string;
+    readonly audioLocator: string;
+    readonly checksumSha256?: string;
+    readonly sizeBytes?: number;
+    readonly speakerId: string;
+    readonly timelineOffsetMs: number;
+  }[],
+): readonly {
+  readonly artifactRevision: string;
+  readonly audioLocator: string;
+  readonly checksumSha256: string;
+  readonly sizeBytes: number;
+  readonly speakerId: string;
+  readonly timelineOffsetMs: number;
+}[] {
+  const tracksBySpeaker = new Map<string, StoredAuthoritativeTrack>();
+  for (const track of tracks) {
+    if (
+      track.artifactVersionId === null ||
+      track.artifactVersionId === "null" ||
+      containsControlCharacter(track.artifactVersionId) ||
+      tracksBySpeaker.has(track.speakerId)
+    ) {
+      throw new RecordingIngressError(
+        "corrupt-spool",
+        "completion receipt has ambiguous or mutable authoritative track identity",
+      );
+    }
+    tracksBySpeaker.set(track.speakerId, track);
+  }
+  if (tracksBySpeaker.size !== references.length) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "completion receipt track identity is not bijective",
+    );
+  }
+  return references.map((reference) => {
+    const track = tracksBySpeaker.get(reference.speakerId);
+    if (
+      track === undefined ||
+      track.audioLocator !== reference.audioLocator ||
+      track.timelineOffsetMs !== reference.timelineOffsetMs
+    ) {
+      throw new RecordingIngressError(
+        "corrupt-spool",
+        "completion receipt track identity does not match the recording snapshot",
+      );
+    }
+    if (
+      reference.artifactRevision !== undefined &&
+      (reference.artifactRevision !== track.artifactVersionId ||
+        reference.checksumSha256 !== track.checksumSha256 ||
+        reference.sizeBytes !== track.sizeBytes)
+    ) {
+      throw new RecordingIngressError(
+        "corrupt-spool",
+        "completion receipt track identity does not match the authoritative track",
+      );
+    }
+    return {
+      artifactRevision: track.artifactVersionId,
+      audioLocator: reference.audioLocator,
+      checksumSha256: track.checksumSha256,
+      sizeBytes: track.sizeBytes,
+      speakerId: reference.speakerId,
+      timelineOffsetMs: reference.timelineOffsetMs,
+    };
+  });
 }
 
 function assertTrackActors(

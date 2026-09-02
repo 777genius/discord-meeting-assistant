@@ -42,11 +42,13 @@ export async function bootstrapVersionedBucket(
 ): Promise<string> {
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }));
-  } catch (error) {
+  } catch {
     try {
       await client.send(new CreateBucketCommand({ Bucket: bucket }));
     } catch (createError) {
-      if (!isAlreadyOwned(createError)) throw createError;
+      if (!isAlreadyOwned(createError)) {
+        throw createError;
+      }
     }
   }
 
@@ -79,9 +81,13 @@ export async function bootstrapVersionedBucket(
 }
 
 async function secret(path: string | undefined, name: string): Promise<string> {
-  if (path === undefined) throw new Error(`${name} file is required`);
+  if (path === undefined) {
+    throw new Error(`${name} file is required`);
+  }
   const value = (await readFile(path, "utf8")).trim();
-  if (value.length === 0) throw new Error(`${name} file is empty`);
+  if (value.length === 0) {
+    throw new Error(`${name} file is empty`);
+  }
   return value;
 }
 

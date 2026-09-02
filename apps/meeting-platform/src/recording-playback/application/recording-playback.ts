@@ -1,7 +1,10 @@
 export type RecordingPlaybackStatus = "processing" | "ready" | "unavailable";
 
 export interface RecordingPlaybackTrack {
+  readonly artifactRevision: string;
   readonly audioLocator: string;
+  readonly checksumSha256: string;
+  readonly sizeBytes: number;
   readonly timelineOffsetMs: number;
 }
 
@@ -33,12 +36,12 @@ export interface RecordingPlaybackAudioReadResult
 
 export interface RecordingPlaybackAudioReader {
   describe(input: {
-    readonly locator: string;
+    readonly artifact: RecordingPlaybackTrack;
     readonly signal?: AbortSignal;
   }): Promise<RecordingPlaybackAudioDescriptor>;
 
   read(input: {
-    readonly locator: string;
+    readonly artifact: RecordingPlaybackTrack;
     readonly range?: RecordingPlaybackByteRange;
     readonly signal?: AbortSignal;
   }): Promise<RecordingPlaybackAudioReadResult>;
@@ -92,7 +95,7 @@ export class GetRecordingPlayback {
   }): Promise<RecordingPlaybackAudioDescriptor> {
     const track = await this.requireTrack(input.meetingId, input.trackIndex);
     return this.audio.describe({
-      locator: track.audioLocator,
+      artifact: track,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
   }
@@ -105,7 +108,7 @@ export class GetRecordingPlayback {
   }): Promise<RecordingPlaybackAudioReadResult> {
     const track = await this.requireTrack(input.meetingId, input.trackIndex);
     return this.audio.read({
-      locator: track.audioLocator,
+      artifact: track,
       ...(input.range === undefined ? {} : { range: input.range }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
