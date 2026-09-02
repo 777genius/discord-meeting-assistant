@@ -1,5 +1,3 @@
-name: discord-meeting-assistant
-
 # Test-only deployment overlay. It exposes the one-campaign readiness root only
 # to Meeting Platform. Compile, admission preflight, and the bounded coordinator
 # run from the audited host-side checkout; there is intentionally no Compose
@@ -19,7 +17,7 @@ services:
       e2e.shared-campaign-root: "acknowledged"
     environment:
       DISCORD_E2E_CAMPAIGN_SHARED_ROOT_ACKNOWLEDGED: "true"
-      DISCORD_BOTIK_APPLICATION_ID: "1533877611258708230"
+      DISCORD_BOTIK_APPLICATION_ID: ${DISCORD_PUBLICATION_APPLICATION_ID:?set user-owned publication application ID}
       E2E_TEST_ONLY_LABEL: "true"
       MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT: /run/e2e-campaign/${E2E_CAMPAIGN_ID:?set fresh campaign ID}/run-3
       MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID: ${E2E_PUBLIC_REPLY_CRASH_WORKER_ID:-historical_reply_worker_before_crash}

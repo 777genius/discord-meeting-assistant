@@ -88,18 +88,23 @@ fail closed; neither Meeting Platform nor the gateway silently substitutes a
 provider. Keep Deepgram available while draining historical
 `voicetext-batch-v2:deepgram-nova-3` work.
 
-### Exact qualification mapping
+### Implemented profile mapping and qualification status
 
-| Platform profile | Provider / model / mode | Language sent | Synthetic fixture | Evidence qualification |
+| Platform profile | Provider / model / mode | Language sent | Contract coverage | Exact-revision provider quality |
 | --- | --- | --- | --- | --- |
-| `deepgram-nova-3` batch | Deepgram / `nova-3` / batch contract v2 | `multi` | complete authoritative Craig per-speaker Ogg | EN and RU contract plus provider canary; accepted final turns may become final transcript evidence |
-| `deepgram-nova-3` live | Deepgram / `nova-3` / streaming contract v2 | configured live language (`multi` in the semantic canary) | synthetic mono Opus, 48 kHz | EN and RU derived-caption qualification only; never authoritative evidence |
-| `elevenlabs-scribe-v2` batch | ElevenLabs / `scribe_v2` / batch contract v3 | `multi` | complete authoritative Craig per-speaker Ogg | EN and RU contract plus provider canary; accepted final turns may become final transcript evidence |
-| `elevenlabs-scribe-v2-realtime` live | ElevenLabs / `scribe_v2_realtime` / streaming contract v2 | configured live language (`multi` in the semantic canary) | synthetic mono Opus, 48 kHz | EN and RU derived-caption qualification only; never authoritative evidence |
+| `deepgram-nova-3` batch | Deepgram / `nova-3` / batch contract v2 | `multi` | deterministic routing plus authenticated black-box scenario | Pending; no retained EN/RU acoustic-quality campaign for the pinned revisions |
+| `deepgram-nova-3` live | Deepgram / `nova-3` / streaming contract v2 | configured live language | deterministic routing plus authenticated black-box scenario | Pending; derived captions never become authoritative evidence |
+| `elevenlabs-scribe-v2` batch | ElevenLabs / `scribe_v2` / batch contract v3 | `multi` | deterministic routing plus authenticated black-box scenario | Pending; no retained EN/RU acoustic-quality campaign for the pinned revisions |
+| `elevenlabs-scribe-v2-realtime` live | ElevenLabs / `scribe_v2_realtime` / streaming contract v2 | configured live language | deterministic routing plus authenticated black-box scenario | Pending; derived captions never become authoritative evidence |
 
 Recognition languages depend on the selected provider and model, mode, and
 provider account configuration; the gateway contract does not broaden them.
-Only English and Russian provider flows are qualified recognition fixtures.
+No English or Russian provider flow is qualified for acoustic quality on this
+exact public OSS revision. Historical/private EN/RU results are evidence only
+for the revisions named in their retained receipts, if any, and are not promoted
+here. The historical statement "Only English and Russian provider flows are
+qualified" applies, if at all, solely to those private receipts; that status does
+not transfer to the exact public OSS revision.
 Ukrainian may be selected
 for presentation of already accepted text, but is not a qualified STT language
 and must not be inferred from presentation behavior. The implemented Discord
@@ -126,15 +131,28 @@ not run a provider, Discord, admission, or campaign canary. Run any later live
 qualification only with test-only provider keys, synthetic audio, an official
 test bot, and a private test guild.
 
-The cross-head Rust/TypeScript gate is origin-driven and providerless:
+The external cross-head Rust/TypeScript gate is authenticated and exercises all
+four provider/mode profiles. Run it only against an explicitly approved fake
+provider or with test-only provider credentials and the synthetic Ogg fixture;
+it is not providerless and is not itself an acoustic-quality qualification:
 
 ```sh
-VOICETEXT_GATEWAY_BLACK_BOX_ORIGIN=http://127.0.0.1:8080 \
+VOICETEXT_GATEWAY_E2E_HTTP_ORIGIN=http://127.0.0.1:8080 \
+VOICETEXT_GATEWAY_E2E_WS_ORIGIN=ws://127.0.0.1:8080 \
+VOICETEXT_GATEWAY_E2E_TOKEN='<test-only bearer token>' \
+VOICETEXT_GATEWAY_E2E_OGG_FIXTURE=/absolute/path/to/synthetic.ogg \
 VOICETEXT_CADDY_BIN=/absolute/path/to/caddy \
 pnpm --filter @discord-meeting/voicetext-adapter run test:gateway-exact-head
 ```
 
-The ordinary package test always runs the same routing scenario against an
-in-memory origin and skips the production-compatible origin when none is
-provided. The exact-head command fails if either the origin or offline Caddy
-adapter is absent. It sends no authenticated audio and invokes no provider.
+The ordinary package test runs a providerless routing scenario against an
+in-memory origin and skips the external scenario when these four variables are
+absent. The exact-head command fails if any external variable or the offline
+Caddy adapter is absent. Passing the scenario proves compatibility and profile
+routing only; retain a separately admitted exact-revision campaign before making
+EN/RU or provider-quality claims.
+
+When, and only when, an admitted provider-backed campaign supplies test-only
+provider keys, also set `VOICETEXT_GATEWAY_E2E_PROVIDER_WIRE=true`. That mode
+repeats the provider effects required by the black-box contract; it still does
+not promote language-quality or private-guild qualification by itself.

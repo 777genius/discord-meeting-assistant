@@ -8,9 +8,12 @@ private VoiceText SaaS.
 
 ## Immutable sources and identities
 
-The overlays pin source three ways: remote repository URL, exact Git ref plus
-BuildKit `checksum`, and the same 40-character commit as image tag and OCI
-revision label.
+The remote-source overlays pin source three ways: repository URL, exact Git ref
+plus BuildKit `checksum`, and the same 40-character commit as image tag and OCI
+revision label. Meeting Platform is a local source build: its generator proves a
+clean checkout, requires `MEETING_PLATFORM_SOURCE_REVISION` to equal `HEAD`, and
+records the exact commit and tree before Compose uses that revision for both the
+image tag and OCI image/build label.
 
 | Component | Repository | Exact ref and checksum |
 | --- | --- | --- |
@@ -22,11 +25,12 @@ SHA-256 is `43b58c2661b22039fa432199227318b0d91fbbe1faa669bc0e62a68ddff8f940`
 and bundle SHA-256 is
 `9ecdba8ebe3dd7e5ca4d67be0d540a66d07c3a66e0536dcd9c929099249f72a9`.
 
-Do not replace either context with a mutable branch, an unversioned image, a
+Do not replace either remote context with a mutable branch, an unversioned image, a
 local source directory, or the public Craig service. BuildKit must be 0.28.0 or
-newer so the Git-context checksum is enforced. The Meeting Platform image label
-comes from `MEETING_PLATFORM_SOURCE_REVISION`; set it to the exact commit of the
-clean Discord checkout being deployed.
+newer so the Git-context checksum is enforced. Set
+`MEETING_PLATFORM_SOURCE_REVISION` to the output of `git rev-parse HEAD`; the
+generator fails before Compose if it does not identify the clean Discord
+checkout being deployed.
 
 Create exactly two official Discord applications owned by the operator:
 
@@ -118,14 +122,21 @@ From the repository root of a clean Discord checkout, after DNS for
 available, run this one exact command:
 
 ```sh
-node tooling/generate-build-provenance.mjs >/dev/null && docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml config >/dev/null && docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml up --build --detach --wait
+node infra/deployment/generate-build-provenance.mjs --env-file /secure/oss-meeting.env >/dev/null && docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml config >/dev/null && docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml up --build --detach --wait
 ```
 
-The provenance step fails if the checkout is dirty. Compose config then fails
+The provenance step fails if the checkout is dirty, the configured Meeting
+Platform revision differs from `HEAD`, either official application ID is
+missing, or the Craig and publication IDs are equal. It atomically replaces its read-only
+`0444` output, so the checkout owner can repeat the exact command for deploy,
+restart, or upgrade without elevated privileges. Compose config then fails
 before creation on an incomplete interpolation. The final step builds only the
 pinned remote sources, starts migrations and dependencies, and waits for service
 health without invoking Discord commands, joining voice, or calling a speech
 provider. Do not enable any Compose profile for this workflow.
+The former `node tooling/generate-build-provenance.mjs >/dev/null && docker compose`
+sequence is obsolete because it neither cross-checked the deployment environment
+nor safely replaced its existing `0444` output.
 In particular, Infinity Context, subscription-runtime/`hosted-summary`, the
 Pipecat `conversation` profile, `local-stt`, the E2E campaign/controller, and
 recording playback remain excluded.
@@ -165,8 +176,10 @@ delete the original Craig recording.
 For a consistent backup, stop the project, snapshot/copy every data root above
 and the external secret/config files, then restart with the same command. Back
 up `data/craig/recordings`, `data/craig/postgres`, and `data/postgres` first and
-retain their source revision labels with the backup. Test restores into a new
-private deployment before relying on them.
+retain the inspected OCI image revision labels and generated Meeting Platform
+provenance file with the backup. A label alone is not proof of source identity;
+verify it against `.build/meeting-platform-build-provenance.json`. Test restores
+into a new private deployment before relying on them.
 
 To tear down containers and networks while retaining all bind-mounted evidence:
 

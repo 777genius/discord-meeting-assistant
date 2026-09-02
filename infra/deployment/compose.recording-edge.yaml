@@ -1,5 +1,3 @@
-name: discord-meeting-recording-edge
-
 services:
   recording-edge:
     build:
@@ -26,7 +24,7 @@ services:
 networks:
   meeting-internal:
     external: true
-    name: ${MEETING_INTERNAL_NETWORK:-discord-meeting-prod-internal}
+    name: ${MEETING_INTERNAL_NETWORK:?set the exact project-scoped meeting-internal network name}
   public-edge:
     external: true
     name: ${PUBLIC_EDGE_NETWORK:?set the network used by the host HTTPS proxy}

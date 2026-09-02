@@ -10,7 +10,7 @@ generation and are not part of that default.
 Optional live features add captions, an evolving summary, voice conversation,
 grounded Q&A, historical meeting memory, and private recording playback.
 
-[**Add Botik to Discord**](https://discord.com/oauth2/authorize?client_id=1533224474609057793&integration_type=0&permissions=1133568&scope=bot%20applications.commands)
+[**Self-host Botik with two user-owned Discord applications**](infra/deployment/oss-meeting-topology.md)
 
 ## See the Discord result
 
@@ -38,8 +38,10 @@ playback is enabled.
 | Grounded meeting Q&A | Reply to the current final Botik post, or ask by voice when enabled, for an answer tied to accepted transcript evidence. Botik abstains when evidence or authorization is insufficient. | Optional, rollout-gated |
 | Historical meeting memory | Ground answers in authorized previous meetings from the same configured room. | Optional, requires qualified memory serving |
 | Recording playback | Open a private signed link to a synchronized browser player. | Optional deployment feature |
-| Output presentation | Discord summaries, transcript labels, and attachments can be presented in English, Russian, or Ukrainian. | Depends on the feature |
-| Speech recognition | Recognition languages depend on the selected provider and model. Deepgram and ElevenLabs batch/live profiles are qualified here with English and Russian fixtures; this is not a claim that those providers support only those languages. | Provider/model-dependent |
+| Output presentation | Discord labels and attachments support English, Russian, or Ukrainian; generated title and overview language depends on the selected summary provider. | Depends on the feature |
+| Speech recognition | Recognition languages depend on the selected provider and model. The four Deepgram/ElevenLabs batch/live profiles have deterministic contract coverage, but this exact OSS revision has no retained EN/RU provider-quality qualification evidence. | Provider/model-dependent; exact-revision qualification pending |
+
+This is not a claim that those providers support only those languages.
 
 Optional capabilities are enabled independently by each deployment. The core
 post-call flow does not depend on live voice, historical memory, or playback.
@@ -82,9 +84,16 @@ Discord consumer.
 
 ## Set up your Discord server
 
-1. [Add Botik to Discord](https://discord.com/oauth2/authorize?client_id=1533224474609057793&integration_type=0&permissions=1133568&scope=bot%20applications.commands).
-2. Open any text channel and run `/setup-voice-bot`.
-3. Select the voice channel to record and the text channel that should receive
+1. Create two official applications in the Discord Developer Portal: a
+   user-owned Craig recording application and a separate user-owned Meeting
+   Platform publication application. Create one test bot for each application
+   when qualifying the deployment.
+2. Configure their distinct application IDs and token files as described in the
+   [self-host topology](infra/deployment/oss-meeting-topology.md), then install
+   both applications in an operator-owned private guild. Never use a user token,
+   self-bot, public guild, or a project-operated application ID.
+3. Open any text channel and run `/setup-voice-bot` with the publication bot.
+4. Select the voice channel to record and the text channel that should receive
    final results and, when enabled, live updates.
 
 The canonical deployment uses two official applications and two installations:
@@ -163,6 +172,11 @@ authoritative pull-request gate.
 Private real-Discord acceptance, Russian and English synthetic fixtures,
 recovery checks, and retained-evidence verification are documented in the
 [E2E runbook](docs/operations/real-e2e-runbook.md).
+
+Those historical/private campaign procedures and any evidence retained outside
+this public checkout do not qualify the current OSS revision. EN/RU acoustic
+quality and all four provider/mode profiles remain pending until a campaign
+receipt binds the exact Meeting Platform and VoiceText source revisions.
 
 `@agent-teams/engineering-foundation` is an exact development-only dependency.
 Production code must never import it.

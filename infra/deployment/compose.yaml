@@ -213,9 +213,12 @@ services:
     build:
       context: ../..
       dockerfile: apps/meeting-platform/Dockerfile
+      labels:
+        org.opencontainers.image.revision: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
     image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
     labels:
       e2e.test-only: "${E2E_TEST_ONLY_LABEL:-false}"
+      org.opencontainers.image.revision: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
     deploy:
       replicas: 1
     init: true
@@ -319,7 +322,5 @@ services:
 
 networks:
   meeting-internal:
-    name: discord-meeting-internal
     internal: true
-  meeting-egress:
-    name: discord-meeting-egress
+  meeting-egress: {}

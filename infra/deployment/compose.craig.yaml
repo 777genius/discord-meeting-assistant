@@ -128,5 +128,4 @@ services:
 
 networks:
   craig-data:
-    name: discord-meeting-craig-data
     internal: true
