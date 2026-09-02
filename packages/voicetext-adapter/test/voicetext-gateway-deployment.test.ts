@@ -129,7 +129,8 @@ describe("VoiceText gateway deployment overlay", () => {
   it("renders the complete core topology while excluding every optional profile", () => {
     expect(defaultServices.toSorted()).toEqual([
       "craig-bot", "craig-migrations", "craig-postgres", "craig-redis",
-      "meeting-platform", "object-storage", "postgres", "postgres-migrations", "redis",
+      "meeting-platform", "object-storage", "object-storage-bootstrap", "postgres",
+      "postgres-migrations", "redis",
       "voicetext-edge", "voicetext-gateway", "voicetext-postgres",
     ].toSorted());
     expect(defaultServices).not.toEqual(expect.arrayContaining([
