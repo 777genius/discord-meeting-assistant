@@ -67,10 +67,16 @@ describe("platform configuration", () => {
     }, async (path) => `fixture:${path}`)).rejects.toThrow();
   });
   it("keeps the optional Infinity overlay wired to the complete fail-closed contract", async () => {
-    const compose = await readFile(
-      new URL("../../../infra/deployment/compose.infinity-context.yaml", import.meta.url),
-      "utf8",
-    );
+    const [compose, baseCompose] = await Promise.all([
+      readFile(
+        new URL("../../../infra/deployment/compose.infinity-context.yaml", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL("../../../infra/deployment/compose.yaml", import.meta.url),
+        "utf8",
+      ),
+    ]);
 
     expect(compose).toContain(
       "INFINITY_CONTEXT_ACTIVATION: ${INFINITY_CONTEXT_ACTIVATION:?set reviewed Infinity Context activation JSON}",
@@ -84,7 +90,7 @@ describe("platform configuration", () => {
     expect(compose).toContain(
       "INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: /run/secrets/infinity-context-topology-key",
     );
-    expect(compose).toContain(
+    expect(baseCompose).toContain(
       "MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE: /run/secrets/meeting-knowledge-actor-keyring.json",
     );
     expect(compose).toContain(
