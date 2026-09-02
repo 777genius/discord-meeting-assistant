@@ -1,6 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import type { RecordingArtifactSnapshot } from "@discord-meeting/meeting-core/recording";
 import type { BinaryArtifactReader } from "@discord-meeting/object-storage-adapter";
 import type {
   BinaryAudioArtifact,
@@ -26,10 +25,23 @@ type ImmutableArtifactExpectation = {
   readonly sizeBytes: number;
 };
 
+interface ImmutableRecordingArtifactIdentity {
+  readonly speakerAudio: readonly {
+    readonly [key: string]: unknown;
+    readonly artifactRevision?: string;
+    readonly audioLocator: string;
+    readonly checksumSha256?: string;
+    readonly sizeBytes?: number;
+  }[];
+}
+
 export class ImmutableArtifactReadScope {
   readonly #storage = new AsyncLocalStorage<ReadonlyMap<string, ImmutableArtifactExpectation>>();
 
-  public run<Value>(recording: RecordingArtifactSnapshot, operation: () => Promise<Value>): Promise<Value> {
+  public run<Value>(
+    recording: ImmutableRecordingArtifactIdentity,
+    operation: () => Promise<Value>,
+  ): Promise<Value> {
     const expectations = new Map<string, ImmutableArtifactExpectation>();
     for (const reference of recording.speakerAudio) {
       if (
