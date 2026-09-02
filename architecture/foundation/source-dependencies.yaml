@@ -580,6 +580,7 @@ boundaries:
       - apps/meeting-platform/src/adapters/outbound/subscription-runtime-farewell-classifier.ts
       - apps/meeting-platform/src/adapters/outbound/system-conversation-delay.ts
       - apps/meeting-platform/src/adapters/outbound/test-only-answer-delivery-crash-injection.ts
+      - apps/meeting-platform/src/adapters/outbound/transcript-outline-summary-adapter.ts
     allow:
       boundaries:
         - adapters.object-storage

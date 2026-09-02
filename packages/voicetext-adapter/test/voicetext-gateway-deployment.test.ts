@@ -72,6 +72,23 @@ describe("VoiceText gateway deployment overlay", () => {
     expect(compose).not.toContain("api.voicetext.site");
     expect(environment).not.toContain("api.voicetext.site");
   });
+
+  it("keeps hosted generation and Infinity out of the default OSS dependency graph", async () => {
+    const [compose, hostedSummary, infinity] = await Promise.all([
+      readDeploymentFile("compose.yaml"),
+      readDeploymentFile("compose.hosted-summary.yaml"),
+      readDeploymentFile("compose.infinity-context.yaml"),
+    ]);
+
+    expect(compose).toContain("profiles: [hosted-summary]");
+    expect(compose).toContain("SUMMARY_PROVIDER: ${SUMMARY_PROVIDER:-transcript-outline}");
+    expect(compose).toContain("VOICETEXT_LIVE_ENABLED: ${VOICETEXT_LIVE_ENABLED:-false}");
+    expect(compose).not.toContain("INFINITY_CONTEXT_URL:");
+    expect(compose).not.toContain("subscription-runtime-sidecar: { condition: service_started }");
+    expect(hostedSummary).toContain("SUMMARY_PROVIDER: subscription-runtime");
+    expect(hostedSummary).toContain("SUBSCRIPTION_RUNTIME_TOKEN_FILE:");
+    expect(infinity).toContain("INFINITY_CONTEXT_URL:");
+  });
 });
 
 async function readDeploymentFile(name: string): Promise<string> {

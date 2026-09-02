@@ -2,6 +2,9 @@ import { S3Client } from "@aws-sdk/client-s3";
 import type { ConnectionOptions } from "bullmq";
 import { ResolveMeetingPublicationTarget } from "@discord-meeting/meeting-routing-core";
 import {
+  type SummaryGenerationPort,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
+import {
   type FinalTranscriptionPort,
 } from "@discord-meeting/meeting-core/transcription";
 import {
@@ -28,6 +31,10 @@ import { InstrumentedSubscriptionRuntimeTransport } from "../adapters/outbound/i
 import { CraigRecordingIngressAdapter } from "../adapters/outbound/craig-recording-ingress-adapter.js";
 import { DiscordPublicationTargetResolver } from "../adapters/outbound/discord-publication-target-resolver.js";
 import { GrpcSubscriptionRuntimeTransport } from "../adapters/outbound/subscription-runtime-grpc-transport.js";
+import {
+  TranscriptOutlineSummaryAdapter,
+  type SummaryProviderHealth,
+} from "../adapters/outbound/transcript-outline-summary-adapter.js";
 import type { RecordingDurabilityPort } from "../application/recording-ingress.js";
 import type { PlatformConfig } from "../config.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
@@ -51,7 +58,9 @@ export interface PlatformCoreResources {
   readonly publicationTargets: DiscordPublicationTargetResolver;
   readonly publicationEffects: PostgresSummaryPublicationEffectLedger;
   readonly rawRuntimeTransport: GrpcSubscriptionRuntimeTransport;
-  readonly rawSummarizer: SubscriptionRuntimeSummaryAdapter;
+  readonly rawSummarizer: SummaryGenerationPort & {
+    checkHealth(): Promise<SummaryProviderHealth>;
+  };
   readonly rawTranscriber: FinalTranscriptionPort;
   readonly legacyTranscriptionExecutionBinding: FinalTranscriptionExecutionBinding;
   readonly selectedTranscriptionExecutionBinding: FinalTranscriptionExecutionBinding;
@@ -118,12 +127,14 @@ export function createPlatformCoreResources(input: {
     publicationTargets,
     publicationEffects: new PostgresSummaryPublicationEffectLedger(pool),
     rawRuntimeTransport,
-    rawSummarizer: new SubscriptionRuntimeSummaryAdapter(runtimeTransport, {
-      expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
-      expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-      maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
-      technicalVocabulary: meetingVocabulary,
-    }),
+    rawSummarizer: input.config.summaryProvider === "subscription-runtime"
+      ? new SubscriptionRuntimeSummaryAdapter(runtimeTransport, {
+          expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
+          expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+          maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
+          technicalVocabulary: meetingVocabulary,
+        })
+      : new TranscriptOutlineSummaryAdapter(),
     rawTranscriber: createFinalTranscriber(
       input.config,
       artifactReader,

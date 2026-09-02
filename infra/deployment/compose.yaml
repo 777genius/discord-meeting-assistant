@@ -110,12 +110,13 @@ services:
     mem_limit: ${SPEACHES_MEMORY_LIMIT:-7g}
 
   subscription-runtime-sidecar:
+    profiles: [hosted-summary]
     build:
       args:
-        SOURCE_REVISION: ${SUBSCRIPTION_RUNTIME_SOURCE_REVISION:?set immutable source revision}
+        SOURCE_REVISION: ${SUBSCRIPTION_RUNTIME_SOURCE_REVISION:-unconfigured}
       context: ../..
       dockerfile: apps/subscription-runtime-sidecar/Dockerfile
-    image: discord-meeting/subscription-runtime-sidecar:${SUBSCRIPTION_RUNTIME_SOURCE_REVISION:?set immutable source revision}
+    image: discord-meeting/subscription-runtime-sidecar:${SUBSCRIPTION_RUNTIME_SOURCE_REVISION:-unconfigured}
     init: true
     restart: unless-stopped
     read_only: true
@@ -123,7 +124,7 @@ services:
       SUBSCRIPTION_RUNTIME_AUTH_POOL_MANIFEST_PATH: /run/subscription-runtime-auth/pool.json
       SUBSCRIPTION_RUNTIME_DISABLE_TOOLS: "1"
       SUBSCRIPTION_RUNTIME_EXECUTION_PROFILE: stateless-completion
-      SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256:?set launcher SHA-256}
+      SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256:-unconfigured}
       SUBSCRIPTION_RUNTIME_EXPECTED_PACKAGE_VERSION: 0.1.0-main.27
       SUBSCRIPTION_RUNTIME_GRPC_BIND: 0.0.0.0:50052
       SUBSCRIPTION_RUNTIME_ISOLATED_CWD: /run/discord-meeting-subscription-runtime/workspace
@@ -247,12 +248,6 @@ services:
       DISCORD_RESULTS_CHANNEL_ID: ${DISCORD_RESULTS_CHANNEL_ID:-}
       DISCORD_TOKEN_FILE: /run/secrets/discord-sut-token
       E2E_TEST_ONLY_LABEL: ${E2E_TEST_ONLY_LABEL:-false}
-      INFINITY_CONTEXT_ACTIVATION: ${INFINITY_CONTEXT_ACTIVATION:?set reviewed Infinity Context activation JSON}
-      INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: ${INFINITY_CONTEXT_OPERATION_TIMEOUT_MS:-300000}
-      INFINITY_CONTEXT_REQUEST_TIMEOUT_MS: ${INFINITY_CONTEXT_REQUEST_TIMEOUT_MS:-10000}
-      INFINITY_CONTEXT_TOKEN_FILE: /run/secrets/infinity-context-token
-      INFINITY_CONTEXT_TOPOLOGY_KEY_FILE: /run/secrets/infinity-context-topology-key
-      INFINITY_CONTEXT_URL: ${INFINITY_CONTEXT_URL:?set reachable Infinity Context service URL}
       LIVE_INGRESS_OWNER_MODE: singleton
       MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: ${MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED:-false}
       MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: ${MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH:-}
@@ -279,9 +274,7 @@ services:
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3-secret-access-key
       SPEACHES_BASE_URL: http://speaches:8000
       SPEACHES_MODEL: ${SPEACHES_MODEL_ID:-Systran/faster-whisper-small}
-      SUBSCRIPTION_RUNTIME_ADDRESS: subscription-runtime-sidecar:50052
-      SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256:?set launcher SHA-256}
-      SUBSCRIPTION_RUNTIME_TOKEN_FILE: /run/secrets/runtime-service-token
+      SUMMARY_PROVIDER: ${SUMMARY_PROVIDER:-transcript-outline}
       TRANSCRIPTION_PROVIDER: voicetext
       TRANSCRIPTION_LEGACY_EXECUTION_BINDING: voicetext-batch-v2:deepgram-nova-3
       VOICETEXT_BATCH_MAX_ARTIFACT_BYTES: ${VOICETEXT_BATCH_MAX_ARTIFACT_BYTES:-67108864}
@@ -289,6 +282,7 @@ services:
       VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS: ${VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS:-1}
       VOICETEXT_BATCH_PROFILE: ${VOICETEXT_BATCH_PROFILE:-deepgram-nova-3}
       VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS: ${VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS:-10}
+      VOICETEXT_LIVE_ENABLED: ${VOICETEXT_LIVE_ENABLED:-false}
       VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS: ${VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS:-2000}
       VOICETEXT_LIVE_PROFILE: ${VOICETEXT_LIVE_PROFILE:-deepgram-nova-3}
       VOICETEXT_SERVICE_TOKEN_FILE: /run/secrets/voicetext-service-token
@@ -305,7 +299,6 @@ services:
       postgres-migrations: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       object-storage: { condition: service_started }
-      subscription-runtime-sidecar: { condition: service_started }
     healthcheck:
       test:
         [

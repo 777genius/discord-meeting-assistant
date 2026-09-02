@@ -4,6 +4,18 @@ import { loadPlatformConfig } from "../src/config.js";
 import { platformTestEnvironment as environment } from "./config-test-environment.js";
 
 describe("platform conversation and provider configuration", () => {
+  it("requires the complete runtime custody set only for hosted summaries", async () => {
+    await expect(loadPlatformConfig({
+      ...environment,
+      SUMMARY_PROVIDER: "subscription-runtime",
+      SUBSCRIPTION_RUNTIME_ADDRESS: undefined,
+      SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: undefined,
+      SUBSCRIPTION_RUNTIME_TOKEN_FILE: undefined,
+    }, async () => "fixture")).rejects.toThrow(
+      "SUBSCRIPTION_RUNTIME_ADDRESS is required",
+    );
+  });
+
   it("does not read a conversation secret while conversation is disabled", async () => {
     const readPaths: string[] = [];
     const config = await loadPlatformConfig(

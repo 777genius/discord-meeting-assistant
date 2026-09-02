@@ -146,8 +146,9 @@ rollback path.
 
 ## Infinity Context historical memory
 
-The standard Compose deployment enables the production Infinity Context path
-and fails before container creation unless `INFINITY_CONTEXT_URL` and the full
+The standard Compose deployment leaves Infinity Context disabled. Add
+`compose.infinity-context.yaml` to enable the production path; that overlay
+fails before container creation unless `INFINITY_CONTEXT_URL` and the full
 reviewed `INFINITY_CONTEXT_ACTIVATION` JSON are present. Provision Infinity
 Context separately at the qualified service revision and embedding profile; it
 is not bundled into this Compose project. Its URL must be an HTTP(S) service

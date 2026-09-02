@@ -232,9 +232,12 @@ const environmentSchema = z
     S3_SECRET_ACCESS_KEY_FILE: absolutePath,
     SPEACHES_BASE_URL: httpUrl,
     SPEACHES_MODEL: z.string().min(1).max(256),
-    SUBSCRIPTION_RUNTIME_ADDRESS: runtimeAddress,
-    SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: sha256,
-    SUBSCRIPTION_RUNTIME_TOKEN_FILE: absolutePath,
+    SUMMARY_PROVIDER: z
+      .enum(["transcript-outline", "subscription-runtime"])
+      .default("transcript-outline"),
+    SUBSCRIPTION_RUNTIME_ADDRESS: runtimeAddress.optional(),
+    SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: sha256.optional(),
+    SUBSCRIPTION_RUNTIME_TOKEN_FILE: absolutePath.optional(),
     TRANSCRIPTION_PROVIDER: z
       .enum(["speaches", "voicetext"])
       .default("speaches"),
@@ -265,6 +268,10 @@ const environmentSchema = z
       .min(1)
       .max(maximumVoicetextLiveMaxConcurrentSessions)
       .default(defaultVoicetextLiveMaxConcurrentSessions),
+    VOICETEXT_LIVE_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
     VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS: z.coerce
       .number()
       .int()
@@ -365,6 +372,21 @@ const environmentSchema = z
     validateRecordingPlaybackEnvironment(environment, context);
     validateInfinityContextEnvironment(environment, context);
     validateMeetingKnowledgeEnvironment(environment, context);
+    if (environment.SUMMARY_PROVIDER === "subscription-runtime") {
+      for (const [name, value] of [
+        ["SUBSCRIPTION_RUNTIME_ADDRESS", environment.SUBSCRIPTION_RUNTIME_ADDRESS],
+        ["SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256", environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256],
+        ["SUBSCRIPTION_RUNTIME_TOKEN_FILE", environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE],
+      ] as const) {
+        if (value === undefined) {
+          context.addIssue({
+            code: "custom",
+            message: `${name} is required for subscription-runtime summaries`,
+            path: [name],
+          });
+        }
+      }
+    }
     if (environment.TRANSCRIPTION_PROVIDER !== "voicetext") {
       return;
     }

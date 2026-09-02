@@ -66,9 +66,9 @@ describe("platform configuration", () => {
       }),
     }, async (path) => `fixture:${path}`)).rejects.toThrow();
   });
-  it("keeps the standard deployment wired to the complete fail-closed Infinity contract", async () => {
+  it("keeps the optional Infinity overlay wired to the complete fail-closed contract", async () => {
     const compose = await readFile(
-      new URL("../../../infra/deployment/compose.yaml", import.meta.url),
+      new URL("../../../infra/deployment/compose.infinity-context.yaml", import.meta.url),
       "utf8",
     );
 
@@ -94,6 +94,23 @@ describe("platform configuration", () => {
       "INFINITY_CONTEXT_OPERATION_TIMEOUT_MS: ${INFINITY_CONTEXT_OPERATION_TIMEOUT_MS:-300000}",
     );
     expect(compose).not.toContain("MEETING_KNOWLEDGE_TWO_HOUR_HISTORICAL_ENABLED");
+  });
+
+  it("loads the providerless summary profile without a subscription-runtime secret", async () => {
+    const paths: string[] = [];
+    const configured = await loadPlatformConfig({
+      ...environment,
+      SUBSCRIPTION_RUNTIME_ADDRESS: undefined,
+      SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: undefined,
+      SUBSCRIPTION_RUNTIME_TOKEN_FILE: undefined,
+    }, async (path) => {
+      paths.push(path);
+      return `fixture:${path}`;
+    });
+
+    expect(configured.summaryProvider).toBe("transcript-outline");
+    expect(configured.secrets.subscriptionRuntimeToken).toBe("disabled");
+    expect(paths).not.toContain("/run/secrets/runtime");
   });
 
   it("loads Infinity activation only as a complete versioned provenance-bound set", async () => {

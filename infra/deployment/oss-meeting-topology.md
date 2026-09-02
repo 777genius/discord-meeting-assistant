@@ -52,10 +52,12 @@ commit check. See [voicetext-gateway.md](voicetext-gateway.md) for exact paths.
 ## Core and optional services
 
 Core meeting evidence is Craig recording plus final VoiceText transcription.
-Discord live captions are derived. A summary generator and final summary
-publication can be attached only as a separately operated adapter; absence or
-failure must not invalidate recording/transcription evidence. Infinity Context
-(historical memory), subscription-runtime (hosted generation), Pipecat/TTS
+The default `transcript-outline` summary reports only the authoritative turn
+count and attaches the transcript; it infers no decisions, actions, or topics
+and needs no generation provider. Discord live captions are derived and off by
+default (`VOICETEXT_LIVE_ENABLED=false`). Infinity Context (historical memory),
+subscription-runtime (hosted generation through
+`compose.hosted-summary.yaml --profile hosted-summary`), Pipecat/TTS
 (conversation), Speaches (alternate STT), and recording playback are non-core
 profiles. Keep them off for this topology. Pipecat remains future-only here.
 
@@ -79,7 +81,11 @@ docker compose --env-file /secure/oss-meeting.env \
   -f infra/deployment/compose.yaml \
   -f infra/deployment/compose.voicetext-gateway.yaml up -d
 curl --fail --silent https://voice.example.com/health/ready
-curl --fail --silent http://127.0.0.1:4310/readyz
+docker compose --env-file /secure/oss-meeting.env \
+  -f infra/deployment/compose.yaml \
+  -f infra/deployment/compose.voicetext-gateway.yaml \
+  exec -T meeting-platform node -e \
+  "fetch('http://127.0.0.1:4310/readyz').then(async r=>{console.log(await r.text());process.exit(r.ok?0:1)})"
 ```
 
 Do not join Discord for the smoke. Run the providerless, unauthenticated
