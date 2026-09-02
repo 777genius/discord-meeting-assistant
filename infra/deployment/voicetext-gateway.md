@@ -12,15 +12,14 @@ revision label.
 
 ## Pin the source
 
-The overlay fixes the source identity and accepts only the public hostname from
-the deployment environment:
+The first three rows below are immutable checked-in Compose constants, not deployment environment variables. Only `VOICETEXT_PUBLIC_HOST` is operator supplied:
 
-```text
-VOICETEXT_GATEWAY_GIT_URL=https://github.com/777genius/voicetext-gateway.git
-VOICETEXT_GATEWAY_GIT_REF=2d9b7b29a60e2fdecc8a5ac4d89e05ec2c98b793
-VOICETEXT_GATEWAY_SOURCE_REVISION=2d9b7b29a60e2fdecc8a5ac4d89e05ec2c98b793
-VOICETEXT_PUBLIC_HOST=voice.example.com
-```
+| Setting | Checked value |
+| --- | --- |
+| `VOICETEXT_GATEWAY_GIT_URL` | `https://github.com/777genius/voicetext-gateway.git` |
+| `VOICETEXT_GATEWAY_GIT_REF` | `2d9b7b29a60e2fdecc8a5ac4d89e05ec2c98b793` |
+| `VOICETEXT_GATEWAY_SOURCE_REVISION` | `2d9b7b29a60e2fdecc8a5ac4d89e05ec2c98b793` |
+| `VOICETEXT_PUBLIC_HOST` | operator-supplied DNS name |
 
 BuildKit resolves that exact ref and verifies it with the identical `checksum`
 Git-context query before executing the gateway Dockerfile. This requires Docker
@@ -92,10 +91,10 @@ provider. Keep Deepgram available while draining historical
 
 | Platform profile | Provider / model / mode | Language sent | Contract coverage | Exact-revision provider quality |
 | --- | --- | --- | --- | --- |
-| `deepgram-nova-3` batch | Deepgram / `nova-3` / batch contract v2 | `multi` | deterministic routing plus authenticated black-box scenario | Pending; no retained EN/RU acoustic-quality campaign for the pinned revisions |
-| `deepgram-nova-3` live | Deepgram / `nova-3` / streaming contract v2 | configured live language | deterministic routing plus authenticated black-box scenario | Pending; derived captions never become authoritative evidence |
-| `elevenlabs-scribe-v2` batch | ElevenLabs / `scribe_v2` / batch contract v3 | `multi` | deterministic routing plus authenticated black-box scenario | Pending; no retained EN/RU acoustic-quality campaign for the pinned revisions |
-| `elevenlabs-scribe-v2-realtime` live | ElevenLabs / `scribe_v2_realtime` / streaming contract v2 | configured live language | deterministic routing plus authenticated black-box scenario | Pending; derived captions never become authoritative evidence |
+| `deepgram-nova-3` batch | Deepgram / `nova-3` / batch contract v2 | `multi` | providerless deterministic contract only | Pending; no retained EN/RU acoustic-quality campaign for the pinned revisions |
+| `deepgram-nova-3` live | Deepgram / `nova-3` / streaming contract v2 | configured live language | providerless deterministic contract only | Pending; derived captions never become authoritative evidence |
+| `elevenlabs-scribe-v2` batch | ElevenLabs / `scribe_v2` / batch contract v3 | `multi` | providerless deterministic contract only | Pending; no retained EN/RU acoustic-quality campaign for the pinned revisions |
+| `elevenlabs-scribe-v2-realtime` live | ElevenLabs / `scribe_v2_realtime` / streaming contract v2 | configured live language | providerless deterministic contract only | Pending; derived captions never become authoritative evidence |
 
 Recognition languages depend on the selected provider and model, mode, and
 provider account configuration; the gateway contract does not broaden them.
@@ -131,23 +130,38 @@ not run a provider, Discord, admission, or campaign canary. Run any later live
 qualification only with test-only provider keys, synthetic audio, an official
 test bot, and a private test guild.
 
-The external cross-head Rust/TypeScript gate is authenticated and exercises all
-four provider/mode profiles. Run it only against an explicitly approved fake
-provider or with test-only provider credentials and the synthetic Ogg fixture;
-it is not providerless and is not itself an acoustic-quality qualification:
+The ordinary adapter package test is explicitly providerless. Its fake loopback
+gateway uses fabricated transcript text and is contract coverage only.
+
+The separate opt-in provider canary sends the pinned real-speech Ogg fixture to
+one selected batch/live provider pair. Its five required transcript terms are
+checked-in constants, not operator inputs. It first verifies a create-only
+running gateway identity observation against the pinned commit, independently expected
+Git tree, full immutable image digest, origins, run ID, and identity digest. It
+retains a create-only identity-bound receipt only after provider-derived batch
+and live text, timestamps, ACKs, idempotent replay, and finalization pass. The
+complete variable and receipt contracts are documented in
+`packages/voicetext-adapter/README.md`. A credentialed invocation has this shape:
 
 ```sh
-VOICETEXT_GATEWAY_E2E_HTTP_ORIGIN=http://127.0.0.1:8080 \
-VOICETEXT_GATEWAY_E2E_WS_ORIGIN=ws://127.0.0.1:8080 \
-VOICETEXT_GATEWAY_E2E_TOKEN='<test-only bearer token>' \
-VOICETEXT_GATEWAY_E2E_OGG_FIXTURE=/absolute/path/to/synthetic.ogg \
-VOICETEXT_CADDY_BIN=/absolute/path/to/caddy \
-pnpm --filter @discord-meeting/voicetext-adapter run test:gateway-exact-head
+VOICETEXT_GATEWAY_PROVIDER_CANARY_REQUIRED=1 \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_HTTP_ORIGIN=https://voice.example.com \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_WS_ORIGIN=wss://voice.example.com \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_TOKEN='<test-only bearer token>' \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_PROFILE=deepgram \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_FIXTURE=/absolute/path/to/speaker-a.ru-en.ogg \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_RUN_ID=release-candidate-deepgram \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_IDENTITY_FILE=/create-only/evidence/gateway-identity.json \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_EXPECTED_IDENTITY_SHA256='<64 lowercase hex>' \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_EXPECTED_TREE='<exact Git tree object ID>' \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_EXPECTED_IMAGE_DIGEST='<repository@sha256:...>' \
+VOICETEXT_GATEWAY_PROVIDER_CANARY_RECEIPT=/new/evidence/deepgram-receipt.json \
+pnpm --filter @discord-meeting/voicetext-adapter run test:gateway-provider-canary
 ```
 
-The ordinary package test runs a providerless routing scenario against an
-in-memory origin and skips the external scenario when these four variables are
-absent. The exact-head command fails if any external variable or the offline
-Caddy adapter is absent. Passing the scenario proves compatibility and profile
-routing only; retain a separately admitted exact-revision campaign before making
-EN/RU or provider-quality claims.
+Run it again with `PROFILE=elevenlabs`, a fresh run ID, a separately observed
+identity binding, and a new receipt path to qualify that pair. Never reuse or
+overwrite an identity or receipt path. `test:gateway-exact-head` additionally
+requires the offline Caddy adapter check. Neither command is a language or
+private-Discord qualification; no EN, RU, UK, or other language claim may be
+made without separately retained, exact-identity acoustic evidence.

@@ -23,19 +23,23 @@ async function deploymentFile(name) {
   return await readFile(new URL(name, deploymentRoot), "utf8");
 }
 
-test("documents the exact authenticated black-box environment contract", async () => {
+test("documents the separate identity-bound real-provider canary", async () => {
   const guide = await deploymentFile("voicetext-gateway.md");
   for (const name of [
-    "VOICETEXT_GATEWAY_E2E_HTTP_ORIGIN",
-    "VOICETEXT_GATEWAY_E2E_WS_ORIGIN",
-    "VOICETEXT_GATEWAY_E2E_TOKEN",
-    "VOICETEXT_GATEWAY_E2E_OGG_FIXTURE",
+    "VOICETEXT_GATEWAY_PROVIDER_CANARY_REQUIRED",
+    "VOICETEXT_GATEWAY_PROVIDER_CANARY_HTTP_ORIGIN",
+    "VOICETEXT_GATEWAY_PROVIDER_CANARY_WS_ORIGIN",
+    "VOICETEXT_GATEWAY_PROVIDER_CANARY_IDENTITY_FILE",
+    "VOICETEXT_GATEWAY_PROVIDER_CANARY_EXPECTED_TREE",
+    "VOICETEXT_GATEWAY_PROVIDER_CANARY_EXPECTED_IMAGE_DIGEST",
+    "VOICETEXT_GATEWAY_PROVIDER_CANARY_RECEIPT",
   ]) {
-    assert.match(guide, new RegExp(`^${name}=`, "mu"));
+    assert.match(guide, new RegExp(name, "u"));
   }
-  assert.doesNotMatch(guide, /BLACK_BOX_ORIGIN/u);
-  assert.match(guide, /authenticated and exercises all\s+four provider\/mode profiles/iu);
-  assert.match(guide, /not providerless/iu);
+  assert.doesNotMatch(guide, /VOICETEXT_GATEWAY_E2E_/u);
+  assert.match(guide, /ordinary adapter package test is explicitly providerless/iu);
+  assert.match(guide, /provider-derived batch[\s\S]*live text/iu);
+  assert.match(guide, /Neither command is a language/iu);
 });
 
 test("replaces a 0444 provenance file without weakening exact identity", async () => {

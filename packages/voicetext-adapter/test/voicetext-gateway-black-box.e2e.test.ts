@@ -30,16 +30,14 @@ const profileExpectations = [
   { contract_version: 3, mode: "batch", model: "scribe_v2", profile: "elevenlabs-scribe-v2", provider: "elevenlabs", ready: true },
 ] as const;
 
-type ExternalConfiguration = {
+type ProviderlessConfiguration = {
   readonly fixturePath: string;
   readonly httpOrigin: URL;
   readonly token: string;
   readonly wsOrigin: URL;
 };
 
-const externalConfiguration = loadExternalConfiguration();
-
-describe("VoiceText gateway black-box cross-head fixture", () => {
+describe("VoiceText gateway providerless black-box contract fixture", () => {
   let inMemoryServer!: Server;
   let inMemoryOrigin = "";
 
@@ -73,27 +71,26 @@ describe("VoiceText gateway black-box cross-head fixture", () => {
     await assertLocalRoutingContract(parseOrigin(inMemoryOrigin, ["http:", "https:"]));
   });
 
-  it("documents providerless conformance separately from provider-backed qualification", async () => {
+  it("documents providerless conformance separately from the real-provider canary", async () => {
     const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
     const packageManifest = await readFile(new URL("../package.json", import.meta.url), "utf8");
     expect(readme).toMatch(/default package suite is providerless[\s\S]*in-process contract gateway/iu);
-    expect(readme).toMatch(/exact-head black-box gate[\s\S]*authenticated and\s+provider-backed/iu);
+    expect(readme).toMatch(/separate provider canary[\s\S]*real Opus speech packets/iu);
     for (const variable of [
-      "VOICETEXT_GATEWAY_E2E_HTTP_ORIGIN",
-      "VOICETEXT_GATEWAY_E2E_WS_ORIGIN",
-      "VOICETEXT_GATEWAY_E2E_TOKEN",
-      "VOICETEXT_GATEWAY_E2E_OGG_FIXTURE",
+      "VOICETEXT_GATEWAY_PROVIDER_CANARY_REQUIRED",
+      "VOICETEXT_GATEWAY_PROVIDER_CANARY_IDENTITY_FILE",
+      "VOICETEXT_GATEWAY_PROVIDER_CANARY_RECEIPT",
     ]) {
       expect(readme).toContain(variable);
     }
     expect(`${readme}\n${packageManifest}`).not.toContain("VOICETEXT_GATEWAY_BLACK_BOX");
-    expect(readme).toMatch(/does not retain exact-revision English\/Russian\s+quality evidence for all four/iu);
+    expect(readme).toMatch(/does not qualify a language/iu);
   });
 
   it("drives all four profiles through the production clients against an in-process contract gateway", async () => {
     const gateway = await startLoopbackGateway();
     try {
-      await assertGatewayContract({
+      await assertProviderlessGatewayContract({
         fixturePath: gateway.fixturePath,
         httpOrigin: gateway.httpOrigin,
         token: LOOPBACK_TOKEN,
@@ -109,14 +106,6 @@ describe("VoiceText gateway black-box cross-head fixture", () => {
       await gateway.stop();
     }
   });
-
-  it.skipIf(externalConfiguration === undefined)(
-    "qualifies all four profiles through the production clients against a provider-backed gateway",
-    async () => {
-      await assertGatewayContract(requireExternalConfiguration(externalConfiguration));
-    },
-    120_000,
-  );
 });
 
 async function assertLocalRoutingContract(origin: URL): Promise<void> {
@@ -124,10 +113,10 @@ async function assertLocalRoutingContract(origin: URL): Promise<void> {
     expect((await boundedFetch(new URL(path, origin))).status, `${path} must be routed`).toBe(200);
   }
   expect((await boundedFetch(new URL("/api/v1/transcribe/batch", origin), { method: "POST" })).status).toBe(401);
-  expect((await boundedFetch(new URL("/__voicetext_cross_head_unknown__", origin))).status).toBe(404);
+  expect((await boundedFetch(new URL("/__voicetext_providerless_unknown__", origin))).status).toBe(404);
 }
 
-async function assertGatewayContract(configuration: ExternalConfiguration): Promise<void> {
+async function assertProviderlessGatewayContract(configuration: ProviderlessConfiguration): Promise<void> {
   await assertHealthAndClosedBoundaries(configuration);
   const fixture = await readFile(configuration.fixturePath);
   expect(fixture.subarray(0, 4).toString("ascii"), "the supplied fixture must be Ogg").toBe("OggS");
@@ -149,7 +138,7 @@ async function assertGatewayContract(configuration: ExternalConfiguration): Prom
   }
 }
 
-async function assertHealthAndClosedBoundaries(configuration: ExternalConfiguration): Promise<void> {
+async function assertHealthAndClosedBoundaries(configuration: ProviderlessConfiguration): Promise<void> {
   const health = await boundedFetch(new URL("/health", configuration.httpOrigin));
   expect(health.status).toBe(200);
   expect(await readJson(health)).toEqual({ status: "ok", provider_profiles: profileExpectations });
@@ -164,12 +153,12 @@ async function assertHealthAndClosedBoundaries(configuration: ExternalConfigurat
   const unauthorizedBody = await unauthorized.text();
   expect(unauthorizedBody).toBe('{"error_code":"UNAUTHORIZED"}');
   expect(unauthorizedBody).not.toContain(configuration.token);
-  expect((await boundedFetch(new URL("/__voicetext_cross_head_unknown__", configuration.httpOrigin))).status).toBe(404);
+  expect((await boundedFetch(new URL("/__voicetext_providerless_unknown__", configuration.httpOrigin))).status).toBe(404);
   await expectUnauthenticatedWebSocketRejection(streamEndpoint(configuration.wsOrigin));
   await assertBatchResourceBound(configuration);
 }
 
-async function assertBatchResourceBound(configuration: ExternalConfiguration): Promise<void> {
+async function assertBatchResourceBound(configuration: ProviderlessConfiguration): Promise<void> {
   const form = new FormData();
   form.set("contract_version", "2");
   form.set("provider", "deepgram");
@@ -190,7 +179,7 @@ async function assertBatchResourceBound(configuration: ExternalConfiguration): P
 }
 
 async function assertBatchProfile(
-  configuration: ExternalConfiguration,
+  configuration: ProviderlessConfiguration,
   fixture: Uint8Array,
   profile: VoicetextBatchProfile,
   key: string,
@@ -235,7 +224,7 @@ async function pollUntilCompleted(
 }
 
 async function assertLiveProfile(
-  configuration: ExternalConfiguration,
+  configuration: ProviderlessConfiguration,
   profile: VoicetextLiveProfile,
   index: number,
 ): Promise<void> {
@@ -250,8 +239,8 @@ async function assertLiveProfile(
     token: configuration.token,
   });
   const session = await adapter.openSession({
-    idempotencyKey: `cross-head-live-${index}`,
-    meetingId: "cross-head-meeting",
+    idempotencyKey: `providerless-live-${index}`,
+    meetingId: "providerless-meeting",
     onTranscript: (event) => events.push(event),
     speakerId: `speaker-${index}`,
   });
@@ -272,30 +261,6 @@ async function assertLiveProfile(
   ]));
 }
 
-function loadExternalConfiguration(): ExternalConfiguration | undefined {
-  const variables = {
-    fixturePath: process.env.VOICETEXT_GATEWAY_E2E_OGG_FIXTURE,
-    httpOrigin: process.env.VOICETEXT_GATEWAY_E2E_HTTP_ORIGIN,
-    token: process.env.VOICETEXT_GATEWAY_E2E_TOKEN,
-    wsOrigin: process.env.VOICETEXT_GATEWAY_E2E_WS_ORIGIN,
-  };
-  const required = process.env.VOICETEXT_GATEWAY_E2E_REQUIRED === "1";
-  if (Object.values(variables).every((value) => value === undefined) && !required) {
-    return undefined;
-  }
-  for (const [name, value] of Object.entries(variables)) {
-    if (value === undefined || value === "") {
-      throw new Error(`all four VOICETEXT_GATEWAY_E2E variables are required; missing ${name}`);
-    }
-  }
-  return {
-    fixturePath: variables.fixturePath as string,
-    httpOrigin: parseOrigin(variables.httpOrigin as string, ["http:", "https:"]),
-    token: variables.token as string,
-    wsOrigin: parseOrigin(variables.wsOrigin as string, ["ws:", "wss:"]),
-  };
-}
-
 function parseOrigin(raw: string, protocols: readonly string[]): URL {
   const origin = new URL(raw);
   if (!protocols.includes(origin.protocol) || origin.pathname !== "/" || origin.search !== "" ||
@@ -303,13 +268,6 @@ function parseOrigin(raw: string, protocols: readonly string[]): URL {
     throw new Error(`gateway origin must be a credential-free ${protocols.join("/")} origin`);
   }
   return origin;
-}
-
-function requireExternalConfiguration(configuration: ExternalConfiguration | undefined): ExternalConfiguration {
-  if (configuration === undefined) {
-    throw new Error("external gateway configuration was not supplied");
-  }
-  return configuration;
 }
 
 function streamEndpoint(origin: URL): URL {

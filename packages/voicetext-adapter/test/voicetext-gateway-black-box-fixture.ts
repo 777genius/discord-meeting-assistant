@@ -37,7 +37,7 @@ export async function startLoopbackGateway(): Promise<LoopbackGateway> {
     elevenlabs_live: 0,
   };
   const jobs = new Map<string, BatchJob>();
-  const directory = await mkdtemp(join(tmpdir(), "voicetext-cross-head-"));
+  const directory = await mkdtemp(join(tmpdir(), "voicetext-providerless-contract-"));
   const fixturePath = join(directory, "synthetic.ogg");
   await writeFile(fixturePath, Buffer.concat([Buffer.from("OggS"), Buffer.alloc(24), Buffer.from("OpusHead")]));
 
