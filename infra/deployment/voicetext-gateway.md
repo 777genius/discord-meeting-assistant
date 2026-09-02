@@ -17,8 +17,8 @@ The first three rows below are immutable checked-in Compose constants, not deplo
 | Setting | Checked value |
 | --- | --- |
 | `VOICETEXT_GATEWAY_GIT_URL` | `https://github.com/777genius/voicetext-gateway.git` |
-| `VOICETEXT_GATEWAY_GIT_REF` | `a32ea2ad2caa23fd74a9389ea232fd29e21aa4c3` |
-| `VOICETEXT_GATEWAY_SOURCE_REVISION` | `a32ea2ad2caa23fd74a9389ea232fd29e21aa4c3` |
+| `VOICETEXT_GATEWAY_GIT_REF` | `7adb5bb4c5c063ba3973e8bc76a759ac8ea29bb4` |
+| `VOICETEXT_GATEWAY_SOURCE_REVISION` | `7adb5bb4c5c063ba3973e8bc76a759ac8ea29bb4` |
 | `VOICETEXT_PUBLIC_HOST` | operator-supplied DNS name |
 
 BuildKit resolves that exact ref and verifies it with the identical `checksum`

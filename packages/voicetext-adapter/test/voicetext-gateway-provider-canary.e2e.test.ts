@@ -25,7 +25,7 @@ import {
 } from "./voicetext-provider-canary-evidence.js";
 import { extractOggOpusSpeechPackets } from "./voicetext-provider-canary-ogg.js";
 
-const PINNED_GATEWAY_COMMIT = "a32ea2ad2caa23fd74a9389ea232fd29e21aa4c3";
+const PINNED_GATEWAY_COMMIT = "7adb5bb4c5c063ba3973e8bc76a759ac8ea29bb4";
 const PINNED_FIXTURE_SHA256 = "8e29a933ef95eaf1f149b150ff123f90a3276847fcd4941ccb6c55b24561b9d8";
 const PINNED_EXPECTED_TERMS = Object.freeze([
   "Meeting Platform", "Craig recording", "PostgreSQL", "Discord", "пятницу",
