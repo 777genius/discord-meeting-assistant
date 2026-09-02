@@ -122,9 +122,15 @@ export class RecordingArtifact {
     );
 
     const manifestIdentity = immutableIdentity({
-      artifactRevision: snapshot.manifestRevision,
-      checksumSha256: snapshot.manifestChecksumSha256,
-      sizeBytes: snapshot.manifestSizeBytes,
+      ...(snapshot.manifestRevision === undefined
+        ? {}
+        : { artifactRevision: snapshot.manifestRevision }),
+      ...(snapshot.manifestChecksumSha256 === undefined
+        ? {}
+        : { checksumSha256: snapshot.manifestChecksumSha256 }),
+      ...(snapshot.manifestSizeBytes === undefined
+        ? {}
+        : { sizeBytes: snapshot.manifestSizeBytes }),
     }, "manifest");
     this.manifestRevision = manifestIdentity.artifactRevision;
     this.manifestChecksumSha256 = manifestIdentity.checksumSha256;
