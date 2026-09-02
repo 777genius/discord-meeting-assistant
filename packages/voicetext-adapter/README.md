@@ -24,10 +24,30 @@ backend. Its [Compose overlay](../../infra/deployment/compose.voicetext-gateway.
 uses a checksum-verified Git context; this repository does not claim a released
 gateway image.
 
-Recognition language coverage depends on the selected provider and model. Only
-English and Russian provider flows are qualified. Contract compatibility does
-not establish final private-guild acceptance; that requires the separate live
-Discord campaign to pass.
+## Qualification boundaries
+
+The default package suite is providerless. Its in-process contract gateway
+drives the production `FetchVoicetextBatchClient` and production live session
+for every configured profile, proving client encoding, response parsing, ACK
+pacing, finalization, and the ordered close boundary without contacting a speech
+provider.
+
+The exact-head black-box gate is different: it is authenticated and
+provider-backed. It requires all four variables below and may send the supplied
+Ogg fixture to the gateway's configured speech providers:
+
+- `VOICETEXT_GATEWAY_E2E_HTTP_ORIGIN`
+- `VOICETEXT_GATEWAY_E2E_WS_ORIGIN`
+- `VOICETEXT_GATEWAY_E2E_TOKEN`
+- `VOICETEXT_GATEWAY_E2E_OGG_FIXTURE`
+
+Run it with `pnpm --filter @discord-meeting/voicetext-adapter
+test:gateway-exact-head` only in an explicitly approved provider test
+environment. Passing in-process conformance does not prove provider acoustic
+quality. This repository does not retain exact-revision English/Russian
+quality evidence for all four batch/live profiles, and neither gate establishes
+private-guild acceptance; those require separately retained provider canaries
+and the official-bot Discord campaign.
 
 The legacy streaming-final adapter uploads Deepgram-compatible mono `pcm_s16le`
 audio through VoiceText protocol v2. Uploads are ACK-driven and paced to

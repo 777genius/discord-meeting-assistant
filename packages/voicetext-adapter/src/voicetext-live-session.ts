@@ -1,13 +1,8 @@
 import { VoicetextAdapterError } from "./errors.js";
 import {
-  asLiveSessionError,
-  createLiveSessionDeferred,
-  rememberLiveSessionPacketId,
-  requireLiveSessionActive,
-  stableLiveSessionUuid,
-  validateLiveSessionFinalizeStatus,
-  validateLiveSessionPacket,
-  withLiveSessionTimeout,
+  asLiveSessionError, createLiveSessionDeferred, rememberLiveSessionPacketId,
+  requireLiveSessionActive, stableLiveSessionUuid, validateLiveSessionFinalizeStatus,
+  validateLiveSessionPacket, withLiveSessionTimeout,
   type LiveSessionDeferred,
 } from "./voicetext-live-session-primitives.js";
 import {
@@ -27,7 +22,9 @@ import { VoicetextLiveTimeline } from "./voicetext-live-timeline.js";
 import { VoicetextLiveTranscriptEmitter } from "./voicetext-live-transcript-emitter.js";
 import type { VoicetextWebSocketConnection } from "./websocket-connector.js";
 
-const maximumOutstandingPacketAcks = 256;
+// The gateway accepts the next binary frame only after acknowledging the
+// previous one. Keep the transport window aligned with that wire invariant.
+const maximumOutstandingPacketAcks = 1;
 
 export class LiveSession implements VoicetextLiveSession {
   private readonly ackWaiters = new Map<number, LiveSessionDeferred<void>>();
@@ -397,11 +394,16 @@ export class LiveSession implements VoicetextLiveSession {
     }
     const oldest = this.ackWaiters.values().next().value;
     if (oldest !== undefined) {
-      await withLiveSessionTimeout(
-        oldest.promise,
-        this.options.audioAckTimeoutMs,
-        "Voicetext live packet acknowledgement timed out",
-      );
+      try {
+        await withLiveSessionTimeout(
+          oldest.promise,
+          this.options.audioAckTimeoutMs,
+          "Voicetext live packet acknowledgement timed out",
+        );
+      } catch (error) {
+        this.closeAfterReceiveFailure(error);
+        throw error;
+      }
     }
   }
 

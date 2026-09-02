@@ -10,7 +10,7 @@
     "check": "pnpm run typecheck && pnpm run test",
     "test": "vitest run",
     "test:caddy-routing": "VOICETEXT_CADDY_ADAPT_REQUIRED=1 vitest run test/voicetext-caddy-routing.test.ts",
-    "test:gateway-exact-head": "VOICETEXT_GATEWAY_BLACK_BOX_REQUIRE_ORIGIN=1 VOICETEXT_CADDY_ADAPT_REQUIRED=1 vitest run test/voicetext-caddy-routing.test.ts test/voicetext-gateway-black-box.e2e.test.ts",
+    "test:gateway-exact-head": "VOICETEXT_GATEWAY_E2E_REQUIRED=1 VOICETEXT_CADDY_ADAPT_REQUIRED=1 vitest run test/voicetext-caddy-routing.test.ts test/voicetext-gateway-black-box.e2e.test.ts",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
