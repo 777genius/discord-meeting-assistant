@@ -437,12 +437,17 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
       speakerId: "speaker-a",
     });
 
-    await expect(session.sendPacket({
+    const first = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
       packetId: "packet-1",
       relativeTimeMs: 20,
-    })).resolves.toBe("accepted");
+    });
+    await Promise.resolve();
+    expect(socket.binary).toHaveLength(1);
+    socket.acknowledge(1);
+    await expect(first).resolves.toBe("accepted");
+
     const second = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
@@ -450,16 +455,12 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
       relativeTimeMs: 40,
     });
     await Promise.resolve();
-    expect(socket.binary).toHaveLength(1);
-
-    socket.acknowledge(1);
+    expect(socket.binary).toHaveLength(2);
+    socket.acknowledge(2);
     await expect(second).resolves.toBe("accepted");
     expect(socket.binary).toHaveLength(2);
 
     const finalization = session.finalize();
-    await Promise.resolve();
-    expect(socket.text.some(({ type }) => type === "finalize")).toBe(false);
-    socket.acknowledge(2);
     await finalization;
     expect(socket.text.some(({ type }) => type === "finalize")).toBe(true);
     expect(socket.text.at(-1)).toEqual({ type: "close" });
@@ -475,20 +476,14 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
         onTranscript: () => {},
         speakerId: "speaker-a",
       });
-      await session.sendPacket({
+      const first = session.sendPacket({
         durationSamples48Khz: 960,
         opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
         packetId: "packet-1",
         relativeTimeMs: 0,
       });
 
-      const second = session.sendPacket({
-        durationSamples48Khz: 960,
-        opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
-        packetId: "packet-2",
-        relativeTimeMs: 20,
-      });
-      const rejected = expect(second).rejects.toThrow(
+      const rejected = expect(first).rejects.toThrow(
         "Voicetext live packet acknowledgement timed out",
       );
       await vi.advanceTimersByTimeAsync(1_001);
@@ -515,7 +510,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
       onTranscript: () => {},
       speakerId: "speaker-a",
     });
-    await session.sendPacket({
+    const packet = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
       packetId: "packet-1",
@@ -525,6 +520,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
     for (const acknowledgement of acknowledgements) {
       socket.enqueue(acknowledgement);
     }
+    await packet.catch(() => undefined);
     await vi.waitFor(() => {
       expect(socket.terminated).toBe(true);
     });
@@ -545,17 +541,18 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
       onTranscript: () => {},
       speakerId: "speaker-a",
     });
-    await session.sendPacket({
+    const packet = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
       packetId: "packet-1",
       relativeTimeMs: 0,
     });
 
+    socket.acknowledge(1);
+    await expect(packet).resolves.toBe("accepted");
     const first = session.finalize();
     const second = session.finalize();
     expect(second).toBe(first);
-    socket.acknowledge(1);
     await Promise.all([first, second]);
     expect(session.finalize()).toBe(first);
     expect(socket.text.filter(({ type }) => type === "finalize")).toHaveLength(1);
@@ -573,12 +570,15 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
       onTranscript: () => {},
       speakerId: "speaker-a",
     });
-    await session.sendPacket({
+    const packet = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
       packetId: "packet-1",
       relativeTimeMs: 0,
     });
+    const packetFailure = expect(packet).rejects.toThrow(
+      "Voicetext closed live session with code 1011",
+    );
     socket.enqueueFrame({ code: 1_011, reason: "provider unavailable", type: "close" });
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0);
@@ -586,6 +586,7 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
 
     try {
       expect(unhandled).toEqual([]);
+      await packetFailure;
       await expect(session.finalize()).rejects.toThrow(
         "Voicetext closed live session with code 1011",
       );
@@ -618,12 +619,13 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
       onTranscript: (event) => events.push(event),
       speakerId: "speaker-a",
     });
-    await session.sendPacket({
+    const packet = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
       packetId: "packet-1",
       relativeTimeMs: 350_000,
     });
+    await packet;
     await session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
@@ -778,17 +780,19 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
       onTranscript: () => {},
       speakerId: "speaker-a",
     });
-    await session.sendPacket({
+    const packet = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
       packetId: "packet-1",
       relativeTimeMs: 0,
     });
+    socket.acknowledge(1);
+    await expect(packet).resolves.toBe("accepted");
     const finalization = session.finalize();
 
     session.terminate();
 
-    await expect(finalization).rejects.toThrow("terminated");
+    await expect(finalization).rejects.toThrow("cancelled");
     expect(socket.terminated).toBe(true);
     expect(socket.text.filter(({ type }) => type === "finalize")).toHaveLength(0);
   });
