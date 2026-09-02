@@ -363,7 +363,7 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
       ...(artifactRevision === undefined ? {} : { artifactRevision }),
       audioLocator: stringValue(reference.audioLocator, "audioLocator"),
       ...(checksumSha256 === undefined ? {} : { checksumSha256 }),
-      ...(sizeBytes === undefined ? {} : { sizeBytes }),
+      ...(sizeBytes === undefined ? {} : { sizeBytes: sizeBytes as number }),
       speakerId: stringValue(reference.speakerId, "speakerId"),
       timelineOffsetMs: reference.timelineOffsetMs as number,
     };
