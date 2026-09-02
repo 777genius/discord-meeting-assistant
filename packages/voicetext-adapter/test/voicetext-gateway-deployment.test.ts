@@ -97,7 +97,8 @@ describe("VoiceText gateway deployment overlay", () => {
     const guide = await readDeploymentFile("voicetext-gateway.md");
 
     expect(guide).toMatch(/languages depend on the selected provider and model/iu);
-    expect(guide).toMatch(/Only English\s+and Russian provider flows are qualified/u);
+    expect(guide).toMatch(/No English or Russian provider flow is qualified/iu);
+    expect(guide).toMatch(/no retained EN\/RU acoustic-quality campaign/iu);
     expect(guide).toMatch(/acceptance; that remains pending/iu);
   });
 

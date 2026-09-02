@@ -151,8 +151,3 @@ absent. The exact-head command fails if any external variable or the offline
 Caddy adapter is absent. Passing the scenario proves compatibility and profile
 routing only; retain a separately admitted exact-revision campaign before making
 EN/RU or provider-quality claims.
-
-When, and only when, an admitted provider-backed campaign supplies test-only
-provider keys, also set `VOICETEXT_GATEWAY_E2E_PROVIDER_WIRE=true`. That mode
-repeats the provider effects required by the black-box contract; it still does
-not promote language-quality or private-guild qualification by itself.

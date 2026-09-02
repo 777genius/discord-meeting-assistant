@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 
@@ -316,7 +317,7 @@ function streamEndpoint(origin: URL): URL {
 }
 
 function idempotencyKey(kind: string, profile: number): string {
-  return `${kind}-${profile}`.padEnd(64, profile === 0 ? "a" : "b");
+  return createHash("sha256").update(`${kind}:${profile}`).digest("hex");
 }
 
 async function delay(milliseconds: number): Promise<void> {
