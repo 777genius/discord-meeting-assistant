@@ -395,7 +395,7 @@ function hasLiveTranscriptionConfiguration(
   return (
     config.transcriptionProvider === "voicetext" &&
     config.voicetext !== undefined &&
-    config.voicetext.liveEnabled &&
+    config.voicetext.liveEnabled === true &&
     config.secrets.voicetextServiceToken !== undefined
   );
 }
