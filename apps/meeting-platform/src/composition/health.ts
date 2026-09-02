@@ -165,9 +165,11 @@ function isVoicetextHealthy(value: unknown, config: PlatformConfig): boolean {
     return false;
   }
   const expectedProfiles = [
-    liveHealthIdentity(config.voicetext.liveProfile),
     batchHealthIdentity(config.voicetext.batchProfile),
-  ] as const;
+    ...(config.voicetext.liveEnabled === true
+      ? [liveHealthIdentity(config.voicetext.liveProfile)]
+      : []),
+  ];
   const providerProfiles: readonly unknown[] = value.provider_profiles;
   return expectedProfiles.every((identity) => {
     const matching = providerProfiles.filter((profile) =>

@@ -113,7 +113,8 @@ describe("platform configuration", () => {
     });
 
     expect(configured.summaryProvider).toBe("transcript-outline");
-    expect(configured.secrets.subscriptionRuntimeToken).toBe("disabled");
+    expect(configured.secrets.subscriptionRuntimeToken).toBeUndefined();
+    expect(configured.subscriptionRuntime).toBeUndefined();
     expect(paths).not.toContain("/run/secrets/runtime");
   });
 

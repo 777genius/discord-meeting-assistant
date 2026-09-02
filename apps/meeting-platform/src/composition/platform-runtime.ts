@@ -187,7 +187,9 @@ export async function startMeetingPlatform(
       queue: postCall.queue,
       queueEvents: postCall.queueEvents,
       recordings: core.recordings,
-      runtimeTransport: core.rawRuntimeTransport,
+      ...(core.subscriptionRuntime === undefined
+        ? {}
+        : { runtimeTransport: core.subscriptionRuntime.rawTransport }),
       s3: core.s3,
       server: http.server,
       worker: postCall.worker,
@@ -205,12 +207,15 @@ async function createPlatformKnowledgeComposition(input: {
   readonly metrics: PrometheusMetrics;
 }) {
   const { cleanup, config, core, logger, metrics } = input;
-  const historicalMemory = createPlatformHistoricalMemory({
-    config,
-    logger,
-    pool: core.pool,
-    runtimeTransport: core.runtimeTransport,
-  });
+  const runtimeTransport = core.subscriptionRuntime?.transport;
+  const historicalMemory = config.infinityContext === undefined
+    ? undefined
+    : createPlatformHistoricalMemory({
+        config,
+        logger,
+        pool: core.pool,
+        ...(runtimeTransport === undefined ? {} : { runtimeTransport }),
+      });
   if (historicalMemory !== undefined) {
     cleanup.defer("historical memory reconciler", () => historicalMemory.close());
   }
@@ -227,7 +232,7 @@ async function createPlatformKnowledgeComposition(input: {
   }
   const groundedAnswerUseCase = createPlatformGroundedMeetingAnswer({
     config,
-    runtimeTransport: core.runtimeTransport,
+    ...(runtimeTransport === undefined ? {} : { runtimeTransport }),
   });
   const recordingPlayback = createPlatformRecordingPlaybackComposition({
     config,
@@ -251,7 +256,7 @@ async function createPlatformKnowledgeComposition(input: {
     ...(recordingPlayback.recordingPlaybackUrl === undefined
       ? {}
       : { recordingPlaybackUrl: recordingPlayback.recordingPlaybackUrl }),
-    runtimeTransport: core.runtimeTransport,
+    ...(runtimeTransport === undefined ? {} : { runtimeTransport }),
   });
   const meetingKnowledge = createMeetingKnowledgeLocalFinalReply({
     ...(groundedAnswerUseCase === undefined ? {} : { answers: groundedAnswerUseCase }),
@@ -261,7 +266,7 @@ async function createPlatformKnowledgeComposition(input: {
     ...(historicalMemory === undefined ? {} : { historicalMemory }),
     logger,
     pool: core.pool,
-    runtimeTransport: core.runtimeTransport,
+    ...(runtimeTransport === undefined ? {} : { runtimeTransport }),
   });
   cleanup.defer("Meeting Knowledge local final reply", () => meetingKnowledge.close());
   return {

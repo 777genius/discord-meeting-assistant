@@ -1,9 +1,56 @@
 import { describe, expect, it } from "vitest";
 
 import { loadPlatformConfig } from "../src/config.js";
+import { createPlatformSubscriptionRuntimeResources } from
+  "../src/composition/core-resources.js";
 import { platformTestEnvironment as environment } from "./config-test-environment.js";
 
 describe("platform conversation and provider configuration", () => {
+  it("keeps providerless core composition explicitly free of a runtime transport", async () => {
+    const configured = await loadPlatformConfig({
+      ...environment,
+      SUBSCRIPTION_RUNTIME_ADDRESS: undefined,
+      SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: undefined,
+      SUBSCRIPTION_RUNTIME_TOKEN_FILE: undefined,
+    }, async () => "fixture");
+
+    expect(
+      createPlatformSubscriptionRuntimeResources(configured, {} as never),
+    ).toBeUndefined();
+  });
+
+  it("constructs the hosted transport only from a complete validated custody set", async () => {
+    const configured = await loadPlatformConfig({
+      ...environment,
+      SUMMARY_PROVIDER: "subscription-runtime",
+    }, async () => "subscription-runtime-service-token");
+
+    const runtime = createPlatformSubscriptionRuntimeResources(
+      configured,
+      { info: () => undefined } as never,
+    );
+    expect(runtime).toBeDefined();
+    runtime?.rawTransport.close();
+  });
+
+  it("admits ordinary Voicetext live captions without hosted runtime custody", async () => {
+    const configured = await loadPlatformConfig({
+      ...environment,
+      SUBSCRIPTION_RUNTIME_ADDRESS: undefined,
+      SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: undefined,
+      SUBSCRIPTION_RUNTIME_TOKEN_FILE: undefined,
+      TRANSCRIPTION_PROVIDER: "voicetext",
+      TRANSCRIPTION_LEGACY_EXECUTION_BINDING: "voicetext-batch-v2:deepgram-nova-3",
+      VOICETEXT_LIVE_ENABLED: "true",
+      VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext",
+      VOICETEXT_WS_URL: "wss://voicetext.test/api/v1/transcribe/stream",
+    }, async (path) => `fixture:${path}`);
+
+    expect(configured.voicetext?.liveEnabled).toBe(true);
+    expect(configured.subscriptionRuntime).toBeUndefined();
+    expect(configured.secrets.subscriptionRuntimeToken).toBeUndefined();
+  });
+
   it("requires the complete runtime custody set only for hosted summaries", async () => {
     await expect(loadPlatformConfig({
       ...environment,

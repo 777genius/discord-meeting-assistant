@@ -134,7 +134,9 @@ export async function loadPlatformConfigWithParser(
     recordingPlayback,
     s3AccessKeyId,
     s3SecretAccessKey,
-    subscriptionRuntimeToken: subscriptionRuntimeToken ?? "disabled",
+    ...(subscriptionRuntimeToken === undefined
+      ? {}
+      : { subscriptionRuntimeToken }),
     ...(voicetextServiceToken === undefined ? {} : { voicetextServiceToken }),
     ...(buildProvenance === undefined ? {} : { buildProvenance }),
     ...(twoHourHistoricalQualification === undefined

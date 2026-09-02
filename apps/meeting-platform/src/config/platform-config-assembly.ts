@@ -17,7 +17,7 @@ export interface LoadedPlatformSecrets {
   readonly redisUrl: string;
   readonly s3AccessKeyId: string;
   readonly s3SecretAccessKey: string;
-  readonly subscriptionRuntimeToken: string;
+  readonly subscriptionRuntimeToken?: string;
   readonly voicetextServiceToken?: string;
   readonly twoHourHistoricalQualification?: TwoHourHistoricalQualificationV1;
   readonly recordingPlayback: {
@@ -75,7 +75,9 @@ function platformSecrets(loaded: LoadedPlatformSecrets): PlatformConfig["secrets
     redisUrl: loaded.redisUrl,
     s3AccessKeyId: loaded.s3AccessKeyId,
     s3SecretAccessKey: loaded.s3SecretAccessKey,
-    subscriptionRuntimeToken: loaded.subscriptionRuntimeToken,
+    ...(loaded.subscriptionRuntimeToken === undefined
+      ? {}
+      : { subscriptionRuntimeToken: loaded.subscriptionRuntimeToken }),
     ...(loaded.voicetextServiceToken === undefined
       ? {}
       : { voicetextServiceToken: loaded.voicetextServiceToken }),
@@ -181,10 +183,13 @@ export function assemblePlatformConfig(
         }),
     speaches: { baseUrl: environment.SPEACHES_BASE_URL, model: environment.SPEACHES_MODEL },
     summaryProvider: environment.SUMMARY_PROVIDER,
-    subscriptionRuntime: {
-      address: environment.SUBSCRIPTION_RUNTIME_ADDRESS ?? "disabled.invalid:1",
-      launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256 ?? "0".repeat(64),
-    },
+    ...(environment.SUBSCRIPTION_RUNTIME_ADDRESS === undefined ||
+      environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256 === undefined
+      ? {}
+      : { subscriptionRuntime: {
+          address: environment.SUBSCRIPTION_RUNTIME_ADDRESS,
+          launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256,
+        } }),
     ...(environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT === undefined ||
       environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID === undefined
       ? {}

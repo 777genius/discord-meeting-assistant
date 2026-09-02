@@ -41,6 +41,34 @@ describe("post-call durability health", () => {
 });
 
 describe("Voicetext health", () => {
+  it("does not gate batch-only readiness on the disabled live profile", async () => {
+    const config = voicetextConfig();
+    const health = new HealthAggregator([
+      createTranscriptionHealthProbe({
+        ...config,
+        voicetext: {
+          ...config.voicetext!,
+          batchProfile: "elevenlabs-scribe-v2",
+          liveEnabled: false,
+          liveProfile: "deepgram-nova-3",
+        },
+      }),
+    ]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      status: "ok",
+      provider_profiles: [
+        { mode: "live", model: "nova-3", profile: "deepgram-nova-3", protocol_version: 2, provider: "deepgram", ready: false },
+        { contract_version: 3, mode: "batch", model: "scribe_v2", profile: "elevenlabs-scribe-v2", provider: "elevenlabs", ready: true },
+      ],
+    }), { status: 200 })));
+
+    await expect(health.snapshot()).resolves.toMatchObject({
+      dependencies: [{ name: "stt", status: "healthy" }],
+      ready: true,
+      status: "healthy",
+    });
+  });
+
   it("requires the exact configured live and batch profiles to be ready", async () => {
     const health = new HealthAggregator([
       createTranscriptionHealthProbe(voicetextConfig()),
@@ -112,6 +140,7 @@ function voicetextConfig(): PlatformConfig {
       batchMaxConcurrentMeetings: 1,
       batchProfile: "elevenlabs-scribe-v2",
       liveMaxConcurrentSessions: 1,
+      liveEnabled: true,
       livePacketBackpressureTimeoutMs: 1,
       liveProfile: "elevenlabs-scribe-v2-realtime",
       webSocketUrl: "wss://voicetext.test/api/v1/transcribe/stream",

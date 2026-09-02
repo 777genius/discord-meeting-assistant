@@ -57,7 +57,6 @@ export interface PlatformCoreResources {
   readonly pool: Pool;
   readonly publicationTargets: DiscordPublicationTargetResolver;
   readonly publicationEffects: PostgresSummaryPublicationEffectLedger;
-  readonly rawRuntimeTransport: GrpcSubscriptionRuntimeTransport;
   readonly rawSummarizer: SummaryGenerationPort & {
     checkHealth(): Promise<SummaryProviderHealth>;
   };
@@ -68,8 +67,13 @@ export interface PlatformCoreResources {
   readonly transcriptionExecutionBindings: PostgresTranscriptionExecutionBindingStore;
   readonly recordingIngress: RecordingDurabilityPort;
   readonly recordings: DurableCraigRecordingIngress;
-  readonly runtimeTransport: InstrumentedSubscriptionRuntimeTransport;
+  readonly subscriptionRuntime?: PlatformSubscriptionRuntimeResources;
   readonly s3: S3Client;
+}
+
+export interface PlatformSubscriptionRuntimeResources {
+  readonly rawTransport: GrpcSubscriptionRuntimeTransport;
+  readonly transport: InstrumentedSubscriptionRuntimeTransport;
 }
 
 export function createPlatformCoreResources(input: {
@@ -106,18 +110,15 @@ export function createPlatformCoreResources(input: {
     new ResolveMeetingPublicationTarget(sourceConfigurations),
     input.config.discordLegacyRoute,
   );
-  const rawRuntimeTransport = new GrpcSubscriptionRuntimeTransport({
-    address: input.config.subscriptionRuntime.address,
-    serviceToken: input.config.secrets.subscriptionRuntimeToken,
-  });
-  input.cleanup.defer("subscription runtime transport", () => {
-    rawRuntimeTransport.close();
-  });
-  const runtimeTransport = new InstrumentedSubscriptionRuntimeTransport(
-    rawRuntimeTransport,
+  const subscriptionRuntime = createPlatformSubscriptionRuntimeResources(
+    input.config,
     input.logger,
-    () => performance.now(),
   );
+  if (subscriptionRuntime !== undefined) {
+    input.cleanup.defer("subscription runtime transport", () => {
+      subscriptionRuntime.rawTransport.close();
+    });
+  }
   return {
     connection: redisConnection(input.config.secrets.redisUrl),
     sourceConfigurations,
@@ -126,10 +127,12 @@ export function createPlatformCoreResources(input: {
     pool,
     publicationTargets,
     publicationEffects: new PostgresSummaryPublicationEffectLedger(pool),
-    rawRuntimeTransport,
     rawSummarizer: input.config.summaryProvider === "subscription-runtime"
-      ? new SubscriptionRuntimeSummaryAdapter(runtimeTransport, {
-          expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
+      ? new SubscriptionRuntimeSummaryAdapter(
+          requirePlatformSubscriptionRuntime(subscriptionRuntime).transport,
+          {
+          expectedLauncherSha256: requireSubscriptionRuntimeConfig(input.config)
+            .launcherSha256,
           expectedRuntimeEngine: subscriptionRuntimeCliEngine,
           maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
           technicalVocabulary: meetingVocabulary,
@@ -142,13 +145,57 @@ export function createPlatformCoreResources(input: {
     ),
     recordingIngress: new CraigRecordingIngressAdapter(recordings),
     recordings,
-    runtimeTransport,
+    ...(subscriptionRuntime === undefined ? {} : { subscriptionRuntime }),
     s3,
     legacyTranscriptionExecutionBinding: legacyFinalTranscriptionExecutionBinding(input.config),
     selectedTranscriptionExecutionBinding: selectedFinalTranscriptionExecutionBinding(input.config),
     supportedTranscriptionExecutionBindings: supportedFinalTranscriptionExecutionBindings(input.config),
     transcriptionExecutionBindings,
   };
+}
+
+export function createPlatformSubscriptionRuntimeResources(
+  config: PlatformConfig,
+  logger: Logger,
+): PlatformSubscriptionRuntimeResources | undefined {
+  const runtimeConfig = config.subscriptionRuntime;
+  const serviceToken = config.secrets.subscriptionRuntimeToken;
+  if (runtimeConfig === undefined && serviceToken === undefined) {
+    return undefined;
+  }
+  if (runtimeConfig === undefined || serviceToken === undefined) {
+    throw new Error("Subscription Runtime configuration must be complete when enabled");
+  }
+  const rawTransport = new GrpcSubscriptionRuntimeTransport({
+    address: runtimeConfig.address,
+    serviceToken,
+  });
+  return {
+    rawTransport,
+    transport: new InstrumentedSubscriptionRuntimeTransport(
+      rawTransport,
+      logger,
+      () => performance.now(),
+    ),
+  };
+}
+
+export function requirePlatformSubscriptionRuntime(
+  runtime: PlatformSubscriptionRuntimeResources | undefined,
+): PlatformSubscriptionRuntimeResources {
+  if (runtime === undefined) {
+    throw new Error("Subscription Runtime is required for this enabled feature");
+  }
+  return runtime;
+}
+
+function requireSubscriptionRuntimeConfig(
+  config: PlatformConfig,
+): NonNullable<PlatformConfig["subscriptionRuntime"]> {
+  if (config.subscriptionRuntime === undefined) {
+    throw new Error("Subscription Runtime configuration is missing");
+  }
+  return config.subscriptionRuntime;
 }
 
 function s3ClientOptions(config: PlatformConfig) {

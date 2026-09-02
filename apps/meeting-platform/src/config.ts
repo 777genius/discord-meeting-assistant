@@ -307,16 +307,23 @@ const environmentSchema = z
     validateRecordingPlaybackEnvironment(environment, context);
     validateInfinityContextEnvironment(environment, context);
     validateMeetingKnowledgeEnvironment(environment, context);
-    if (environment.SUMMARY_PROVIDER === "subscription-runtime") {
-      for (const [name, value] of [
-        ["SUBSCRIPTION_RUNTIME_ADDRESS", environment.SUBSCRIPTION_RUNTIME_ADDRESS],
-        ["SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256", environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256],
-        ["SUBSCRIPTION_RUNTIME_TOKEN_FILE", environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE],
-      ] as const) {
+    const subscriptionRuntimeFields = [
+      ["SUBSCRIPTION_RUNTIME_ADDRESS", environment.SUBSCRIPTION_RUNTIME_ADDRESS],
+      ["SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256", environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256],
+      ["SUBSCRIPTION_RUNTIME_TOKEN_FILE", environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE],
+    ] as const;
+    const configuredSubscriptionRuntimeFields = subscriptionRuntimeFields
+      .filter(([, value]) => value !== undefined).length;
+    const subscriptionRuntimeRequired =
+      environment.SUMMARY_PROVIDER === "subscription-runtime" ||
+      environment.CONVERSATION_ENABLED ||
+      environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED;
+    if (subscriptionRuntimeRequired || configuredSubscriptionRuntimeFields > 0) {
+      for (const [name, value] of subscriptionRuntimeFields) {
         if (value === undefined) {
           context.addIssue({
             code: "custom",
-            message: `${name} is required for subscription-runtime summaries`,
+            message: `${name} is required for enabled subscription-runtime features`,
             path: [name],
           });
         }

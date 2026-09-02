@@ -168,7 +168,7 @@ interface PlatformHistoricalMemoryInput {
   readonly pool: Pool;
   readonly profileMaintenance?: Pick<HistoricalSyncStore, "enqueueAppliedProfileRebuilds">;
   readonly productionQualification?: InfinityContextProductionQualificationPolicyV1;
-  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
+  readonly runtimeTransport?: SubscriptionRuntimeTransportPort;
 }
 
 export interface PlatformHistoricalMemoryRuntime {
@@ -202,9 +202,11 @@ function createPlatformExhaustiveCoverage(
   factory: HistoricalRetrievalFactoryInput,
 ): ExhaustiveCoverage {
   const extraction = new SubscriptionRuntimeCoverageExtractorAdapter(
-    factory.input.runtimeTransport,
+    requireSubscriptionRuntimeTransport(factory.input.runtimeTransport),
     {
-      expectedLauncherSha256: factory.input.config.subscriptionRuntime.launcherSha256,
+      expectedLauncherSha256: requireSubscriptionRuntimeConfig(
+        factory.input.config,
+      ).launcherSha256,
       expectedRuntimeEngine: subscriptionRuntimeCliEngine,
     },
   );
@@ -218,6 +220,24 @@ function createPlatformExhaustiveCoverage(
     sync: new PostgresHistoricalMemoryStore(factory.input.pool),
     tokenizer: factory.tokenizer,
   }, undefined, factory.profile);
+}
+
+function requireSubscriptionRuntimeTransport(
+  transport: SubscriptionRuntimeTransportPort | undefined,
+): SubscriptionRuntimeTransportPort {
+  if (transport === undefined) {
+    throw new Error("Subscription Runtime is required for historical coverage");
+  }
+  return transport;
+}
+
+function requireSubscriptionRuntimeConfig(
+  config: PlatformConfig,
+): NonNullable<PlatformConfig["subscriptionRuntime"]> {
+  if (config.subscriptionRuntime === undefined) {
+    throw new Error("Subscription Runtime is required for historical coverage");
+  }
+  return config.subscriptionRuntime;
 }
 
 async function executeHistoricalPass(input: {

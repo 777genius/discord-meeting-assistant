@@ -55,7 +55,7 @@ export interface MeetingPlatformShutdownResources extends PostCallShutdownResour
   readonly meetingKnowledge?: MeetingKnowledgeLocalFinalReplyRuntime;
   readonly pool: Pool;
   readonly recordings: CloseableRecordingIngress;
-  readonly runtimeTransport: GrpcSubscriptionRuntimeTransport;
+  readonly runtimeTransport?: GrpcSubscriptionRuntimeTransport;
   readonly s3: S3Client;
   readonly server: PlatformHttpHost;
 }
@@ -179,7 +179,7 @@ export async function closeMeetingPlatformResources(
     ...(meetingKnowledgeDrained ? [awaitBounded(
       "subscription runtime transport",
       startOperation(() => {
-        input.runtimeTransport.close();
+        input.runtimeTransport?.close();
       }),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     )] : []),

@@ -39,4 +39,40 @@ describe("TranscriptOutlineSummaryAdapter", () => {
     });
     expect(await adapter.checkHealth()).toEqual({ status: "serving" });
   });
+
+  it.each([
+    {
+      overview: "Финальный транскрипт составлен по записи встречи. Реплик: 1. Полная версия приложена для проверки.",
+      text: "Нужно обсудить решение и добавить задачу.",
+      title: "Транскрипт встречи",
+    },
+    {
+      overview: "Фінальний транскрипт складено за записом зустрічі. Реплік: 1. Повну версію додано для перевірки.",
+      text: "Треба обговорити рішення й додати завдання.",
+      title: "Транскрипт зустрічі",
+    },
+  ])("localizes the providerless outline from dominant transcript language: $title", async ({ overview, text, title }) => {
+    const adapter = new TranscriptOutlineSummaryAdapter();
+    const result = await adapter.generate({
+      idempotencyKey: title,
+      meetingId: "meeting-localized",
+      transcript: {
+        recordingId: "recording-localized",
+        transcriptId: `transcript-${title}`,
+        turns: [{
+          endMs: 2_000,
+          speakerId: "speaker-1",
+          startMs: 1_000,
+          text,
+          turnId: "turn-1",
+        }],
+        version: 1,
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { overview, title },
+    });
+  });
 });

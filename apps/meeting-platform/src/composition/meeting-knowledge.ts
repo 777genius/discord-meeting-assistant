@@ -206,7 +206,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   readonly historicalMemory?: PlatformHistoricalMemoryRuntime;
   readonly logger: Logger;
   readonly pool: Pool;
-  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
+  readonly runtimeTransport?: SubscriptionRuntimeTransportPort;
 }): MeetingKnowledgeLocalFinalReplyRuntime {
   const servingEnabled = meetingKnowledgeLocalServingEnabled(
     input.config,
@@ -251,6 +251,11 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
   const meetingKnowledgeConfig = input.config.meetingKnowledge;
   if (meetingKnowledgeConfig === undefined) {throw new Error(
     "Meeting Knowledge serving configuration is unavailable");}
+  const runtimeTransport = input.runtimeTransport;
+  const subscriptionRuntime = input.config.subscriptionRuntime;
+  if (runtimeTransport === undefined || subscriptionRuntime === undefined) {
+    throw new Error("Subscription Runtime is required for grounded text answers");
+  }
 
   const secret = input.config.secrets.meetingKnowledgePrincipalKey;
   if (secret === undefined) {
@@ -314,12 +319,15 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
       ...(retrievalV2Admission === undefined ? {} : { retrievalV2Admission }),
     }),
   );
-  const generator = createGroundedAnswerGenerator({ config: input.config, runtimeTransport: input.runtimeTransport,
+  const generator = createGroundedAnswerGenerator({
+    config: input.config,
+    launcherSha256: subscriptionRuntime.launcherSha256,
+    runtimeTransport,
     timeoutMs: meetingKnowledgeProviderLeasePolicy.groundedAnswerTimeoutMilliseconds,
   });
   const selector = createFocusedEvidenceSelector({
-    launcherSha256: input.config.subscriptionRuntime.launcherSha256,
-    logger: input.logger, runtimeTransport: input.runtimeTransport,
+    launcherSha256: subscriptionRuntime.launcherSha256,
+    logger: input.logger, runtimeTransport,
     timeoutMs: meetingKnowledgeProviderLeasePolicy.focusedEvidenceSelectorTimeoutMilliseconds,
   });
   const processor = new ProcessFinalReplyJob({

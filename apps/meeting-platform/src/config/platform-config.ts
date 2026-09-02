@@ -16,7 +16,7 @@ interface PlatformSecrets {
   readonly redisUrl: string;
   readonly s3AccessKeyId: string;
   readonly s3SecretAccessKey: string;
-  readonly subscriptionRuntimeToken: string;
+  readonly subscriptionRuntimeToken?: string;
   readonly voicetextServiceToken?: string;
 }
 
@@ -89,7 +89,7 @@ export interface PlatformConfig {
   readonly sourceTreeSha256?: string;
   readonly speaches: { readonly baseUrl: string; readonly model: string };
   readonly summaryProvider?: "transcript-outline" | "subscription-runtime";
-  readonly subscriptionRuntime: {
+  readonly subscriptionRuntime?: {
     readonly address: string;
     readonly launcherSha256: string;
   };
