@@ -391,7 +391,7 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
     (manifestIdentityCount !== 0 && manifestIdentityCount !== 3) ||
     (record.schemaVersion === 6 && manifestIdentityCount !== 3) ||
     manifestRevision === "null" ||
-    (manifestRevision !== undefined && containsControlCharacter(manifestRevision)) ||
+    (manifestRevision !== undefined && controlCharacterPattern.test(manifestRevision)) ||
     (manifestChecksumSha256 !== undefined &&
       !/^[0-9a-f]{64}$/u.test(manifestChecksumSha256)) ||
     (manifestSizeBytes !== undefined &&
@@ -492,9 +492,16 @@ function reconstructCompletedTrackIdentity(
         "completion receipt track identity does not match the recording snapshot",
       );
     }
+    const artifactRevision = track.artifactVersionId;
+    if (artifactRevision === null) {
+      throw new RecordingIngressError(
+        "corrupt-spool",
+        "completion receipt track is missing immutable artifact identity",
+      );
+    }
     if (
       reference.artifactRevision !== undefined &&
-      (reference.artifactRevision !== track.artifactVersionId ||
+      (reference.artifactRevision !== artifactRevision ||
         reference.checksumSha256 !== track.checksumSha256 ||
         reference.sizeBytes !== track.sizeBytes)
     ) {
@@ -504,7 +511,7 @@ function reconstructCompletedTrackIdentity(
       );
     }
     return {
-      artifactRevision: track.artifactVersionId,
+      artifactRevision,
       audioLocator: reference.audioLocator,
       checksumSha256: track.checksumSha256,
       sizeBytes: track.sizeBytes,
