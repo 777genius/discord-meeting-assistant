@@ -213,10 +213,7 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     input.historicalMemory !== undefined,
   );
   const jobs = new PostgresQuestionJobStore(input.pool, localFinalReplyPolicyRelease);
-  const baseDelivery = input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
-      createDiscordOneAttemptAnswerRest(input.config.secrets.discordToken),
-      input.config.discordApplicationId,
-    );
+  const baseDelivery = resolveAnswerDelivery(input);
   const crash = input.config.testOnly?.publicReplyCrashInjection;
   const publication = new DurableAnswerPublication({
     delivery: crash === undefined ? baseDelivery
@@ -374,4 +371,14 @@ export function createMeetingKnowledgeLocalFinalReply(input: {
     reportDuplicateContainment,
     reportError,
   });
+}
+
+function resolveAnswerDelivery(input: {
+  readonly answerDelivery?: AnswerDeliveryPort;
+  readonly config: PlatformConfig;
+}): AnswerDeliveryPort {
+  return input.answerDelivery ?? new DiscordAnswerDeliveryAdapter(
+    createDiscordOneAttemptAnswerRest(input.config.secrets.discordToken),
+    input.config.discordApplicationId,
+  );
 }

@@ -27,7 +27,7 @@ describe("platform conversation and provider configuration", () => {
 
     const runtime = createPlatformSubscriptionRuntimeResources(
       configured,
-      { info: () => undefined } as never,
+      { info() {} } as never,
     );
     expect(runtime).toBeDefined();
     runtime?.rawTransport.close();

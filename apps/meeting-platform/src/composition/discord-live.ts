@@ -17,9 +17,6 @@ import { CraigPlaybackGateway } from "@discord-meeting/craig-playback-adapter";
 import type { ConversationCoordinator } from
   "@discord-meeting/meeting-core/conversation";
 import type { GroundedMeetingAnswer } from "@discord-meeting/meeting-core/meeting-knowledge";
-import type {
-  IncrementalSummaryGenerationPort,
-} from "@discord-meeting/meeting-core/live-meeting";
 import {
   type SummaryPublicationPort,
   type SummaryPublicationEffectLedger,
@@ -33,9 +30,6 @@ import {
 import type { Pool } from "pg";
 import { GrpcPipecatConversationRuntime } from "@discord-meeting/pipecat-runtime-adapter";
 import {
-  SubscriptionRuntimeIncrementalSummaryAdapter,
-  subscriptionRuntimeCliEngine,
-  subscriptionRuntimeIncrementalMaxOutputTokens,
   type SubscriptionRuntimeTransportPort,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-adapter";
@@ -43,7 +37,6 @@ import { Client, GatewayIntentBits, Partials } from "discord.js";
 
 import { FileConversationFarewellCueRegistry } from "../adapters/outbound/file-conversation-farewell-cue-registry.js";
 import { FileParticipantGreetingCueRegistry } from "../adapters/outbound/file-participant-greeting-cue-registry.js";
-import { SubscriptionRuntimeFarewellClassifier } from "../adapters/outbound/subscription-runtime-farewell-classifier.js";
 import type { PlatformConfig } from "../config.js";
 import { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
 import { PostgresRecordingPublicationReconciliation } from
@@ -54,6 +47,11 @@ import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
 import { meetingVocabulary } from "./meeting-vocabulary.js";
+import {
+  createFarewellClassifier,
+  createLiveIncrementalSummaryPort,
+} from "./optional-live-runtime.js";
+export { createLiveIncrementalSummaryPort } from "./optional-live-runtime.js";
 import {
   createPlatformLiveConversationConfiguration,
   createPlatformLiveMeetingRuntime,
@@ -75,7 +73,6 @@ import { createVoiceGroundedAnswers } from "./voice-grounded-answers.js";
 // adjustments from corrupting playback deadlines and the four-second guard.
 const monotonicUnixNowMilliseconds = (): number =>
   Math.floor(performance.timeOrigin + performance.now());
-const incrementalSummaryTimeoutMs = 120_000;
 
 export interface PlatformDiscordLiveComposition {
   readonly conversationRuntime?: GrpcPipecatConversationRuntime;
@@ -185,9 +182,7 @@ export async function createPlatformDiscordLiveComposition(input: {
       : { liveFinalizedMemory: input.liveFinalizedMemory }),
     meetings: input.meetings,
     oneShotReceipts: new PostgresConversationOneShotReceiptStore(input.pool),
-    ...(input.runtimeTransport === undefined
-      ? {}
-      : { runtimeTransport: input.runtimeTransport }),
+    runtimeTransport: input.runtimeTransport,
   });
   if (live !== undefined) {
     input.cleanup.defer("derived live runtime", () => live.close());
@@ -331,7 +326,7 @@ function createLiveRuntime(input: {
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly oneShotReceipts: PostgresConversationOneShotReceiptStore;
-  readonly runtimeTransport?: SubscriptionRuntimeTransportPort;
+  readonly runtimeTransport?: SubscriptionRuntimeTransportPort | undefined;
 }): PlatformLiveMeetingRuntime | undefined {
   if (!hasLiveTranscriptionConfiguration(input.config)) {
     return undefined;
@@ -378,60 +373,6 @@ function createLiveRuntime(input: {
       token: input.config.secrets.voicetextServiceToken,
     }),
   });
-}
-
-/**
- * Keeps the consumer-owned live-summary port explicit when the optional hosted
- * runtime is absent. Captions continue to project, while summary generation
- * settles as unavailable and can never invent an outline from partial speech.
- */
-export function createLiveIncrementalSummaryPort(
-  config: PlatformConfig,
-  runtimeTransport?: SubscriptionRuntimeTransportPort,
-): IncrementalSummaryGenerationPort {
-  if (runtimeTransport === undefined || config.subscriptionRuntime === undefined) {
-    return new UnavailableIncrementalSummaryPort();
-  }
-  return new SubscriptionRuntimeIncrementalSummaryAdapter(runtimeTransport, {
-    expectedLauncherSha256: config.subscriptionRuntime.launcherSha256,
-    expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-    maxOutputTokens: subscriptionRuntimeIncrementalMaxOutputTokens,
-    maxRecentContextTurns: 256,
-    timeoutMs: incrementalSummaryTimeoutMs,
-  });
-}
-
-class UnavailableIncrementalSummaryPort
-  implements IncrementalSummaryGenerationPort
-{
-  public async generate() {
-    return {
-      failure: {
-        code: "LIVE_SUMMARY_PROVIDER_UNAVAILABLE",
-        message: "Incremental summary generation is not configured",
-        retryable: false,
-      },
-      ok: false as const,
-    };
-  }
-}
-
-function createFarewellClassifier(
-  config: PlatformConfig,
-  runtimeTransport?: SubscriptionRuntimeTransportPort,
-): { readonly farewellClassifier?: SubscriptionRuntimeFarewellClassifier } {
-  if (config.conversation === undefined) {
-    return {};
-  }
-  if (runtimeTransport === undefined || config.subscriptionRuntime === undefined) {
-    throw new Error("Subscription Runtime is required for voice-assistant features");
-  }
-  return {
-    farewellClassifier: new SubscriptionRuntimeFarewellClassifier(
-      runtimeTransport,
-      config.subscriptionRuntime.launcherSha256,
-    ),
-  };
 }
 
 function hasLiveTranscriptionConfiguration(

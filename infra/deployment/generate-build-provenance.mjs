@@ -11,7 +11,7 @@ import {
   rename,
   rm,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = new URL("../../", import.meta.url);
@@ -21,7 +21,7 @@ const outputPath = new URL(
 );
 
 function git(args, encoding) {
-  return new Promise((resolveResult, reject) => {
+  return new Promise((resolve, reject) => {
     execFile("git", args, {
       cwd: repositoryRoot,
       encoding,
@@ -30,7 +30,7 @@ function git(args, encoding) {
       if (error !== null) {
         reject(error);
       } else {
-        resolveResult(stdout);
+        resolve(stdout);
       }
     });
   });
@@ -118,7 +118,7 @@ async function main() {
     "utf8",
   )).trim();
   const deploymentIdentity = await deploymentIdentityFromEnvFile(
-    resolve(process.argv[3]),
+    resolvePath(process.argv[3]),
   );
   assertExactRevision(deploymentIdentity.revision, releaseRevision);
 
@@ -146,7 +146,7 @@ async function main() {
   process.stdout.write(`${outputPath.pathname}\n`);
 }
 
-const invokedPath = process.argv[1] === undefined ? "" : resolve(process.argv[1]);
+const invokedPath = process.argv[1] === undefined ? "" : resolvePath(process.argv[1]);
 if (invokedPath === fileURLToPath(import.meta.url)) {
   await main();
 }
