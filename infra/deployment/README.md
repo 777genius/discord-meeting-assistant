@@ -171,11 +171,13 @@ topology HMAC key and store it in
 Infinity service. Keep the topology key stable across rollouts because rotating
 it changes the opaque remote identities and requires an explicit migration.
 
-Before a local source build, generate provenance from the clean checkout:
+Before a local source build, use the verified wrapper; direct Compose builds are unsupported because local contexts exist only for the lifetime of this command:
 
 ```sh
-node infra/deployment/generate-build-provenance.mjs --env-file <deployment.env>
+node infra/deployment/run-verified-compose.mjs --env-file <deployment.env> -- -f infra/deployment/compose.yaml build
 ```
+
+The wrapper renders and verifies Compose before building. Its context is a `git archive` of `HEAD` plus only the exact generated `.build/meeting-platform-build-provenance.json`; ignored and untracked files never reach the Docker daemon.
 
 Set these non-secret values in the deployment environment file:
 
@@ -329,3 +331,16 @@ The multilingual model handles Russian and English directly and can accept
 additional locale hints without adding a new application profile. The
 deterministic profile remains limited to local and CI E2E and is rejected by
 both production compositions.
+
+## Immutable remote source constants
+
+The authoritative Craig and VoiceText gateway Git URL, full ref, and revision are
+checked in at `infra/deployment/source-pins.json`. Their Compose remote contexts
+repeat the same revision as `ref`, BuildKit `checksum`, image tag, and OCI
+revision label. These pins are release constants, not deployment-environment
+settings; the verified Compose wrapper rejects any rendered mismatch.
+
+With `compose.hosted-summary.yaml`, Meeting Platform waits for the subscription
+runtime sidecar's authenticated gRPC `CheckHealth` response to report `SERVING`.
+The probe reads the mounted service-token file and never sends its value through
+Compose or process arguments.

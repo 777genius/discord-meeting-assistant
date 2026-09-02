@@ -6,7 +6,7 @@ services:
       SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256:?set launcher SHA-256}
       SUBSCRIPTION_RUNTIME_TOKEN_FILE: /run/secrets/runtime-service-token
     depends_on:
-      subscription-runtime-sidecar: { condition: service_started }
+      subscription-runtime-sidecar: { condition: service_healthy }
 
   subscription-runtime-sidecar:
     profiles: [hosted-summary]

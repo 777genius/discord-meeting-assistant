@@ -3,7 +3,9 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { assertRenderedDeployment, sanitizedComposeEnvironment } from "./run-verified-compose.mjs";
 
 import {
   assertDistinctApplicationIds,
@@ -137,3 +139,100 @@ test("keeps exact-revision language and profile qualification pending", async ()
   assert.match(gatewayGuide, /no retained EN\/RU acoustic-quality campaign/iu);
   assert.doesNotMatch(claims, /Only (?:the )?English and Russian provider flows are qualified on this exact/iu);
 });
+
+test("uses only a Git-derived context and one generated .build artifact", async () => {
+  const [dockerignore, compose, recordingEdge, gateway, workflow, generator] = await Promise.all([
+    readFile(new URL(".dockerignore", repositoryRoot), "utf8"),
+    deploymentFile("compose.yaml"),
+    deploymentFile("compose.recording-edge.yaml"),
+    deploymentFile("compose.voicetext-gateway.yaml"),
+    readFile(new URL(".github/workflows/build-test-candidate.yml", repositoryRoot), "utf8"),
+    readFile(new URL("tooling/generate-git-build-context.mjs", repositoryRoot), "utf8"),
+  ]);
+  const platformDockerfile = await readFile(new URL("apps/meeting-platform/Dockerfile", repositoryRoot), "utf8");
+  for (const pattern of [".env", ".env.*", "**/.env", "**/.env.*"]) {
+    assert.ok(dockerignore.split("\n").includes(pattern));
+  }
+  assert.match(dockerignore, /\.build\/\*\n!\.build\/meeting-platform-build-provenance\.json/u);
+  for (const source of [compose, recordingEdge, gateway]) {
+    assert.doesNotMatch(source, /^\s+context: (?:\.\.?\/|\.)\s*$/mu);
+  }
+  assert.equal((workflow.match(/^\s+context: \.build\/docker-context$/gmu) ?? []).length, 3);
+  assert.match(generator, /git.*archive/su);
+  assert.match(generator, /copyFile\(provenancePath,[\s\S]*meeting-platform-build-provenance\.json/u);
+  assert.ok(platformDockerfile.includes("pnpm --filter=@discord-meeting/infinity-context-adapter... --if-present run build"));
+});
+
+test("sanitizes inherited identities and rejects a rendered identity mismatch", () => {
+  const sourceTree = "b".repeat(40);
+  const environment = sanitizedComposeEnvironment({
+    PATH: "/usr/bin",
+    COMPOSE_FILE: "hostile.yaml",
+    COMPOSE_PROFILES: "hosted-summary",
+    DISCORD_CRAIG_APPLICATION_ID: "999999999999999999",
+    MEETING_PLATFORM_SOURCE_REVISION: "c".repeat(40),
+    MEETING_PLATFORM_SOURCE_TREE: "d".repeat(40),
+  }, sourceTree);
+  assert.deepEqual(environment, { PATH: "/usr/bin", MEETING_PLATFORM_SOURCE_TREE: sourceTree });
+
+  const identity = {
+    craigApplicationId: "222222222222222222",
+    publicationApplicationId: "111111111111111111",
+  };
+  const provenance = { releaseRevision: "a".repeat(40), sourceTree };
+  const contextPath = resolvePathForTest(".build/docker-context");
+  const rendered = { services: { "meeting-platform": {
+    build: { context: contextPath, labels: {
+      "org.opencontainers.image.revision": provenance.releaseRevision,
+      "org.opencontainers.image.source-tree": sourceTree,
+    } },
+    environment: {
+      DISCORD_APPLICATION_ID: identity.publicationApplicationId,
+      DISCORD_BOTIK_APPLICATION_ID: identity.publicationApplicationId,
+      DISCORD_CRAIG_APPLICATION_ID: identity.craigApplicationId,
+    },
+    image: `discord-meeting/meeting-platform:${provenance.releaseRevision}`,
+  } } };
+  const input = { rendered, identity, provenance, contextPath, pins: {} };
+  assert.doesNotThrow(() => assertRenderedDeployment(input));
+  rendered.services["meeting-platform"].environment.DISCORD_APPLICATION_ID = identity.craigApplicationId;
+  assert.throws(() => assertRenderedDeployment(input), /publication application/u);
+});
+
+test("gates hosted summary on an authenticated serving sidecar", async () => {
+  const [base, hosted, probe] = await Promise.all([
+    deploymentFile("compose.yaml"),
+    deploymentFile("compose.hosted-summary.yaml"),
+    readFile(new URL("apps/subscription-runtime-sidecar/src/healthcheck.ts", repositoryRoot), "utf8"),
+  ]);
+  assert.match(base, /healthcheck:[\s\S]*subscription-runtime-sidecar\/src\/healthcheck\.ts/u);
+  assert.match(hosted, /subscription-runtime-sidecar: \{ condition: service_healthy \}/u);
+  assert.match(probe, /SUBSCRIPTION_RUNTIME_SERVICE_TOKEN_FILE/u);
+  assert.match(probe, /transport\.checkHealth\(\)/u);
+  assert.match(probe, /health\.status !== "serving"/u);
+});
+
+test("publishes immutable remote gateway constants outside environment settings", async () => {
+  const [pinsText, example, topology] = await Promise.all([
+    deploymentFile("source-pins.json"),
+    deploymentFile(".env.example"),
+    deploymentFile("oss-meeting-topology.md"),
+  ]);
+  const pins = JSON.parse(pinsText);
+  assert.deepEqual(pins.craigMeetingGateway, {
+    gitUrl: "https://github.com/777genius/craig-meeting-gateway.git",
+    gitRef: craigRevision,
+    revision: craigRevision,
+  });
+  assert.deepEqual(pins.voiceTextGateway, {
+    gitUrl: "https://github.com/777genius/voicetext-gateway.git",
+    gitRef: gatewayRevision,
+    revision: gatewayRevision,
+  });
+  assert.doesNotMatch(example, /(?:CRAIG|VOICETEXT)_GATEWAY_GIT_(?:URL|REF|REVISION)=/u);
+  assert.match(topology, /source-pins\.json/u);
+});
+
+function resolvePathForTest(path) {
+  return fileURLToPath(new URL(path, repositoryRoot));
+}

@@ -8,6 +8,7 @@ private VoiceText SaaS.
 
 ## Immutable sources and identities
 
+`infra/deployment/source-pins.json` is the checked-in authority for each gateway Git URL, exact ref, and revision; these are immutable release constants, never environment settings.
 The remote-source overlays pin source three ways: repository URL, exact Git ref
 plus BuildKit `checksum`, and the same 40-character commit as image tag and OCI
 revision label. Meeting Platform is a local source build: its generator proves a
@@ -122,14 +123,14 @@ From the repository root of a clean Discord checkout, after DNS for
 available, run this one exact command:
 
 ```sh
-node infra/deployment/generate-build-provenance.mjs --env-file /secure/oss-meeting.env >/dev/null && docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml config >/dev/null && docker compose --env-file /secure/oss-meeting.env -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml up --build --detach --wait
+node infra/deployment/run-verified-compose.mjs --env-file /secure/oss-meeting.env -- -f infra/deployment/compose.yaml -f infra/deployment/compose.craig.yaml -f infra/deployment/compose.voicetext-gateway.yaml up --build --detach --wait
 ```
 
-The provenance step fails if the checkout is dirty, the configured Meeting
+The verified wrapper creates a Docker context from exactly the files in the committed Git tree, adds only `.build/meeting-platform-build-provenance.json`, removes identity and Compose-control variables inherited from its process, and compares the rendered Compose source revision, source tree, local context, remote source pins, and application identities before any build. It fails if the checkout is dirty, the configured Meeting
 Platform revision differs from `HEAD`, either official application ID is
 missing, or the Craig and publication IDs are equal. It atomically replaces its read-only
 `0444` output, so the checkout owner can repeat the exact command for deploy,
-restart, or upgrade without elevated privileges. Compose config then fails
+restart, or upgrade without elevated privileges. The generated context cannot contain ignored or untracked files, including `.env` variants. Compose config then fails
 before creation on an incomplete interpolation. The final step builds only the
 pinned remote sources, starts migrations and dependencies, and waits for service
 health without invoking Discord commands, joining voice, or calling a speech

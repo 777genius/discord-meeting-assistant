@@ -23,8 +23,11 @@ services:
 
   postgres-migrations:
     build:
-      context: ../..
+      context: ../../.build/docker-context
       dockerfile: apps/meeting-platform/Dockerfile
+      labels:
+        org.opencontainers.image.revision: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
+        org.opencontainers.image.source-tree: ${MEETING_PLATFORM_SOURCE_TREE:?run the verified Compose wrapper}
     image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
     init: true
     restart: "no"
@@ -113,10 +116,13 @@ services:
     profiles: [hosted-summary]
     build:
       args:
-        SOURCE_REVISION: ${SUBSCRIPTION_RUNTIME_SOURCE_REVISION:-unconfigured}
-      context: ../..
+        SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
+      context: ../../.build/docker-context
       dockerfile: apps/subscription-runtime-sidecar/Dockerfile
-    image: discord-meeting/subscription-runtime-sidecar:${SUBSCRIPTION_RUNTIME_SOURCE_REVISION:-unconfigured}
+      labels:
+        org.opencontainers.image.revision: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
+        org.opencontainers.image.source-tree: ${MEETING_PLATFORM_SOURCE_TREE:?run the verified Compose wrapper}
+    image: discord-meeting/subscription-runtime-sidecar:${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
     init: true
     restart: unless-stopped
     read_only: true
@@ -148,6 +154,17 @@ services:
       - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=0700,uid=10001,gid=10001
       - /run/discord-meeting-subscription-runtime/workspace:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=10001,gid=10001
     cap_drop: [ALL]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/apps/subscription-runtime-sidecar/node_modules/.bin/tsx",
+          "/app/apps/subscription-runtime-sidecar/src/healthcheck.ts",
+        ]
+      interval: 10s
+      timeout: 7s
+      retries: 30
+      start_period: 30s
     networks: [meeting-internal, meeting-egress]
     security_opt: [no-new-privileges:true]
     pids_limit: 256
@@ -158,8 +175,11 @@ services:
     build:
       args:
         SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
-      context: ../../apps/pipecat-runtime
-      dockerfile: Dockerfile
+      context: ../../.build/docker-context
+      dockerfile: apps/pipecat-runtime/Dockerfile
+      labels:
+        org.opencontainers.image.revision: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
+        org.opencontainers.image.source-tree: ${MEETING_PLATFORM_SOURCE_TREE:?run the verified Compose wrapper}
     image: discord-meeting/pipecat-runtime:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
     init: true
     restart: unless-stopped
@@ -211,14 +231,16 @@ services:
 
   meeting-platform:
     build:
-      context: ../..
+      context: ../../.build/docker-context
       dockerfile: apps/meeting-platform/Dockerfile
       labels:
         org.opencontainers.image.revision: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
+        org.opencontainers.image.source-tree: ${MEETING_PLATFORM_SOURCE_TREE:?run the verified Compose wrapper}
     image: discord-meeting/meeting-platform:${MEETING_PLATFORM_SOURCE_REVISION:?set immutable source revision}
     labels:
       e2e.test-only: "${E2E_TEST_ONLY_LABEL:-false}"
       org.opencontainers.image.revision: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
+      org.opencontainers.image.source-tree: ${MEETING_PLATFORM_SOURCE_TREE:?run the verified Compose wrapper}
     deploy:
       replicas: 1
     init: true

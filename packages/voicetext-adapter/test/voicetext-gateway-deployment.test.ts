@@ -43,7 +43,11 @@ beforeAll(async () => {
     "-f", "infra/deployment/compose.voicetext-gateway.yaml",
     "config",
   ];
-  const options = { cwd: repositoryRoot.pathname, maxBuffer: 10 * 1024 * 1024 };
+  const options = {
+    cwd: repositoryRoot.pathname,
+    env: { ...process.env, MEETING_PLATFORM_SOURCE_TREE: "b".repeat(40) },
+    maxBuffer: 10 * 1024 * 1024,
+  };
   const config = await run("docker", [...composeArguments, "--format", "json"], options);
   rendered = JSON.parse(config.stdout) as RenderedCompose;
   const services = await run("docker", [...composeArguments, "--services"], options);
@@ -176,8 +180,8 @@ describe("VoiceText gateway deployment overlay", () => {
 
   it("documents the exact one-command workflow and honest default capability boundary", async () => {
     const guide = await readDeploymentFile("oss-meeting-topology.md");
-    expect(guide.match(/config >\/dev\/null && docker compose/gu)).toHaveLength(1);
-    expect(guide).toContain("node tooling/generate-build-provenance.mjs >/dev/null && docker compose");
+    expect(guide).toContain("node infra/deployment/run-verified-compose.mjs --env-file");
+    expect(guide).toMatch(/Git tree[\s\S]*ignored or untracked files/iu);
     expect(guide).toContain("compose.craig.yaml");
     expect(guide).toMatch(/reports the authoritative transcript turn count and attaches the transcript/iu);
     expect(guide).toMatch(/Pipecat conversation profile[\s\S]*default-off and non-core/iu);

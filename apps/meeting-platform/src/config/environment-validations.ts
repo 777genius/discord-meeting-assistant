@@ -153,7 +153,6 @@ export function validateDiscordApplicationEnvironment(
   context: RefinementCtx,
 ): void {
   if (
-    environment.DISCORD_BOTIK_APPLICATION_ID !== undefined &&
     environment.DISCORD_APPLICATION_ID === environment.DISCORD_CRAIG_APPLICATION_ID
   ) {
     context.addIssue({

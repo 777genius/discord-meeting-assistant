@@ -73,8 +73,8 @@ services:
 
   voicetext-edge:
     build:
-      context: .
-      dockerfile: recording-edge.Dockerfile
+      context: ../../.build/docker-context
+      dockerfile: infra/deployment/recording-edge.Dockerfile
     image: discord-meeting/voicetext-edge:2.11.4-1
     init: true
     restart: unless-stopped

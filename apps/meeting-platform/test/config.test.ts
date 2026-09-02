@@ -279,6 +279,16 @@ describe("platform configuration defaults and publication", () => {
     );
   });
 
+  it("rejects one publication and Craig identity when the Botik override is omitted", async () => {
+    await expect(loadPlatformConfig({
+      ...environment,
+      DISCORD_BOTIK_APPLICATION_ID: undefined,
+      DISCORD_CRAIG_APPLICATION_ID: environment.DISCORD_APPLICATION_ID,
+    }, async () => "value")).rejects.toThrow(
+      "publication and Craig application IDs must be distinct",
+    );
+  });
+
   it("publishes final summaries separately by default and accepts live replacement opt-in", async () => {
     const separate = await loadPlatformConfig(environment, async () => "value");
     const replacement = await loadPlatformConfig(

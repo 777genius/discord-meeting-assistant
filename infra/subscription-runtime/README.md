@@ -161,8 +161,7 @@ attestation, permission, and interactive-input failures are terminal.
 
 Before real Discord E2E, verify without printing secrets:
 
-- `SUBSCRIPTION_RUNTIME_SOURCE_REVISION` is the exact 40-character deployed Git
-  commit and matches the sidecar image revision label;
+- the sidecar image revision label equals the exact clean-checkout Meeting Platform Git commit;
 - the private root is outside every other project's directory;
 - auth and secret files are regular, non-symlink files with least-privilege
   ownership and modes;
