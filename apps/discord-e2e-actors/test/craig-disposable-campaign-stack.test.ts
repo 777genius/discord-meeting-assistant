@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -39,7 +39,11 @@ const migrationChecksum = "8".repeat(64);
 const protocolResponse = '{"kind":"craig-control-ready","version":"v1"}\n';
 
 async function fixture(campaignId = "campaign-42"): Promise<CraigCampaignStackInput> {
-  const campaignRoot = await mkdtemp(join(tmpdir(), "craig-campaign-root-"));
+  // macOS exposes /var through a symlink to /private/var. The production
+  // guard intentionally rejects that spelling, so create the fixture under
+  // the canonical temp directory path before asserting it.
+  const canonicalTempDirectory = await realpath(tmpdir());
+  const campaignRoot = await mkdtemp(join(canonicalTempDirectory, "craig-campaign-root-"));
   await mkdir(join(campaignRoot, campaignId, "control"), { recursive: true, mode: 0o700 });
   await mkdir(join(campaignRoot, campaignId, "barriers"), { recursive: true, mode: 0o700 });
   const campaignPath = join(campaignRoot, campaignId);
