@@ -111,7 +111,7 @@ describe("VoiceText gateway deployment overlay", () => {
 
     expect(readme).toMatch(/Output presentation[\s\S]*English, Russian, or Ukrainian/iu);
     expect(readme).toMatch(/Speech recognition[\s\S]*provider and model/iu);
-    expect(readme).toMatch(/provider-agnostic does not mean that an arbitrary vendor API key can be added to this checkout without an adapter/iu);
+    expect(readme).toMatch(/provider-agnostic does not mean that\s+an arbitrary vendor API key can be added to this checkout without an adapter/iu);
     expect(readme).toMatch(/domain\/application ports are provider-agnostic/iu);
     expect(readme).toMatch(/new public\s+V1 profile[\s\S]*Discord consumer/iu);
   });
