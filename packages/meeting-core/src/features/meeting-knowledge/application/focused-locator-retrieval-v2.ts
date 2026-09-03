@@ -271,7 +271,7 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
       return unavailable();
     }
     const authorizationPrincipalRef = input.authorizationPrincipalRef;
-    const invoke = <T>(lane: () => Promise<T>): Promise<T> => {
+    const invoke = <T,>(lane: () => Promise<T>): Promise<T> => {
       input.signal?.throwIfAborted();
       return lane();
     };
