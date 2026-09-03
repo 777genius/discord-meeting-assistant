@@ -152,7 +152,10 @@ export async function retrieveFocusedMemory(
       )
     ) {return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };}
     return result;
-  } catch {return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };}
+  } catch {
+    input.signal?.throwIfAborted();
+    return { schemaVersion: focusedMemoryContractVersion, status: "unavailable" };
+  }
 }
 
 export function fixedOutcomeForFocusedRetrieval(

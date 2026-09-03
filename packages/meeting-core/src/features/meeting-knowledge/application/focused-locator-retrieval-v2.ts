@@ -270,6 +270,7 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
       input.authorizationPrincipalRef === undefined) {
       return unavailable();
     }
+    const authorizationPrincipalRef = input.authorizationPrincipalRef;
     const invoke = <T>(lane: () => Promise<T>): Promise<T> => {
       input.signal?.throwIfAborted();
       return lane();
@@ -277,7 +278,7 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
     const [currentLane, historicalLane] = await settleWithAbort(Promise.allSettled([
       invoke(() => this.dependencies.current.retrieve(input)),
       invoke(() => this.dependencies.historical.retrieve({
-        authorizationPrincipalRef: input.authorizationPrincipalRef,
+        authorizationPrincipalRef,
         currentMeetingId: input.meetingId,
         request: binding.request,
         roomId: input.roomId,
@@ -342,7 +343,10 @@ function interleave(current: readonly FocusedMemoryReference[], historical: read
   return Object.freeze(output);
 }
 function canonicalKey(reference: FocusedMemoryReference): string {
-  return [reference.meetingId, reference.transcriptId, reference.transcriptVersion, reference.turnId].join("\u0000");
+  return [reference.meetingId, reference.transcriptId,
+    reference.transcriptVersion, reference.turnId,
+    reference.sourceStartCodePoint ?? "",
+    reference.sourceEndCodePoint ?? ""].join("\u0000");
 }
 function dedupe(references: readonly FocusedMemoryReference[]): FocusedMemoryReference[] {
   const seen = new Set<string>();

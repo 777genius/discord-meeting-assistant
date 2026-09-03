@@ -215,12 +215,15 @@ describe("focused retrieval candidate and lane isolation", () => {
         historicalSource: { ...indexedOnly.historicalSource,
           candidateLocator: "locator-history-second" },
         turnHash: "d".repeat(64), turnId: "turn-history-second" });
+      const rangedLocal = Object.freeze({ ...local,
+        historicalSource: { candidateLocator: "range-specific", indexGeneration: "index",
+          releaseId: "release" }, sourceEndCodePoint: 4, sourceStartCodePoint: 0 });
       const memory = composite(async () => ({ authorityGeneration: "generation",
         candidates: [local, local, localSecond], schemaVersion: 1, status: "current" }),
       async () => ({
         authorityGeneration: "historical", candidates: [{ ...local,
           historicalSource: { candidateLocator: "duplicate", indexGeneration: "index",
-            releaseId: "release" } }, indexedOnly, indexedOnly, { ...localSecond,
+            releaseId: "release" } }, indexedOnly, indexedOnly, rangedLocal, { ...localSecond,
           historicalSource: { candidateLocator: "duplicate-second",
             indexGeneration: "index", releaseId: "release" } }, indexedSecond],
         schemaVersion: 1, status: "current",
@@ -235,7 +238,8 @@ describe("focused retrieval candidate and lane isolation", () => {
         scopeId: "scope-1", transcriptId: local.transcriptId, transcriptVersion: 1 });
 
       expect(result).toMatchObject({
-        candidates: [local, indexedOnly, localSecond, indexedSecond], status: "current",
+        candidates: [local, indexedOnly, localSecond, rangedLocal, indexedSecond],
+        status: "current",
       });
     });
 

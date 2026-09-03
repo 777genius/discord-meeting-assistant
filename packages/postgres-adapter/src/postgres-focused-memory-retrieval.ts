@@ -6,13 +6,17 @@ import {
   type FocusedMemoryRetrievalResult,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { createHash } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import {
   canonicalFinalReplyTurnHash,
   loadCurrentReplyAuthority,
   type ResolvedFinalReplyAuthority,
 } from "./postgres-final-reply-evidence.js";
+import {
+  type HistoricalPostgresCancellationPort,
+  withHistoricalPostgresClient,
+} from "./postgres-historical-query.js";
 
 interface ExactLexicalMatch {
   readonly matchedTerms: number;
@@ -241,6 +245,7 @@ export class PostgresFocusedMemoryRetrieval
   public constructor(
     private readonly pool: Pool,
     private readonly botApplicationIdentity: string,
+    private readonly cancellation?: HistoricalPostgresCancellationPort,
   ) {}
 
   public async retrieve(
@@ -252,25 +257,37 @@ export class PostgresFocusedMemoryRetrieval
     }
     try {
       input.signal?.throwIfAborted();
-      const unavailable = await this.pool.query<{ readonly unavailable: boolean }>(
-        `
-          SELECT EXISTS (
-            SELECT 1
-            FROM meeting_knowledge.unavailable_final_projections
-            WHERE final_projection_receipt = $1
-          ) AS unavailable
-        `,
-        [input.finalProjectionReceipt],
-      );
-      if (unavailable.rows[0]?.unavailable === true) {
+      const readAuthority = async (executor: Pick<Pool, "query"> | PoolClient) => {
+        const unavailable = await executor.query<{ readonly unavailable: boolean }>(
+          `
+            SELECT EXISTS (
+              SELECT 1
+              FROM meeting_knowledge.unavailable_final_projections
+              WHERE final_projection_receipt = $1
+            ) AS unavailable
+          `,
+          [input.finalProjectionReceipt],
+        );
+        if (unavailable.rows[0]?.unavailable === true) {
+          return { authority: null, unavailable: true } as const;
+        }
+        const authority = await loadCurrentReplyAuthority(
+          executor,
+          input.meetingId,
+          this.botApplicationIdentity,
+        );
+        return { authority, unavailable: false } as const;
+      };
+      const loaded = input.signal === undefined
+        ? await readAuthority(this.pool)
+        : await withHistoricalPostgresClient(
+            this.pool, input.signal, readAuthority, this.cancellation,
+          );
+      if (loaded.unavailable) {
         return { schemaVersion: 1, status: "unavailable" };
       }
       input.signal?.throwIfAborted();
-      const authority = await loadCurrentReplyAuthority(
-        this.pool,
-        input.meetingId,
-        this.botApplicationIdentity,
-      );
+      const authority = loaded.authority;
       input.signal?.throwIfAborted();
       if (authority === null || !authorityMatchesRetrieval(authority, input)) {
         return { schemaVersion: 1, status: "stale" };

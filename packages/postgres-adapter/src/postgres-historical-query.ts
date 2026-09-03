@@ -185,7 +185,7 @@ export async function withHistoricalPostgresTransaction<T>(
   }, cancellation);
 }
 
-async function withHistoricalPostgresClient<T>(
+export async function withHistoricalPostgresClient<T>(
   pool: Pool,
   signal: AbortSignal | undefined,
   operation: (client: PoolClient) => Promise<T>,

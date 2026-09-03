@@ -8,8 +8,8 @@ import {
   FinalTranscript,
   type TranscriptTurnSnapshot,
 } from "@discord-meeting/meeting-core/transcription";
-import type { Pool } from "pg";
-import { describe, expect, it } from "vitest";
+import type { Pool, PoolClient } from "pg";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   PostgresFinalReplyEvidence,
@@ -159,6 +159,35 @@ describe("PostgreSQL current-meeting query term policy", () => {
 });
 
 describe("PostgreSQL focused current-meeting memory", () => {
+  it("cancels an in-flight authority read before returning an outcome", async () => {
+    const queryStarted = Promise.withResolvers<void>();
+    let rejectQuery: ((reason?: unknown) => void) | undefined;
+    const client = {
+      processID: 42_424,
+      query: vi.fn(() => {
+        queryStarted.resolve();
+        return new Promise<never>((_resolve, reject) => {rejectQuery = reject;});
+      }),
+      release: vi.fn(),
+    } as unknown as PoolClient;
+    const pool = { connect: vi.fn(async () => client) } as unknown as Pool;
+    const cancellation = { cancelAndVerifyInactive: vi.fn(async (backendPid: number) => {
+      expect(backendPid).toBe(42_424);
+      rejectQuery?.(new Error("synthetic focused query cancelled"));
+    }) };
+    const controller = new AbortController();
+    const { input } = retrievalInput(twoHourSnapshot(16), "What changed about Atlas?");
+    const pending = new PostgresFocusedMemoryRetrieval(pool, botId, cancellation)
+      .retrieve({ ...input, signal: controller.signal });
+
+    await queryStarted.promise;
+    controller.abort(new Error("focused retrieval aborted"));
+
+    await expect(pending).rejects.toThrow("focused retrieval aborted");
+    expect(cancellation.cancelAndVerifyInactive).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledWith(true);
+  });
+
   it("returns only bounded focused locators for a short current transcript", async () => {
     const snapshot = twoHourSnapshot(16);
     const retrieval = new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId);
