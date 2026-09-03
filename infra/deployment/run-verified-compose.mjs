@@ -156,7 +156,7 @@ async function main() {
   if (process.argv[2] !== "--env-file" || process.argv[4] !== "--" || process.argv[3] === undefined) {
     throw new Error("usage: run-verified-compose.mjs --env-file <deployment.env> -- <Compose build/up arguments>");
   }
-  const environmentPath = resolve(process.argv[3]);
+  const environmentPath = pathResolve(process.argv[3]);
   const composeArguments = process.argv.slice(5);
   const invocation = composeInvocation(composeArguments);
   await execute(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "generate-build-provenance.mjs"), "--env-file", environmentPath], { cwd: repositoryRoot });
@@ -182,4 +182,4 @@ async function main() {
   }
 }
 
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {await main();}
+if (pathResolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {await main();}
