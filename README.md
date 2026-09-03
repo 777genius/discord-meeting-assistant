@@ -39,17 +39,19 @@ playback is enabled.
 | Historical meeting memory | Ground answers in authorized previous meetings from the same configured room. | Optional, requires qualified memory serving |
 | Recording playback | Open a private signed link to a synchronized browser player. | Optional deployment feature |
 | Output presentation | Discord labels and attachments support English, Russian, or Ukrainian; generated title and overview language depends on the selected summary provider. | Depends on the feature |
-| Speech recognition | Recognition languages depend on the selected provider and model. The four Deepgram/ElevenLabs batch/live profiles have deterministic contract coverage, but this exact OSS revision has no retained EN/RU provider-quality qualification evidence. | Provider/model-dependent; exact-revision qualification pending |
+| Speech recognition | Recognition languages depend on the selected provider and model. The configured batch/live adapters are implemented and conformance-tested, but this exact OSS revision has no retained provider-quality qualification evidence. | Provider/model-dependent; exact-revision qualification pending |
 
-This is not a claim that those providers support only those languages.
+This is not a claim that any configured provider supports only those languages.
 
 Optional capabilities are enabled independently by each deployment. The core
 post-call flow does not depend on live voice, historical memory, or playback.
-Meeting Platform talks only to the versioned VoiceText contract; Deepgram and
-ElevenLabs are tested adapters behind the self-hosted gateway. The Rust
-domain/application ports are provider-agnostic. A new public V1 profile still
-requires an explicit identity/config addition in gateway composition and the
-Discord consumer.
+Meeting Platform talks only to the versioned VoiceText contract; configured
+speech providers are implemented, conformance-tested adapters behind the
+self-hosted gateway. The Rust domain/application ports are provider-agnostic.
+Those tests establish contract behavior only: real acoustic qualification
+requires retained receipts bound to the exact provider, model, and source
+revision. A new public V1 profile still requires an explicit identity/config
+addition in gateway composition and the Discord consumer.
 
 ## How it works
 
