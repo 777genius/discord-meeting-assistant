@@ -10,9 +10,9 @@ const buildRoot = join(repositoryRoot, ".build");
 const provenancePath = join(buildRoot, "meeting-platform-build-provenance.json");
 
 function execute(file, args, options = {}) {
-  return new Promise((fulfill, reject) => {
+  return new Promise((resolve, reject) => {
     execFile(file, args, { maxBuffer: 32 * 1024 * 1024, ...options }, (error, stdout) => {
-      if (error === null) {fulfill(stdout);}
+      if (error === null) {resolve(stdout);}
       else {reject(error);}
     });
   });

@@ -246,7 +246,8 @@ async function createPlatformKnowledgeComposition(input: {
     ...(groundedAnswerUseCase === undefined ? {} : { groundedAnswerUseCase }),
     ...(historicalMemory === undefined ? {} : { historicalMemory }),
     logger,
-    markLivePacketDelivered: (packetId) => core.recordings.markLivePacketDelivered(packetId).then(() => {}),
+    markLivePacketDelivered: (packetId) => core.recordings.markLivePacketDelivered(packetId)
+      .then(() => Promise.resolve()),
     pendingLivePackets: async (recordingId) => {
       const packets = await core.recordings.pendingLivePackets(recordingId);
       return packets.map((packet) => ({
