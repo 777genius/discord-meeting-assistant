@@ -49,9 +49,9 @@ Meeting Platform talks only to the versioned VoiceText contract; configured
 speech providers are implemented, conformance-tested adapters behind the
 self-hosted gateway. The Rust domain/application ports are provider-agnostic.
 Those tests establish contract behavior only: real acoustic qualification
-requires retained receipts bound to the exact provider, model, and source
-revision. A new public V1 profile still requires an explicit identity/config
-addition in gateway composition and the Discord consumer.
+requires retained exact-revision receipts that bind the provider and model to
+the tested source revision. A new public V1 profile still requires an explicit
+identity/config addition in gateway composition and the Discord consumer.
 
 ## How it works
 
