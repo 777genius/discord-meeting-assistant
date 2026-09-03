@@ -331,7 +331,7 @@ export class SpeakerTranscriptionSession {
   private rememberRetryablePacket(
     packet: LiveVoicePacket,
     packetId: string,
-  ): Promise<void> {
+  ): void {
     if (!this.dependencies.ledger.markRetryable(packetId)) {
       return;
     }
@@ -350,7 +350,7 @@ export class SpeakerTranscriptionSession {
       | "LIVE_PACKET_ADMISSION_BACKLOG_FULL"
       | "LIVE_PACKET_GLOBAL_BACKLOG_FULL"
       | "LIVE_PACKET_BACKPRESSURE_TIMEOUT",
-  ): Promise<void> {
+  ): void {
     if (this.backpressureDegraded) {
       return;
     }
