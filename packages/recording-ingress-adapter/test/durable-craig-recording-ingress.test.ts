@@ -263,7 +263,7 @@ describe("authoritative Craig recording finalization", () => {
         authoritativeDurationMs: 299_000,
         recordingId: "recording-1",
         speakerAudio: [{
-          artifactRevision: expect.any(String),
+          artifactRevision: expect.any(String) as unknown,
           checksumSha256: track.metadata.checksumSha256,
           sizeBytes: track.metadata.sizeBytes,
           speakerId: firstSpeakerId,
@@ -283,7 +283,7 @@ describe("authoritative Craig recording finalization", () => {
     expect(manifest.startedAt).toBe("2026-08-01T10:00:00.000Z");
     expect(manifest.tracks).toHaveLength(1);
     expect(manifest.tracks[0]).toMatchObject({
-      artifactRevision: expect.any(String),
+      artifactRevision: expect.any(String) as unknown,
       checksumSha256: track.metadata.checksumSha256,
       sizeBytes: track.metadata.sizeBytes,
     });

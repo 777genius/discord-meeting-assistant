@@ -103,11 +103,11 @@ export function parseGatewayRunningIdentity(
     "sourceTree", "wsOrigin",
   ], "gateway identity");
   const parsed = identity as unknown as GatewayRunningIdentityV1;
-  if (parsed.kind !== "voicetext-gateway-running-identity" || parsed.schemaVersion !== 1
+  if (identity.kind !== "voicetext-gateway-running-identity" || identity.schemaVersion !== 1
     || !containerPattern.test(parsed.containerId) || !imageIdPattern.test(parsed.imageId)
     || !repositoryDigestPattern.test(parsed.imageDigest)
     || !gitObjectPattern.test(parsed.sourceCommit) || !gitObjectPattern.test(parsed.sourceTree)
-    || parsed.sourceRepository !== pinnedRepository || !identifierPattern.test(parsed.runId)
+    || identity.sourceRepository !== pinnedRepository || !identifierPattern.test(parsed.runId)
     || !isCanonicalTimestamp(parsed.observedAt)
     || !digestPattern.test(parsed.identitySha256)
     || !isExactOrigin(parsed.httpOrigin, ["http:", "https:"])
@@ -150,7 +150,7 @@ export function validateProviderCanaryReceipt(
     "schemaVersion",
   ], "provider canary receipt");
   const parsed = receipt as unknown as ProviderCanaryReceiptV1;
-  if (parsed.kind !== "voicetext-gateway-provider-canary-receipt" || parsed.schemaVersion !== 1
+  if (receipt.kind !== "voicetext-gateway-provider-canary-receipt" || receipt.schemaVersion !== 1
     || !identifierPattern.test(parsed.runId) || !isCanonicalTimestamp(parsed.createdAt)
     || !digestPattern.test(parsed.receiptSha256) || !digestPattern.test(parsed.expectedTermsSha256)
     || !digestPattern.test(parsed.gatewayIdentitySha256)) {
@@ -164,7 +164,8 @@ export function validateProviderCanaryReceipt(
   validateTranscriptEvidence(parsed.live, false);
   validateFixture(parsed.fixture);
   validateProfile(parsed.profile);
-  if (parsed.live.finalizeComplete !== true
+  const finalizeComplete: unknown = (parsed.live as unknown as Record<string, unknown>).finalizeComplete;
+  if (finalizeComplete !== true
     || parsed.live.acknowledgedPacketCount !== parsed.fixture.packetCount
     || parsed.gatewayIdentity.identitySha256 !== parsed.gatewayIdentitySha256
     || parsed.runId !== parsed.gatewayIdentity.runId
@@ -213,7 +214,7 @@ function validateTranscriptEvidence(value: unknown, includesJobId: boolean): voi
     : ["acknowledgedPacketCount", "finalizeComplete", "firstStartMs", "lastEndMs", "segmentCount", "textSha256"],
   "transcript evidence");
   if (!isNonnegativeInteger(evidence.firstStartMs) || !isNonnegativeInteger(evidence.lastEndMs)
-    || (evidence.lastEndMs as number) <= (evidence.firstStartMs as number)
+    || evidence.lastEndMs <= evidence.firstStartMs
     || !Number.isSafeInteger(evidence.segmentCount) || (evidence.segmentCount as number) < 1
     || typeof evidence.textSha256 !== "string" || !digestPattern.test(evidence.textSha256)
     || (includesJobId && (typeof evidence.jobId !== "string" || !identifierPattern.test(evidence.jobId)))) {

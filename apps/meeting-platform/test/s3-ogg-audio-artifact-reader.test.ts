@@ -66,12 +66,12 @@ describe("S3 Ogg audio artifact reader", () => {
       }],
       providerTimestampOrigin: "recording-media-origin",
     });
-    expect(capture.request).toEqual({
+    expect(capture.request).toMatchObject({
       expected: { checksumSha256: "a".repeat(64), contentType: "audio/ogg", sizeBytes: 4 },
       locator: "s3://meeting/recordings/speaker.ogg",
       revision: "version-1",
-      signal: expect.any(AbortSignal),
     });
+    expect(capture.request?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("rejects non-Ogg artifacts and arbitrary byte splitting", async () => {

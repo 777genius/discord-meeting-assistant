@@ -9,6 +9,12 @@ const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const buildRoot = join(repositoryRoot, ".build");
 const provenancePath = join(buildRoot, "meeting-platform-build-provenance.json");
 
+/**
+ * @param {string} file
+ * @param {string[]} args
+ * @param {import("node:child_process").ExecFileOptions} [options]
+ * @returns {Promise<string>}
+ */
 function execute(file, args, options = {}) {
   return new Promise((resolve, reject) => {
     execFile(file, args, { maxBuffer: 32 * 1024 * 1024, ...options }, (error, stdout) => {
@@ -18,6 +24,7 @@ function execute(file, args, options = {}) {
   });
 }
 
+/** @param {string} destination */
 export async function generateGitBuildContext(destination) {
   const destinationPath = pathResolve(destination);
   if (dirname(destinationPath) !== buildRoot) {
