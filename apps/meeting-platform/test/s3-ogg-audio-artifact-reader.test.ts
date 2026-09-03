@@ -14,7 +14,7 @@ function artifactReader(
 ): BinaryArtifactReader {
   return {
     read: async (request) => {
-      if (capture !== undefined) capture.request = request;
+      if (capture !== undefined) {capture.request = request;}
       return ({
       body: (async function* () {
         yield bytes.slice(0, 2);

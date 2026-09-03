@@ -520,7 +520,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
     for (const acknowledgement of acknowledgements) {
       socket.enqueue(acknowledgement);
     }
-    await packet.catch(() => undefined);
+    await packet.catch(() => {});
     await vi.waitFor(() => {
       expect(socket.terminated).toBe(true);
     });

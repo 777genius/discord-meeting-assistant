@@ -29,8 +29,8 @@ const identityEnvironmentNames = new Set([
 function execute(file, args, options = {}) {
   return new Promise((fulfill, reject) => {
     execFile(file, args, { maxBuffer: 32 * 1024 * 1024, ...options }, (error, stdout) => {
-      if (error === null) fulfill(stdout);
-      else reject(error);
+      if (error === null) {fulfill(stdout);}
+      else {reject(error);}
     });
   });
 }
@@ -55,7 +55,7 @@ function requiredService(rendered, name) {
 }
 
 function assertEqual(actual, expected, label) {
-  if (actual !== expected) throw new Error(`rendered Compose ${label} does not match verified identity`);
+  if (actual !== expected) {throw new Error(`rendered Compose ${label} does not match verified identity`);}
 }
 
 function assertLocalBuildContext(rendered, name, expectedContext, provenance) {
@@ -65,7 +65,7 @@ function assertLocalBuildContext(rendered, name, expectedContext, provenance) {
   if (provenance !== undefined) {
     assertEqual(build.labels?.["org.opencontainers.image.revision"], provenance.releaseRevision, `${name} build revision`);
     assertEqual(build.labels?.["org.opencontainers.image.source-tree"], provenance.sourceTree, `${name} source tree`);
-    if (build.args?.SOURCE_REVISION !== undefined) assertEqual(build.args.SOURCE_REVISION, provenance.releaseRevision, `${name} source argument`);
+    if (build.args?.SOURCE_REVISION !== undefined) {assertEqual(build.args.SOURCE_REVISION, provenance.releaseRevision, `${name} source argument`);}
     assertEqual(service.image?.split(":").at(-1), provenance.releaseRevision, `${name} image revision`);
   }
 }
@@ -100,10 +100,10 @@ export function assertRenderedDeployment(input) {
     "subscription-runtime-sidecar",
     "pipecat-runtime",
   ]) {
-    if (input.rendered.services?.[name] !== undefined) assertLocalBuildContext(input.rendered, name, input.contextPath, input.provenance);
+    if (input.rendered.services?.[name] !== undefined) {assertLocalBuildContext(input.rendered, name, input.contextPath, input.provenance);}
   }
-  if (input.rendered.services?.["recording-edge"] !== undefined) assertLocalBuildContext(input.rendered, "recording-edge", input.contextPath);
-  if (input.rendered.services?.["voicetext-edge"] !== undefined) assertLocalBuildContext(input.rendered, "voicetext-edge", input.contextPath);
+  if (input.rendered.services?.["recording-edge"] !== undefined) {assertLocalBuildContext(input.rendered, "recording-edge", input.contextPath);}
+  if (input.rendered.services?.["voicetext-edge"] !== undefined) {assertLocalBuildContext(input.rendered, "voicetext-edge", input.contextPath);}
   if (input.rendered.services?.["craig-bot"] !== undefined) {
     assertEqual(requiredService(input.rendered, "craig-bot").environment?.DISCORD_APPLICATION_ID, input.identity.craigApplicationId, "Craig bot application");
     assertRemotePin(input.rendered, "craig-bot", input.pins.craigMeetingGateway);
@@ -118,7 +118,7 @@ export function assertRenderedDeployment(input) {
 
 function composeInvocation(arguments_) {
   const commandIndex = arguments_.findIndex((value) => value === "build" || value === "up");
-  if (commandIndex < 0) throw new Error("verified Compose wrapper requires build or up --build");
+  if (commandIndex < 0) {throw new Error("verified Compose wrapper requires build or up --build");}
   if (arguments_[commandIndex] === "up" && !arguments_.slice(commandIndex + 1).includes("--build")) {
     throw new Error("verified Compose up requires --build");
   }
@@ -182,4 +182,4 @@ async function main() {
   }
 }
 
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) await main();
+if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {await main();}

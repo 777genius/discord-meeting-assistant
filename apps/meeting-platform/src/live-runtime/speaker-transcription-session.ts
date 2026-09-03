@@ -78,7 +78,7 @@ export class SpeakerTranscriptionSession {
     packets: readonly LiveVoicePacket[],
     deadlineMs: number,
   ): Promise<void> {
-    if (this.admissionClosed) return;
+    if (this.admissionClosed) {return;}
     const globallyReserved = await this.dependencies.packetAdmission.reserve(
       packets.length,
       deadlineMs,

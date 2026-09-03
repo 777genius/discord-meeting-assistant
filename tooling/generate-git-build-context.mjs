@@ -12,8 +12,8 @@ const provenancePath = join(buildRoot, "meeting-platform-build-provenance.json")
 function execute(file, args, options = {}) {
   return new Promise((fulfill, reject) => {
     execFile(file, args, { maxBuffer: 32 * 1024 * 1024, ...options }, (error, stdout) => {
-      if (error === null) fulfill(stdout);
-      else reject(error);
+      if (error === null) {fulfill(stdout);}
+      else {reject(error);}
     });
   });
 }
@@ -27,7 +27,7 @@ export async function generateGitBuildContext(destination) {
     cwd: repositoryRoot,
     encoding: "utf8",
   });
-  if (status.length !== 0) throw new Error("Git build context requires a clean checkout");
+  if (status.length !== 0) {throw new Error("Git build context requires a clean checkout");}
   await mkdir(buildRoot, { recursive: true });
   const temporary = await mkdtemp(join(buildRoot, ".git-context-"));
   try {
