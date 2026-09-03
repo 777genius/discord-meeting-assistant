@@ -878,3 +878,4 @@ describe("recording ingress lifecycle safety", () => {
     ).toThrow(expect.objectContaining({ failure: "path-policy" }));
   });
 });
+/* oxlint-disable max-lines -- integration fixture intentionally covers full ingress lifecycle */

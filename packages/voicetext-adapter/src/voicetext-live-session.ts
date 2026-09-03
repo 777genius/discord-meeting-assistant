@@ -51,20 +51,14 @@ export class LiveSession implements VoicetextLiveSession {
     private readonly options: ValidatedVoicetextLiveTranscriptionOptions,
   ) {
     this.transcriptEmitter = new VoicetextLiveTranscriptEmitter(request, this.timeline);
-    request.signal?.addEventListener("abort", () => {
-      this.terminate();
-    }, { once: true });
+    request.signal?.addEventListener("abort", () => { this.terminate(); }, { once: true });
   }
 
   public async start(): Promise<void> {
     const config: VoicetextConfigMessage = {
       capabilities: ["finalize_ack"],
       channels: 1,
-      client_session_id: stableLiveSessionUuid(
-        this.request.idempotencyKey,
-        this.request.meetingId,
-        this.request.speakerId,
-      ),
+      client_session_id: stableLiveSessionUuid(this.request.idempotencyKey, this.request.meetingId, this.request.speakerId),
       encoding: "opus",
       ...(this.options.keyterms.length === 0 ? {} : { keyterms: this.options.keyterms }),
       language: this.options.language,
@@ -75,25 +69,14 @@ export class LiveSession implements VoicetextLiveSession {
       type: "config",
     };
     await this.socket.sendText(JSON.stringify(config), this.abortController.signal);
-    const readySignal = createVoicetextLiveOperationSignal(
-      this.request.signal,
-      this.options.readyTimeoutMs,
-    );
+    const readySignal = createVoicetextLiveOperationSignal(this.request.signal, this.options.readyTimeoutMs);
     for (;;) {
       const frame = await this.socket.receive(readySignal);
       if (frame.type === "close") {
-        throw new VoicetextAdapterError(
-          "transport_error",
-          "Voicetext closed before the live session became ready",
-          true,
-        );
+        throw new VoicetextAdapterError("transport_error", "Voicetext closed before the live session became ready", true);
       }
       if (frame.type !== "text") {
-        throw new VoicetextAdapterError(
-          "protocol_error",
-          "Voicetext returned a binary live protocol frame",
-          false,
-        );
+        throw new VoicetextAdapterError("protocol_error", "Voicetext returned a binary live protocol frame", false);
       }
       const message = parseServerMessage(
         frame.data,

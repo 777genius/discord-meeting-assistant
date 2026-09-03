@@ -71,11 +71,11 @@ describe("S3RecordingPlaybackAudioReader", () => {
     const result = await reader.read({ artifact, range: { end: 5, start: 2 } });
 
     expect(await collect(result.body)).toEqual([2, 3, 4, 5]);
-    expect((send.mock.calls[0]?.[0] as HeadObjectCommand).input).toMatchObject({
+    expect((send.mock.calls[0]![0] as HeadObjectCommand).input).toMatchObject({
       ChecksumMode: "ENABLED",
       VersionId: "version-1",
     });
-    expect((send.mock.calls[1]?.[0] as GetObjectCommand).input).toMatchObject({
+    expect((send.mock.calls[1]![0] as GetObjectCommand).input).toMatchObject({
       IfMatch: '"etag-1"',
       Range: "bytes=2-5",
       VersionId: "version-1",

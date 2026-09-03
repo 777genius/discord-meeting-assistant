@@ -2,7 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve as pathResolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -19,7 +19,7 @@ function execute(file, args, options = {}) {
 }
 
 export async function generateGitBuildContext(destination) {
-  const destinationPath = resolve(destination);
+  const destinationPath = pathResolve(destination);
   if (dirname(destinationPath) !== buildRoot) {
     throw new Error("Git build context destination must be a direct child of .build");
   }
@@ -48,7 +48,7 @@ export async function generateGitBuildContext(destination) {
   return destinationPath;
 }
 
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+if (pathResolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
   if (process.argv.length !== 3) {
     throw new Error("usage: generate-git-build-context.mjs <.build/destination>");
   }

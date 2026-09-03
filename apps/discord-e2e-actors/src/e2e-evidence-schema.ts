@@ -352,7 +352,8 @@ export const retainedE2eEvidenceV10Schema = z.union([
     value.deployment.meetingPlatform.sourceRevision) {
     context.addIssue({ code: "custom", message: "V10 durability proof is bound to another source revision" });
   }
-  if (value.qualificationKind === "voice") {
+  const validateVoiceGrounding = (): void => {
+    if (value.qualificationKind !== "voice") { return; }
     const grounded = value.conversation.lifecycle.groundedAnswers.filter(
       (observation) => observation.status === "validated",
     );
@@ -375,23 +376,24 @@ export const retainedE2eEvidenceV10Schema = z.union([
         receipt.ttsAttestation === undefined)) {
       context.addIssue({ code: "custom", message: "V10 voice evidence requires one cited grounded answer with complete TTS attestation" });
     }
-    const preparedWithoutAsset = value.conversation.lifecycle.playbackReceipts.some(
-      (receipt) => receipt.playbackKind === "prepared-cue" &&
-        receipt.preparedAssetSha256 === undefined,
-    );
-    const ttsAttestations = receipts.map((receipt) => JSON.stringify(receipt.ttsAttestation));
-    const pipecatDeployment = value.deployment.pipecat?.composeService;
-    const pipecatSourceRevision = value.deployment.pipecat?.sourceRevision;
-    if (preparedWithoutAsset || pipecatDeployment === undefined ||
-      pipecatSourceRevision === undefined || receipts.some((receipt) =>
-        receipt.ttsAttestation?.deployment !== pipecatDeployment ||
-        receipt.ttsAttestation.sourceRevision !== pipecatSourceRevision ||
-        receipt.ttsAttestation.attemptId !== receipt.playbackAttemptId ||
-        receipt.ttsAttestation.turnId !== receipt.turnId) ||
-      new Set(ttsAttestations).size !== 1) {
-      context.addIssue({ code: "custom", message: "V10 voice playback provenance must be versioned and fail closed" });
-    }
-  }
+    const validatePlaybackProvenance = (): void => {
+      const preparedWithoutAsset = value.conversation.lifecycle.playbackReceipts.some(
+        (receipt) => receipt.playbackKind === "prepared-cue" && receipt.preparedAssetSha256 === undefined,
+      );
+      const ttsAttestations = receipts.map((receipt) => JSON.stringify(receipt.ttsAttestation));
+      const pipecatDeployment = value.deployment.pipecat?.composeService;
+      const pipecatSourceRevision = value.deployment.pipecat?.sourceRevision;
+      if (preparedWithoutAsset || pipecatDeployment === undefined || pipecatSourceRevision === undefined ||
+        receipts.some((receipt) => receipt.ttsAttestation?.deployment !== pipecatDeployment ||
+          receipt.ttsAttestation.sourceRevision !== pipecatSourceRevision ||
+          receipt.ttsAttestation.attemptId !== receipt.playbackAttemptId ||
+          receipt.ttsAttestation.turnId !== receipt.turnId) || new Set(ttsAttestations).size !== 1) {
+        context.addIssue({ code: "custom", message: "V10 voice playback provenance must be versioned and fail closed" });
+      }
+    };
+    validatePlaybackProvenance();
+  };
+  validateVoiceGrounding();
 });
 export const retainedE2eEvidenceSchema = z.union([retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema, retainedE2eEvidenceV4Schema, retainedE2eEvidenceV5Schema,

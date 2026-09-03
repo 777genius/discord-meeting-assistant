@@ -158,13 +158,7 @@ export async function createPlatformDiscordLiveComposition(input: {
     });
   }
   const groundedAnswers = createVoiceGroundedAnswers(input, discord);
-  const conversation = await createLiveConversationResources({
-    config: input.config,
-    ...(groundedAnswers === undefined ? {} : { groundedAnswers }),
-    logger: input.logger,
-    playback: craigPlaybackGateway,
-    ...(conversationRuntime === undefined ? {} : { runtime: conversationRuntime }),
-  });
+  const conversation = await createConversationResources(input, groundedAnswers, craigPlaybackGateway, conversationRuntime);
   const live = createLiveRuntime({
     config: input.config,
     ...(conversation.coordinator === undefined
@@ -282,6 +276,21 @@ export async function createPlatformDiscordLiveComposition(input: {
     ...(live === undefined ? {} : { live }),
     rawPublisher,
   };
+}
+
+async function createConversationResources(
+  input: Parameters<typeof createPlatformDiscordLiveComposition>[0],
+  groundedAnswers: ReturnType<typeof createVoiceGroundedAnswers>,
+  playback: CraigPlaybackGateway,
+  runtime: GrpcPipecatConversationRuntime | undefined,
+) {
+  return createLiveConversationResources({
+    config: input.config,
+    ...(groundedAnswers === undefined ? {} : { groundedAnswers }),
+    logger: input.logger,
+    playback,
+    ...(runtime === undefined ? {} : { runtime }),
+  });
 }
 
 function createInstallUrls(config: PlatformConfig): {

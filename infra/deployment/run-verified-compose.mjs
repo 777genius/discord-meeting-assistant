@@ -2,7 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, open, readFile, rename, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve as pathResolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { deploymentIdentityFromEnvFile } from "./generate-build-provenance.mjs";
@@ -61,7 +61,7 @@ function assertEqual(actual, expected, label) {
 function assertLocalBuildContext(rendered, name, expectedContext, provenance) {
   const service = requiredService(rendered, name);
   const build = requiredRecord(service.build, `${name} build`);
-  assertEqual(resolve(String(build.context)), expectedContext, `${name} build context`);
+  assertEqual(pathResolve(String(build.context)), expectedContext, `${name} build context`);
   if (provenance !== undefined) {
     assertEqual(build.labels?.["org.opencontainers.image.revision"], provenance.releaseRevision, `${name} build revision`);
     assertEqual(build.labels?.["org.opencontainers.image.source-tree"], provenance.sourceTree, `${name} source tree`);
