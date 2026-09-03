@@ -6,6 +6,7 @@ import {
   PersistedFocusedMemoryRetrievalV2,
   PrepareFocusedLocatorRetrievalV2Request,
   buildHistoricalIndexPlan,
+  type FocusedMemoryRetrievalResult,
   type FocusedLocatorRetrievalV2Port,
   type FocusedMemoryRetrievalPort,
   type HistoricalAuthorizationPort,
@@ -159,7 +160,7 @@ describe("focused retrieval candidate and lane isolation", () => {
         .toEqual({ schemaVersion: 1, status: "unavailable" });
       await expect(composite(async () => ({
         malformed: true, schemaVersion: 1, status: "low_coverage",
-      }), indexedCurrent).retrieve(input)).resolves
+      } as unknown as FocusedMemoryRetrievalResult), indexedCurrent).retrieve(input)).resolves
         .toEqual({ schemaVersion: 1, status: "unavailable" });
       await expect(composite(async () => ({ schemaVersion: 1, status: "stale" }),
         indexedCurrent).retrieve(input)).resolves
@@ -219,11 +220,11 @@ describe("focused retrieval candidate and lane isolation", () => {
         historicalSource: { candidateLocator: "range-specific", indexGeneration: "index",
           releaseId: "release" }, sourceEndCodePoint: 4, sourceStartCodePoint: 0 });
       const memory = composite(async () => ({ authorityGeneration: "generation",
-        candidates: [local, local, localSecond], schemaVersion: 1, status: "current" }),
+        candidates: [local, localSecond], schemaVersion: 1, status: "current" }),
       async () => ({
         authorityGeneration: "historical", candidates: [{ ...local,
           historicalSource: { candidateLocator: "duplicate", indexGeneration: "index",
-            releaseId: "release" } }, indexedOnly, indexedOnly, rangedLocal, { ...localSecond,
+            releaseId: "release" } }, indexedOnly, rangedLocal, { ...localSecond,
           historicalSource: { candidateLocator: "duplicate-second",
             indexGeneration: "index", releaseId: "release" } }, indexedSecond],
         schemaVersion: 1, status: "current",

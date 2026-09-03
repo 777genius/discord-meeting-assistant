@@ -534,7 +534,10 @@ describe("ProcessFinalReplyJob answer generation", () => {
     phrase,
   ) => {
     const { generator, memory, processor, publication } = processingFixture();
-    memory.result = { schemaVersion: 1, status: memoryStatus };
+    memory.result = memoryStatus === "low_coverage"
+      ? { authorityGeneration: authority.memoryGeneration, schemaVersion: 1,
+          status: memoryStatus }
+      : { schemaVersion: 1, status: memoryStatus };
 
     await expect(processor.executeOnce()).resolves.toMatchObject({ outcome });
     expect(generator.requests).toEqual([]);
