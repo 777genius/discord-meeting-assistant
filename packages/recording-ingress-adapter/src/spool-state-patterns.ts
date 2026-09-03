@@ -4,7 +4,7 @@ import type { StoredAuthoritativeTrack } from "./spool-state.js";
 export const immutableProducerRevision = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 export const sha256Pattern = /^[0-9a-f]{64}$/u;
 // Unicode escapes keep this intentional control-character check lint-safe.
-export const controlCharacterPattern = {
+const controlCharacterPattern = {
   test(value: string): boolean {
     for (const character of value) {
       const code = character.codePointAt(0) ?? 0;

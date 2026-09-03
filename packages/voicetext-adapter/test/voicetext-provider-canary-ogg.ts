@@ -1,6 +1,6 @@
 const maximumOpusPacketDurationSamples = 5_760;
 
-export interface ExtractedOpusPacket {
+interface ExtractedOpusPacket {
   readonly durationSamples48Khz: number;
   readonly opus: Uint8Array;
   readonly relativeTimeMs: number;
@@ -129,7 +129,7 @@ function parsePage(bytes: Uint8Array, offset: number): OggPage {
   };
 }
 
-export function opusPacketDurationSamples(packet: Uint8Array): number {
+function opusPacketDurationSamples(packet: Uint8Array): number {
   const toc = packet[0];
   if (toc === undefined) {
     throw new Error("Opus packet is empty");

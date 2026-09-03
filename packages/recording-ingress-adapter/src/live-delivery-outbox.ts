@@ -39,7 +39,7 @@ interface DeliveredRecord {
 
 type OutboxRecord = PendingRecord | DeliveredRecord;
 
-export function durableLivePacketIdentity(packet: {
+function durableLivePacketIdentity(packet: {
   readonly mediaTimestamp: number;
   readonly recordingId: string;
   readonly relativeTimeMs: number;

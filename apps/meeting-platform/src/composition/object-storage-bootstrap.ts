@@ -91,7 +91,7 @@ async function secret(path: string | undefined, name: string): Promise<string> {
   return value;
 }
 
-export async function runObjectStorageBootstrap(environment = process.env): Promise<void> {
+async function runObjectStorageBootstrap(environment = process.env): Promise<void> {
   const bucket = environment.S3_BUCKET;
   const endpoint = environment.S3_ENDPOINT;
   const region = environment.S3_REGION;
