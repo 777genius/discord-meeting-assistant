@@ -11,6 +11,7 @@ import { z } from "zod";
 
 const snowflakeSchema = z.string().regex(/^\d{17,20}$/u);
 const markerSchema = z.string().trim().min(1).max(256);
+const effectIdSchema = z.string().trim().min(1).max(512);
 const reconciliationPageSize = 100;
 const reconciliationPageLimit = 10;
 const answerPayloadSchema = z.object({
@@ -122,6 +123,10 @@ function markerUrl(marker: string): string {
   return `https://discord-meeting.invalid/knowledge-answer/${sha256(marker)}`;
 }
 
+function nonceForEffect(effectId: string): string {
+  return sha256(effectIdSchema.parse(effectId)).slice(0, 25);
+}
+
 function withoutDeliveryContainer(
   binding: AnswerPublicationBinding,
 ): Omit<AnswerPublicationBinding, "deliveryContainerId"> {
@@ -185,6 +190,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
   public async create(input: {
     readonly authorityScopeId: string;
     readonly deliveryContainerId: string;
+    readonly effectId: string;
     readonly marker: string;
     readonly payloadBytes: string;
     readonly projectionTargetContainerId: string;
@@ -193,6 +199,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
     snowflakeSchema.parse(input.authorityScopeId);
     snowflakeSchema.parse(input.projectionTargetContainerId);
     const payload = answerPayloadSchema.parse(JSON.parse(input.payloadBytes) as unknown);
+    const nonce = nonceForEffect(input.effectId);
     if (
       payload.embeds[0]?.url !== markerUrl(markerSchema.parse(input.marker)) ||
       payload.message_reference.channel_id !== input.deliveryContainerId ||
@@ -203,7 +210,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
     const response = await this.rest.post(
       Routes.channelMessages(input.deliveryContainerId),
       {
-        body: payload,
+        body: { ...payload, enforce_nonce: true, nonce },
       },
     );
     return z.object({ id: snowflakeSchema }).loose().parse(response).id;

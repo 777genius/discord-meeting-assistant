@@ -246,10 +246,12 @@ export class PostgresFocusedMemoryRetrieval
   public async retrieve(
     input: Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0],
   ): Promise<FocusedMemoryRetrievalResult> {
+    input.signal?.throwIfAborted();
     if (!validRetrievalInput(input)) {
       return { schemaVersion: 1, status: "unavailable" };
     }
     try {
+      input.signal?.throwIfAborted();
       const unavailable = await this.pool.query<{ readonly unavailable: boolean }>(
         `
           SELECT EXISTS (
@@ -263,11 +265,13 @@ export class PostgresFocusedMemoryRetrieval
       if (unavailable.rows[0]?.unavailable === true) {
         return { schemaVersion: 1, status: "unavailable" };
       }
+      input.signal?.throwIfAborted();
       const authority = await loadCurrentReplyAuthority(
         this.pool,
         input.meetingId,
         this.botApplicationIdentity,
       );
+      input.signal?.throwIfAborted();
       if (authority === null || !authorityMatchesRetrieval(authority, input)) {
         return { schemaVersion: 1, status: "stale" };
       }
@@ -285,15 +289,15 @@ export class PostgresFocusedMemoryRetrieval
         (turn.startMs < interval.endMs && turn.endMs > interval.startMs)
       );
       if (queryTerms(input.question).size === 0) {
-        return { schemaVersion: 1, status: "low_coverage" };
+        return { authorityGeneration: authority.binding.memoryGeneration, schemaVersion: 1, status: "low_coverage" };
       }
       const matches = exactLexicalMatches(humanTurns, input.question);
       if (matches.length === 0) {
-        return { schemaVersion: 1, status: "low_coverage" };
+        return { authorityGeneration: authority.binding.memoryGeneration, schemaVersion: 1, status: "low_coverage" };
       }
       const selected = selectExactLexicalTurns(matches, input.maximumCandidates);
       if (selected.length === 0 || selected.length >= canonicalHumanTurns.length) {
-        return { schemaVersion: 1, status: "low_coverage" };
+        return { authorityGeneration: authority.binding.memoryGeneration, schemaVersion: 1, status: "low_coverage" };
       }
       const requestDigest = digestJson({
         hardFilters: input.hardFilters ?? null,
@@ -322,6 +326,7 @@ export class PostgresFocusedMemoryRetrieval
         status: "current",
       });
     } catch {
+      input.signal?.throwIfAborted();
       return { schemaVersion: 1, status: "unavailable" };
     }
   }

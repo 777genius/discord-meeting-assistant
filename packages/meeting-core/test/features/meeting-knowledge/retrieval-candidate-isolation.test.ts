@@ -100,7 +100,7 @@ function composite(
 }
 
 describe("focused retrieval candidate and lane isolation", () => {
-  it("fails the batch for any rejected lane while accepting a proven empty lane",
+  it("preserves history for an empty current lane while failing invalid lanes",
     async () => {
       const meeting = makeMeeting({ meetingId: "history", turns: markerTurn("fact") });
       const store = new AppliedStore([{ binding: meeting.binding,
@@ -140,6 +140,27 @@ describe("focused retrieval candidate and lane isolation", () => {
         .toEqual({ schemaVersion: 1, status: "unavailable" });
       await expect(composite(unavailableLane, unavailableLane).retrieve(input)).resolves
         .toEqual({ schemaVersion: 1, status: "unavailable" });
+      await expect(composite(async () => ({
+        authorityGeneration: "current-generation", candidates: [],
+        schemaVersion: 1, status: "current",
+      }), indexedCurrent).retrieve(input)).resolves.toMatchObject({
+        authorityGeneration: "current-generation", candidates: [indexed],
+        status: "current",
+      });
+      await expect(composite(async () => ({
+        authorityGeneration: "current-generation", schemaVersion: 1, status: "low_coverage",
+      }), indexedCurrent).retrieve(input)).resolves.toMatchObject({
+        authorityGeneration: "current-generation", candidates: [indexed],
+        status: "current",
+      });
+      await expect(composite(async () => ({
+        authorityGeneration: "wrong-generation", schemaVersion: 1, status: "low_coverage",
+      }), indexedCurrent).retrieve(input)).resolves
+        .toEqual({ schemaVersion: 1, status: "unavailable" });
+      await expect(composite(async () => ({
+        malformed: true, schemaVersion: 1, status: "low_coverage",
+      }), indexedCurrent).retrieve(input)).resolves
+        .toEqual({ schemaVersion: 1, status: "unavailable" });
       await expect(composite(async () => ({ schemaVersion: 1, status: "stale" }),
         indexedCurrent).retrieve(input)).resolves
         .toEqual({ schemaVersion: 1, status: "stale" });
@@ -148,6 +169,25 @@ describe("focused retrieval candidate and lane isolation", () => {
         schemaVersion: 1, status: "current",
       })).retrieve(input)).resolves
         .toMatchObject({ candidates: [local], status: "current" });
+      await expect(composite(async () => ({
+        authorityGeneration: "wrong-generation", candidates: [local],
+        schemaVersion: 1, status: "current",
+      }), indexedCurrent).retrieve(input)).resolves
+        .toEqual({ schemaVersion: 1, status: "unavailable" });
+      await expect(composite(async () => ({ schemaVersion: 1, status: "pending" }),
+        indexedCurrent).retrieve(input)).resolves
+        .toEqual({ schemaVersion: 1, status: "pending" });
+      const preAbort = new AbortController();
+      preAbort.abort(new Error("pre-abort"));
+      let preAbortCalls = 0;
+      await expect(composite(async () => { preAbortCalls += 1; return localCurrent(input); }, indexedCurrent)
+        .retrieve({ ...input, signal: preAbort.signal })).rejects.toThrow("pre-abort");
+      expect(preAbortCalls).toBe(0);
+      const hung = new Promise<never>(() => {});
+      const cancellation = new AbortController();
+      const pending = composite(async () => hung, indexedCurrent).retrieve({ ...input, signal: cancellation.signal });
+      cancellation.abort(new Error("hung lane cancelled"));
+      await expect(pending).rejects.toThrow("hung lane cancelled");
       const controller = new AbortController();
       controller.abort(new Error("cancelled composite retrieval"));
       await expect(composite(localCurrent, indexedCurrent).retrieve({
@@ -164,16 +204,26 @@ describe("focused retrieval candidate and lane isolation", () => {
       const local = Object.freeze({ meetingId: "current-meeting",
         transcriptId: "transcript-current", transcriptVersion: 1,
         turnHash: "a".repeat(64), turnId: "turn-current" });
+      const localSecond = Object.freeze({ ...local, turnHash: "c".repeat(64),
+        turnId: "turn-current-second" });
       const indexedOnly = Object.freeze({ historicalSource: {
         candidateLocator: "locator-history", indexGeneration: "index-history",
         releaseId: "release-history" }, meetingId: "history-meeting",
       transcriptId: "transcript-history", transcriptVersion: 1,
       turnHash: "b".repeat(64), turnId: "turn-history" });
+      const indexedSecond = Object.freeze({ ...indexedOnly,
+        historicalSource: { ...indexedOnly.historicalSource,
+          candidateLocator: "locator-history-second" },
+        turnHash: "d".repeat(64), turnId: "turn-history-second" });
       const memory = composite(async () => ({ authorityGeneration: "generation",
-        candidates: [local], schemaVersion: 1, status: "current" }), async () => ({
+        candidates: [local, local, localSecond], schemaVersion: 1, status: "current" }),
+      async () => ({
         authorityGeneration: "historical", candidates: [{ ...local,
           historicalSource: { candidateLocator: "duplicate", indexGeneration: "index",
-            releaseId: "release" } }, indexedOnly], schemaVersion: 1, status: "current",
+            releaseId: "release" } }, indexedOnly, indexedOnly, { ...localSecond,
+          historicalSource: { candidateLocator: "duplicate-second",
+            indexGeneration: "index", releaseId: "release" } }, indexedSecond],
+        schemaVersion: 1, status: "current",
       }));
       const result = await memory.retrieve({ authorizationPrincipalRef: "principal",
         canonicalEvidenceHash: "c".repeat(64), expectedAuthorityGeneration: "generation",
@@ -184,7 +234,9 @@ describe("focused retrieval candidate and lane isolation", () => {
           request, retrievalPath: "infinity_locator_v2" }, roomId: "room-1",
         scopeId: "scope-1", transcriptId: local.transcriptId, transcriptVersion: 1 });
 
-      expect(result).toMatchObject({ candidates: [local, indexedOnly], status: "current" });
+      expect(result).toMatchObject({
+        candidates: [local, indexedOnly, localSecond, indexedSecond], status: "current",
+      });
     });
 
   it("isolates stale, missing, oversized, and bad-provenance candidates in order",

@@ -23,6 +23,8 @@ import type { HistoricalRoomAuthoritySnapshotPort } from
 import type { FocusedMemoryRetrievalPort,
   FocusedMemoryRetrievalResult } from
   "./ports/final-reply.js";
+import { decodeFocusedMemoryRetrievalResult } from
+  "./ports/focused-memory-contract.js";
 import { HistoricalFocusedLocatorRetrievalV2 } from
   "./focused-locator-historical-rehydration-v2.js";
 
@@ -262,39 +264,53 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
 
   public async retrieve(input: Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0]):
   Promise<FocusedMemoryRetrievalResult> {
+    input.signal?.throwIfAborted();
     const binding = input.retrievalBinding;
     if (binding?.retrievalPath !== "infinity_locator_v2" ||
       input.authorizationPrincipalRef === undefined) {
       return unavailable();
     }
-    const [currentLane, historicalLane] = await Promise.allSettled([
-      this.dependencies.current.retrieve(input),
-      this.dependencies.historical.retrieve({
+    const invoke = <T>(lane: () => Promise<T>): Promise<T> => {
+      input.signal?.throwIfAborted();
+      return lane();
+    };
+    const [currentLane, historicalLane] = await settleWithAbort(Promise.allSettled([
+      invoke(() => this.dependencies.current.retrieve(input)),
+      invoke(() => this.dependencies.historical.retrieve({
         authorizationPrincipalRef: input.authorizationPrincipalRef,
         currentMeetingId: input.meetingId,
         request: binding.request,
         roomId: input.roomId,
         scopeId: input.scopeId,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
-      }),
-    ]);
-    input.signal?.throwIfAborted();
+      })),
+    ]), input.signal);
     const current = currentLane.status === "fulfilled"
-      ? currentLane.value
-      : unavailable();
+      ? decodeLane(currentLane.value)
+      : null;
     const historical = historicalLane.status === "fulfilled"
-      ? historicalLane.value
-      : unavailable();
+      ? decodeLane(historicalLane.value)
+      : null;
+    if (current === null || historical === null) {
+      return unavailable();
+    }
     // The local lane owns the bound current authority. Its explicit stale or
     // pending result cannot be repaired with historical evidence.
     if (current.status === "stale" || current.status === "pending") {
       return current;
     }
-    if (current.status !== "current" || historical.status !== "current") {
+    if (historical.status !== "current" ||
+      (current.status !== "current" && current.status !== "low_coverage")) {
+      return unavailable();
+    }
+    if (current.authorityGeneration !== input.expectedAuthorityGeneration) {
       return unavailable();
     }
     const maximum = Math.min(input.maximumCandidates, 256);
-    const currentCandidates = current.candidates;
+    // Local low coverage is established only after the current adapter's
+    // authority fence. It contributes no candidates; it does not erase valid
+    // evidence from the independently authorized historical lane.
+    const currentCandidates = current.status === "current" ? current.candidates : [];
     const historicalCandidates = historical.candidates;
     const candidates = interleave(currentCandidates, historicalCandidates, maximum);
     return candidates.length === 0 ? unavailable() : Object.freeze({
@@ -314,34 +330,39 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
   }
 }
 
-function interleave(current: readonly FocusedMemoryReference[],
-  historical: readonly FocusedMemoryReference[], maximum: number):
-readonly FocusedMemoryReference[] {
+function interleave(current: readonly FocusedMemoryReference[], historical: readonly FocusedMemoryReference[], maximum: number): readonly FocusedMemoryReference[] {
+  const currentLane = dedupe(current);
+  const currentIds = new Set(currentLane.map(canonicalKey));
+  const historicalLane = dedupe(historical).filter((candidate) => !currentIds.has(canonicalKey(candidate)));
   const output: FocusedMemoryReference[] = [];
-  const admitted = new Set<string>();
-  for (let index = 0; output.length < maximum &&
-      (index < current.length || index < historical.length); index += 1) {
-    const local = current[index];
-    const remote = historical[index];
-    if (local !== undefined && admitCanonical(local, admitted)) {
-      output.push(local);
-    }
-    if (remote !== undefined && output.length < maximum &&
-      admitCanonical(remote, admitted)) {
-      output.push(remote);
-    }
+  for (let index = 0; output.length < maximum && (index < currentLane.length || index < historicalLane.length); index += 1) {
+    if (currentLane[index] !== undefined) output.push(currentLane[index]!);
+    if (historicalLane[index] !== undefined && output.length < maximum) output.push(historicalLane[index]!);
   }
   return Object.freeze(output);
 }
+function canonicalKey(reference: FocusedMemoryReference): string {
+  return [reference.meetingId, reference.transcriptId, reference.transcriptVersion, reference.turnId].join("\u0000");
+}
+function dedupe(references: readonly FocusedMemoryReference[]): FocusedMemoryReference[] {
+  const seen = new Set<string>();
+  return references.filter((reference) => { const key = canonicalKey(reference); if (seen.has(key)) return false; seen.add(key); return true; });
+}
 
-function admitCanonical(reference: FocusedMemoryReference, admitted: Set<string>): boolean {
-  const key = [reference.meetingId, reference.transcriptId,
-    reference.transcriptVersion, reference.turnId].join("\u0000");
-  if (admitted.has(key)) {
-    return false;
+function decodeLane(value: unknown): FocusedMemoryRetrievalResult | null {
+  try {
+    return decodeFocusedMemoryRetrievalResult(value);
+  } catch {
+    return null;
   }
-  admitted.add(key);
-  return true;
+}
+
+async function settleWithAbort<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return operation;
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_, reject) => { onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError")); signal.addEventListener("abort", onAbort, { once: true }); });
+  try { return await Promise.race([operation, aborted]); } finally { signal.removeEventListener("abort", onAbort); }
 }
 
 function unavailable(): FocusedMemoryRetrievalResult {

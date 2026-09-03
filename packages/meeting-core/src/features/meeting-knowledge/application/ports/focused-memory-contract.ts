@@ -84,6 +84,11 @@ export function decodeFocusedMemoryRetrievalResult(
     );
   }
   const status = input.status;
+  if (status === "low_coverage") {
+    assertOnlyKeys(input, new Set(["authorityGeneration", "schemaVersion", "status"]),
+      "focused memory result");
+    return Object.freeze({ authorityGeneration: requireKnowledgeText(input.authorityGeneration as string, "authorityGeneration", 512), schemaVersion: focusedMemoryContractVersion, status: "low_coverage" });
+  }
   if (typeof status === "string" && terminalStatuses.has(status)) {
     assertOnlyKeys(
       input,
@@ -93,7 +98,6 @@ export function decodeFocusedMemoryRetrievalResult(
     return Object.freeze({
       schemaVersion: focusedMemoryContractVersion,
       status: status as
-        | "low_coverage"
         | "pending"
         | "stale"
         | "unavailable",
@@ -119,12 +123,6 @@ export function decodeFocusedMemoryRetrievalResult(
     throw new MeetingKnowledgeInvariantError(
       "INVALID_GROUNDING_PLAN",
       "focused memory result requires at most 256 priority candidate references",
-    );
-  }
-  if (input.candidates.length === 0) {
-    throw new MeetingKnowledgeInvariantError(
-      "INVALID_GROUNDING_PLAN",
-      "focused memory result has neither priority nor complete current evidence",
     );
   }
   const candidates = decodeCandidates(input.candidates, "candidates");

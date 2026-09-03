@@ -177,7 +177,7 @@ describe("PostgreSQL focused current-meeting memory", () => {
       ...input,
       question: "Meteorological zephyr calibration?",
     });
-    expect(noHit).toEqual({ schemaVersion: 1, status: "low_coverage" });
+    expect(noHit).toEqual({ authorityGeneration: input.expectedAuthorityGeneration, schemaVersion: 1, status: "low_coverage" });
   });
 
   it("abstains instead of selecting every turn from a nominally small transcript", async () => {
@@ -186,6 +186,7 @@ describe("PostgreSQL focused current-meeting memory", () => {
 
     await expect(new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
       .retrieve(input)).resolves.toEqual({
+        authorityGeneration: input.expectedAuthorityGeneration,
         schemaVersion: 1,
         status: "low_coverage",
       });
@@ -334,8 +335,12 @@ describe("PostgreSQL focused current-meeting memory", () => {
     })).resolves.toEqual({ schemaVersion: 1, status: "stale" });
     await expect(retrieval.retrieve({
       ...russian.input,
+      scopeId: "wrong-scope",
+    })).resolves.toEqual({ schemaVersion: 1, status: "stale" });
+    await expect(retrieval.retrieve({
+      ...russian.input,
       question: "Meteorological zephyr calibration?",
-    })).resolves.toEqual({ schemaVersion: 1, status: "low_coverage" });
+    })).resolves.toEqual({ authorityGeneration: russian.input.expectedAuthorityGeneration, schemaVersion: 1, status: "low_coverage" });
   });
 
   it("selects multi-hop evidence at the start, quarter, and end without returning corpus text", async () => {
@@ -511,7 +516,7 @@ describe("PostgreSQL bounded canonical exact lexical fallback", () => {
     const { input } = retrievalInput(snapshot, "Кто утвердил бюджет запуска?");
 
     await expect(new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
-      .retrieve(input)).resolves.toEqual({ schemaVersion: 1, status: "low_coverage" });
+      .retrieve(input)).resolves.toEqual({ authorityGeneration: input.expectedAuthorityGeneration, schemaVersion: 1, status: "low_coverage" });
   });
 
   it("keeps matching current evidence speaker/time-diverse within the bound", async () => {

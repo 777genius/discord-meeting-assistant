@@ -126,9 +126,13 @@ export type FocusedMemoryRetrievalResult =
       readonly status: "current";
     }
   | {
+      readonly authorityGeneration: string;
+      readonly schemaVersion: 1;
+      readonly status: "low_coverage";
+    }
+  | {
       readonly schemaVersion: 1;
       readonly status:
-        | "low_coverage"
         | "pending"
         | "stale"
         | "unavailable";

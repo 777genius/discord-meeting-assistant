@@ -36,7 +36,6 @@ const transitions = Object.freeze({
   request_started: Object.freeze([
     "delivered",
     "outcome_unknown",
-    "request_started",
     "retraction_pending",
   ]),
   reserved: Object.freeze(["cancelled", "claimed", "rejected_before_request", "reserved"]),
