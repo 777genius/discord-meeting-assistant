@@ -532,4 +532,3 @@ try {
   await queue.close();
 }
 `;
-/* oxlint-disable max-lines -- script fixture embeds complete deployment probe */

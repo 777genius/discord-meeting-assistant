@@ -844,4 +844,3 @@ function campaignProofFor(conversation: ReturnType<typeof retainedV8Evidence>["c
     planDigestSha256,
   };
 }
-/* oxlint-disable max-lines -- end-to-end collector fixture exercises complete evidence graph */
