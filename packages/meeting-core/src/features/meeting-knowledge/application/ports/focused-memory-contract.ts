@@ -18,14 +18,10 @@ import { decodeFocusedRetrievalAudit, retrievalAuditsBindInput } from
 export const focusedMemoryContractVersion = 1 as const;
 function focusedMemoryReferenceKey(reference: FocusedMemoryReference): string {
   return [
-    reference.historicalSource?.releaseId ?? "current",
-    reference.historicalSource?.indexGeneration ?? "current",
-    reference.historicalSource?.candidateLocator ?? "current",
     reference.meetingId,
     reference.transcriptId,
     reference.transcriptVersion,
     reference.turnId,
-    reference.turnHash,
     reference.sourceStartCodePoint ?? "whole",
     reference.sourceEndCodePoint ?? "whole",
   ].join("\u0000");

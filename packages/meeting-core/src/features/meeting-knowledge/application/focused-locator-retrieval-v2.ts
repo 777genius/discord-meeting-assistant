@@ -27,6 +27,7 @@ import { decodeFocusedMemoryRetrievalResult } from
   "./ports/focused-memory-contract.js";
 import { HistoricalFocusedLocatorRetrievalV2 } from
   "./focused-locator-historical-rehydration-v2.js";
+import { deduplicateEvidenceTurns } from "./grounded-question-internals.js";
 
 export { HistoricalFocusedLocatorRetrievalV2 } from
   "./focused-locator-historical-rehydration-v2.js";
@@ -249,9 +250,15 @@ export class FocusedHistoricalEvidenceV2 implements FocusedHistoricalEvidenceV2P
       scopeId: input.scopeId,
       signal: input.signal,
     });
-    return result.status !== "current" ? result : Object.freeze({
+    if (result.status !== "current") {return result;}
+    const canonicalTurns = [...deduplicateEvidenceTurns(result.turns, {
+      meetingId: input.currentMeetingId,
+      transcriptId: `live-memory-v1:${input.currentMeetingId}`,
+      transcriptVersion: 1,
+    }).values()];
+    return Object.freeze({
       ...result,
-      turns: Object.freeze(result.turns.slice(0, input.maximumCandidates)),
+      turns: Object.freeze(canonicalTurns.slice(0, input.maximumCandidates)),
     });
   }
 }
@@ -314,6 +321,13 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
     const currentCandidates = current.status === "current" ? current.candidates : [];
     const historicalCandidates = historical.candidates;
     const candidates = interleave(currentCandidates, historicalCandidates, maximum);
+    if (candidates.length === 0 && current.status === "low_coverage") {
+      return Object.freeze({
+        authorityGeneration: current.authorityGeneration,
+        schemaVersion: 1,
+        status: "low_coverage",
+      });
+    }
     return candidates.length === 0 ? unavailable() : Object.freeze({
       authorityGeneration: current.authorityGeneration,
       candidates,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 
 import {
+  FocusedHistoricalEvidenceV2,
   HistoricalFocusedLocatorRetrievalV2,
   PersistedFocusedMemoryRetrievalV2,
   PrepareFocusedLocatorRetrievalV2Request,
@@ -155,6 +156,17 @@ describe("focused retrieval candidate and lane isolation", () => {
         status: "current",
       });
       await expect(composite(async () => ({
+        authorityGeneration: "current-generation", schemaVersion: 1,
+        status: "low_coverage",
+      }), async () => ({
+        authorityGeneration: "historical-empty", candidates: [],
+        schemaVersion: 1, status: "current",
+      })).retrieve(input)).resolves.toEqual({
+        authorityGeneration: "current-generation",
+        schemaVersion: 1,
+        status: "low_coverage",
+      });
+      await expect(composite(async () => ({
         authorityGeneration: "wrong-generation", schemaVersion: 1, status: "low_coverage",
       }), indexedCurrent).retrieve(input)).resolves
         .toEqual({ schemaVersion: 1, status: "unavailable" });
@@ -243,7 +255,126 @@ describe("focused retrieval candidate and lane isolation", () => {
         status: "current",
       });
     });
+});
 
+describe("historical locator deduplication", () => {
+  it("deduplicates overlapping historical locators before the voice candidate cap",
+    async () => {
+      const canonicalTurn = {
+        endMs: 1_000,
+        source: {
+          historicalSource: { candidateLocator: "block-first",
+            indexGeneration: "index-1", releaseId: "release-1" },
+          meetingId: "meeting-history",
+          sourceEndCodePoint: 12,
+          sourceStartCodePoint: 0,
+          transcriptId: "transcript-history",
+          transcriptVersion: 1,
+        },
+        speakerId: "speaker",
+        startMs: 0,
+        text: "shared range",
+        turnHash: "a".repeat(64),
+        turnId: "turn-shared",
+      } as const;
+      const distinct = {
+        ...canonicalTurn,
+        source: { ...canonicalTurn.source,
+          historicalSource: { ...canonicalTurn.source.historicalSource,
+            candidateLocator: "block-distinct" },
+          sourceEndCodePoint: 27,
+          sourceStartCodePoint: 13 },
+        text: "distinct range",
+        turnHash: "b".repeat(64),
+      } as const;
+      const evidence = new FocusedHistoricalEvidenceV2({
+        admission: { prepare: async () => ({ status: "prepared" }) } as unknown as
+          PrepareFocusedLocatorRetrievalV2Request,
+        retrieval: { retrieveEvidence: async () => ({
+          authorityGeneration: "historical-generation",
+          status: "current" as const,
+          turns: [canonicalTurn, {
+            ...canonicalTurn,
+            source: { ...canonicalTurn.source,
+              historicalSource: { ...canonicalTurn.source.historicalSource,
+                candidateLocator: "block-overlap" } },
+          }, distinct],
+        }) } as unknown as HistoricalFocusedLocatorRetrievalV2,
+      });
+
+      const result = await evidence.retrieve({
+        authorizationPrincipalRef: "principal",
+        currentMeetingId: "current-meeting",
+        maximumCandidates: 2,
+        question: "What changed?",
+        roomId: "room-1",
+        scopeId: "scope-1",
+        signal: new AbortController().signal,
+      });
+
+      expect(result).toMatchObject({ status: "current" });
+      if (result.status === "current") {
+        expect(result.turns).toEqual([canonicalTurn, distinct]);
+      }
+
+      const meeting = makeMeeting({ meetingId: "history", turns: markerTurn("fact") });
+      const store = new AppliedStore([{ binding: meeting.binding,
+        plan: buildHistoricalIndexPlan(meeting, new TestIds()), remoteDocumentIds: {} }]);
+      const request = await requestFor(store);
+      const firstReference = {
+        historicalSource: canonicalTurn.source.historicalSource,
+        meetingId: canonicalTurn.source.meetingId,
+        sourceEndCodePoint: canonicalTurn.source.sourceEndCodePoint,
+        sourceStartCodePoint: canonicalTurn.source.sourceStartCodePoint,
+        transcriptId: canonicalTurn.source.transcriptId,
+        transcriptVersion: canonicalTurn.source.transcriptVersion,
+        turnHash: canonicalTurn.turnHash,
+        turnId: canonicalTurn.turnId,
+      };
+      const overlappingReference = { ...firstReference,
+        historicalSource: { ...firstReference.historicalSource,
+          candidateLocator: "block-overlap" } };
+      const distinctReference = { ...firstReference,
+        historicalSource: distinct.source.historicalSource,
+        sourceEndCodePoint: distinct.source.sourceEndCodePoint,
+        sourceStartCodePoint: distinct.source.sourceStartCodePoint,
+        turnHash: distinct.turnHash };
+      const compositeResult = await composite(async () => ({
+        authorityGeneration: "current-generation", candidates: [],
+        schemaVersion: 1, status: "current",
+      }), async () => ({
+        authorityGeneration: "historical-generation",
+        candidates: [firstReference, overlappingReference, distinctReference],
+        schemaVersion: 1,
+        status: "current",
+      })).retrieve({
+        authorizationPrincipalRef: "principal",
+        canonicalEvidenceHash: "c".repeat(64),
+        expectedAuthorityGeneration: "current-generation",
+        finalProjectionReceipt: "receipt",
+        maximumCandidates: 2,
+        meetingId: "current-meeting",
+        meetingRevision: 1,
+        neighborTurns: 0,
+        projectionTargetContainerId: "container",
+        question: "What changed?",
+        retrievalBinding: { cutoverEpoch: "epoch",
+          profileFingerprint: "d".repeat(64), request,
+          retrievalPath: "infinity_locator_v2" },
+        roomId: "room-1",
+        scopeId: "scope-1",
+        transcriptId: "current-transcript",
+        transcriptVersion: 1,
+      });
+
+      expect(compositeResult).toMatchObject({
+        candidates: [firstReference, distinctReference],
+        status: "current",
+      });
+    });
+});
+
+describe("focused retrieval candidate isolation edge cases", () => {
   it("isolates stale, missing, oversized, and bad-provenance candidates in order",
     async () => {
       const meetings = [

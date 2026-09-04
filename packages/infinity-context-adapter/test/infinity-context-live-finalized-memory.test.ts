@@ -165,6 +165,33 @@ describe("Infinity finalized-live-memory ACL", () => {
       .toEqual(["delete", "reconcile"]);
   });
 
+  it("deletes an exact active unprocessed document without attempting processing", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    endpoint.failNextDocumentProcess();
+    const memory = adapter(endpoint);
+
+    await expect(memory.upsert(projection())).resolves.toMatchObject({
+      status: "outcome_unknown",
+    });
+    expect(endpoint.documentCount()).toBe(1);
+    const processRequestsBeforeRemoval = endpoint.requests.filter(({ method, path }) =>
+      method === "POST" && path.endsWith("/process")
+    ).length;
+    endpoint.failNextDocumentProcess();
+
+    await expect(memory.reconcileRemoval(projection())).resolves.toEqual({
+      status: "not_found",
+    });
+    await expect(memory.remove(projection())).resolves.toEqual({ status: "applied" });
+
+    expect(endpoint.documentCount()).toBe(0);
+    expect(endpoint.requests.filter(({ method, path }) =>
+      method === "POST" && path.endsWith("/process")
+    )).toHaveLength(processRequestsBeforeRemoval);
+    expect(endpoint.exactDocumentRequests.map(({ operation }) => operation))
+      .toEqual(["reconcile", "delete"]);
+  });
+
   it.each([100, 101, 2_209])(
     "reconciles, restarts and retires %i exact documents to zero without scoped-list loops",
     async (count) => {

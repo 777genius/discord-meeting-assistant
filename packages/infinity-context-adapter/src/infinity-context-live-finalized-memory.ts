@@ -231,14 +231,38 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     projection: LiveFinalizedMemoryProjectionV1,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<LiveFinalizedMemoryProjectionResultV1> {
-    const result = await this.reconcile(projection, options);
-    if (result.status === "applied") {
+    if (!validProjection(projection)) {
+      return rejected("memory.invalid_live_projection");
+    }
+    const exactDocuments = this.#exactDocuments;
+    if (exactDocuments === undefined) {
+      return rejected("memory.live_exact_reconciliation_unavailable");
+    }
+    const topology = this.topology(projection);
+    const identity = this.exactIdentity(projection, topology);
+    const operation = new InfinityOperationDeadline(
+      this.#operationTimeoutMs,
+      options.signal,
+    );
+    try {
+      const response = await operation.request(this.#requestTimeoutMs, (signal) =>
+        exactDocuments.reconcileExactDocument({ ...identity, signal })
+      );
+      if (response.status === "absent") {
+        return { status: "applied" };
+      }
+      if (!matchesExactIdentity(response, identity) ||
+        response.remoteDocumentId.length === 0) {
+        throw new InfinityContextAdapterContractError(
+          "live memory exact removal reconciliation returned conflicting ownership",
+        );
+      }
       return { status: "not_found" };
+    } catch (error) {
+      return failure(error, "outcome_unknown");
+    } finally {
+      operation.close();
     }
-    if (result.status === "not_found") {
-      return { status: "applied" };
-    }
-    return result;
   }
 
   public async remove(
