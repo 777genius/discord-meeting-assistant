@@ -1,5 +1,6 @@
 import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rename, symlink, writeFile } from
+  "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,7 +18,7 @@ describe("installed quality campaign corpus admission", () => {
     const fixture = await createFixture();
     const statusPath = join(fixture.root, "status.json");
     await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
-      statusPath] })).resolves.toBe(0);
+      statusPath], corpusAdmissionClock: fixedClock() })).resolves.toBe(0);
 
     const status = await json(statusPath) as { digests: { campaignRootSha256: string } };
     const executionPath = join(fixture.outputRoot, "execution-corpus.json");
@@ -38,6 +39,14 @@ describe("installed quality campaign corpus admission", () => {
     expect(gold.signerKeyId).toBe(fixture.keyIds.gold_relevance);
     expect(gold.signerKeyId).not.toBe(fixture.custodyAuthority.keyId);
     expect(gold.payload.entries).toHaveLength(240);
+    const locatorInventory = await json(join(fixture.outputRoot, "locator-inventory.json")) as {
+      payload: { locatorIds: string[] } };
+    expect(locatorInventory.payload.locatorIds).toContain(sha256("distractor:0"));
+    const forbiddenEvidence = await json(join(fixture.outputRoot, "forbidden-locators.json")) as {
+      payload: Record<string, unknown> };
+    expect(forbiddenEvidence.payload).toMatchObject({ forbiddenLocatorIds:
+      expect.any(Array), schemaVersion: "meeting_knowledge.semantic_quality_forbidden_locators.v2" });
+    expect(forbiddenEvidence.payload).not.toHaveProperty("entries");
     const first = await artifactBytes(fixture.outputRoot);
 
     const secondOutputRoot = join(fixture.root, "prepared-second");
@@ -47,7 +56,7 @@ describe("installed quality campaign corpus admission", () => {
     const secondPhasePath = join(fixture.root, "phase-second.json");
     await writeFile(secondPhasePath, canonicalJson(secondPhase));
     await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", secondPhasePath,
-      join(fixture.root, "status-second.json")] })).resolves.toBe(0);
+      join(fixture.root, "status-second.json")], corpusAdmissionClock: fixedClock() })).resolves.toBe(0);
     expect(await artifactBytes(secondOutputRoot)).toEqual(first);
   });
 
@@ -55,7 +64,7 @@ describe("installed quality campaign corpus admission", () => {
     async () => {
       for (const mutation of ["tamper", "hash", "unsigned", "count", "duplicate", "version",
         "scope", "path", "auth-version", "auth-disabled", "auth-expired", "symlink",
-        "duplicate-json"] as const) {
+        "authority-symlink", "duplicate-json", "array-overlap", "nested-overlap"] as const) {
         const fixture = await createFixture();
         const phase = await json(fixture.phasePath) as { payload: Record<string, unknown>;
           schemaVersion: string };
@@ -116,22 +125,202 @@ describe("installed quality campaign corpus admission", () => {
           const targetPath = `${corpusPath}.target`;
           await rename(corpusPath, targetPath);
           await symlink(targetPath, corpusPath);
-        } else {
+        } else if (mutation === "authority-symlink") {
+          const authorityPath = String(phase.payload.custodyAuthorityPath);
+          const authorityDocument = await json(authorityPath) as { publicKeyPath: string };
+          const targetPath = `${authorityDocument.publicKeyPath}.target`;
+          await rename(authorityDocument.publicKeyPath, targetPath);
+          await symlink(targetPath, authorityDocument.publicKeyPath);
+        } else if (mutation === "duplicate-json") {
           const corpusPath = String(phase.payload.sealedCorpusPath);
           const bytes = await readFile(corpusPath, "utf8");
           await writeFile(corpusPath,
             `{"schemaVersion":"meeting_knowledge.semantic_quality_sealed_corpus.v1",${bytes.slice(1)}`);
+        } else if (mutation === "array-overlap") {
+          const paths = phase.payload.questionReviewReceiptPaths as string[];
+          phase.payload.questionReviewReceiptPaths = [paths[0], paths[0]];
+          await writeFile(fixture.phasePath, canonicalJson(phase));
+        } else {
+          phase.payload.authorityPolicyPath = join(String(phase.payload.sealedCorpusPath), "nested");
+          await writeFile(fixture.phasePath, canonicalJson(phase));
         }
         await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
-          join(fixture.root, `status-${mutation}.json`)] })).resolves.toBe(1);
+          join(fixture.root, `status-${mutation}.json`)], corpusAdmissionClock: fixedClock() }))
+          .resolves.toBe(1);
       }
     });
 });
 
-async function createFixture() {
+describe("quality campaign corpus admission filesystem hardening", () => {
+  it("rejects 101 global forbidden locators at the same bound used by evidence validation",
+    async () => {
+      const fixture = await createFixture(101);
+      await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
+        join(fixture.root, "status.json")], corpusAdmissionClock: fixedClock() })).resolves.toBe(1);
+      await expect(lstat(fixture.outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+  it("allows many turns per source block but rejects one turn mapped to two blocks", async () => {
+    const fixture = await createFixture(12, true);
+    await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
+      join(fixture.root, "status.json")], corpusAdmissionClock: fixedClock() })).resolves.toBe(1);
+  });
+
+  it("rejects duplicate phase JSON and symlinks in phase or authority ancestors", async () => {
+    for (const mutation of ["duplicate-phase", "duplicate-policy", "phase-ancestor",
+      "authority-ancestor"] as const) {
+      const fixture = await createFixture();
+      let phasePath = fixture.phasePath;
+      if (mutation === "duplicate-phase") {
+        const bytes = await readFile(phasePath, "utf8");
+        await writeFile(phasePath, bytes.replace("{", "{\"schemaVersion\":\"duplicate\","));
+      } else if (mutation === "duplicate-policy") {
+        const phase = await json(phasePath) as { payload: Record<string, unknown> };
+        const policyPath = String(phase.payload.authorityPolicyPath);
+        const bytes = await readFile(policyPath, "utf8");
+        await writeFile(policyPath, bytes.replace("{", "{\"artifact_custody\":\"duplicate\","));
+      } else if (mutation === "phase-ancestor") {
+        const actual = join(fixture.root, "actual-phase-parent");
+        await mkdir(actual); await rename(phasePath, join(actual, "phase.json"));
+        const linked = join(fixture.root, "linked-phase-parent"); await symlink(actual, linked);
+        phasePath = join(linked, "phase.json");
+      } else {
+        const phase = await json(phasePath) as { payload: Record<string, unknown> };
+        const policyPath = String(phase.payload.authorityPolicyPath);
+        const actual = join(fixture.root, "actual-policy-parent"); await mkdir(actual);
+        await rename(policyPath, join(actual, "policy.json"));
+        const linked = join(fixture.root, "linked-policy-parent"); await symlink(actual, linked);
+        phase.payload.authorityPolicyPath = join(linked, "policy.json");
+        await writeFile(phasePath, canonicalJson(phase));
+      }
+      await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", phasePath,
+        join(fixture.root, `status-${mutation}.json`)], corpusAdmissionClock: fixedClock() }))
+        .resolves.toBe(1);
+      await expect(lstat(fixture.outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  it("uses the trusted runtime epoch and binds it into the completion marker", async () => {
+    const expired = await createFixture();
+    const phase = await json(expired.phasePath) as { payload: Record<string, unknown> };
+    phase.payload.admissionEpochMs = 0;
+    await writeFile(expired.phasePath, canonicalJson(phase));
+    await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", expired.phasePath,
+      join(expired.root, "expired-status.json")], corpusAdmissionClock: fixedClock(2_000_000) }))
+      .resolves.toBe(1);
+    await expect(lstat(expired.outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    delete phase.payload.admissionEpochMs; await writeFile(expired.phasePath, canonicalJson(phase));
+    await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", expired.phasePath,
+      join(expired.root, "expired-status-2.json")], corpusAdmissionClock: fixedClock(2_000_000) }))
+      .resolves.toBe(1);
+
+    const admitted = await createFixture();
+    await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", admitted.phasePath,
+      join(admitted.root, "status.json")], corpusAdmissionClock: fixedClock(1_234_567) }))
+      .resolves.toBe(0);
+    await expect(json(join(admitted.outputRoot, "corpus-admission-manifest.json")))
+      .resolves.toMatchObject({ authorizationComparisonEpochMs: 1_234_567,
+        completionState: "complete" });
+  });
+
+  it("rejects swapped purpose receipts and wrong actual-dataset digests", async () => {
+    for (const mutation of ["swapped", "wrong-digest"] as const) {
+      const fixture = await createFixture();
+      const phase = await json(fixture.phasePath) as { payload: Record<string, unknown> };
+      if (mutation === "swapped") {
+        const mapping = phase.payload.turnToBlockManifestPath;
+        phase.payload.turnToBlockManifestPath = phase.payload.forbiddenLocatorManifestPath;
+        phase.payload.forbiddenLocatorManifestPath = mapping;
+        await writeFile(fixture.phasePath, canonicalJson(phase));
+      } else {
+        const path = String(phase.payload.turnToBlockManifestPath);
+        const receipt = await json(path) as { payload: Record<string, unknown> };
+        receipt.payload.turnMappingsSha256 = sha256("unrelated mapping entries");
+        await writeFile(path, canonicalJson(fixture.signCustody(receipt.payload)));
+      }
+      await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
+        join(fixture.root, `status-${mutation}.json`)], corpusAdmissionClock: fixedClock() }))
+        .resolves.toBe(1);
+      await expect(lstat(fixture.outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  it("publishes create-only under collisions and concurrent races", async () => {
+    for (const collision of ["directory", "symlink", "ancestor"] as const) {
+      const fixture = await createFixture();
+      if (collision === "directory") {await mkdir(fixture.outputRoot);}
+      else if (collision === "symlink") {
+        await symlink(join(fixture.root, "missing-target"), fixture.outputRoot);
+      } else {
+        const phase = await json(fixture.phasePath) as { payload: Record<string, unknown> };
+        const actual = join(fixture.root, "actual-output-parent"); await mkdir(actual);
+        const linked = join(fixture.root, "linked-output-parent"); await symlink(actual, linked);
+        phase.payload.outputRoot = join(linked, "prepared");
+        await writeFile(fixture.phasePath, canonicalJson(phase));
+      }
+      await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
+        join(fixture.root, `status-${collision}.json`)], corpusAdmissionClock: fixedClock() }))
+        .resolves.toBe(1);
+    }
+    const fixture = await createFixture();
+    const outcomes = await Promise.all(["one", "two"].map(async (suffix) =>
+      await runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
+        join(fixture.root, `status-race-${suffix}.json`)], corpusAdmissionClock: fixedClock() })));
+    expect(outcomes.toSorted()).toEqual([0, 1]);
+    expect(await json(join(fixture.outputRoot, "corpus-admission-manifest.json")))
+      .toMatchObject({ completionState: "complete" });
+  });
+
+  it("prevalidates status custody and preserves a valid corpus across ambiguous retry", async () => {
+    for (const mutation of ["collision", "output-root", "inside", "symlink-parent",
+      "unwritable"] as const) {
+      const fixture = await createFixture();
+      let statusPath: string;
+      if (mutation === "collision") {statusPath = fixture.phasePath;}
+      else if (mutation === "output-root") {statusPath = fixture.outputRoot;}
+      else if (mutation === "inside") {statusPath = join(fixture.outputRoot, "status.json");}
+      else {
+        const actual = join(fixture.root, `status-parent-${mutation}`); await mkdir(actual);
+        if (mutation === "symlink-parent") {
+          const linked = join(fixture.root, "linked-status-parent"); await symlink(actual, linked);
+          statusPath = join(linked, "status.json");
+        } else {await chmod(actual, 0o500); statusPath = join(actual, "status.json");}
+      }
+      await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
+        statusPath], corpusAdmissionClock: fixedClock() })).resolves.toBe(1);
+      await expect(lstat(fixture.outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+
+    const fixture = await createFixture(); const statusPath = join(fixture.root, "status.json");
+    await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
+      statusPath], corpusAdmissionClock: fixedClock() })).resolves.toBe(0);
+    const before = await artifactBytes(fixture.outputRoot);
+    await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
+      statusPath], corpusAdmissionClock: fixedClock() })).resolves.toBe(1);
+    expect(await artifactBytes(fixture.outputRoot)).toEqual(before);
+  });
+
+  it("rejects partial publication until its durable completion marker is recovered", async () => {
+    const fixture = await createFixture(); const statusPath = join(fixture.root, "status.json");
+    await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
+      statusPath], corpusAdmissionClock: fixedClock() })).resolves.toBe(0);
+    const status = await json(statusPath) as { digests: { campaignRootSha256: string } };
+    const marker = join(fixture.outputRoot, "corpus-admission-manifest.json");
+    const retainedMarker = join(fixture.root, "retained-completion.json"); await rename(marker,
+      retainedMarker);
+    const load = () => loadProductionExecutionCorpus({ authority: fixture.custodyAuthority,
+      campaignRootSha256: status.digests.campaignRootSha256, expectedQuestionCount: 240,
+      executionPacketPath: join(fixture.outputRoot, "execution-corpus.json") });
+    await expect(load()).rejects.toThrow(/completion manifest/u);
+    await rename(retainedMarker, marker);
+    await expect(load()).resolves.toHaveLength(240);
+  });
+});
+
+async function createFixture(forbiddenCount = 12, inconsistentTurnMapping = false) {
   const root = await mkdtemp(join(tmpdir(), "quality-corpus-admission-test-"));
   const inputRoot = join(root, "inputs");
-  await import("node:fs/promises").then(({ mkdir }) => mkdir(inputRoot));
+  await mkdir(inputRoot);
   const authorities: Record<string, Awaited<ReturnType<typeof authority>>> = {};
   for (const role of QUALITY_AUTHORITY_ROLES) {authorities[role] = await authority(inputRoot, role);}
   const policyPath = join(inputRoot, "policy.json");
@@ -155,11 +344,21 @@ async function createFixture() {
       expectedClaims: answerable ? [`claim-${index}`] : [], forbiddenClaims: [], questionId,
       speakerTimeAuthority: answerable ? [{ endMs: index * 100 + 50, speakerId: "speaker-1",
         startMs: index * 100 }] : [] };
-    return { execution, forbiddenLocatorIds: [sha256(`forbidden:${index}`)], gold };
+    return { execution, gold };
   });
-  const corpus = { entries, releaseRootSha256, reviewerDigestSha256,
+  const forbiddenLocatorIds = Array.from({ length: forbiddenCount }, (_, index) =>
+    sha256(`global-forbidden:${index}`));
+  const turnMappings = entries.flatMap(({ gold }, index) => [
+    ...gold.evidenceLocators.map((sourceLocatorId) => ({ sourceLocatorId, turnId: `turn-${index}` })),
+    { sourceLocatorId: sha256(`distractor:${index}`), turnId: `distractor-turn-${index}` },
+  ]);
+  turnMappings.push({ sourceLocatorId: entries[1]!.gold.evidenceLocators[0]!,
+    turnId: "second-turn-in-the-same-source-block" });
+  if (inconsistentTurnMapping) {turnMappings.push({ sourceLocatorId: sha256("another-block"),
+    turnId: "turn-1" });}
+  const corpus = { entries, forbiddenLocatorIds, releaseRootSha256, reviewerDigestSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_sealed_corpus.v1",
-    snapshotSha256, sourceDigestSha256 };
+    snapshotSha256, sourceDigestSha256, turnMappings };
   const sealedCorpusPath = join(inputRoot, "sealed-corpus.json");
   await writeFile(sealedCorpusPath, canonicalJson(corpus));
   const questions = entries.map(({ execution, gold }) => ({ locale: execution.locale,
@@ -185,15 +384,19 @@ async function createFixture() {
   const reviewPaths = await Promise.all((["reviewer_1", "reviewer_2"] as const).map(
     async (role) => {const path = join(inputRoot, `${role}-review.json`);
       await writeFile(path, canonicalJson(authorities[role]!.signed(reviewPayload))); return path;}));
-  const locatorPayload = { entriesSha256: sha256("entries"), releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1", snapshotSha256 };
+  const mappingPayload = { turnMappingsSha256: sha256({ dataset: turnMappings,
+    purpose: "turn_to_source_locator_authority" }), releaseRootSha256,
+  schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1", snapshotSha256 };
+  const forbiddenPayload = { forbiddenLocatorSetSha256: sha256({ dataset: forbiddenLocatorIds,
+    purpose: "global_forbidden_locator_authority" }), releaseRootSha256,
+  schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1", snapshotSha256 };
   const mappingPath = join(inputRoot, "mapping.json");
   const forbiddenPath = join(inputRoot, "forbidden.json");
-  await writeFile(mappingPath, canonicalJson(custody.signed(locatorPayload)));
-  await writeFile(forbiddenPath, canonicalJson(custody.signed(locatorPayload)));
+  await writeFile(mappingPath, canonicalJson(custody.signed(mappingPayload)));
+  await writeFile(forbiddenPath, canonicalJson(custody.signed(forbiddenPayload)));
   const phasePath = join(root, "phase.json");
   const outputRoot = join(root, "prepared");
-  const phase = { payload: { acceptanceReceiptPath: acceptancePath, admissionEpochMs: 1_000_000,
+  const phase = { payload: { acceptanceReceiptPath: acceptancePath,
     authorityPolicyPath: policyPath, custodyAuthorityPath: custody.authorityPath,
     executionAuthorizationPath: authorizationPath, executionSignerPath: custody.signerPath,
     forbiddenLocatorManifestPath: forbiddenPath,
@@ -210,6 +413,8 @@ async function createFixture() {
       [role, value.keyId])) as Record<string, string>, outputRoot, phasePath, root,
     signCustody: custody.signed };
 }
+
+function fixedClock(nowEpochMs = 1_000_000) {return { nowEpochMs: () => nowEpochMs };}
 
 async function authority(root: string, role: string) {
   const pair = generateKeyPairSync("ed25519");

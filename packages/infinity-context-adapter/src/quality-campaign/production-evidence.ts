@@ -346,33 +346,30 @@ export function verifyExactOutcomeAuthorities(policy: QualityCampaignAuthorityPo
   const forbiddenReceipt = verifyExternalSignedValue<Record<string, unknown>>(
     input.evidence.forbiddenLocatorReceipt, locatorAuthority.keyId,
     locatorAuthority.publicKeyPem, "authoritative forbidden locator inventory");
-  const forbiddenPayload = exactRecord(forbiddenReceipt.payload, ["campaignRootSha256", "entries",
-    "releaseRootSha256", "schemaVersion"], "authoritative forbidden locator payload");
+  const forbiddenPayload = forbiddenReceipt.payload as Record<string, unknown>;
   if (relevancePayload.schemaVersion !== "meeting_knowledge.semantic_quality_gold_relevance.v1" ||
-    forbiddenPayload.schemaVersion !==
-      "meeting_knowledge.semantic_quality_forbidden_locators.v1" ||
+    forbiddenPayload.schemaVersion !== "meeting_knowledge.semantic_quality_forbidden_locators.v1" &&
+      forbiddenPayload.schemaVersion !== "meeting_knowledge.semantic_quality_forbidden_locators.v2" ||
     relevancePayload.campaignRootSha256 !== input.campaignRootSha256 ||
     forbiddenPayload.campaignRootSha256 !== input.campaignRootSha256 ||
     relevancePayload.releaseRootSha256 !== input.releaseRootSha256 ||
     forbiddenPayload.releaseRootSha256 !== input.releaseRootSha256 ||
-    !Array.isArray(relevancePayload.entries) || !Array.isArray(forbiddenPayload.entries) ||
-    relevancePayload.entries.length !== input.questions.length ||
-    forbiddenPayload.entries.length !== input.questions.length) {
+    !Array.isArray(relevancePayload.entries) ||
+    relevancePayload.entries.length !== input.questions.length) {
     throw new Error("authoritative relevance or forbidden locator evidence is foreign or incomplete");
   }
+  const globalForbiddenLocatorIds = decodeGlobalForbiddenLocators(forbiddenPayload,
+    input.questions);
   const locatorSet = new Set(locatorIds);
   for (const [index, question] of input.questions.entries()) {
     const relevance = exactRecord(relevancePayload.entries[index], ["campaignRootSha256",
       "expectedAbstention", "locale", "questionDigestSha256", "questionId",
       "releaseRootSha256", "relevantLocatorIds", "rubricDigestSha256", "source"],
     "authoritative relevance entry");
-    const forbidden = exactRecord(forbiddenPayload.entries[index], ["campaignRootSha256",
-      "forbiddenLocatorIds", "questionDigestSha256", "questionId", "releaseRootSha256"],
-    "authoritative forbidden locator entry");
     const relevantLocatorIds = locatorArray(relevance.relevantLocatorIds,
       "authoritative relevant locator");
-    const forbiddenLocatorIds = locatorArray(forbidden.forbiddenLocatorIds,
-      "authoritative forbidden locator");
+    const forbiddenLocatorIds = globalForbiddenLocatorIds ?? decodeQuestionForbiddenLocators(
+      forbiddenPayload, index, question, input.campaignRootSha256, input.releaseRootSha256);
     const questionBinding = { locale: relevance.locale,
       questionDigestSha256: relevance.questionDigestSha256, questionId: relevance.questionId,
       rubricDigestSha256: relevance.rubricDigestSha256, source: relevance.source };
@@ -383,11 +380,8 @@ export function verifyExactOutcomeAuthorities(policy: QualityCampaignAuthorityPo
     if (canonicalJson(questionBinding) !== canonicalJson(question) ||
       relevance.campaignRootSha256 !== input.campaignRootSha256 ||
       relevance.releaseRootSha256 !== input.releaseRootSha256 ||
-      forbidden.campaignRootSha256 !== input.campaignRootSha256 ||
-      forbidden.releaseRootSha256 !== input.releaseRootSha256 ||
-      forbidden.questionId !== question.questionId ||
-      forbidden.questionDigestSha256 !== question.questionDigestSha256 ||
-      relevantLocatorIds.some((locator) => !locatorSet.has(locator))) {
+      relevantLocatorIds.some((locator) => !locatorSet.has(locator)) ||
+      forbiddenLocatorIds.some((locator) => locatorSet.has(locator))) {
       throw new Error("authoritative outcome inputs do not bind the exact sealed question");
     }
     const matching = input.evidence.outcomes.filter((outcome) =>
@@ -399,6 +393,37 @@ export function verifyExactOutcomeAuthorities(policy: QualityCampaignAuthorityPo
       throw new Error("outcome relevance or forbidden locators differ from signed authority");
     }
   }
+}
+
+function decodeGlobalForbiddenLocators(payload: Record<string, unknown>,
+  questions: readonly CampaignQuestion[]): readonly string[] | undefined {
+  if (payload.schemaVersion !== "meeting_knowledge.semantic_quality_forbidden_locators.v2") {
+    if (!Array.isArray(payload.entries) || payload.entries.length !== questions.length) {
+      throw new Error("authoritative forbidden locator evidence is incomplete");
+    }
+    return undefined;
+  }
+  const exact = exactRecord(payload, ["campaignRootSha256", "forbiddenLocatorIds",
+    "questionSetSha256", "releaseRootSha256", "schemaVersion"],
+  "authoritative global forbidden locator payload");
+  if (exact.questionSetSha256 !== sha256(questions)) {
+    throw new Error("authoritative forbidden locators bind another question set");
+  }
+  return locatorArray(exact.forbiddenLocatorIds, "authoritative forbidden locator");
+}
+
+function decodeQuestionForbiddenLocators(payload: Record<string, unknown>, index: number,
+  question: CampaignQuestion, campaignRootSha256: string,
+  releaseRootSha256: string): readonly string[] {
+  const forbidden = exactRecord((payload.entries as unknown[])[index], ["campaignRootSha256",
+    "forbiddenLocatorIds", "questionDigestSha256", "questionId", "releaseRootSha256"],
+  "authoritative forbidden locator entry");
+  if (forbidden.campaignRootSha256 !== campaignRootSha256 ||
+    forbidden.releaseRootSha256 !== releaseRootSha256 || forbidden.questionId !==
+      question.questionId || forbidden.questionDigestSha256 !== question.questionDigestSha256) {
+    throw new Error("authoritative outcome inputs do not bind the exact sealed question");
+  }
+  return locatorArray(forbidden.forbiddenLocatorIds, "authoritative forbidden locator");
 }
 
 function locatorArray(value: unknown, label: string): readonly string[] {

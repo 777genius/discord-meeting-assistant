@@ -2,12 +2,14 @@ import { exactRecord } from "./canonical.js";
 import { createOperatorSafeReceipt, runQualityCampaignOperatorCli, type OperatorExit } from
   "./operator-cli.js";
 import { runQualityCampaignProductionComposition } from "./production-composition.js";
-import { admitSealedQualificationCorpus } from "./production-corpus-admission.js";
+import { admitSealedQualificationCorpus, type CorpusAdmissionClock } from
+  "./production-corpus-admission.js";
 import { createHttpQualityCampaignProductionPorts } from "./production-http-ports.js";
 import type { QualityCampaignProductionPorts } from "./production-ports.js";
 
 /** Installed/exported CLI. Dependency injection exists only for deterministic structural tests. */
 export async function runQualityCampaignProductionCli(input: { readonly argv: readonly string[];
+  readonly corpusAdmissionClock?: CorpusAdmissionClock;
   readonly ports?: QualityCampaignProductionPorts;
   readonly writeSafeLine?: (line: string) => void }): Promise<OperatorExit> {
   const phasePath = input.argv[1]; const statusPath = input.argv[2];
@@ -20,7 +22,8 @@ export async function runQualityCampaignProductionCli(input: { readonly argv: re
           "meeting_knowledge.semantic_quality_corpus_admission_phase.v1") {
           throw new Error("corpus admission phase input is invalid");
         }
-        const admitted = await admitSealedQualificationCorpus(phaseInput.payload);
+        const admitted = await admitSealedQualificationCorpus(phaseInput.payload,
+          input.corpusAdmissionClock ?? { nowEpochMs: () => Date.now() });
         return { blockers: [], command, receipt: createOperatorSafeReceipt(
           admitted.campaignRootSha256, { ...admitted }), status: "completed" };
       }

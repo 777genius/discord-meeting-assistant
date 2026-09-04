@@ -1,8 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
 
@@ -12,9 +13,12 @@ import { attemptIdentity, canonicalJson, DurableAttemptJournal, executeReservedE
   verifySpendReservation } from "../src/quality-campaign/index.js";
 import { qualificationProviderAccountingFixture } from
   "./quality-campaign-provider-accounting-fixture.js";
+import { ProductionCheckpointStore } from
+  "../src/quality-campaign/production-checkpoints.js";
 
 const digest = (value: string) => value.repeat(64);
 const campaignRootSha256 = digest("1"), provider = "pinned-provider";
+const tsxLoaderPath = fileURLToPath(new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url));
 
 function fixture() {
   const signers = Object.fromEntries(QUALITY_AUTHORITY_ROLES.map((role) => {
@@ -97,16 +101,19 @@ it("admits one same-attempt exchange across two process-barrier participants", a
 const c=JSON.parse(await readFile(process.argv[2],"utf8")); const api=await import(c.sourceUrl);
 const policy=new api.QualityCampaignAuthorityPolicy(c.authorityPins);
 process.send({type:"ready"}); await new Promise(resolve=>process.once("message",resolve));
+const journal=new api.DurableAttemptJournal(c.journalRoot,policy);
 const state=await api.executeReservedExchange({campaignRootSha256:c.campaignRootSha256,
 deadlineEpochMs:c.deadlineEpochMs,effectReservation:{requestedEncryptedBytes:1,requestedTokens:1},
-identity:c.attempt,journal:new api.DurableAttemptJournal(c.journalRoot,policy),nowEpochMs:1000,
+identity:c.attempt,journal,nowEpochMs:1000,
 port:{exchange:async()=>{await appendFile(c.callsPath,"call\\n");process.send({type:"effect"});
 await new Promise(resolve=>process.once("message",resolve));return {effect:"unknown"};}},
 provider:c.provider,release:c.release,request:Buffer.from(c.attempt.questionId),
 signal:new AbortController().signal,spendReservation:c.spendReservation});
+await journal.close();
 process.send({state,type:"result"});process.disconnect();\n`);
   const participants = [0, 1].map(() => controlledChild(spawn(process.execPath,
-    ["--import", "tsx/esm", childPath, configPath], { stdio: ["ignore", "ignore", "pipe", "ipc"] })));
+    ["--import", tsxLoaderPath, childPath, configPath],
+    { stdio: ["ignore", "ignore", "pipe", "ipc"] })));
   await Promise.all(participants.map((participant) => participant.take("ready")));
   for (const participant of participants) {participant.child.send({ type: "start" });}
   const winner = await Promise.race(participants.map(async (participant) => {
@@ -118,7 +125,7 @@ process.send({state,type:"result"});process.disconnect();\n`);
   expect((await winner.take("result")).state).toBe("outcome_unknown");
   await Promise.all(participants.map((participant) => participant.take("exit")));
   expect((await readFile(callsPath, "utf8")).trim().split("\n")).toHaveLength(1);
-}, 30_000);
+}, 60_000);
 
 it("publishes complete identical reservations across 64 same-process barrier races", async () => {
   const value = fixture();
@@ -136,13 +143,15 @@ it("publishes complete identical reservations across 64 same-process barrier rac
     const providerRelease = new Promise<void>((resolve) => {releaseProvider = resolve;});
     const participate = async () => {
       readyCount += 1; if (readyCount === 2) {reportReady();} await start;
-      return await executeReservedExchange({ campaignRootSha256, deadlineEpochMs: 1_500,
+      const journal = new DurableAttemptJournal(root, value.policy);
+      try {return await executeReservedExchange({ campaignRootSha256, deadlineEpochMs: 1_500,
         effectReservation: { requestedEncryptedBytes: 1, requestedTokens: 1 }, identity: attempt,
-        journal: new DurableAttemptJournal(root, value.policy), nowEpochMs: 1_000,
+        journal, nowEpochMs: 1_000,
         port: { exchange: async () => {providerCalls += 1; reportProvider();
           await providerRelease; return { effect: "unknown" as const };} }, provider,
         release: value.release, request: Buffer.from(attempt.questionId),
-        signal: new AbortController().signal, spendReservation });
+        signal: new AbortController().signal, spendReservation });}
+      finally {await journal.close();}
     };
     const participants = [participate(), participate()];
     await ready; releaseStart(); await providerEntered;
@@ -150,8 +159,8 @@ it("publishes complete identical reservations across 64 same-process barrier rac
     releaseProvider();
     expect(await Promise.all(participants)).toEqual(["outcome_unknown", "outcome_unknown"]);
     expect(providerCalls).toBe(1);
-    const reservation = JSON.parse(await readFile(join(root, attempt.attemptId,
-      "reserved.json"), "utf8")) as { readonly state: string };
+    const reservation = JSON.parse(await readFile(join(root,
+      `${attempt.attemptId}.reserved.json`), "utf8")) as { readonly state: string };
     expect(reservation.state).toBe("provider_reserved");
   }
 }, 60_000);
@@ -162,16 +171,177 @@ it("ignores a crash-left unpublished temp reservation", async () => {
       resolver: 0, retrieval: 0 } });
   const attempt = identity(value.releaseRootSha256, sha256(spendReservation), "stale-temp-question");
   const root = await mkdtemp(join(tmpdir(), "quality-stale-temp-"));
-  const attemptRoot = join(root, attempt.attemptId); await mkdir(attemptRoot, { recursive: true });
-  await writeFile(join(attemptRoot, ".reserved.json.crash.tmp"), "partial");
+  await writeFile(join(root, `.${attempt.attemptId}.reserved.json.crash.tmp`), "partial");
+  const journal = new DurableAttemptJournal(root, value.policy);
   const state = await executeReservedExchange({ campaignRootSha256, deadlineEpochMs: 1_500,
     effectReservation: { requestedEncryptedBytes: 1, requestedTokens: 1 }, identity: attempt,
-    journal: new DurableAttemptJournal(root, value.policy), nowEpochMs: 1_000,
+    journal, nowEpochMs: 1_000,
     port: { exchange: async () => ({ effect: "unknown" as const }) }, provider,
     release: value.release, request: Buffer.from(attempt.questionId),
     signal: new AbortController().signal, spendReservation });
   expect(state).toBe("outcome_unknown");
-  expect(await readdir(attemptRoot)).toContain("reserved.json");
+  expect(await readdir(root)).toContain(`${attempt.attemptId}.reserved.json`);
+  await journal.close();
+}, 30_000);
+
+it("fails closed on truncated, over-limit, and symlink-substituted journal records", async () => {
+  const value = fixture();
+  for (const attack of ["truncated", "over-limit", "symlink"] as const) {
+    const spendReservation = value.makeSpend({ maxCalls: 1, maxCallsByKind: {
+      adjudicator_1: 0, adjudicator_2: 0, answer: 1, capability: 0,
+      resolver: 0, retrieval: 0 } });
+    const attempt = identity(value.releaseRootSha256, sha256(spendReservation), `hostile-${attack}`);
+    const root = await mkdtemp(join(tmpdir(), "quality-hostile-journal-"));
+    const journal = new DurableAttemptJournal(root, value.policy);
+    const request = Buffer.from(attempt.questionId);
+    expect(await executeReservedExchange({ campaignRootSha256, deadlineEpochMs: 1_500,
+      effectReservation: { requestedEncryptedBytes: 1, requestedTokens: 1 }, identity: attempt,
+      journal, nowEpochMs: 1_000, port: { exchange: async () => ({ effect: "unknown" as const }) },
+      provider, release: value.release, request, signal: new AbortController().signal,
+      spendReservation })).toBe("outcome_unknown");
+    const reservationPath = join(root, `${attempt.attemptId}.reserved.json`);
+    if (attack === "truncated") {await writeFile(reservationPath, "{");}
+    else if (attack === "over-limit") {await writeFile(reservationPath, Buffer.alloc(8_000_001, 0x20));}
+    else {
+      const retained = join(root, `${attempt.attemptId}.retained-reserved.json`);
+      await rename(reservationPath, retained); await symlink(retained, reservationPath);
+    }
+    expect(await journal.recoveredState({ identity: attempt, release: value.release,
+      requestDigestSha256: sha256(request) })).toBe("blocked_evidence");
+    await journal.close();
+  }
+}, 30_000);
+
+it("pins the journal root descriptor across a pathname symlink swap", async () => {
+  const value = fixture(); const spendReservation = value.makeSpend({ maxCalls: 1,
+    maxCallsByKind: { adjudicator_1: 0, adjudicator_2: 0, answer: 1, capability: 0,
+      resolver: 0, retrieval: 0 } });
+  const attempt = identity(value.releaseRootSha256, sha256(spendReservation), "root-swap-question");
+  const parent = await mkdtemp(join(tmpdir(), "quality-root-swap-"));
+  const root = join(parent, "journal"); await mkdir(root, { mode: 0o700 });
+  const journal = new DurableAttemptJournal(root, value.policy); const request = Buffer.from(attempt.questionId);
+  expect(await journal.recoveredState({ identity: attempt, release: value.release,
+    requestDigestSha256: sha256(request) })).toBe("never_reserved");
+  const retained = join(parent, "retained-journal"), replacement = join(parent, "replacement");
+  await rename(root, retained); await mkdir(replacement, { mode: 0o700 }); await symlink(replacement, root);
+  expect(await executeReservedExchange({ campaignRootSha256, deadlineEpochMs: 1_500,
+    effectReservation: { requestedEncryptedBytes: 1, requestedTokens: 1 }, identity: attempt,
+    journal, nowEpochMs: 1_000, port: { exchange: async () => ({ effect: "unknown" as const }) },
+    provider, release: value.release, request, signal: new AbortController().signal,
+    spendReservation })).toBe("outcome_unknown");
+  expect(await readdir(replacement)).toEqual([]);
+  expect(await readdir(retained)).toContain(`${attempt.attemptId}.reserved.json`);
+  await journal.close();
+}, 30_000);
+
+it("fails closed after a fresh journal observes root replacement or ledger truncation", async () => {
+  const value = fixture(); const spendReservation = value.makeSpend({ maxCalls: 2,
+    maxCallsByKind: { adjudicator_1: 0, adjudicator_2: 0, answer: 2, capability: 0,
+      resolver: 0, retrieval: 0 } });
+  for (const attack of ["root-replacement", "ledger-truncation"] as const) {
+    const parent = await mkdtemp(join(tmpdir(), `quality-restart-${attack}-`));
+    const root = join(parent, "journal"); const first = identity(value.releaseRootSha256,
+      sha256(spendReservation), `${attack}-first`); let providerCalls = 0;
+    const initial = new DurableAttemptJournal(root, value.policy);
+    expect(await executeReservedExchange({ campaignRootSha256, deadlineEpochMs: 1_500,
+      effectReservation: { requestedEncryptedBytes: 1, requestedTokens: 1 }, identity: first,
+      journal: initial, nowEpochMs: 1_000, port: { exchange: async () => {providerCalls += 1;
+        return { effect: "unknown" as const };} }, provider, release: value.release,
+      request: Buffer.from(first.questionId), signal: new AbortController().signal,
+      spendReservation })).toBe("outcome_unknown");
+    await initial.close();
+    if (attack === "root-replacement") {
+      await rename(root, join(parent, "retained-journal")); await mkdir(root, { mode: 0o700 });
+    } else {
+      const ledger = (await readdir(join(root, "budgets"))).find((name) => name.endsWith(".jsonl") &&
+        !name.startsWith("."));
+      if (ledger === undefined) {throw new Error("test budget ledger is missing");}
+      await writeFile(join(root, "budgets", ledger), "");
+    }
+    const resumed = new DurableAttemptJournal(root, value.policy); const second =
+      attack === "root-replacement" ? first : identity(value.releaseRootSha256,
+        sha256(spendReservation), `${attack}-second`);
+    const run = executeReservedExchange({ campaignRootSha256, deadlineEpochMs: 1_500,
+      effectReservation: { requestedEncryptedBytes: 1, requestedTokens: 1 }, identity: second,
+      journal: resumed, nowEpochMs: 1_000, port: { exchange: async () => {providerCalls += 1;
+        return { effect: "unknown" as const };} }, provider, release: value.release,
+      request: Buffer.from(second.questionId), signal: new AbortController().signal,
+      spendReservation });
+    if (attack === "root-replacement") {expect(await run).toBe("blocked_evidence");
+      await expect(resumed.close()).rejects.toThrow(/attempt journal close failed/u);}
+    else {await expect(run).rejects.toThrow(/replaced or truncated/u); await resumed.close();}
+    expect(providerCalls).toBe(1);
+  }
+}, 30_000);
+
+it("does not repeat a provider effect when a fresh process resumes replaced durable state", async () => {
+  const value = fixture(); const spendReservation = value.makeSpend({ maxCalls: 2,
+    maxCallsByKind: { adjudicator_1: 0, adjudicator_2: 0, answer: 2, capability: 0,
+      resolver: 0, retrieval: 0 } });
+  for (const attack of ["root-replacement", "ledger-truncation"] as const) {
+    const parent = await mkdtemp(join(tmpdir(), `quality-process-restart-${attack}-`));
+    const root = join(parent, "journal"); const callsPath = join(parent, "calls.txt");
+    const first = identity(value.releaseRootSha256, sha256(spendReservation), `${attack}-first`);
+    const initial = new DurableAttemptJournal(root, value.policy);
+    await executeReservedExchange({ campaignRootSha256, deadlineEpochMs: 1_500,
+      effectReservation: { requestedEncryptedBytes: 1, requestedTokens: 1 }, identity: first,
+      journal: initial, nowEpochMs: 1_000, port: { exchange: async () => {
+        await writeFile(callsPath, "call\n"); return { effect: "unknown" as const };} }, provider,
+      release: value.release, request: Buffer.from(first.questionId),
+      signal: new AbortController().signal, spendReservation });
+    await initial.close();
+    if (attack === "root-replacement") {
+      await rename(root, join(parent, "retained-journal")); await mkdir(root, { mode: 0o700 });
+    } else {
+      const ledger = (await readdir(join(root, "budgets"))).find((name) => name.endsWith(".jsonl") &&
+        !name.startsWith("."));
+      if (ledger === undefined) {throw new Error("test budget ledger is missing");}
+      await writeFile(join(root, "budgets", ledger), "");
+    }
+    const second = attack === "root-replacement" ? first : identity(value.releaseRootSha256,
+      sha256(spendReservation), `${attack}-second`);
+    const childPath = join(parent, "resume-child.mjs"), configPath = join(parent, "resume.json");
+    await writeFile(configPath, canonicalJson({ authorityPins: value.pins, callsPath,
+      campaignRootSha256, identity: second, journalRoot: root, provider, release: value.release,
+      sourceUrl: new URL("../src/quality-campaign/index.ts", import.meta.url).href,
+      spendReservation }));
+    await writeFile(childPath, `import {appendFile,readFile} from "node:fs/promises";
+const c=JSON.parse(await readFile(process.argv[2],"utf8"));const api=await import(c.sourceUrl);
+const policy=new api.QualityCampaignAuthorityPolicy(c.authorityPins);
+const journal=new api.DurableAttemptJournal(c.journalRoot,policy);let state="blocked_evidence";
+try{state=await api.executeReservedExchange({campaignRootSha256:c.campaignRootSha256,
+deadlineEpochMs:1500,effectReservation:{requestedEncryptedBytes:1,requestedTokens:1},
+identity:c.identity,journal,nowEpochMs:1000,port:{exchange:async()=>{await appendFile(c.callsPath,
+"call\\n");return {effect:"unknown"};}},provider:c.provider,release:c.release,
+request:Buffer.from(c.identity.questionId),signal:new AbortController().signal,
+spendReservation:c.spendReservation});}catch{}finally{await journal.close().catch(()=>{});}
+process.stdout.write(state);`);
+    const result = await collectChild(spawn(process.execPath,
+      ["--import", tsxLoaderPath, childPath, configPath], { stdio: ["ignore", "pipe", "pipe"] }));
+    expect(result).toEqual({ code: 0, stderr: "", stdout: "blocked_evidence" });
+    expect((await readFile(callsPath, "utf8")).trim().split("\n")).toHaveLength(1);
+  }
+}, 60_000);
+
+it("closes journal and checkpoint descriptors idempotently and rejects later operations", async () => {
+  const value = fixture(); const parent = await mkdtemp(join(tmpdir(), "quality-lifecycle-"));
+  const before = (await readdir("/proc/self/fd")).length;
+  for (let index = 0; index < 32; index += 1) {
+    const journal = new DurableAttemptJournal(join(parent, `journal-${index}`), value.policy);
+    const checkpoint = new ProductionCheckpointStore(join(parent, `checkpoint-${index}`));
+    const attempt = identity(value.releaseRootSha256, digest("2"), `lifecycle-${index}`);
+    expect(await journal.recoveredState({ identity: attempt, release: value.release,
+      requestDigestSha256: sha256(Buffer.from(attempt.questionId)) })).toBe("never_reserved");
+    await checkpoint.deadline({ campaignRootSha256, nowEpochMs: 1_000 });
+    await Promise.all([journal.close(), journal.close(), checkpoint.close(), checkpoint.close()]);
+    await expect(journal.recoveredState({ identity: attempt, release: value.release,
+      requestDigestSha256: sha256(Buffer.from(attempt.questionId)) }))
+      .rejects.toThrow(/attempt journal is closed/u);
+    await expect(checkpoint.requirePhase(campaignRootSha256, "missing"))
+      .rejects.toThrow();
+  }
+  const after = (await readdir("/proc/self/fd")).length;
+  expect(after).toBeLessThanOrEqual(before + 2);
 }, 30_000);
 
 it("accepts identical terminal publishers and rejects a different create-only writer", async () => {
@@ -230,6 +400,7 @@ it("accepts identical terminal publishers and rejects a different create-only wr
   expect(results.filter(({ status }) => status === "rejected")).toHaveLength(1);
   expect(String((results.find(({ status }) => status === "rejected") as
     PromiseRejectedResult).reason)).toMatch(/create-only artifact conflicts/u);
+  await Promise.all([identical.journal.close(), conflicting.journal.close()]);
 }, 30_000);
 
 it("enforces cumulative token, encrypted-byte, and per-kind ceilings", async () => {
@@ -253,5 +424,16 @@ it("enforces cumulative token, encrypted-byte, and per-kind ceilings", async () 
         request: Buffer.from(questionId), signal: new AbortController().signal, spendReservation });
     }
     expect(providerCalls).toBe(1);
+    await journal.close();
   }
 });
+
+async function collectChild(child: ChildProcess): Promise<{
+  readonly code: number | null; readonly stderr: string; readonly stdout: string }> {
+  let stdout = "", stderr = "";
+  child.stdout?.setEncoding("utf8"); child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {stdout += chunk;});
+  child.stderr?.on("data", (chunk: string) => {stderr += chunk;});
+  const code = await new Promise<number | null>((resolve) => {child.on("exit", resolve);});
+  return { code, stderr, stdout };
+}

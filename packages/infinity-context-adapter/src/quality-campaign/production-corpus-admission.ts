@@ -1,13 +1,17 @@
+/* oxlint-disable max-lines -- offline corpus custody and its closed publication inventory stay co-located */
 import { createPrivateKey, createPublicKey, sign } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readFile, rename, rm, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { mkdir, open, type FileHandle } from "node:fs/promises";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 
 import { admitMainCampaign, MAIN_CARDINALITY, type CampaignQuestion } from "./admission.js";
 import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256, safeId, sha256 } from
   "./canonical.js";
 import { nodeCampaignAuthentication } from "./production-authentication.js";
-import { loadProductionAuthority, loadProductionAuthorityPolicy } from "./production-inputs.js";
+import { joinFromHandle, loadSecureQualityAuthority, loadSecureQualityAuthorityPolicy,
+  openQualityCampaignDirectory, readCanonicalQualityCampaignJson, readQualityCampaignBytesAt,
+  readQualityCampaignText } from
+  "./production-execution-corpus-custody.js";
 import { validateQualificationExecutionPacket, validateQualificationGoldPacket,
   type QualificationGoldPacket } from "./qualification-corpus-packets.js";
 import type { TrustedAuthorityPin } from "./release.js";
@@ -25,13 +29,11 @@ const OUTPUT_FILES = Object.freeze({
 
 interface CorpusEntry {
   readonly execution: ReturnType<typeof validateQualificationExecutionPacket>;
-  readonly forbiddenLocatorIds: readonly string[];
   readonly gold: QualificationGoldPacket;
 }
 
 interface CorpusAdmissionResult {
-  readonly campaignRootSha256: string;
-  readonly corpusAdmissionManifestSha256: string;
+  readonly campaignRootSha256: string; readonly corpusAdmissionManifestSha256: string;
   readonly executionCorpusSha256: string;
   readonly goldRelevanceSha256: string;
   readonly questionCount: number;
@@ -39,7 +41,6 @@ interface CorpusAdmissionResult {
 
 interface CorpusAdmissionPhase {
   readonly acceptanceReceiptPath: string;
-  readonly admissionEpochMs: number;
   readonly authorityPolicyPath: string;
   readonly custodyAuthorityPath: string;
   readonly executionAuthorizationPath: string;
@@ -55,12 +56,19 @@ interface CorpusAdmissionPhase {
   readonly turnToBlockManifestPath: string;
 }
 
-/** Offline-only custodian slice. It has no provider, Discord, network, clock, or environment port. */
-export async function admitSealedQualificationCorpus(value: unknown):
+export interface CorpusAdmissionClock { readonly nowEpochMs: () => number; }
+
+/** Offline-only custodian slice. Runtime time enters through the adapter-owned clock boundary. */
+export async function admitSealedQualificationCorpus(value: unknown,
+  clock: CorpusAdmissionClock):
 Promise<CorpusAdmissionResult> {
   const input = decodePhase(value);
+  const authorizationComparisonEpochMs = clock.nowEpochMs();
+  if (!Number.isSafeInteger(authorizationComparisonEpochMs) || authorizationComparisonEpochMs < 0) {
+    throw new Error("corpus admission clock is invalid");
+  }
   const paths = inputPaths(input);
-  if (new Set(paths).size !== paths.length || paths.some((path) => isInside(input.outputRoot, path))) {
+  if (pathsOverlap([...paths, input.outputRoot])) {
     throw new Error("corpus admission paths overlap or substitute an output");
   }
   const [corpusValue, acceptance, authorization, review1, review2, mapping, forbidden] =
@@ -72,9 +80,9 @@ Promise<CorpusAdmissionResult> {
       readJson(input.turnToBlockManifestPath, "turn-to-block manifest"),
       readJson(input.forbiddenLocatorManifestPath, "forbidden-locator manifest")]);
   const corpus = decodeCorpus(corpusValue, input.releaseRootSha256);
-  const policy = await loadProductionAuthorityPolicy(input.authorityPolicyPath);
-  const custody = await loadProductionAuthority(input.custodyAuthorityPath);
-  const reviewers = await Promise.all(input.reviewerAuthorityPaths.map(loadProductionAuthority));
+  const policy = await loadSecureQualityAuthorityPolicy(input.authorityPolicyPath);
+  const custody = await loadSecureQualityAuthority(input.custodyAuthorityPath);
+  const reviewers = await Promise.all(input.reviewerAuthorityPaths.map(loadSecureQualityAuthority));
   policy.assertReference("artifact_custody", custody.keyId);
   policy.assertReference("reviewer_1", reviewers[0]!.keyId);
   policy.assertReference("reviewer_2", reviewers[1]!.keyId);
@@ -88,18 +96,11 @@ Promise<CorpusAdmissionResult> {
   const corpusDigestSha256 = sha256(corpusValue);
   const questionSetSha256 = sha256(questions);
   verifyPreparationReceipts({ acceptance, authorization, corpus, corpusDigestSha256,
-    custody, input, mapping, forbidden, questionSetSha256, questions,
+    custody, input, mapping, forbidden, nowEpochMs: authorizationComparisonEpochMs,
+    questionSetSha256, questions,
     reviewReceipts: [review1, review2], reviewers });
 
-  const parent = dirname(input.outputRoot);
-  await mkdir(parent, { recursive: true, mode: 0o700 });
-  const parentMetadata = await stat(parent);
-  if (!parentMetadata.isDirectory() || (parentMetadata.mode & 0o077) !== 0) {
-    throw new Error("corpus admission parent must be a private directory");
-  }
-  try {await lstat(input.outputRoot); throw new Error("corpus admission output already exists");}
-  catch (error) {if ((error as NodeJS.ErrnoException).code !== "ENOENT") {throw error;}}
-  const temporaryRoot = await mkdtemp(join(parent, ".quality-corpus-admission-"));
+  const { output, outputName, parent } = await createPrivateOutput(input.outputRoot);
   try {
     const initialFiles: Readonly<Record<string, unknown>> = Object.freeze({
       [OUTPUT_FILES.acceptance]: acceptance, [OUTPUT_FILES.authorization]: authorization,
@@ -111,7 +112,7 @@ Promise<CorpusAdmissionResult> {
     });
     const checksumInventory = [];
     for (const [path, document] of Object.entries(initialFiles)) {
-      const bytes = canonicalJson(document); await writeCreateOnly(join(temporaryRoot, path), bytes);
+      const bytes = canonicalJson(document); await writeCreateOnly(output, path, bytes);
       checksumInventory.push({ path, sha256: sha256(Buffer.from(bytes)) });
     }
     const inputManifest = { acceptanceReceiptPath: OUTPUT_FILES.acceptance, checksumInventory,
@@ -124,15 +125,17 @@ Promise<CorpusAdmissionResult> {
       sealedAutomaticQuestionsPath: OUTPUT_FILES.automatic,
       sourceDigestSha256: corpus.sourceDigestSha256,
       turnToBlockManifestPath: OUTPUT_FILES.turnMapping } as const;
-    await writeCreateOnly(join(temporaryRoot, OUTPUT_FILES.manifest), canonicalJson(inputManifest));
+    await writeCreateOnly(output, OUTPUT_FILES.manifest, canonicalJson(inputManifest));
     const admitted = await admitMainCampaign(policy, { authorityKeyId: custody.keyId,
-      manifestPath: join(temporaryRoot, OUTPUT_FILES.manifest), nowEpochMs: input.admissionEpochMs,
+      manifestDirectory: output,
+      manifestPath: joinFromHandle(output, OUTPUT_FILES.manifest),
+      nowEpochMs: authorizationComparisonEpochMs,
       releaseRootSha256: input.releaseRootSha256,
       reviewerAuthorityKeyIds: [reviewers[0]!.keyId, reviewers[1]!.keyId] });
     const execution = signed(signers[0], { campaignRootSha256: admitted.rootBindingSha256,
       packets: corpus.entries.map(({ execution: packet }) => packet),
       schemaVersion: "meeting_knowledge.quality_execution_corpus.v1" });
-    const goldEntries = corpus.entries.map(({ forbiddenLocatorIds: _ignored, gold }, index) => ({
+    const goldEntries = corpus.entries.map(({ gold }, index) => ({
       ...questions[index]!, campaignRootSha256: admitted.rootBindingSha256,
       expectedAbstention: gold.abstentionAuthority === "must_abstain",
       releaseRootSha256: input.releaseRootSha256,
@@ -141,47 +144,90 @@ Promise<CorpusAdmissionResult> {
     const gold = signed(signers[1], { campaignRootSha256: admitted.rootBindingSha256,
       entries: goldEntries, releaseRootSha256: input.releaseRootSha256,
       schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" });
-    const locatorIds = [...new Set(corpus.entries.flatMap(({ gold: packet }) =>
-      packet.evidenceLocators))]
+    const locatorIds = [...new Set(corpus.turnMappings.map(({ sourceLocatorId }) =>
+      sourceLocatorId))]
       .toSorted();
     if (locatorIds.length === 0) {throw new Error("sealed corpus has no authorized locators");}
     const locatorInventory = signed(signers[2], { campaignRootSha256:
       admitted.rootBindingSha256, locatorIds, releaseRootSha256: input.releaseRootSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_locator_inventory.v1" });
     const forbiddenEvidence = signed(signers[2], { campaignRootSha256:
-      admitted.rootBindingSha256, entries: corpus.entries.map((entry, index) => ({
-        campaignRootSha256: admitted.rootBindingSha256,
-        forbiddenLocatorIds: entry.forbiddenLocatorIds,
-        questionDigestSha256: questions[index]!.questionDigestSha256,
-        questionId: questions[index]!.questionId, releaseRootSha256: input.releaseRootSha256 })),
-      releaseRootSha256: input.releaseRootSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_forbidden_locators.v1" });
+      admitted.rootBindingSha256, forbiddenLocatorIds: corpus.forbiddenLocatorIds,
+      questionSetSha256: admitted.questionSetSha256, releaseRootSha256: input.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_forbidden_locators.v2" });
     const finalFiles = { [OUTPUT_FILES.execution]: execution,
       [OUTPUT_FILES.forbiddenEvidence]: forbiddenEvidence, [OUTPUT_FILES.gold]: gold,
       [OUTPUT_FILES.inventory]: locatorInventory };
     for (const [path, document] of Object.entries(finalFiles)) {
-      await writeCreateOnly(join(temporaryRoot, path), canonicalJson(document));
+      await writeCreateOnly(output, path, canonicalJson(document));
     }
     const artifactInventory = await Promise.all([...Object.keys(initialFiles), OUTPUT_FILES.manifest,
       ...Object.keys(finalFiles)].toSorted().map(async (path) => ({ path,
-        sha256: sha256(await readFile(join(temporaryRoot, path))) })));
-    const preparation = { artifactInventory, campaignRootSha256: admitted.rootBindingSha256,
+        sha256: sha256(await readOutput(output, path)) })));
+    const preparation = { artifactInventory, authorizationComparisonEpochMs,
+      campaignRootSha256: admitted.rootBindingSha256, completionState: "complete",
       corpusDigestSha256, questionCount: questions.length,
       questionSetSha256: admitted.questionSetSha256, releaseRootSha256: input.releaseRootSha256,
       schemaVersion: "meeting_knowledge.semantic_quality_corpus_admission_manifest.v1" } as const;
-    await writeCreateOnly(join(temporaryRoot, OUTPUT_FILES.preparation), canonicalJson(preparation));
-    await rename(temporaryRoot, input.outputRoot);
-    return Object.freeze({ campaignRootSha256: admitted.rootBindingSha256,
+    await output.sync();
+    await writeCreateOnly(output, OUTPUT_FILES.preparation, canonicalJson(preparation));
+    await output.sync(); await parent.sync();
+    const result = Object.freeze({ campaignRootSha256: admitted.rootBindingSha256,
       corpusAdmissionManifestSha256: sha256(preparation), executionCorpusSha256: sha256(execution),
       goldRelevanceSha256: sha256(gold), questionCount: questions.length });
+    await output.close(); await parent.close();
+    return result;
   } catch (error) {
-    try {await rm(temporaryRoot, { recursive: true, force: true });} catch {}
+    const cleanupError = await cleanupOutput(parent, output, outputName);
+    if (cleanupError !== undefined && error instanceof Error) {
+      Object.defineProperty(error, "cleanupError", { value: cleanupError });
+    }
     throw error;
   }
 }
 
+async function createPrivateOutput(outputRoot: string) {
+  const parent = await openQualityCampaignDirectory(dirname(outputRoot),
+    "corpus admission parent");
+  const metadata = await parent.stat();
+  if (!metadata.isDirectory() || (metadata.mode & 0o077) !== 0) {
+    const error = new Error("corpus admission parent must be a private directory");
+    try {await parent.close();} catch (cleanup) {attachCleanup(error, cleanup);}
+    throw error;
+  }
+  const outputName = basename(outputRoot);
+  let created = false;
+  try {
+    await mkdir(joinFromHandle(parent, outputName), { mode: 0o700 }); created = true;
+    await parent.sync();
+    const output = await open(joinFromHandle(parent, outputName), constants.O_RDONLY |
+      constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    return { output, outputName, parent };
+  } catch (error) {
+    const cleanup = await cleanupOutput(parent, undefined, created ? outputName : undefined);
+    if (error instanceof Error && cleanup !== undefined) {attachCleanup(error, cleanup);}
+    throw error;
+  }
+}
+
+async function cleanupOutput(parent: FileHandle, output: FileHandle | undefined,
+  outputName: string | undefined): Promise<unknown> {
+  let cleanupError: unknown;
+  try {await output?.close();} catch (error) {cleanupError ??= error;}
+  // A failed admission may have durable partial files. Retain them fail-closed: pathname-based
+  // recursive cleanup cannot prove it still targets the directory descriptor we created.
+  void outputName;
+  try {await parent.sync();} catch (error) {cleanupError ??= error;}
+  try {await parent.close();} catch (error) {cleanupError ??= error;}
+  return cleanupError;
+}
+
+function attachCleanup(error: Error, cleanup: unknown): void {
+  Object.defineProperty(error, "cleanupError", { value: cleanup });
+}
+
 function decodePhase(value: unknown): CorpusAdmissionPhase {
-  const keys = ["acceptanceReceiptPath", "admissionEpochMs", "authorityPolicyPath",
+  const keys = ["acceptanceReceiptPath", "authorityPolicyPath",
     "custodyAuthorityPath", "executionAuthorizationPath", "executionSignerPath",
     "forbiddenLocatorManifestPath", "goldRelevanceSignerPath", "locatorSignerPath", "outputRoot",
     "questionReviewReceiptPaths", "releaseRootSha256", "reviewerAuthorityPaths",
@@ -197,45 +243,58 @@ function decodePhase(value: unknown): CorpusAdmissionPhase {
     }
     record[key] = record[key].map((path) => absolute(path, key));
   }
-  if (!Number.isSafeInteger(record.admissionEpochMs) || Number(record.admissionEpochMs) < 0) {
-    throw new Error("corpus admission epoch is invalid");
-  }
   record.releaseRootSha256 = digest(record.releaseRootSha256, "corpus admission release root");
   return record as unknown as CorpusAdmissionPhase;
 }
 
 function decodeCorpus(value: unknown, releaseRootSha256: string) {
-  const record = exactRecord(value, ["entries", "releaseRootSha256", "reviewerDigestSha256",
-    "schemaVersion", "snapshotSha256", "sourceDigestSha256"], "sealed corpus");
+  const record = exactRecord(value, ["entries", "forbiddenLocatorIds", "releaseRootSha256",
+    "reviewerDigestSha256", "schemaVersion", "snapshotSha256", "sourceDigestSha256",
+    "turnMappings"], "sealed corpus");
   if (record.schemaVersion !== "meeting_knowledge.semantic_quality_sealed_corpus.v1" ||
     record.releaseRootSha256 !== releaseRootSha256 || !Array.isArray(record.entries) ||
     record.entries.length !== MAIN_CARDINALITY.perRepetition) {
     throw new Error("sealed corpus version, release, or cardinality is invalid");
   }
   const entries = record.entries.map((entryValue): CorpusEntry => {
-    const entry = exactRecord(entryValue, ["execution", "forbiddenLocatorIds", "gold"],
+    const entry = exactRecord(entryValue, ["execution", "gold"],
       "sealed corpus entry");
     const execution = validateQualificationExecutionPacket(entry.execution);
     const gold = validateQualificationGoldPacket(entry.gold);
     locatorList(gold.evidenceLocators, "gold evidence locator");
-    const forbiddenLocatorIds = locatorList(entry.forbiddenLocatorIds, "forbidden locator");
     if (gold.questionId !== execution.questionId ||
       gold.abstentionAuthority === "must_abstain" && (gold.evidenceLocators.length !== 0 ||
         gold.expectedClaims.length !== 0 || gold.speakerTimeAuthority.length !== 0) ||
       gold.abstentionAuthority === "answerable" && (gold.evidenceLocators.length === 0 ||
-        gold.expectedClaims.length === 0) || gold.evidenceLocators.some((id) =>
-        forbiddenLocatorIds.includes(id))) {
+      gold.expectedClaims.length === 0)) {
       throw new Error("sealed corpus answerability or question binding is invalid");
     }
-    return Object.freeze({ execution, forbiddenLocatorIds, gold });
+    return Object.freeze({ execution, gold });
   });
   if (new Set(entries.map(({ execution }) => execution.questionId)).size !== entries.length) {
     throw new Error("sealed corpus contains duplicate question IDs");
   }
-  return Object.freeze({ entries: Object.freeze(entries),
+  const forbiddenLocatorIds = locatorList(record.forbiddenLocatorIds,
+    "global forbidden locator", 100);
+  if (forbiddenLocatorIds.length === 0) {throw new Error("global forbidden locator set is empty");}
+  if (!Array.isArray(record.turnMappings) || record.turnMappings.length === 0 ||
+    record.turnMappings.length > 100_000) {throw new Error("turn mapping dataset is invalid");}
+  const turnMappings = record.turnMappings.map((mappingValue) => {
+    const mapping = exactRecord(mappingValue, ["sourceLocatorId", "turnId"], "turn mapping");
+    return Object.freeze({ sourceLocatorId: digest(mapping.sourceLocatorId,
+      "turn mapping source locator"), turnId: safeId(mapping.turnId, "turn mapping turn ID") });
+  });
+  const evidenceLocators = [...new Set(entries.flatMap(({ gold }) => gold.evidenceLocators))];
+  if (new Set(turnMappings.map(({ turnId }) => turnId)).size !== turnMappings.length ||
+    evidenceLocators.some((locator) => !turnMappings.some(({ sourceLocatorId }) =>
+      sourceLocatorId === locator)) || turnMappings.some(({ sourceLocatorId }) =>
+      forbiddenLocatorIds.includes(sourceLocatorId))) {
+    throw new Error("authoritative locator datasets are duplicated, incomplete, or overlapping");
+  }
+  return Object.freeze({ entries: Object.freeze(entries), forbiddenLocatorIds,
     releaseRootSha256: digest(record.releaseRootSha256, "sealed corpus release"),
     reviewerDigestSha256: digest(record.reviewerDigestSha256, "sealed corpus reviewers"),
-    snapshotSha256: digest(record.snapshotSha256, "sealed corpus snapshot"),
+    snapshotSha256: digest(record.snapshotSha256, "sealed corpus snapshot"), turnMappings,
     sourceDigestSha256: digest(record.sourceDigestSha256, "sealed corpus source") });
 }
 
@@ -254,13 +313,15 @@ function assertCorpusCounts(questions: readonly CampaignQuestion[]): void {
   }
 }
 
+// oxlint-disable-next-line complexity -- every independent corpus authority is checked together
 function verifyPreparationReceipts(input: { readonly acceptance: unknown;
   readonly authorization: unknown; readonly corpus: ReturnType<typeof decodeCorpus>;
-  readonly corpusDigestSha256: string; readonly custody: Awaited<ReturnType<typeof loadProductionAuthority>>;
+  readonly corpusDigestSha256: string;
+  readonly custody: Awaited<ReturnType<typeof loadSecureQualityAuthority>>;
   readonly forbidden: unknown; readonly input: ReturnType<typeof decodePhase>;
-  readonly mapping: unknown; readonly questionSetSha256: string;
+  readonly mapping: unknown; readonly nowEpochMs: number; readonly questionSetSha256: string;
   readonly questions: readonly CampaignQuestion[]; readonly reviewReceipts: readonly [unknown, unknown];
-  readonly reviewers: readonly Awaited<ReturnType<typeof loadProductionAuthority>>[] }): void {
+  readonly reviewers: readonly Awaited<ReturnType<typeof loadSecureQualityAuthority>>[] }): void {
   const acceptance = nodeCampaignAuthentication.verify<Record<string, unknown>>(input.acceptance,
     input.custody.keyId, input.custody.publicKeyPem, "corpus acceptance");
   const payload = exactRecord(acceptance.payload, ["corpusDigestSha256", "purpose",
@@ -279,7 +340,7 @@ function verifyPreparationReceipts(input: { readonly acceptance: unknown;
     "releaseRootSha256", "schemaVersion"], "corpus execution authorization payload");
   if (auth.schemaVersion !== "meeting_knowledge.semantic_quality_execution_authorization.v1" ||
     auth.authorizedProviderExecution !== true || !Number.isSafeInteger(auth.expiresAtEpochMs) ||
-    Number(auth.expiresAtEpochMs) <= input.input.admissionEpochMs ||
+    Number(auth.expiresAtEpochMs) <= input.nowEpochMs ||
     auth.acceptanceReceiptSha256 !== sha256(input.acceptance) ||
     auth.corpusDigestSha256 !== input.corpusDigestSha256 ||
     auth.releaseRootSha256 !== input.input.releaseRootSha256) {
@@ -303,11 +364,17 @@ function verifyPreparationReceipts(input: { readonly acceptance: unknown;
   for (const [label, document] of [["mapping", input.mapping], ["forbidden", input.forbidden]] as const) {
     const verified = nodeCampaignAuthentication.verify<Record<string, unknown>>(document,
       input.custody.keyId, input.custody.publicKeyPem, `${label} custody`);
-    const authority = exactRecord(verified.payload, ["entriesSha256", "releaseRootSha256",
+    const digestKey = label === "mapping" ? "turnMappingsSha256" : "forbiddenLocatorSetSha256";
+    const authority = exactRecord(verified.payload, [digestKey, "releaseRootSha256",
       "schemaVersion", "snapshotSha256"], `${label} custody payload`);
+    const actualDataset = label === "mapping" ? input.corpus.turnMappings :
+      input.corpus.forbiddenLocatorIds;
+    const expectedDatasetSha256 = sha256({ dataset: actualDataset, purpose: label === "mapping" ?
+      "turn_to_source_locator_authority" : "global_forbidden_locator_authority" });
     if (authority.schemaVersion !== "meeting_knowledge.semantic_quality_locator_authority.v1" ||
       authority.releaseRootSha256 !== input.input.releaseRootSha256 ||
-      authority.snapshotSha256 !== input.corpus.snapshotSha256) {
+      authority.snapshotSha256 !== input.corpus.snapshotSha256 ||
+      authority[digestKey] !== expectedDatasetSha256) {
       throw new Error(`${label} custody is foreign`);
     }
   }
@@ -317,7 +384,8 @@ async function loadSigner(path: string, pin: TrustedAuthorityPin) {
   const record = exactRecord(await readJson(path, "signer"), ["keyId", "privateKeyPath"],
     "signer configuration");
   if (record.keyId !== pin.keyId) {throw new Error("signer role is foreign");}
-  const pem = await readBounded(absolute(record.privateKeyPath, "private key"), "private key", 16_384);
+  const pem = await readQualityCampaignText(absolute(record.privateKeyPath, "private key"),
+    "private key", 16_384);
   let key; try {key = createPrivateKey(pem);} catch {throw new Error("signer private key is invalid");}
   const publicPem = createPublicKey(key).export({ format: "pem", type: "spki" }).toString();
   if (publicKeyFingerprintSha256(publicPem, "signer") !== pin.publicKeyFingerprintSha256) {
@@ -331,8 +399,8 @@ function signed(signer: Awaited<ReturnType<typeof loadSigner>>, payload: unknown
     signer.key).toString("base64"), signerKeyId: signer.keyId });
 }
 
-function locatorList(value: unknown, label: string): readonly string[] {
-  if (!Array.isArray(value) || value.length > 256) {throw new Error(`${label} list is invalid`);}
+function locatorList(value: unknown, label: string, maximum = 256): readonly string[] {
+  if (!Array.isArray(value) || value.length > maximum) {throw new Error(`${label} list is invalid`);}
   const values = value.map((item) => digest(item, label));
   if (new Set(values).size !== values.length) {throw new Error(`${label} list is duplicated`);}
   return Object.freeze(values);
@@ -347,45 +415,36 @@ function inputPaths(input: ReturnType<typeof decodePhase>): readonly string[] {
 }
 
 async function readJson(path: string, label: string): Promise<unknown> {
-  try {
-    const text = await readBounded(path, label, MAXIMUM_INPUT_BYTES);
-    const value = JSON.parse(text) as unknown;
-    if (canonicalJson(value) !== text) {throw new Error("non-canonical JSON");}
-    return value;
-  }
-  catch (error) {if (error instanceof Error && error.message.includes("exceeds")) {throw error;}
-    throw new Error(`${label} is invalid`, { cause: error });}
+  return await readCanonicalQualityCampaignJson(path, label);
 }
 
-async function readBounded(path: string, label: string, maximum: number): Promise<string> {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    const metadata = await file.stat();
-    if (!metadata.isFile() || metadata.size === 0 || metadata.size > maximum) {
-      throw new Error(`${label} exceeds its byte limit`);
-    }
-    const bytes = await file.readFile();
-    if (bytes.byteLength === 0 || bytes.byteLength > maximum) {
-      throw new Error(`${label} exceeds its byte limit`);
-    }
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } finally {await file.close();}
-}
-
-async function writeCreateOnly(path: string, bytes: string): Promise<void> {
+async function writeCreateOnly(directory: FileHandle, path: string, bytes: string): Promise<void> {
   if (Buffer.byteLength(bytes) > MAXIMUM_INPUT_BYTES) {throw new Error("artifact exceeds byte limit");}
-  const file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  const file = await open(joinFromHandle(directory, path), constants.O_WRONLY | constants.O_CREAT |
+    constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try {await file.writeFile(bytes); await file.sync();}
   finally {await file.close();}
 }
 
+async function readOutput(directory: FileHandle, path: string): Promise<Buffer> {
+  return await readQualityCampaignBytesAt(directory, path, "published corpus artifact",
+    MAXIMUM_INPUT_BYTES);
+}
+
 function absolute(value: unknown, label: string): string {
-  if (typeof value !== "string" || !isAbsolute(value) || value.includes("\0")) {
-    throw new Error(`${label} must be an absolute path`);
-  }
+  if (typeof value !== "string" || !isAbsolute(value) || value.includes("\0"))
+    {throw new Error(`${label} must be an absolute path`);}
   return resolve(value);
 }
 
-function isInside(root: string, path: string): boolean {
-  return path === root || path.startsWith(`${root}/`);
+function isInside(root: string, path: string): boolean {return path === root ||
+  path.startsWith(`${root}/`);}
+
+function pathsOverlap(paths: readonly string[]): boolean {
+  for (let left = 0; left < paths.length; left += 1) {
+    for (let right = left + 1; right < paths.length; right += 1) {
+      if (isInside(paths[left]!, paths[right]!) || isInside(paths[right]!, paths[left]!)) {return true;}
+    }
+  }
+  return false;
 }

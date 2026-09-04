@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { artifactAttemptIdentity, attemptIdentity, createHttpQualityCampaignProductionPorts,
+import { artifactAttemptIdentity, attemptIdentity, canonicalJson, createHttpQualityCampaignProductionPorts,
   sha256, verifyExternalSignedValue } from "../src/quality-campaign/index.js";
 
 const servers: ReturnType<typeof createServer>[] = [];
@@ -77,6 +77,13 @@ describe("concrete HTTP production review evidence", () => {
     await expect(ports.review.receipts(fixture.answerAttempt.attemptId,
       context(Date.now() + 10))).rejects.toThrow();
   });
+
+  it("rejects an authority response that appends beyond the closed byte limit", async () => {
+    const fixture = await httpFixture(); fixture.respondWith("x".repeat(8_000_001));
+    const ports = await createHttpQualityCampaignProductionPorts(fixture.connectionsPath);
+    await expect(ports.review.receipts(fixture.answerAttempt.attemptId,
+      context(Date.now() + 5_000))).rejects.toThrow(/byte limit/u);
+  });
 });
 
 async function httpFixture() {
@@ -119,7 +126,7 @@ async function httpFixture() {
     runtimeAddress: "127.0.0.1:1", runtimeTokenPath: tokenPath,
     topologyAuthority: authority("provider"), topologyKeyPath: keyPath, topologyPath: keyPath };
   const connectionsPath = join(root, "connections.json");
-  await writeFile(connectionsPath, JSON.stringify({ absenceAuthority: authority("absence"),
+  await writeFile(connectionsPath, canonicalJson({ absenceAuthority: authority("absence"),
     absenceEndpoint: `${endpoint}/absence`, adjudicators: [authority("provider"),
       authority("holdout"), authority("evidence")].map((item) => ({ ...item, endpoint })),
     artifactCustody: { envelopeRoot: root,

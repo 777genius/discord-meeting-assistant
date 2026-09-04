@@ -1,8 +1,11 @@
-import { open, readFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { constants } from "node:fs";
+import { lstat, open, unlink, type FileHandle } from "node:fs/promises";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 
 import { canonicalJson, digest, exactRecord } from "./canonical.js";
 import { EXIT_OUTCOME_UNKNOWN, EXIT_SAFE_PAUSE } from "./execution.js";
+import { joinFromHandle, openQualityCampaignDirectory, readCanonicalQualityCampaignJson } from
+  "./production-execution-corpus-custody.js";
 
 export const QUALITY_CAMPAIGN_COMMANDS = Object.freeze([
   "corpus-admit", "verify-bind", "preflight", "execute", "resume", "status", "adjudicate",
@@ -86,20 +89,24 @@ export async function runQualityCampaignOperatorCli(input: { readonly argv: read
   }
   let phaseInput: Readonly<Record<string, unknown>>;
   try {
-    phaseInput = exactRecord(JSON.parse((await readFile(resolve(phaseInputPath))).toString("utf8")),
+    phaseInput = exactRecord(await readCanonicalQualityCampaignJson(resolve(phaseInputPath),
+      "operator phase input"),
       ["payload", "schemaVersion"], "operator phase input");
   } catch {return 1;}
+  let status: Awaited<ReturnType<typeof reserveStatus>>;
+  try {status = await reserveStatus(input.statusReceiptPath, phaseInput, phaseInputPath);}
+  catch {return 1;}
   let result: OperatorResult;
   try {result = await input.handlers.run({ command: command as QualityCampaignCommand,
-    phaseInput });} catch {return 1;}
+    phaseInput });} catch {await abandonStatus(status); return 1;}
   let safe: OperatorSafeReceipt;
-  try {safe = decodeSafeReceipt(result.receipt);} catch {return 1;}
+  try {safe = decodeSafeReceipt(result.receipt);} catch {await abandonStatus(status); return 1;}
   if (result.command !== command || !isSafeBlockerSet(result.blockers) ||
-    !isConsistentResult(result, safe)) {return 1;}
+    !isConsistentResult(result, safe)) {await abandonStatus(status); return 1;}
   const receipt = Object.freeze({ blockers: result.blockers, command: result.command,
     counters: safe.counters, digests: safe.digests, errorCode: safe.errorCode, schemaVersion:
     "meeting_knowledge.semantic_quality_operator_status.v1", status: result.status });
-  try {await writeCreateOnly(input.statusReceiptPath, canonicalJson(receipt));} catch {return 1;}
+  try {await publishStatus(status, canonicalJson(receipt));} catch {return 1;}
   input.writeSafeLine?.(canonicalJson(receipt));
   if (result.status === "outcome_unknown") {return EXIT_OUTCOME_UNKNOWN;}
   if (result.status === "paused") {return EXIT_SAFE_PAUSE;}
@@ -153,10 +160,71 @@ function isConsistentResult(result: OperatorResult, receipt: OperatorSafeReceipt
   return result.blockers.length > 0 && receipt.errorCode === null;
 }
 
-async function writeCreateOnly(path: string, bytes: string): Promise<void> {
+async function reserveStatus(path: string, phase: Readonly<Record<string, unknown>>,
+  phasePath: string): Promise<{ readonly directory: FileHandle; readonly file: FileHandle;
+    readonly identity: { readonly dev: number; readonly ino: number }; readonly path: string }> {
   if (!isAbsolute(path) || path.includes("\0")) {throw new Error("status path must be absolute");}
-  const handle = await open(resolve(path), "wx", 0o600);
-  try {await handle.writeFile(bytes); await handle.sync();} finally {await handle.close();}
-  const directory = await open(dirname(resolve(path)), "r");
-  try {await directory.sync();} finally {await directory.close();}
+  const target = resolve(path);
+  await assertStatusSeparation(target, phase, resolve(phasePath));
+  const directory = await openQualityCampaignDirectory(dirname(target), "status parent", true);
+  try {
+    const file = await open(joinFromHandle(directory, basename(target)), constants.O_WRONLY |
+      constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    const metadata = await file.stat(); await directory.sync();
+    return { directory, file, identity: metadata, path: target };
+  } catch (error) {await directory.close(); throw error;}
+}
+
+async function assertStatusSeparation(statusPath: string, phase: Readonly<Record<string, unknown>>,
+  phasePath: string): Promise<void> {
+  const paths = [phasePath, ...campaignPaths(phase.payload)].map((path) => resolve(path));
+  for (const candidate of paths) {
+    if (overlaps(statusPath, candidate)) {
+      throw new Error("status path overlaps a campaign input or output");
+    }
+  }
+  const identities = new Set<string>();
+  for (const candidate of paths) {
+    const parent = await openQualityCampaignDirectory(dirname(candidate), "campaign path parent");
+    try {
+      let metadata;
+      try {metadata = await lstat(joinFromHandle(parent, basename(candidate)));}
+      catch (error) {if ((error as NodeJS.ErrnoException).code === "ENOENT") {continue;} throw error;}
+      if (metadata.isSymbolicLink()) {throw new Error("campaign path is a symbolic link");}
+      const identity = `${metadata.dev}:${metadata.ino}`;
+      if (identities.has(identity)) {throw new Error("campaign paths identify the same inode");}
+      identities.add(identity);
+    } finally {await parent.close();}
+  }
+}
+
+function campaignPaths(value: unknown, key = "payload"): string[] {
+  if (Array.isArray(value)) {return value.flatMap((item) => campaignPaths(item, key));}
+  if (typeof value === "object" && value !== null) {return Object.entries(value).flatMap(
+    ([childKey, item]) => campaignPaths(item, childKey));}
+  if (typeof value !== "string" || !(key.endsWith("Path") || key.endsWith("Root") ||
+    key.endsWith("Paths") || key === "outputRoot")) {return [];}
+  if (!isAbsolute(value) || value.includes("\0")) {throw new Error("campaign path must be absolute");}
+  return [value];
+}
+function overlaps(left: string, right: string): boolean {return left === right ||
+  left.startsWith(`${right}/`) || right.startsWith(`${left}/`);}
+
+async function publishStatus(status: Awaited<ReturnType<typeof reserveStatus>>, bytes: string) {
+  try {await status.file.writeFile(bytes); await status.file.sync(); await status.directory.sync();}
+  finally {await status.file.close(); await status.directory.close();}
+}
+
+async function abandonStatus(status: Awaited<ReturnType<typeof reserveStatus>>) {
+  let primary: unknown;
+  try {await status.file.close();} catch (error) {primary = error;}
+  try {
+    const current = await lstat(joinFromHandle(status.directory, basename(status.path)));
+    if (current.dev !== status.identity.dev || current.ino !== status.identity.ino) {
+      throw new Error("status reservation was replaced; replacement retained");
+    }
+    await unlink(joinFromHandle(status.directory, basename(status.path))); await status.directory.sync();
+  } catch (error) {primary ??= error;}
+  try {await status.directory.close();} catch (error) {primary ??= error;}
+  if (primary !== undefined) {throw new Error("status reservation cleanup failed", { cause: primary });}
 }
