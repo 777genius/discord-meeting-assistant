@@ -181,7 +181,7 @@ async function requestJson(endpoint: string, token: string, body: unknown,
   try {
     const response = await fetch(endpoint, { body: JSON.stringify(body), headers: {
       authorization: `Bearer ${token}`, "content-type": "application/json" }, method: "POST",
-    signal: controller.signal });
+    redirect: "error", signal: controller.signal });
     if (!response.ok) {throw new Error("production authority request failed");}
     const declaredLength = response.headers.get("content-length");
     if (declaredLength !== null && (!/^\d+$/u.test(declaredLength) ||
@@ -237,6 +237,9 @@ async function load(path: string): Promise<HttpConnectionConfiguration> {
   }
   const typed = record as unknown as HttpConnectionConfiguration;
   decodeCanonicalExecutionConfiguration(typed.canonicalExecution);
+  for (const [label, endpoint] of outboundEndpoints(typed)) {
+    assertAbsoluteHttpsEndpoint(endpoint, label);
+  }
   const artifactCustody = exactRecord(typed.artifactCustody,
     ["envelopeRoot", "keyCustodySha256", "keyId", "keyPath"], "artifact custody");
   absolute(String(artifactCustody.envelopeRoot)); absolute(String(artifactCustody.keyPath));
@@ -267,9 +270,37 @@ function decodeCanonicalExecutionConfiguration(value:
     }
   }
   digest(record.expectedRuntimeLauncherSha256, "expected runtime launcher");
+  assertAbsoluteHttpsEndpoint(record.infinityBaseUrl, "canonical Infinity endpoint");
   if (!Number.isSafeInteger(record.requestTimeoutMs) || Number(record.requestTimeoutMs) < 1 ||
     Number(record.requestTimeoutMs) > 2_000) {
     throw new Error("canonical execution request timeout is invalid");
+  }
+}
+
+function outboundEndpoints(config: HttpConnectionConfiguration): readonly (readonly [string,
+  unknown])[] {
+  return [["absence authority endpoint", config.absenceEndpoint],
+    ["deletion authority endpoint", config.deletionEndpoint],
+    ["main evidence authority endpoint", config.evidenceEndpoint],
+    ["holdout answer endpoint", config.holdoutAnswerEndpoint],
+    ["holdout capability endpoint", config.holdoutCapabilityEndpoint],
+    ["holdout evidence authority endpoint", config.holdoutEvidenceEndpoint],
+    ["holdout retrieval endpoint", config.holdoutRetrievalEndpoint],
+    ["raw outcome authority endpoint", config.rawOutcomeEndpoint],
+    ["release observation authority endpoint", config.releaseObservationEndpoint],
+    ...config.adjudicators.map((reviewer, index) =>
+      [`adjudicator ${index + 1} endpoint`, reviewer?.endpoint] as const)];
+}
+
+function assertAbsoluteHttpsEndpoint(value: unknown, label: string): void {
+  if (typeof value !== "string") {throw new Error(`${label} must be an absolute HTTPS URL`);}
+  let endpoint: URL;
+  try {endpoint = new URL(value);} catch (error) {
+    throw new Error(`${label} must be an absolute HTTPS URL`, { cause: error });
+  }
+  if (endpoint.protocol !== "https:" || endpoint.username !== "" || endpoint.password !== "" ||
+    endpoint.hostname === "") {
+    throw new Error(`${label} must be an absolute HTTPS URL without credentials`);
   }
 }
 

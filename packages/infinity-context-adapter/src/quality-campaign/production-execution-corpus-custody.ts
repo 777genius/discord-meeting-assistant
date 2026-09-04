@@ -236,8 +236,9 @@ async function readBoundedStableFile(file: FileHandle, label: string,
   }
   const before = await file.stat();
   if (!before.isFile() || before.size === 0) {throw new Error(`${label} size is invalid`);}
-  const bytes = Buffer.allocUnsafe(maximumBytes + 1);
-  const { bytesRead } = await file.read(bytes, 0, maximumBytes + 1, 0);
+  const readLength = Math.min(before.size, maximumBytes) + 1;
+  const bytes = Buffer.allocUnsafe(readLength);
+  const { bytesRead } = await file.read(bytes, 0, readLength, 0);
   const after = await file.stat();
   if (bytesRead === 0 || bytesRead > maximumBytes || before.dev !== after.dev ||
     before.ino !== after.ino || before.mode !== after.mode || before.size !== after.size ||

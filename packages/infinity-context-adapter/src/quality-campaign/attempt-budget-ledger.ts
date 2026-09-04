@@ -117,11 +117,6 @@ async function bindAndCheckLockIdentity(directory: FileHandle, lockName: string,
     if (!metadata.isFile() || metadata.size !== Buffer.byteLength(binding)) {
       throw new Error("budget ledger lock identity temporary file changed during write");
     }
-    if (process.env.DISCORD_MEETING_TEST_PAUSE_LOCK_IDENTITY_AFTER_SYNC === "1" &&
-      process.send !== undefined) {
-      process.send({ state: "lock_identity_temporary_synced" });
-      await new Promise<void>((resolve) => {process.once("message", () => {resolve();});});
-    }
   } catch (error) {
     await created?.close(); created = undefined;
     if (ownsTemporary) {

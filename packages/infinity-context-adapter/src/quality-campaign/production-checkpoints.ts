@@ -38,8 +38,8 @@ export function assertAdjudicationCheckpoint(receiptSha256: string, campaignRoot
 export function retentionCheckpointReceipt(campaignRootSha256: string, reconstructed: {
   readonly inventorySha256: string; readonly metricsSha256ByRepetition: unknown }) {
   return createOperatorSafeReceipt(campaignRootSha256, { inventorySha256:
-    reconstructed.inventorySha256, metricsSha256ByRepetition:
-    reconstructed.metricsSha256ByRepetition, outcomeCount: 720 });
+    reconstructed.inventorySha256, metricsSha256:
+    sha256(reconstructed.metricsSha256ByRepetition), outcomeCount: 720 });
 }
 
 /** Durable campaign state stays beneath one private descriptor-pinned root for its lifetime. */

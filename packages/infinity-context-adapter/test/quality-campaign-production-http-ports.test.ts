@@ -1,6 +1,5 @@
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,14 +8,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { artifactAttemptIdentity, attemptIdentity, canonicalJson, createHttpQualityCampaignProductionPorts,
   sha256, verifyExternalSignedValue } from "../src/quality-campaign/index.js";
 
-const servers: ReturnType<typeof createServer>[] = [];
 const REVIEW_KEYS = ["firstEffectEvidence", "firstReceipt", "predecessorPlaintextSha256",
   "rawOutcomeEnvelopeSha256", "resolverEffectEvidence", "resolverReceipt",
   "secondEffectEvidence", "secondReceipt"] as const;
 
-afterEach(async () => {await Promise.all(servers.splice(0).map(async (server) => {
-  await new Promise<void>((resolve) => {server.close(() => {resolve();});});
-})); vi.unstubAllGlobals();});
+afterEach(() => {vi.unstubAllGlobals();});
 
 describe("concrete HTTP production review evidence", () => {
   it("preserves the exact eight-field contract without treating signatures as trusted", async () => {
@@ -38,6 +34,55 @@ describe("concrete HTTP production review evidence", () => {
         resolverReceipt: null });
     expect(fixture.requests()).toEqual([{ attemptId: fixture.answerAttempt.attemptId },
       { attemptId: fixture.answerAttempt.attemptId }]);
+    expect(fixture.fetchCalls().every((call) => call.init.redirect === "error" &&
+      (call.init.headers as Record<string, string>).authorization ===
+        `Bearer ${fixture.providerCredential}`)).toBe(true);
+  });
+
+  it("rejects every plaintext endpoint before credential reads or network access", async () => {
+    const fixture = await httpFixture();
+    const variants = ["absenceEndpoint", "deletionEndpoint", "evidenceEndpoint",
+      "holdoutAnswerEndpoint", "holdoutCapabilityEndpoint", "holdoutEvidenceEndpoint",
+      "holdoutRetrievalEndpoint", "rawOutcomeEndpoint", "releaseObservationEndpoint"];
+    for (const key of variants) {
+      await fixture.writeInvalidEndpoint((config) => {config[key] = "http://authority.invalid/path";});
+      await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath))
+        .rejects.toThrow(/absolute HTTPS URL/u);
+    }
+    for (const index of [0, 1, 2]) {
+      await fixture.writeInvalidEndpoint((config) => {
+        const adjudicators = config.adjudicators as Record<string, unknown>[];
+        adjudicators[index]!.endpoint = "http://reviewer.invalid/path";
+      });
+      await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath))
+        .rejects.toThrow(/absolute HTTPS URL/u);
+    }
+    await fixture.writeInvalidEndpoint((config) => {
+      const canonical = config.canonicalExecution as Record<string, unknown>;
+      canonical.infinityBaseUrl = "http://infinity.invalid";
+    });
+    await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath))
+      .rejects.toThrow(/absolute HTTPS URL/u);
+    expect(fixture.fetchCalls()).toHaveLength(0);
+  });
+
+  it.each(["not a URL", "https://user:password@authority.invalid/path"])(
+    "rejects malformed or credential-bearing endpoint %s", async (endpoint) => {
+      const fixture = await httpFixture();
+      await fixture.writeInvalidEndpoint((config) => {config.rawOutcomeEndpoint = endpoint;});
+      await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath))
+        .rejects.toThrow(/absolute HTTPS URL/u);
+      expect(fixture.fetchCalls()).toHaveLength(0);
+    });
+
+  it("refuses redirects for credential-bearing requests", async () => {
+    const fixture = await httpFixture(); fixture.respondWith({}, 0, 302);
+    const ports = await createHttpQualityCampaignProductionPorts(fixture.connectionsPath);
+    await expect(ports.review.receipts(fixture.answerAttempt.attemptId,
+      context(Date.now() + 5_000))).rejects.toThrow(/request failed/u);
+    expect(fixture.fetchCalls()).toHaveLength(1);
+    expect(fixture.fetchCalls()[0]).toMatchObject({ input: "https://authority.invalid/review",
+      init: { redirect: "error" } });
   });
 
   it("fails closed on legacy, missing, surplus, malformed and resolver-mismatched payloads",
@@ -103,20 +148,22 @@ describe("concrete HTTP production review evidence", () => {
 
 async function httpFixture() {
   const root = await mkdtemp(join(tmpdir(), "quality-review-http-"));
-  let responseValue: unknown = {}; let responseDelayMs = 0; const bodies: unknown[] = [];
-  const server = createServer((request, response) => {
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => {chunks.push(chunk);});
-    request.on("end", () => {
-      bodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown);
-      setTimeout(() => {response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify(responseValue));}, responseDelayMs);
+  let responseValue: unknown = {}; let responseDelayMs = 0; let responseStatus = 200;
+  const bodies: unknown[] = []; const fetchCalls: { readonly input: string;
+    readonly init: RequestInit }[] = [];
+  vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, init: RequestInit = {}) => {
+    fetchCalls.push({ input: String(input), init });
+    bodies.push(JSON.parse(String(init.body)) as unknown);
+    return new Promise<Response>((resolve, reject) => {
+      const finish = () => {resolve(new Response(JSON.stringify(responseValue), {
+        headers: { "content-type": "application/json" }, status: responseStatus }));};
+      if (responseDelayMs === 0) {finish(); return;}
+      const timeout = setTimeout(finish, responseDelayMs);
+      init.signal?.addEventListener("abort", () => {clearTimeout(timeout);
+        reject(init.signal?.reason);}, { once: true });
     });
-  });
-  servers.push(server); await new Promise<void>((resolve) => {server.listen(0, "127.0.0.1",
-    () => {resolve();});}); const address = server.address();
-  if (address === null || typeof address === "string") {throw new Error("local HTTP bind failed");}
-  const endpoint = `http://127.0.0.1:${address.port}/review`;
+  }));
+  const endpoint = "https://authority.invalid/review";
   const provider = generateKeyPairSync("ed25519"); const holdout = generateKeyPairSync("ed25519");
   const providerPublicKeyPem = provider.publicKey.export({ format: "pem", type: "spki" }).toString();
   const holdoutPublicKeyPem = holdout.publicKey.export({ format: "pem", type: "spki" }).toString();
@@ -127,7 +174,8 @@ async function httpFixture() {
     ["deletion", holdoutPublicKeyPem]] as const) {
     const path = join(root, `${name}.pem`); await writeFile(path, pem); publicKeyPaths[name] = path;
   }
-  const tokenPath = join(root, "token"); await writeFile(tokenPath, "local-test-token");
+  const providerCredential = randomUUID();
+  const tokenPath = join(root, "token"); await writeFile(tokenPath, providerCredential);
   const keyPath = join(root, "key"); const holdoutKeyPath = join(root, "holdout-key");
   await writeFile(keyPath, Buffer.alloc(32, 1).toString("base64"));
   await writeFile(holdoutKeyPath, Buffer.alloc(32, 2).toString("base64"));
@@ -141,7 +189,7 @@ async function httpFixture() {
     runtimeAddress: "127.0.0.1:1", runtimeTokenPath: tokenPath,
     topologyAuthority: authority("provider"), topologyKeyPath: keyPath, topologyPath: keyPath };
   const connectionsPath = join(root, "connections.json");
-  await writeFile(connectionsPath, canonicalJson({ absenceAuthority: authority("absence"),
+  const configuration: Record<string, unknown> = { absenceAuthority: authority("absence"),
     absenceEndpoint: `${endpoint}/absence`, adjudicators: [authority("provider"),
       authority("holdout"), authority("evidence")].map((item) => ({ ...item, endpoint })),
     artifactCustody: { envelopeRoot: root,
@@ -156,14 +204,21 @@ async function httpFixture() {
     holdoutProviderResultAuthority: authority("holdout"), holdoutRetrievalEndpoint: endpoint,
     providerResultAuthority: authority("provider"), rawOutcomeEndpoint: endpoint,
     releaseObservationEndpoint: endpoint,
-    schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v5" }));
+    schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v5" };
+  await writeFile(connectionsPath, canonicalJson(configuration));
   const answerAttempt = attemptIdentity({ callKind: "answer", callOrdinal: 0,
     campaignRootSha256: sha256("campaign"), questionDigestSha256: sha256("question"),
     questionId: "question-1", releaseRootSha256: sha256("release"), repetition: 1,
     spendReservationSha256: sha256("spend") });
-  return { answerAttempt, connectionsPath, providerPublicKeyPem,
-    requests: () => bodies, respondWith(value: unknown, delayMs = 0) {
-      responseValue = value; responseDelayMs = delayMs;} };
+  return { answerAttempt, connectionsPath, providerCredential, providerPublicKeyPem,
+    fetchCalls: () => fetchCalls, requests: () => bodies,
+    respondWith(value: unknown, delayMs = 0, status = 200) {
+      responseValue = value; responseDelayMs = delayMs; responseStatus = status;},
+    async writeInvalidEndpoint(change: (config: Record<string, unknown>) => void) {
+      const invalid = structuredClone(configuration);
+      invalid.credentialPath = join(root, "missing-credential"); change(invalid);
+      await writeFile(connectionsPath, canonicalJson(invalid));
+    } };
 }
 
 function fullReviewEvidence(answerAttempt: ReturnType<typeof attemptIdentity>) {
