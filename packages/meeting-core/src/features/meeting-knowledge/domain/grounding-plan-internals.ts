@@ -157,7 +157,6 @@ export function normalizeRehydratedTurns(
     (!allowEmpty && normalized.length === 0) ||
     normalized.length > 256 ||
     new Set(normalized.map((turn) => [
-      historicalEvidenceSourceKey(turn.source?.historicalSource),
       turn.source?.meetingId ?? "current",
       turn.source?.transcriptId ?? "current",
       turn.source?.transcriptVersion ?? 0,
@@ -166,7 +165,6 @@ export function normalizeRehydratedTurns(
       turn.source?.sourceEndCodePoint ?? "whole",
     ].join("\u0000"))).size !== normalized.length ||
     new Set(normalized.map((turn) => [
-      historicalEvidenceSourceKey(turn.source?.historicalSource),
       turn.source?.meetingId ?? "current",
       turn.source?.transcriptId ?? "current",
       turn.source?.transcriptVersion ?? 0,

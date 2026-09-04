@@ -57,12 +57,10 @@ export class DisposableInfinityEndpoint implements HttpTransport {
   readonly #spaces = new Map<string, JsonObject>();
   #nextDocument = 1; #nextScope = 1; #nextSpace = 1;
   #loseIngestResponse = false; #loseDocumentDeleteResponse = false;
-  #loseProcessResponse = false;
-  #loseThreadDeleteResponse = false;
-  #failDocumentDelete = false;
+  #loseProcessResponse = false; #failProcess = false;
+  #loseThreadDeleteResponse = false; #failDocumentDelete = false;
   #failDocumentDeleteAfter: number | null = null;
-  #hangSearch = false;
-  #hangRequestPath: string | null = null;
+  #hangSearch = false; #hangRequestPath: string | null = null;
   #requestDelayMs = 0;
   #preserveThreadDocument = false;
   #threadStatusHidesDocuments = false;
@@ -143,7 +141,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       path,
     }));
   }
-
+  public failNextDocumentProcess(): void { this.#failProcess = true; }
   #exactDocument(input: InfinityExactDocumentIdentityV1): StoredDocument | undefined {
     const remoteId = this.#ingestIdempotency.get(input.idempotencyKey);
     const document = remoteId === undefined ? undefined : this.#documents.get(remoteId);
@@ -522,6 +520,7 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       return notFound();
     }
     if (process && request.method === "POST") {
+      if (this.#failProcess) { this.#failProcess = false; return Promise.reject(new Error("synthetic process failure")); }
       const idempotencyKey = request.headers.get("idempotency-key") ?? "";
       const replayed = this.#processIdempotency.get(idempotencyKey) === documentId;
       document.indexingStatus = replayed ? "already_indexed_or_pending" : "pending";

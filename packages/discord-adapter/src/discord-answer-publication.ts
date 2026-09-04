@@ -9,10 +9,8 @@ import type {
 import { REST, Routes } from "discord.js";
 import { z } from "zod";
 
-const snowflakeSchema = z.string().regex(/^\d{17,20}$/u);
-const markerSchema = z.string().trim().min(1).max(256);
-const reconciliationPageSize = 100;
-const reconciliationPageLimit = 10;
+const snowflakeSchema = z.string().regex(/^\d{17,20}$/u), markerSchema = z.string().trim().min(1).max(256), effectIdSchema = z.string().trim().min(1).max(512);
+const reconciliationPageSize = 100, reconciliationPageLimit = 10;
 const answerPayloadSchema = z.object({
   allowed_mentions: z.object({
     parse: z.array(z.never()).max(0),
@@ -185,6 +183,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
   public async create(input: {
     readonly authorityScopeId: string;
     readonly deliveryContainerId: string;
+    readonly effectId: string;
     readonly marker: string;
     readonly payloadBytes: string;
     readonly projectionTargetContainerId: string;
@@ -193,6 +192,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
     snowflakeSchema.parse(input.authorityScopeId);
     snowflakeSchema.parse(input.projectionTargetContainerId);
     const payload = answerPayloadSchema.parse(JSON.parse(input.payloadBytes) as unknown);
+    const nonce = sha256(effectIdSchema.parse(input.effectId)).slice(0, 25);
     if (
       payload.embeds[0]?.url !== markerUrl(markerSchema.parse(input.marker)) ||
       payload.message_reference.channel_id !== input.deliveryContainerId ||
@@ -203,7 +203,7 @@ export class DiscordAnswerDeliveryAdapter implements AnswerDeliveryPort {
     const response = await this.rest.post(
       Routes.channelMessages(input.deliveryContainerId),
       {
-        body: payload,
+        body: { ...payload, enforce_nonce: true, nonce },
       },
     );
     return z.object({ id: snowflakeSchema }).loose().parse(response).id;

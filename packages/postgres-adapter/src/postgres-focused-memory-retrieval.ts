@@ -6,17 +6,28 @@ import {
   type FocusedMemoryRetrievalResult,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { createHash } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import {
   canonicalFinalReplyTurnHash,
   loadCurrentReplyAuthority,
   type ResolvedFinalReplyAuthority,
 } from "./postgres-final-reply-evidence.js";
+import {
+  type HistoricalPostgresCancellationPort,
+  withHistoricalPostgresClient,
+} from "./postgres-historical-query.js";
 
 interface ExactLexicalMatch {
   readonly matchedTerms: number;
   readonly turn: CanonicalEvidenceTurn;
+}
+
+type RetrievalInput = Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0];
+
+interface LoadedRetrievalAuthority {
+  readonly authority: ResolvedFinalReplyAuthority | null;
+  readonly unavailable: boolean;
 }
 
 const ignoredQueryTerms = new Set([
@@ -214,7 +225,7 @@ function validRetrievalInput(
 
 function authorityMatchesRetrieval(
   authority: ResolvedFinalReplyAuthority,
-  input: Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0],
+  input: RetrievalInput,
 ): boolean {
   const binding = authority.binding;
   return binding.canonicalEvidenceHash === input.canonicalEvidenceHash &&
@@ -229,6 +240,66 @@ function authorityMatchesRetrieval(
     binding.transcriptVersion === input.transcriptVersion;
 }
 
+async function loadRetrievalAuthority(
+  pool: Pool,
+  botApplicationIdentity: string,
+  input: RetrievalInput,
+  cancellation?: HistoricalPostgresCancellationPort,
+): Promise<LoadedRetrievalAuthority> {
+  const readAuthority = async (
+    executor: Pick<Pool, "query"> | PoolClient,
+  ): Promise<LoadedRetrievalAuthority> => {
+    const unavailable = await executor.query<{ readonly unavailable: boolean }>(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM meeting_knowledge.unavailable_final_projections
+          WHERE final_projection_receipt = $1
+        ) AS unavailable
+      `,
+      [input.finalProjectionReceipt],
+    );
+    if (unavailable.rows[0]?.unavailable === true) {
+      return { authority: null, unavailable: true };
+    }
+    const authority = await loadCurrentReplyAuthority(
+      executor,
+      input.meetingId,
+      botApplicationIdentity,
+    );
+    return { authority, unavailable: false };
+  };
+  return input.signal === undefined
+    ? readAuthority(pool)
+    : withHistoricalPostgresClient(pool, input.signal, readAuthority, cancellation);
+}
+
+function selectRetrievalMatches(
+  authority: ResolvedFinalReplyAuthority,
+  input: RetrievalInput,
+): readonly ExactLexicalMatch[] | null {
+  const humanActors = new Set(authority.binding.humanActorIds);
+  const requestedSpeakers = new Set(input.hardFilters?.speakerIds ?? []);
+  const interval = input.hardFilters?.relativeTimeInterval ?? null;
+  const canonicalHumanTurns = authority.turns.filter(({ speakerId }) =>
+    humanActors.has(speakerId)
+  );
+  const humanTurns = canonicalHumanTurns.filter(({ speakerId }) =>
+    (input.hardFilters?.requiresSpeakerMatch !== true ||
+      requestedSpeakers.has(speakerId))
+  ).filter((turn) =>
+    interval === null ||
+    (turn.startMs < interval.endMs && turn.endMs > interval.startMs)
+  );
+  if (queryTerms(input.question).size === 0) {
+    return null;
+  }
+  const matches = exactLexicalMatches(humanTurns, input.question);
+  const selected = selectExactLexicalTurns(matches, input.maximumCandidates);
+  return matches.length === 0 || selected.length === 0 ||
+    selected.length >= canonicalHumanTurns.length ? null : selected;
+}
+
 /**
  * Production-local focused retrieval scans the authoritative accepted release,
  * but crosses the consumer port with references only. The application then
@@ -241,59 +312,36 @@ export class PostgresFocusedMemoryRetrieval
   public constructor(
     private readonly pool: Pool,
     private readonly botApplicationIdentity: string,
+    private readonly cancellation?: HistoricalPostgresCancellationPort,
   ) {}
 
   public async retrieve(
-    input: Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0],
+    input: RetrievalInput,
   ): Promise<FocusedMemoryRetrievalResult> {
+    input.signal?.throwIfAborted();
     if (!validRetrievalInput(input)) {
       return { schemaVersion: 1, status: "unavailable" };
     }
     try {
-      const unavailable = await this.pool.query<{ readonly unavailable: boolean }>(
-        `
-          SELECT EXISTS (
-            SELECT 1
-            FROM meeting_knowledge.unavailable_final_projections
-            WHERE final_projection_receipt = $1
-          ) AS unavailable
-        `,
-        [input.finalProjectionReceipt],
+      input.signal?.throwIfAborted();
+      const loaded = await loadRetrievalAuthority(
+        this.pool,
+        this.botApplicationIdentity,
+        input,
+        this.cancellation,
       );
-      if (unavailable.rows[0]?.unavailable === true) {
+      if (loaded.unavailable) {
         return { schemaVersion: 1, status: "unavailable" };
       }
-      const authority = await loadCurrentReplyAuthority(
-        this.pool,
-        input.meetingId,
-        this.botApplicationIdentity,
-      );
+      input.signal?.throwIfAborted();
+      const authority = loaded.authority;
+      input.signal?.throwIfAborted();
       if (authority === null || !authorityMatchesRetrieval(authority, input)) {
         return { schemaVersion: 1, status: "stale" };
       }
-      const humanActors = new Set(authority.binding.humanActorIds);
-      const requestedSpeakers = new Set(input.hardFilters?.speakerIds ?? []);
-      const interval = input.hardFilters?.relativeTimeInterval ?? null;
-      const canonicalHumanTurns = authority.turns.filter(({ speakerId }) =>
-        humanActors.has(speakerId)
-      );
-      const humanTurns = canonicalHumanTurns.filter(({ speakerId }) =>
-        (input.hardFilters?.requiresSpeakerMatch !== true ||
-          requestedSpeakers.has(speakerId))
-      ).filter((turn) =>
-        interval === null ||
-        (turn.startMs < interval.endMs && turn.endMs > interval.startMs)
-      );
-      if (queryTerms(input.question).size === 0) {
-        return { schemaVersion: 1, status: "low_coverage" };
-      }
-      const matches = exactLexicalMatches(humanTurns, input.question);
-      if (matches.length === 0) {
-        return { schemaVersion: 1, status: "low_coverage" };
-      }
-      const selected = selectExactLexicalTurns(matches, input.maximumCandidates);
-      if (selected.length === 0 || selected.length >= canonicalHumanTurns.length) {
-        return { schemaVersion: 1, status: "low_coverage" };
+      const selected = selectRetrievalMatches(authority, input);
+      if (selected === null) {
+        return { authorityGeneration: authority.binding.memoryGeneration, schemaVersion: 1, status: "low_coverage" };
       }
       const requestDigest = digestJson({
         hardFilters: input.hardFilters ?? null,
@@ -322,6 +370,7 @@ export class PostgresFocusedMemoryRetrieval
         status: "current",
       });
     } catch {
+      input.signal?.throwIfAborted();
       return { schemaVersion: 1, status: "unavailable" };
     }
   }

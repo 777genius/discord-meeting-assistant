@@ -23,6 +23,7 @@ class PayloadFake implements AnswerPayloadPort {
 
 class StoreFake implements AnswerEffectStore {
   beforeStartRequest?: () => Promise<void>;
+  afterStartRequest?: () => Promise<void>;
   record?: AnswerEffectRecord;
 
   reserve(input: AnswerEffectReservationInput) {
@@ -63,7 +64,7 @@ class StoreFake implements AnswerEffectStore {
     await this.beforeStartRequest?.();
     if (
       this.record?.effectId !== input.effectId ||
-      (this.record.state !== "reserved" && this.record.state !== "claimed")
+      !["claimed", "reserved"].includes(this.record.state)
     ) {
       return false;
     }
@@ -72,6 +73,7 @@ class StoreFake implements AnswerEffectStore {
       claimGeneration: this.record.claimGeneration + 1,
       state: "request_started",
     };
+    await this.afterStartRequest?.();
     return true;
   }
 
@@ -266,6 +268,21 @@ describe("Publishing answer effects", () => {
     expect(canTransitionAnswerEffect("outcome_unknown", "request_started")).toBe(false);
   });
 
+  it("reconciles a crash after durable request start without a second POST", async () => {
+    const store = new StoreFake();
+    const delivery = new DeliveryFake();
+    let crash = true;
+    store.afterStartRequest = async () => {
+      if (crash) { crash = false; throw new Error("simulated crash"); }
+    };
+    const publisher = new DurableAnswerPublication({ delivery, payloads: new PayloadFake(), store });
+    const reservation = await publisher.reserve(reservationInput());
+    await expect(publisher.send({ authorizationDigest: "e".repeat(64), effectId: reservation.effectId, questionGeneration: 1, workerId: "worker-1" })).rejects.toThrow("simulated crash");
+    expect(store.record?.state).toBe("request_started");
+    await expect(publisher.send({ authorizationDigest: "e".repeat(64), effectId: reservation.effectId, questionGeneration: 1, workerId: "worker-2" })).resolves.toEqual({ status: "outcome_unknown" });
+    expect(delivery.creates).toBe(0);
+  });
+
   it("persists request_started before exactly one create", async () => {
     const store = new StoreFake();
     const delivery = new DeliveryFake();
@@ -389,6 +406,7 @@ describe("Publishing answer effects", () => {
       workerId: "worker-2",
     })).resolves.toEqual({ status: "outcome_unknown" });
     expect(delivery.creates).toBe(1);
+    expect(delivery.createInputs.map(({ effectId }) => effectId)).toEqual([reservation.effectId]);
   });
 
   it("keeps reconciling an unconfirmed absence after restart until its exact receipt appears", async () => {

@@ -93,11 +93,11 @@ export function resolveFinalReplyAuthority(
 }
 
 export async function loadCurrentReplyAuthority(
-  pool: Pool,
+  executor: Pick<Pool, "query"> | PoolClient,
   meetingId: string,
   botApplicationIdentity: string,
 ): Promise<ResolvedFinalReplyAuthority | null> {
-  const result = await pool.query<StoredMeetingRow>(
+  const result = await executor.query<StoredMeetingRow>(
     `SELECT snapshot FROM meeting_core.meetings WHERE meeting_id = $1`,
     [meetingId],
   );
@@ -105,7 +105,7 @@ export async function loadCurrentReplyAuthority(
     ? null
     : resolveFinalReplyAuthority(result.rows[0].snapshot, botApplicationIdentity);
   return finalAuthority ?? loadLiveReplyAuthority(
-    pool,
+    executor,
     meetingId,
     botApplicationIdentity,
   );

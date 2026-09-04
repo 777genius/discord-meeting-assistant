@@ -60,18 +60,16 @@ function adapter(endpoint: DisposableInfinityEndpoint) {
 }
 
 describe("Infinity finalized-live-memory ACL", () => {
-  it("fails the explicit external release gate when the published SDK lacks exact reconciliation",
-    () => {
-      expect(() => new InfinityContextLiveFinalizedMemoryAdapter({
+  it("starts without exact reconciliation and fails closed on projection calls", async () => {
+      const memory = new InfinityContextLiveFinalizedMemoryAdapter({
         actorKeys: { activeActorKey: () => "dactor1.r1.opaque-human" },
-        baseUrl: "http://disposable.infinity.invalid",
-        ids,
-        operationTimeoutMs: 2_000,
-        requestTimeoutMs: 1_000,
-        schemaVersion: 1,
-        token: "test-token",
+        baseUrl: "http://disposable.infinity.invalid", ids, operationTimeoutMs: 2_000,
+        requestTimeoutMs: 1_000, schemaVersion: 1, token: "test-token",
         transport: new DisposableInfinityEndpoint(),
-      })).toThrow(/externally released official exact-document SDK/u);
+      });
+      await expect(memory.upsert(projection())).resolves.toEqual({
+        code: "memory.live_exact_reconciliation_unavailable", retryable: false, status: "rejected",
+      });
     });
 
   it("rejects an unsupported runtime configuration schema", () => {
@@ -165,6 +163,33 @@ describe("Infinity finalized-live-memory ACL", () => {
     expect(endpoint.requests.filter(({ method }) => method === "DELETE")).toHaveLength(0);
     expect(endpoint.exactDocumentRequests.map(({ operation }) => operation))
       .toEqual(["delete", "reconcile"]);
+  });
+
+  it("deletes an exact active unprocessed document without attempting processing", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    endpoint.failNextDocumentProcess();
+    const memory = adapter(endpoint);
+
+    await expect(memory.upsert(projection())).resolves.toMatchObject({
+      status: "outcome_unknown",
+    });
+    expect(endpoint.documentCount()).toBe(1);
+    const processRequestsBeforeRemoval = endpoint.requests.filter(({ method, path }) =>
+      method === "POST" && path.endsWith("/process")
+    ).length;
+    endpoint.failNextDocumentProcess();
+
+    await expect(memory.reconcileRemoval(projection())).resolves.toEqual({
+      status: "not_found",
+    });
+    await expect(memory.remove(projection())).resolves.toEqual({ status: "applied" });
+
+    expect(endpoint.documentCount()).toBe(0);
+    expect(endpoint.requests.filter(({ method, path }) =>
+      method === "POST" && path.endsWith("/process")
+    )).toHaveLength(processRequestsBeforeRemoval);
+    expect(endpoint.exactDocumentRequests.map(({ operation }) => operation))
+      .toEqual(["reconcile", "delete"]);
   });
 
   it.each([100, 101, 2_209])(
