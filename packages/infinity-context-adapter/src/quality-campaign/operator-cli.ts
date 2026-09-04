@@ -5,7 +5,7 @@ import { canonicalJson, digest, exactRecord } from "./canonical.js";
 import { EXIT_OUTCOME_UNKNOWN, EXIT_SAFE_PAUSE } from "./execution.js";
 
 export const QUALITY_CAMPAIGN_COMMANDS = Object.freeze([
-  "verify-bind", "preflight", "execute", "resume", "status", "adjudicate",
+  "corpus-admit", "verify-bind", "preflight", "execute", "resume", "status", "adjudicate",
   "adjudicate-resume", "retention", "cleanup-absence", "final-admission",
   "holdout-execute", "holdout-adjudicate", "holdout-cleanup", "holdout-status",
   "holdout-resume",
@@ -32,6 +32,7 @@ export const SAFE_OPERATOR_COUNTERS = Object.freeze([
 ] as const);
 export const SAFE_OPERATOR_DIGESTS = Object.freeze([
   "adjudicationSetSha256", "campaignRootSha256", "cleanupReceiptSha256",
+  "corpusAdmissionManifestSha256", "executionCorpusSha256", "goldRelevanceSha256",
   "finalAdmissionSha256", "holdoutCheckpointSha256", "holdoutExecutionSha256",
   "inventorySha256", "metricsSha256", "qualifiedCheckpointSha256", "releaseRootSha256",
   "rootBindingSha256", "separateReportSha256", "terminalAttemptSetSha256",

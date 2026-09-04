@@ -1,6 +1,8 @@
 import { exactRecord } from "./canonical.js";
-import { runQualityCampaignOperatorCli, type OperatorExit } from "./operator-cli.js";
+import { createOperatorSafeReceipt, runQualityCampaignOperatorCli, type OperatorExit } from
+  "./operator-cli.js";
 import { runQualityCampaignProductionComposition } from "./production-composition.js";
+import { admitSealedQualificationCorpus } from "./production-corpus-admission.js";
 import { createHttpQualityCampaignProductionPorts } from "./production-http-ports.js";
 import type { QualityCampaignProductionPorts } from "./production-ports.js";
 
@@ -13,6 +15,15 @@ export async function runQualityCampaignProductionCli(input: { readonly argv: re
   let ports = input.ports;
   return await runQualityCampaignOperatorCli({ argv: [input.argv[0] ?? "", phasePath],
     handlers: { run: async ({ command, phaseInput }) => {
+      if (command === "corpus-admit") {
+        if (phaseInput.schemaVersion !==
+          "meeting_knowledge.semantic_quality_corpus_admission_phase.v1") {
+          throw new Error("corpus admission phase input is invalid");
+        }
+        const admitted = await admitSealedQualificationCorpus(phaseInput.payload);
+        return { blockers: [], command, receipt: createOperatorSafeReceipt(
+          admitted.campaignRootSha256, { ...admitted }), status: "completed" };
+      }
       const phase = exactRecord(phaseInput.payload, ["configurationPath", "connectionsPath"],
         "production phase payload");
       if (phaseInput.schemaVersion !== "meeting_knowledge.semantic_quality_production_phase.v1") {
