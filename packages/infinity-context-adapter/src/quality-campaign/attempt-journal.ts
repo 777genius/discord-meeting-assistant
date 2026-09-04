@@ -1,6 +1,8 @@
+/* oxlint-disable max-lines -- durable reservation, exchange, and terminal decoders form one journal boundary */
 import { randomUUID } from "node:crypto";
-import { link, mkdir, open, readFile, stat, unlink } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
+import { constants } from "node:fs";
+import { link, mkdir, open, unlink, type FileHandle } from "node:fs/promises";
+import { basename, dirname, isAbsolute, resolve as resolvePath } from "node:path";
 
 import { claimDurableAttemptBudget, loadAdmittedAttemptBudgetClaims } from
   "./attempt-budget-ledger.js";
@@ -14,6 +16,11 @@ import { assertQualificationProviderAccounting,
   type QualificationProviderAccounting } from "./qualification-contract.js";
 import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
   type QualityAuthorityRole, verifyPinnedReleaseDocument } from "./release.js";
+import { joinFromHandle, openOrCreatePrivateQualityCampaignDirectory,
+  openQualityCampaignDirectory, readCanonicalQualityCampaignJsonAt, readQualityCampaignBytesAt } from
+  "./production-execution-corpus-custody.js";
+
+const MAXIMUM_JOURNAL_RECORD_BYTES = 8_000_000;
 
 type ReservationRecord = AttemptReservation;
 
@@ -51,16 +58,67 @@ interface BlockedRecord {
 }
 
 export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpendLedgerPort {
-  private readonly root: string;
+  private readonly state: Promise<{ readonly campaignName: string;
+    readonly identityPrefix: string; readonly parent: FileHandle; readonly root: FileHandle }>;
+  private readonly root: Promise<FileHandle>;
+  private readonly budgets: Promise<FileHandle>;
+  private closePromise: Promise<void> | undefined;
+  private closeRequested = false;
+  private activeOperations = 0;
+  private idleWaiter: (() => void) | undefined;
   public constructor(root: string, public readonly authorityPolicy: QualityCampaignAuthorityPolicy,
     private readonly resultAuthorityRole: Extract<QualityAuthorityRole,
     "holdout_provider_result" | "provider_result"> = "provider_result") {
     if (!isAbsolute(root) || root.includes("\0")) {throw new Error("journal root must be absolute");}
-    this.root = resolvePath(root);
+    this.state = initializeBoundRoot(resolvePath(root));
+    this.root = this.state.then(({ root: handle }) => handle);
+    this.budgets = this.child(this.root, "budgets", "attempt budget root");
+    void this.root.catch(() => null); void this.budgets.catch(() => null);
+  }
+
+  public async close(): Promise<void> {
+    this.closeRequested = true;
+    this.closePromise ??= (async () => {
+      if (this.activeOperations > 0) {
+        await new Promise<void>((resolve) => {this.idleWaiter = resolve;});
+      }
+      let failure: unknown;
+      const initialized = await Promise.allSettled([this.budgets, this.state]);
+      const handles: FileHandle[] = [];
+      if (initialized[0].status === "fulfilled") {handles.push(initialized[0].value);}
+      else {failure = initialized[0].reason;}
+      if (initialized[1].status === "fulfilled") {
+        handles.push(initialized[1].value.root, initialized[1].value.parent);
+      } else {failure ??= initialized[1].reason;}
+      for (const handle of handles) {
+        try {await handle.close();} catch (error) {failure ??= error;}
+      }
+      if (failure !== undefined) {throw new Error("attempt journal close failed", { cause: failure });}
+    })();
+    await this.closePromise;
+  }
+
+  public async [Symbol.asyncDispose](): Promise<void> {await this.close();}
+
+  private beginOperation(): () => void {
+    if (this.closeRequested) {throw new Error("attempt journal is closed");}
+    this.activeOperations += 1; let ended = false;
+    return () => {
+      if (ended) {return;} ended = true; this.activeOperations -= 1;
+      if (this.activeOperations === 0) {this.idleWaiter?.(); this.idleWaiter = undefined;}
+    };
   }
 
   private get resultAuthority(): { readonly keyId: string; readonly publicKeyPem: string } {
     return this.authorityPolicy.authority(this.resultAuthorityRole);
+  }
+
+  private async bindCampaign(campaignRootSha256: string): Promise<void> {
+    const campaign = digest(campaignRootSha256, "journal campaign root");
+    const { campaignName, parent, root } = await this.state; const metadata = await root.stat();
+    await writeCreateOnly(parent, campaignName, canonicalJson({ campaignRootSha256: campaign,
+      journalDev: metadata.dev, journalIno: metadata.ino,
+      schemaVersion: "meeting_knowledge.semantic_quality_journal_campaign_identity.v1" }));
   }
 
   private async reserve(input: { readonly identity: AttemptIdentity;
@@ -70,7 +128,8 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
       digest(input.requestDigestSha256, "request digest"),
       schemaVersion: "meeting_knowledge.semantic_quality_provider_reservation.v3" as const,
       state: "provider_reserved" as const });
-    await writeCreateOnly(this.path(input.identity.attemptId, "reserved"), canonicalJson(record));
+    await writeCreateOnly(await this.root, this.name(input.identity.attemptId, "reserved"),
+      canonicalJson(record));
     return record;
   }
 
@@ -79,6 +138,8 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
     readonly requestedTokens: number; readonly spend: VerifiedSpendReservation }): Promise<{
       readonly admitted: boolean; readonly reservation?: ReservationRecord;
       readonly state: JournalState }> {
+    const end = this.beginOperation(); try {
+    await this.bindCampaign(input.identity.campaignRootSha256);
     assertAttemptIdentity(input.identity, { campaignRootSha256: input.spend.payload.campaignRootSha256,
       releaseRootSha256: input.spend.payload.releaseRootSha256,
       spendReservationSha256: input.spend.spendReservationSha256 });
@@ -86,9 +147,13 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
     if (requested.some((value) => !Number.isSafeInteger(value) || value < 0) ||
       input.requestedTokens < 1) {throw new Error("provider budget claim is invalid");}
     const admissionId = randomUUID();
-    const ledgerPath = this.budgetPath(input.identity.spendReservationSha256);
+    const state = await this.state;
     const budget = await claimDurableAttemptBudget({ admissionId, identity: input.identity,
-      ledgerPath, requestDigestSha256: input.requestDigestSha256,
+      directory: await this.budgets, ledgerName: this.budgetName(
+        input.identity.spendReservationSha256), identityDirectory: state.parent,
+      identityName: `${state.identityPrefix}.${this.budgetName(
+        input.identity.spendReservationSha256)}.identity.jsonl`,
+      requestDigestSha256: input.requestDigestSha256,
       requestedEncryptedBytes: input.requestedEncryptedBytes,
       requestedTokens: input.requestedTokens, spend: input.spend.payload });
     if (!budget.admitted) {
@@ -105,6 +170,7 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
     const reservation = await this.reserve({ identity: input.identity,
       requestDigestSha256: input.requestDigestSha256 });
     return { admitted: true, reservation, state: "provider_reserved" };
+    } finally {end();}
   }
 
   public async terminal(input: { readonly identity: AttemptIdentity;
@@ -113,6 +179,8 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
     readonly requestBytes: Uint8Array; readonly resultEnvelopeBytes: Uint8Array;
     readonly state: TerminalState; readonly expectedResultDigestSha256: string }):
   Promise<TerminalRecord> {
+    const end = this.beginOperation(); try {
+    await this.bindCampaign(input.identity.campaignRootSha256);
     if (input.state === "outcome_unknown") {
       throw new Error("outcome_unknown is inferred from uncertain effect, never asserted by a provider");
     }
@@ -146,9 +214,11 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
       reservationSha256: sha256(reservation),
       schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal.v4" as const,
       signedResult, state: input.state });
-    await writeCreateOnly(this.path(input.identity.attemptId, "exchange"), canonicalJson(exchange));
-    await writeCreateOnly(this.path(input.identity.attemptId, "terminal"), canonicalJson(record));
+    const root = await this.root;
+    await writeCreateOnly(root, this.name(input.identity.attemptId, "exchange"), canonicalJson(exchange));
+    await writeCreateOnly(root, this.name(input.identity.attemptId, "terminal"), canonicalJson(record));
     return record;
+    } finally {end();}
   }
 
   /** A durable reservation without an authenticated terminal is never retryable after restart. */
@@ -156,12 +226,15 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
     readonly release: PinnedReleaseDocument;
     readonly requestDigestSha256: string }):
   Promise<JournalState> {
+    const end = this.beginOperation(); try {
     try {
+      await this.bindCampaign(input.identity.campaignRootSha256);
       assertAttemptIdentity(input.identity);
+      const root = await this.root;
       const [blockedValue, reservationValue, terminalValue] = await Promise.all([
-        readOptional(this.path(input.identity.attemptId, "blocked")),
-        readOptional(this.path(input.identity.attemptId, "reserved")),
-        readOptional(this.path(input.identity.attemptId, "terminal")),
+        readOptional(root, this.name(input.identity.attemptId, "blocked")),
+        readOptional(root, this.name(input.identity.attemptId, "reserved")),
+        readOptional(root, this.name(input.identity.attemptId, "terminal")),
       ]);
       if (reservationValue === null && terminalValue === null && blockedValue === null) {
         return "never_reserved";}
@@ -203,20 +276,24 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
       return terminal.state;
     } catch {
       return "blocked_evidence";
-    }
+    }} finally {end();}
   }
 
   private async requireReservation(attemptId: string): Promise<ReservationRecord> {
-    const value = await readOptional(this.path(attemptId, "reserved"));
+    const value = await readOptional(await this.root, this.name(attemptId, "reserved"));
     if (value === null) {throw new Error("provider terminal lacks a durable reservation");}
     return decodeReservation(value);
   }
   public async blockEvidence(reservation: ReservationRecord): Promise<void> {
+    const end = this.beginOperation(); try {
+    await this.bindCampaign(reservation.campaignRootSha256);
     const record: BlockedRecord = { attemptId: reservation.attemptId,
       reasonCode: "terminal_binding_invalid", reservationSha256: sha256(reservation),
       schemaVersion: "meeting_knowledge.semantic_quality_provider_blocked.v1",
       state: "blocked_evidence" };
-    await writeCreateOnly(this.path(reservation.attemptId, "blocked"), canonicalJson(record));
+    await writeCreateOnly(await this.root, this.name(reservation.attemptId, "blocked"),
+      canonicalJson(record));
+    } finally {end();}
   }
   public async reconcileTerminal(input: { readonly identity: AttemptIdentity;
     readonly expectedResultDigestSha256: string; readonly requestDigestSha256: string;
@@ -224,6 +301,8 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
     readonly release: PinnedReleaseDocument;
     readonly signedResult: unknown;
     readonly state: Exclude<TerminalState, "outcome_unknown"> }): Promise<JournalState> {
+    const end = this.beginOperation(); try {
+    await this.bindCampaign(input.identity.campaignRootSha256);
     const reservation = await this.requireReservation(input.identity.attemptId);
     const expected = { ...input.identity, requestDigestSha256:
       digest(input.requestDigestSha256, "reconciled request digest"),
@@ -236,13 +315,17 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
       expectedResultDigestSha256: input.expectedResultDigestSha256,
       requestBytes: input.requestBytes, resultEnvelopeBytes: input.resultEnvelopeBytes,
       release: input.release, signedResult: input.signedResult, state: input.state })).state;
+    } finally {end();}
   }
   public async completedExchange(identity: AttemptIdentity): Promise<CompletedProviderExchange> {
+    const end = this.beginOperation(); try {
+    await this.bindCampaign(identity.campaignRootSha256);
     assertAttemptIdentity(identity);
+    const root = await this.root;
     const [reservationValue, terminalValue, exchangeValue] = await Promise.all([
-      readOptional(this.path(identity.attemptId, "reserved")),
-      readOptional(this.path(identity.attemptId, "terminal")),
-      readOptional(this.path(identity.attemptId, "exchange")),
+      readOptional(root, this.name(identity.attemptId, "reserved")),
+      readOptional(root, this.name(identity.attemptId, "terminal")),
+      readOptional(root, this.name(identity.attemptId, "exchange")),
     ]);
     if (reservationValue === null || terminalValue === null || exchangeValue === null) {
       throw new Error("exact completed exchange bytes are missing");
@@ -271,19 +354,71 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
       exchange.requestDigestSha256, resultEnvelopeBytes, resultEnvelopeDigestSha256:
       exchange.resultEnvelopeDigestSha256, signedResult, terminalDigestSha256:
       sha256(signedResult) });
+    } finally {end();}
   }
-  private path(attemptId: string, kind: "blocked" | "exchange" | "reserved" | "terminal"): string {
-    return join(this.root, attemptId, `${kind}.json`);
+  private name(attemptId: string, kind: "blocked" | "exchange" | "reserved" | "terminal"): string {
+    return `${safeId(attemptId, "journal attempt ID")}.${kind}.json`;
   }
-  private budgetPath(spendReservationSha256: string): string {
-    return join(this.root, "budgets", `${spendReservationSha256}.jsonl`);
+  private budgetName(spendReservationSha256: string): string {
+    return `${digest(spendReservationSha256, "journal spend reservation")}.jsonl`;
+  }
+  private async child(parentPromise: Promise<FileHandle>, name: string, label: string) {
+    const parent = await parentPromise;
+    try {await mkdir(joinFromHandle(parent, name), { mode: 0o700 }); await parent.sync();}
+    catch (error) {if ((error as NodeJS.ErrnoException).code !== "EEXIST") {throw error;}}
+    const child = await open(joinFromHandle(parent, name), constants.O_RDONLY |
+      constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      const metadata = await child.stat();
+      if (!metadata.isDirectory() || (metadata.mode & 0o077) !== 0) {
+        throw new Error(`${label} is not a private directory`);
+      }
+      return child;
+    } catch (error) {await child.close(); throw error;}
   }
   public async loadAdmittedClaims(spend: VerifiedSpendReservation):
   Promise<readonly DurableSpendClaim[]> {
+    const end = this.beginOperation(); try {
+    await this.bindCampaign(spend.payload.campaignRootSha256);
+    const state = await this.state; const ledgerName = this.budgetName(spend.spendReservationSha256);
     return await loadAdmittedAttemptBudgetClaims({ campaignRootSha256:
-      spend.payload.campaignRootSha256, ledgerPath:
-      this.budgetPath(spend.spendReservationSha256), spend: spend.payload,
-    spendReservationSha256: spend.spendReservationSha256 });
+      spend.payload.campaignRootSha256, directory: await this.budgets,
+      identityDirectory: state.parent, identityName:
+        `${state.identityPrefix}.${ledgerName}.identity.jsonl`, ledgerName, spend: spend.payload,
+      spendReservationSha256: spend.spendReservationSha256 });
+    } finally {end();}
+  }
+}
+
+/** Closes an owned journal after all work settles while preserving the operation's failure. */
+export async function withOwnedAttemptJournal<T>(journal: DurableAttemptJournal,
+  operation: () => Promise<T>): Promise<T> {
+  let value: T;
+  try {value = await operation();}
+  catch (operationError) {
+    try {await journal.close();} catch { /* The operation failure remains authoritative. */ }
+    throw operationError;
+  }
+  await journal.close();
+  return value;
+}
+
+async function initializeBoundRoot(path: string): Promise<{
+  readonly campaignName: string; readonly identityPrefix: string;
+  readonly parent: FileHandle; readonly root: FileHandle }> {
+  const root = await openOrCreatePrivateQualityCampaignDirectory(path, "attempt journal root");
+  let parent: FileHandle | undefined;
+  try {
+    parent = await openQualityCampaignDirectory(dirname(path), "attempt journal trusted parent");
+    const metadata = await root.stat(); const name = `.${basename(path)}.identity.json`;
+    const binding = canonicalJson({ dev: metadata.dev, ino: metadata.ino,
+      schemaVersion: "meeting_knowledge.semantic_quality_journal_identity.v1" });
+    await writeCreateOnly(parent, name, binding);
+    return { campaignName: `.${basename(path)}.campaign.json`,
+      identityPrefix: `.${basename(path)}.budget`, parent, root };
+  } catch (error) {
+    try {await root.close();} finally {await parent?.close();}
+    throw error;
   }
 }
 
@@ -309,26 +444,35 @@ function decodeExchangeBytes(value: unknown): ExchangeBytesRecord {
   digest(record.resultEnvelopeDigestSha256, "exchange result digest");
   return record as unknown as ExchangeBytesRecord;
 }
-async function writeCreateOnly(path: string, bytes: string | Uint8Array): Promise<void> {
-  const directoryPath = dirname(path);
-  await ensureDirectory(directoryPath);
-  const temporaryPath = join(directoryPath, `.${basename(path)}.${randomUUID()}.tmp`);
-  const handle = await open(temporaryPath, "wx", 0o600);
+async function writeCreateOnly(directory: FileHandle, name: string,
+  bytes: string | Uint8Array): Promise<void> {
+  const requested = Buffer.from(bytes);
+  if (requested.byteLength === 0 || requested.byteLength > MAXIMUM_JOURNAL_RECORD_BYTES) {
+    throw new Error("journal artifact exceeds its byte limit");
+  }
+  const temporaryName = `.${name}.${randomUUID()}.tmp`;
+  const temporaryPath = joinFromHandle(directory, temporaryName);
+  const handle = await open(temporaryPath, constants.O_WRONLY | constants.O_CREAT |
+    constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try {
-    await handle.writeFile(bytes);
+    await handle.writeFile(requested);
     await handle.sync();
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size !== requested.byteLength) {
+      throw new Error("journal temporary artifact changed during write");
+    }
   } finally {
     await handle.close();
   }
   let published = false;
   try {
-    await link(temporaryPath, path);
+    await link(temporaryPath, joinFromHandle(directory, name));
     published = true;
-    await syncDirectory(directoryPath);
+    await directory.sync();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") {throw error;}
-    const existing = await readFile(path);
-    const requested = Buffer.from(bytes);
+    const existing = await readQualityCampaignBytesAt(directory, name,
+      "existing journal artifact", MAXIMUM_JOURNAL_RECORD_BYTES);
     if (!existing.equals(requested)) {
       throw new Error("create-only artifact conflicts", { cause: error });
     }
@@ -336,23 +480,15 @@ async function writeCreateOnly(path: string, bytes: string | Uint8Array): Promis
     await unlink(temporaryPath).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {throw error;}
     });
-    if (published) {await syncDirectory(directoryPath);}
+    if (published) {await directory.sync();}
   }
 }
-
-async function syncDirectory(path: string): Promise<void> {
-  const directory = await open(path, "r");
-  try {await directory.sync();} finally {await directory.close();}
-}
-
-async function ensureDirectory(path: string): Promise<void> {
-  await mkdir(path, { recursive: true, mode: 0o700 });
-  if (!(await stat(path)).isDirectory()) {throw new Error("durable path is not a directory");}
-}
-
-async function readOptional(path: string): Promise<unknown> {
-  try {return JSON.parse((await readFile(path)).toString("utf8")) as unknown;}
-  catch (error) {if ((error as NodeJS.ErrnoException).code === "ENOENT") {return null;} throw error;}
+async function readOptional(directory: FileHandle, name: string): Promise<unknown> {
+  try {return await readCanonicalQualityCampaignJsonAt(directory, name, "journal artifact",
+    MAXIMUM_JOURNAL_RECORD_BYTES);}
+  catch (error) {if ((error as NodeJS.ErrnoException).code === "ENOENT" ||
+    (error as Error & { cause?: NodeJS.ErrnoException }).cause?.code === "ENOENT") {return null;}
+    throw error;}
 }
 
 function decodeReservation(value: unknown): ReservationRecord {

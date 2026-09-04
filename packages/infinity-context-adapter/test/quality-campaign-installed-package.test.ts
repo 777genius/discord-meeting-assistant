@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer } from "node:https";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -42,6 +42,11 @@ const protoLoader = subscriptionRequire("@grpc/proto-loader") as {
   loadSync(path: string, options: Record<string, unknown>): unknown };
 const grpcServers: TestGrpcServer[] = [];
 let installed!: Awaited<ReturnType<typeof packAndInstall>>;
+let localHttpsFixturePromise: Promise<{
+  readonly certificate: string;
+  readonly certificatePath: string;
+  readonly privateKey: string;
+}> | undefined;
 
 beforeAll(async () => {installed = await packAndInstall();}, 180_000);
 afterAll(async () => {await Promise.all(servers.splice(0).map(async (server) => {
@@ -71,12 +76,14 @@ describe("packed production quality-campaign entrypoint", () => {
     const fixture = await createPackedPreflightFixture(root, installed.consumerRoot);
     const statusPath = join(root, "preflight-status.json");
     await expect(execute(installed.bin, ["preflight", fixture.phasePath, statusPath], {
-      timeout: 30_000 })).rejects.toMatchObject({ code: 20, stderr: "" });
+      env: fixture.childEnvironment, timeout: 30_000 })).rejects.toMatchObject({ code: 20,
+        stderr: "" });
     expect(fixture.releaseRequests()).toBe(1);
     expect(await readFile(statusPath, "utf8")).toMatch(/"status":"paused"/u);
     const executeStatusPath = join(root, "execute-status.json");
     await expect(execute(installed.bin, ["execute", fixture.phasePath, executeStatusPath], {
-      timeout: 60_000 })).rejects.toMatchObject({ code: 21, stderr: "" });
+      env: fixture.childEnvironment, timeout: 60_000 })).rejects.toMatchObject({ code: 21,
+        stderr: "" });
     expect(fixture.providerRequests()).toBe(0);
     expect(fixture.retrievalRequests()).toBeGreaterThan(0);
     expect(await readFile(executeStatusPath, "utf8")).toMatch(/"status":"outcome_unknown"/u);
@@ -101,13 +108,15 @@ describe("packed production quality-campaign entrypoint", () => {
     const full = packedReviewEvidence(answer); fixture.setReviewEvidence(full);
     const script = `const{createHttpQualityCampaignProductionPorts}=await import("@discord-meeting/infinity-context-adapter/quality-campaign");const p=await createHttpQualityCampaignProductionPorts(${JSON.stringify(fixture.connectionsPath)});const r=await p.review.receipts(${JSON.stringify(answer.attemptId)},{deadlineEpochMs:Date.now()+5000,signal:new AbortController().signal});if(Object.keys(r).length!==8||r.firstEffectEvidence.attempt.callKind!=="adjudicator_1"||r.resolverEffectEvidence.attempt.callKind!=="resolver")process.exit(2)`;
     await expect(execute(process.execPath, ["--input-type=module", "--eval", script], {
-      cwd: installed.consumerRoot, timeout: 10_000 })).resolves.toMatchObject({ stderr: "" });
+      cwd: installed.consumerRoot, env: fixture.childEnvironment,
+      timeout: 10_000 })).resolves.toMatchObject({ stderr: "" });
 
     fixture.setReviewEvidence({ firstReceipt: full.firstReceipt,
       rawOutcomeEnvelopeSha256: full.rawOutcomeEnvelopeSha256,
       resolverReceipt: full.resolverReceipt, secondReceipt: full.secondReceipt });
     await expect(execute(process.execPath, ["--input-type=module", "--eval", script], {
-      cwd: installed.consumerRoot, timeout: 10_000 })).rejects.toMatchObject({ code: 1 });
+      cwd: installed.consumerRoot, env: fixture.childEnvironment,
+      timeout: 10_000 })).rejects.toMatchObject({ code: 1 });
   }, 60_000);
 
   it("routes installed adjudication and final admission commands and fails closed on missing phases",
@@ -116,7 +125,8 @@ describe("packed production quality-campaign entrypoint", () => {
       const fixture = await createPackedPreflightFixture(root, installed.consumerRoot);
       for (const command of ["adjudicate", "final-admission"] as const) {
         await expect(execute(installed.bin, [command, fixture.phasePath,
-          join(root, `${command}-status.json`)], { timeout: 30_000 }))
+          join(root, `${command}-status.json`)], { env: fixture.childEnvironment,
+            timeout: 30_000 }))
           .rejects.toMatchObject({ code: 1, stderr: "" });
       }
       expect(fixture.releaseRequests()).toBe(2);
@@ -186,9 +196,81 @@ function packedRelease(authorities: Record<string, ReturnType<typeof localSigner
 function packedQuestion(source: "automatic" | "independent_review", prefix: string,
   index: number) {
   const id = `${prefix}-${index}`;
-  return { locale: index % 2 === 0 ? "en" as const : "ru" as const,
-    questionDigestSha256: digest(`question:${id}`), questionId: id,
+  const locale = index % 2 === 0 ? "en" as const : "ru" as const;
+  return { locale, questionDigestSha256: sha256(packedExecutionPacket(id, locale, source)), questionId: id,
     rubricDigestSha256: digest(`rubric:${id}`), source };
+}
+
+function packedExecutionPacket(questionId: string, locale: "en" | "ru",
+  source: "automatic" | "independent_review") {
+  return { locale, questionId, questionText: `Packed question ${questionId}?`,
+    scopeTopologyReference: `scope:${questionId}`, source };
+}
+
+interface PackedAdmittedExecutionCorpusInput {
+  readonly acceptance: unknown;
+  readonly authorities: Record<string, ReturnType<typeof localSigner>>;
+  readonly authorization: unknown;
+  readonly automatic: readonly ReturnType<typeof packedQuestion>[];
+  readonly corpusDigestSha256: string;
+  readonly custody: ReturnType<typeof localSigner>;
+  readonly files: Readonly<Record<string, unknown>>;
+  readonly mainRootSha256: string;
+  readonly manifestPath: string;
+  readonly questions: readonly ReturnType<typeof packedQuestion>[];
+  readonly releaseRootSha256: string;
+  readonly reviewed: readonly ReturnType<typeof packedQuestion>[];
+  readonly root: string;
+  readonly selectedLocator: string;
+}
+
+async function createPackedAdmittedExecutionCorpus(input: PackedAdmittedExecutionCorpusInput) {
+  const executionRoot = join(input.root, "admitted-execution");
+  await mkdir(executionRoot, { mode: 0o700 });
+  const executionCorpusPath = join(executionRoot, "execution-corpus.json");
+  const executionCorpus = input.custody.signed({ campaignRootSha256:
+    input.mainRootSha256, packets: input.questions.map((question) => packedExecutionPacket(
+      question.questionId, question.locale, question.source)),
+    schemaVersion: "meeting_knowledge.quality_execution_corpus.v1" });
+  await writeFile(executionCorpusPath, canonicalJson(executionCorpus));
+  const admittedLocatorIds = [input.selectedLocator];
+  const admittedArtifacts: Readonly<Record<string, unknown>> = {
+    "InputManifest.v4.json": JSON.parse(await readFile(input.manifestPath, "utf8")) as unknown,
+    "acceptance-receipt.json": input.acceptance, "automatic-questions.json": input.automatic,
+    "execution-authorization.json": input.authorization,
+    "forbidden-locator-manifest.json": input.files["forbidden-locator-manifest.json"],
+    "forbidden-locators.json": input.authorities.evidence!.signed({ campaignRootSha256:
+      input.mainRootSha256, forbiddenLocatorIds: [digest("packed-forbidden-locator")],
+      questionSetSha256: sha256(input.questions), releaseRootSha256: input.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_forbidden_locators.v2" }),
+    "gold-relevance.json": input.authorities["gold-relevance"]!.signed({ campaignRootSha256:
+      input.mainRootSha256, entries: input.questions.map((question) => ({ ...question,
+        campaignRootSha256: input.mainRootSha256, expectedAbstention: false, releaseRootSha256:
+        input.releaseRootSha256, relevantLocatorIds: admittedLocatorIds })), releaseRootSha256:
+      input.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" }),
+    "independent-review-questions.json": input.reviewed,
+    "locator-inventory.json": input.authorities.evidence!.signed({ campaignRootSha256:
+      input.mainRootSha256, locatorIds: admittedLocatorIds, releaseRootSha256:
+      input.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_locator_inventory.v1" }),
+    "question-review-1.json": input.files["question-review-1.json"],
+    "question-review-2.json": input.files["question-review-2.json"],
+    "turn-to-block-manifest.json": input.files["turn-to-block-manifest.json"],
+  };
+  for (const [name, value] of Object.entries(admittedArtifacts)) {
+    await writeFile(join(executionRoot, name), canonicalJson(value));
+  }
+  const admittedArtifactNames = [...Object.keys(admittedArtifacts), "execution-corpus.json"];
+  const artifactInventory = await Promise.all(admittedArtifactNames.map(async (path) => ({ path,
+    sha256: digestBytes(await readFile(join(executionRoot, path))) })));
+  await writeFile(join(executionRoot, "corpus-admission-manifest.json"), canonicalJson({
+    artifactInventory, authorizationComparisonEpochMs: Date.now(), campaignRootSha256:
+    input.mainRootSha256, completionState: "complete", corpusDigestSha256:
+    input.corpusDigestSha256, questionCount: input.questions.length, questionSetSha256:
+    sha256(input.questions), releaseRootSha256: input.releaseRootSha256, schemaVersion:
+    "meeting_knowledge.semantic_quality_corpus_admission_manifest.v1" }));
+  return executionCorpusPath;
 }
 
 async function createPackedPreflightFixture(root: string, consumerRoot: string) {
@@ -199,7 +281,10 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const memory = canonicalMemoryFixture();
   const capability = sdkQualificationCapability();
   const retrievalSuccess = sdkRetrievalResponse(memory.selectedLocator, capability);
-  const server = createServer((request, response) => {if (request.url === "/release") {
+  const tls = await localHttpsFixture();
+  const childEnvironment = { ...process.env, NODE_EXTRA_CA_CERTS: tls.certificatePath };
+  const server = createServer({ cert: tls.certificate, key: tls.privateKey },
+    (request, response) => {if (request.url === "/release") {
     observedReleaseRequests += 1; response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(release)); return;} if (request.url === "/review") {
     request.resume(); request.on("end", () => {response.writeHead(200,
@@ -243,34 +328,13 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   servers.push(server); await new Promise<void>((resolve) => {server.listen(0, "127.0.0.1",
     () => {resolve();});}); const address = server.address();
   if (address === null || typeof address === "string") {throw new Error("fake HTTP bind failed");}
-  const base = `http://127.0.0.1:${address.port}`;
-  const authorities = Object.fromEntries(["absence", "custody", "deletion", "evidence", "gold-relevance",
-    "execution", "holdout", "holdout-evidence", "holdout-result", "holdout-spend-call", "judge1",
-    "judge2", "main-result", "release", "resolver", "reviewer1", "reviewer2", "spend", "spend-call"]
-    .map((name) => [name, localSigner(name)]));
+  const base = `https://127.0.0.1:${address.port}`;
+  const { authorities, authorityPaths, policyBindingSha256, policyInput } =
+    await createPackedAuthorities(root);
   providerSigner = authorities["main-result"]!;
-  const authorityPaths: Record<string, string> = {};
-  for (const [name, value] of Object.entries(authorities)) {const publicKeyPath = join(root,
-    `${name}.pem`); await writeFile(publicKeyPath, value.publicKeyPem); const path = join(root,
-      `${name}-authority.json`); await writeFile(path, canonicalJson({ keyId: value.keyId,
-        publicKeyPath })); authorityPaths[name] = path;}
   const releaseSigner = authorities.release!; const releasePublicKeyPath = join(root,
     "release.pem");
-  const roleNames = { artifact_custody: "custody", cleanup: "absence",
-    gold_relevance: "gold-relevance",
-    holdout_authorization: "holdout", holdout_provider_result: "holdout-result",
-    holdout_question: "holdout-evidence",
-    inventory: "deletion", locator: "evidence", main_proof: "execution",
-    provider_result: "main-result", release: "release", repetition: "judge1",
-    resolver: "resolver", reviewer_1: "reviewer1", reviewer_2: "reviewer2",
-    spend: "spend" } as const;
-  const policyInput = Object.fromEntries(Object.entries(roleNames).map(([role, name]) => {
-    const authority = authorities[name]!; return [role, { keyId: authority.keyId,
-      publicKeyFingerprintSha256: fingerprint(authority.publicKeyPem),
-      publicKeyPem: authority.publicKeyPem }];}));
-  const policyBindingSha256 = sha256(Object.entries(roleNames).map(([role, name]) => ({ keyId:
-    authorities[name]!.keyId, publicKeyFingerprintSha256: fingerprint(
-      authorities[name]!.publicKeyPem), role })));
+  const roleNames = packedAuthorityRoleNames();
   const authorityPolicyPath = join(root, "authority-policy.json"); await writeFile(
     authorityPolicyPath, canonicalJson(Object.fromEntries(Object.entries(roleNames).map(
       ([role, name]) => [role, authorityPaths[name]]))));
@@ -293,26 +357,32 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const reviewPayload = { corpusDigestSha256, questionSetSha256: sha256(questions),
     reviewerDigestSha256, rubricSetSha256: sha256(questions.map(({ questionId,
       rubricDigestSha256 }) => ({ questionId, rubricDigestSha256 }))), schemaVersion:
-    "meeting_knowledge.semantic_quality_question_review.v1" }; const locator = { entriesSha256:
-    d("locators"), releaseRootSha256, schemaVersion:
+    "meeting_knowledge.semantic_quality_question_review.v1" }; const mapping = {
+    turnMappingsSha256: d("locators"), releaseRootSha256, schemaVersion:
     "meeting_knowledge.semantic_quality_locator_authority.v1", snapshotSha256: d("snapshot") };
-  const files: Record<string, unknown> = { "acceptance.json": acceptance,
-    "authorization.json": authorization, "automatic.json": automatic, "forbidden.json":
-    custody.signed(locator), "mapping.json": custody.signed(locator), "review-1.json":
-    authorities.reviewer1!.signed(reviewPayload), "review-2.json":
-    authorities.reviewer2!.signed(reviewPayload), "reviewed.json": reviewed };
+  const forbidden = { forbiddenLocatorSetSha256: d("forbidden"), releaseRootSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1",
+    snapshotSha256: d("snapshot") };
+  const files: Record<string, unknown> = { "acceptance-receipt.json": acceptance,
+    "automatic-questions.json": automatic, "execution-authorization.json": authorization,
+    "forbidden-locator-manifest.json": custody.signed(forbidden),
+    "independent-review-questions.json": reviewed,
+    "question-review-1.json": authorities.reviewer1!.signed(reviewPayload),
+    "question-review-2.json": authorities.reviewer2!.signed(reviewPayload),
+    "turn-to-block-manifest.json": custody.signed(mapping) };
   for (const [name, value] of Object.entries(files)) {await writeFile(join(root, name),
     canonicalJson(value));}
   const checksumInventory = await Promise.all(Object.keys(files).map(async (path) => ({ path,
     sha256: digestBytes(await readFile(join(root, path))) })));
   const manifestPath = join(root, "InputManifest.v4.json"); await writeFile(manifestPath,
-    canonicalJson({ acceptanceReceiptPath: "acceptance.json", checksumInventory,
-      corpusDigestSha256, executionAuthorizationPath: "authorization.json",
-      forbiddenLocatorManifestPath: "forbidden.json", independentReviewQuestionsPath:
-      "reviewed.json", questionReviewReceiptPaths: ["review-1.json", "review-2.json"],
+    canonicalJson({ acceptanceReceiptPath: "acceptance-receipt.json", checksumInventory,
+      corpusDigestSha256, executionAuthorizationPath: "execution-authorization.json",
+      forbiddenLocatorManifestPath: "forbidden-locator-manifest.json",
+      independentReviewQuestionsPath: "independent-review-questions.json",
+      questionReviewReceiptPaths: ["question-review-1.json", "question-review-2.json"],
       reviewerDigestSha256, schemaVersion: "meeting_knowledge.semantic_quality_input_manifest.v4",
-      sealedAutomaticQuestionsPath: "automatic.json", sourceDigestSha256,
-      turnToBlockManifestPath: "mapping.json" }));
+      sealedAutomaticQuestionsPath: "automatic-questions.json", sourceDigestSha256,
+      turnToBlockManifestPath: "turn-to-block-manifest.json" }));
   const probe = await execute(process.execPath, ["--input-type=module", "--eval",
     `import{admitMainCampaign,QualityCampaignAuthorityPolicy}from"@discord-meeting/infinity-context-adapter/quality-campaign";const p=new QualityCampaignAuthorityPolicy(${JSON.stringify(policyInput)});const a=await admitMainCampaign(p,${JSON.stringify({ authorityKeyId: custody.keyId,
       manifestPath, nowEpochMs: Date.now(), releaseRootSha256,
@@ -339,7 +409,8 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
       mainKeyNamespace: "main:packed", protectedEvidence, releaseRootSha256, schemaVersion:
       "meeting_knowledge.semantic_quality_authoritative_custody.v2", tuningEvidenceDigests:
       [d("tuning")] })));
-  const tokenPath = join(root, "token"); await writeFile(tokenPath, "local-test-token-123");
+  const { credentialPath, infinityTokenPath, runtimeTokenPath } =
+    await createRoleSeparatedTokens(root);
   const evidenceKeyPath = join(root, "evidence.key"); const holdoutEvidenceKeyPath = join(root,
     "holdout-evidence.key"); await writeFile(evidenceKeyPath, Buffer.alloc(32, 1).toString("base64"));
   await writeFile(holdoutEvidenceKeyPath, Buffer.alloc(32, 2).toString("base64"));
@@ -375,10 +446,10 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     answerJournalRoot: join(root, "canonical-answer-journal"), artifactKeyId: "retention-key",
     artifactKeyPath: evidenceKeyPath, artifactRoot: join(root, "canonical-artifacts"),
     expectedRuntimeLauncherSha256: (release as QualityCampaignRelease).answerProcessIdentitySha256,
-    infinityBaseUrl: base, infinityCapabilityPath: capabilityPath, infinityTokenPath: tokenPath,
+    infinityBaseUrl: base, infinityCapabilityPath: capabilityPath, infinityTokenPath,
     postgresUrlPath, requestTimeoutMs: 1_000,
     retrievalJournalRoot: join(root, "canonical-retrieval-journal"),
-    runtimeAddress: runtime.address, runtimeTokenPath: tokenPath,
+    runtimeAddress: runtime.address, runtimeTokenPath,
     topologyAuthority: publicHttp(authorities["main-result"]!, root),
     topologyKeyPath, topologyPath };
   const connectionsPath = join(root, "connections.json");
@@ -388,7 +459,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     artifactCustody: { envelopeRoot: root, keyCustodySha256:
       fingerprint(authorities.custody!.publicKeyPem), keyId: "retention-key",
       keyPath: evidenceKeyPath }, canonicalExecution,
-    credentialPath: tokenPath, deletionAuthority: publicHttp(authorities.deletion!, root),
+    credentialPath, deletionAuthority: publicHttp(authorities.deletion!, root),
     deletionEndpoint: `${base}/deletion`, evidenceAuthority: publicHttp(authorities.evidence!, root),
     evidenceEndpoint: endpoint, evidenceKeyId: "main-key", evidenceKeyPath,
     holdoutAnswerEndpoint: endpoint, holdoutCapabilityEndpoint: endpoint,
@@ -399,25 +470,24 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     providerResultAuthority: publicHttp(authorities["main-result"]!, root),
     rawOutcomeEndpoint: `${base}/review`, releaseObservationEndpoint: `${base}/release`,
     schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v5" }));
-  const unused = join(root, "unused.json"); const configPath = join(root, "operator.json");
-  const executionCorpusPath = join(root, "execution-corpus.json");
-  await writeFile(executionCorpusPath, canonicalJson(custody.signed({ campaignRootSha256:
-    mainRootSha256, packets: questions.map((question) => ({ locale: question.locale,
-      questionId: question.questionId, questionText: `Packed question ${question.questionId}?`,
-      scopeTopologyReference: `scope:${question.questionId}`, source: question.source })),
-    schemaVersion: "meeting_knowledge.quality_execution_corpus.v1" })));
+  const auxiliary = roleSeparatedAuxiliaryPaths(root);
+  const configPath = join(root, "operator.json");
+  const executionCorpusPath = await createPackedAdmittedExecutionCorpus({ acceptance, authorities,
+    authorization, automatic, corpusDigestSha256, custody, files, mainRootSha256, manifestPath,
+    questions, releaseRootSha256, reviewed, root, selectedLocator: memory.selectedLocator });
   await writeFile(configPath, canonicalJson({ absenceAuthorityPath: authorityPaths.absence,
     adjudicationAuthorityPaths: [authorityPaths.judge1, authorityPaths.judge2,
       authorityPaths.resolver], admissionAuthorityPath: authorityPaths.custody,
     authoritativeEvidenceInventoryPath: custodyPath, authorityPolicyPath,
     checkpointRoot: join(root, "checkpoints"),
-    cleanupPlanPath: unused, concurrency: 2, deletionAuthorityPath: authorityPaths.deletion,
+    cleanupPlanPath: auxiliary.cleanup, concurrency: 2, deletionAuthorityPath: authorityPaths.deletion,
     executionCorpusPath,
     holdoutAuthorityPath: authorityPaths.holdout,
-    holdoutCleanupPlanPath: unused, holdoutInputPath: unused, holdoutJournalRoot: join(root,
+    holdoutCleanupPlanPath: auxiliary.holdoutCleanup, holdoutInputPath: auxiliary.holdoutInput,
+    holdoutJournalRoot: join(root,
       "holdout-journal"), journalRoot: join(root, "journal"), mainManifestPath:
     manifestPath, releaseAuthorityPublicKeyPath: releasePublicKeyPath, releaseRootPath,
-    repetitionAuthorityPath: authorityPaths.judge1,
+    repetitionAuthorityPath: authorityPaths.repetition,
     reviewerAuthorityPaths: [authorityPaths.reviewer1, authorityPaths.reviewer2], schemaVersion:
     "meeting_knowledge.semantic_quality_production_operator.v4", spendAuthorityPath:
     authorityPaths.spend, spendReservationsPath }));
@@ -429,7 +499,8 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     campaignRootSha256: mainRootSha256, questionDigestSha256: firstQuestion.questionDigestSha256,
     questionId: firstQuestion.questionId, releaseRootSha256, repetition: 1,
     spendReservationSha256: sha256(spendDocuments[0]!) });
-  return { answerPrompts: runtime.prompts, connectionsPath, phasePath, postgresAuditPath,
+  return { answerPrompts: runtime.prompts, childEnvironment, connectionsPath, phasePath,
+    postgresAuditPath,
     recovery: { answerJournalRoot: canonicalExecution.answerJournalRoot,
       artifactKey: new Uint8Array(32).fill(1), artifactRoot: canonicalExecution.artifactRoot,
       attemptId: firstAttempt.attemptId, questionId: firstQuestion.questionId, repetition: 1 as const,
@@ -441,6 +512,64 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     unselectedText: memory.unselectedText,
     setReviewEvidence(value: unknown) {reviewEvidence = value;} };
 }
+
+async function localHttpsFixture() {
+  localHttpsFixturePromise ??= (async () => {
+    const root = await mkdtemp(join(tmpdir(), "quality-local-tls-"));
+    const certificatePath = join(root, "certificate.pem");
+    const privateKeyPath = join(root, "private-key.pem");
+    await execute("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-sha256", "-nodes",
+      "-keyout", privateKeyPath, "-out", certificatePath, "-days", "1", "-subj",
+      "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost"], {
+      timeout: 10_000 });
+    const [certificate, privateKey] = await Promise.all([
+      readFile(certificatePath, "utf8"), readFile(privateKeyPath, "utf8"),
+    ]);
+    return { certificate, certificatePath, privateKey };
+  })();
+  return await localHttpsFixturePromise;
+}
+
+async function createRoleSeparatedTokens(root: string) {
+  const paths = { credentialPath: join(root, "provider-token"),
+    infinityTokenPath: join(root, "infinity-token"), runtimeTokenPath: join(root, "runtime-token") };
+  await Promise.all(Object.values(paths).map(async (path) => {
+    await writeFile(path, "local-test-token-123");
+  }));
+  return paths;
+}
+
+async function createPackedAuthorities(root: string) {
+  const names = ["absence", "custody", "deletion", "evidence", "gold-relevance", "execution",
+    "holdout", "holdout-evidence", "holdout-result", "holdout-spend-call", "judge1", "judge2",
+    "main-result", "release", "repetition", "resolver", "reviewer1", "reviewer2", "spend",
+    "spend-call"];
+  const authorities = Object.fromEntries(names.map((name) => [name, localSigner(name)]));
+  const authorityPaths: Record<string, string> = {};
+  for (const [name, value] of Object.entries(authorities)) {const publicKeyPath = join(root,
+    `${name}.pem`); await writeFile(publicKeyPath, value.publicKeyPem); const path = join(root,
+      `${name}-authority.json`); await writeFile(path, canonicalJson({ keyId: value.keyId,
+        publicKeyPath })); authorityPaths[name] = path;}
+  const roles = packedAuthorityRoleNames();
+  const policyInput = Object.fromEntries(Object.entries(roles).map(([role, name]) => {const authority =
+    authorities[name]!; return [role, { keyId: authority.keyId, publicKeyFingerprintSha256:
+      fingerprint(authority.publicKeyPem), publicKeyPem: authority.publicKeyPem }];}));
+  const policyBindingSha256 = sha256(Object.entries(roles).map(([role, name]) => ({ keyId:
+    authorities[name]!.keyId, publicKeyFingerprintSha256: fingerprint(
+      authorities[name]!.publicKeyPem), role })));
+  return { authorities, authorityPaths, policyBindingSha256, policyInput };
+}
+
+function packedAuthorityRoleNames() {return { artifact_custody: "custody", cleanup: "absence",
+  gold_relevance: "gold-relevance", holdout_authorization: "holdout",
+  holdout_provider_result: "holdout-result", holdout_question: "holdout-evidence",
+  inventory: "deletion", locator: "evidence", main_proof: "execution",
+  provider_result: "main-result", release: "release", repetition: "repetition", resolver: "resolver",
+  reviewer_1: "reviewer1", reviewer_2: "reviewer2", spend: "spend" } as const;}
+
+function roleSeparatedAuxiliaryPaths(root: string) {return {
+  cleanup: join(root, "cleanup-plan.json"), holdoutCleanup: join(root, "holdout-cleanup-plan.json"),
+  holdoutInput: join(root, "holdout-input.json") } as const;}
 
 function canonicalMemoryFixture() {
   const selectedText = "The launch proposal was approved by the review group.";

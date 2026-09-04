@@ -1,6 +1,6 @@
 import type { CampaignQuestion } from "./campaign-admission-policy.js";
 import { canonicalJson, digest, exactRecord, sha256 } from "./canonical.js";
-import { DurableAttemptJournal } from "./attempt-journal.js";
+import { DurableAttemptJournal, withOwnedAttemptJournal } from "./attempt-journal.js";
 import { attemptIdentity, executeReservedExchange } from "./execution.js";
 import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
   type QualityCampaignRelease,
@@ -66,6 +66,12 @@ async function executeSchedule(input: {
   }
   const journal = new DurableAttemptJournal(input.journalRoot, input.bindingFor(1).policy,
     input.resultAuthorityRole);
+  return await withOwnedAttemptJournal(journal, async () =>
+    await executeScheduleWithJournal(input, journal));
+}
+
+async function executeScheduleWithJournal(input: Parameters<typeof executeSchedule>[0],
+  journal: DurableAttemptJournal): Promise<ScheduledCampaignResult> {
   let cursor = 0; let active = 0; let maximumObservedConcurrency = 0;
   let outcomeUnknown = false;
   const terminalAttemptIds: string[] = [];
@@ -107,7 +113,8 @@ export async function loadScheduledExactOutcomes(input: {
 }): Promise<readonly ScheduledExactOutcome[]> {
   const journal = new DurableAttemptJournal(input.journalRoot, input.policy,
     input.resultAuthorityRole);
-  return Object.freeze(await Promise.all(([1, 2, 3] as const).flatMap((repetition) =>
+  return await withOwnedAttemptJournal(journal, async () => Object.freeze(await Promise.all(
+    ([1, 2, 3] as const).flatMap((repetition) =>
     input.questions.map(async (question) => {
       let predecessor: { readonly bytes: Uint8Array; readonly digestSha256: string } | null = null;
       const terminalChain: ExactTerminalEvidence[] = [];
@@ -137,7 +144,7 @@ export async function loadScheduledExactOutcomes(input: {
         spendReservationSha256: input.spendReservationSha256ByRepetition[repetition] });
       return Object.freeze({ answerAttemptId: terminalChain[2]!.attemptId, answerIdentity,
         terminalChain: Object.freeze(terminalChain) });
-    }))));
+    })))));
 }
 
 function assertExactRequest(bytes: Uint8Array, input: { readonly callKind: typeof CALLS[number];

@@ -20,6 +20,15 @@ export interface StrictCleanupReceipt {
   readonly targetInventoryReceipt: unknown;
 }
 
+export interface CleanupReservationStore {
+  reserveCleanup(input: { readonly campaignRootSha256: string;
+    readonly cleanupManifestSha256: string }): Promise<import("./production-checkpoints.js").CleanupReservationState>;
+  markCleanupOutcomeUnknown(input: { readonly campaignRootSha256: string;
+    readonly cleanupManifestSha256: string }): Promise<void>;
+  completeCleanup(input: { readonly campaignRootSha256: string;
+    readonly cleanupManifestSha256: string; readonly evidence: unknown }): Promise<void>;
+}
+
 export function decodePersistedCleanup(value: unknown): StrictCleanupReceipt {
   const cleanup = exactRecord(value, ["absenceReceiptSha256", "absentArtifactIdsSha256",
     "campaignRootSha256", "cleanupManifestSha256", "cleanupReceipt",
@@ -50,6 +59,7 @@ export async function executeDerivedCleanup(input: {
   readonly observation: CanonicalAbsencePort;
   readonly policy: QualityCampaignAuthorityPolicy;
   readonly protectedEvidence: readonly ProtectedCampaignEvidence[];
+  readonly reservationStore: CleanupReservationStore;
   readonly releaseRootSha256: string;
   readonly targetInventoryAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly targetInventoryAuthorityKeySha256: string;
@@ -66,25 +76,45 @@ export async function executeDerivedCleanup(input: {
     throw new Error("signed protected originals do not match canonical custody evidence");
   }
   const cleanupManifestSha256 = sha256(manifest);
-  const outcomes = await input.deletion.deleteDerived({ campaignRootSha256:
-    input.campaignRootSha256, context: input.context, targets: manifest.targets });
   const targetIds = manifest.targets.map(({ artifactId }) => artifactId).toSorted();
-  if (canonicalJson(outcomes.map(({ artifactId }) => artifactId).toSorted()) !==
-    canonicalJson(targetIds) || outcomes.some(({ outcome }) => outcome === "unknown")) {
-    throw new Error("derived cleanup did not produce exact observed deletion outcomes");
+  const reservationIdentity = { campaignRootSha256: input.campaignRootSha256,
+    cleanupManifestSha256 };
+  const reservation = await input.reservationStore.reserveCleanup(reservationIdentity);
+  if (reservation.state === "completed") {return decodePersistedCleanup(reservation.evidence);}
+  if (reservation.state === "created") {
+    try {
+      const outcomes = await input.deletion.deleteDerived({ campaignRootSha256:
+        input.campaignRootSha256, context: input.context, targets: manifest.targets });
+      if (canonicalJson(outcomes.map(({ artifactId }) => artifactId).toSorted()) !==
+        canonicalJson(targetIds) || outcomes.some(({ outcome }) => outcome === "unknown")) {
+        throw new Error("derived cleanup outcome is unknown");
+      }
+    } catch (error) {
+      await input.reservationStore.markCleanupOutcomeUnknown(reservationIdentity);
+      throw new Error("derived cleanup outcome is unknown; reconciliation only", { cause: error });
+    }
   }
-  const rawObservation = await input.observation.observe({ campaignRootSha256:
+  let rawObservation: unknown;
+  try {rawObservation = await input.observation.observe({ campaignRootSha256:
     input.campaignRootSha256, cleanupManifestSha256, context: input.context,
-    targetArtifactIds: targetIds });
-  const signed = verifyCleanupAbsenceReceipt(input.policy, { authorityKeyId:
-    input.absenceAuthority.keyId, cleanupManifest: manifest,
-    receipt: rawObservation });
+    targetArtifactIds: targetIds });}
+  catch (error) {await input.reservationStore.markCleanupOutcomeUnknown(reservationIdentity);
+    throw new Error("cleanup absence outcome is unknown; reconciliation only", { cause: error });}
+  let signed;
+  try {signed = verifyCleanupAbsenceReceipt(input.policy, { authorityKeyId:
+    input.absenceAuthority.keyId, cleanupManifest: manifest, receipt: rawObservation });}
+  catch (error) {await input.reservationStore.markCleanupOutcomeUnknown(reservationIdentity);
+    throw new Error("cleanup absence evidence is invalid; reconciliation only", { cause: error });}
   for (const evidence of input.protectedEvidence) {digest(evidence.artifactSha256,
     "protected evidence digest");}
-  return Object.freeze({ absenceReceiptSha256: sha256(signed), cleanupReceipt: signed,
+  const result = Object.freeze({ absenceReceiptSha256: sha256(signed), cleanupReceipt: signed,
     absentArtifactIdsSha256: sha256(targetIds), campaignRootSha256: input.campaignRootSha256,
     cleanupManifestSha256, protectedEvidenceSha256: sha256(input.protectedEvidence),
     targetCount: targetIds.length, targetInventoryReceipt: inventory.receipt });
+  try {await input.reservationStore.completeCleanup({ ...reservationIdentity, evidence: result });}
+  catch (error) {await input.reservationStore.markCleanupOutcomeUnknown(reservationIdentity);
+    throw new Error("cleanup completion durability is unknown; reconciliation only", { cause: error });}
+  return result;
 }
 
 function assertCanonicalProtectedEvidence(values: readonly ProtectedCampaignEvidence[]):

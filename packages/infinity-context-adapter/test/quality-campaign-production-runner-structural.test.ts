@@ -1,6 +1,6 @@
 /* oxlint-disable max-lines, max-lines-per-function -- one production-scale fixture proves the closed 3x240 graph */
 import { createCipheriv, generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -52,9 +52,14 @@ function signer(keyId: string) {
 }
 
 function questions(count: number, source: CampaignQuestion["source"], prefix: string) {
-  return Array.from({ length: count }, (_, index) => Object.freeze({ locale: index % 2 === 0 ?
-    "en" as const : "ru" as const, questionDigestSha256: digest(`${prefix}:question:${index}`),
-  questionId: `${prefix}-${index}`, rubricDigestSha256: digest(`${prefix}:rubric:${index}`), source }));
+  return Array.from({ length: count }, (_, index) => {
+    const locale = index % 2 === 0 ? "en" as const : "ru" as const;
+    const questionId = `${prefix}-${index}`;
+    const packet = { locale, questionId, questionText: `Structural question ${questionId}?`,
+      scopeTopologyReference: `scope:${questionId}`, source };
+    return Object.freeze({ locale, questionDigestSha256: sha256(packet), questionId,
+      rubricDigestSha256: digest(`${prefix}:rubric:${index}`), source });
+  });
 }
 
 function decisionFor(questionId: string, outcomeDigestSha256: string,
@@ -242,13 +247,17 @@ async function createFixture() {
     reviewerDigestSha256, rubricSetSha256: sha256(allQuestions.map(({ questionId,
       rubricDigestSha256 }) => ({ questionId, rubricDigestSha256 }))), schemaVersion:
     "meeting_knowledge.semantic_quality_question_review.v1" };
-  const locatorPayload = { entriesSha256: digest("locators"), releaseRootSha256,
+  const mappingPayload = { turnMappingsSha256: digest("locators"), releaseRootSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1",
+    snapshotSha256: digest("snapshot") };
+  const forbiddenPayload = { forbiddenLocatorSetSha256: digest("forbidden-locators"),
+    releaseRootSha256, schemaVersion:
+      "meeting_knowledge.semantic_quality_locator_authority.v1",
     snapshotSha256: digest("snapshot") };
   const sealedFiles: Record<string, unknown> = {
     "acceptance.json": acceptance, "authorization.json": authorization,
-    "automatic.json": automatic, "forbidden.json": custody.signed(locatorPayload),
-    "mapping.json": custody.signed(locatorPayload), "review-1.json": reviewer1.signed(reviewPayload),
+    "automatic.json": automatic, "forbidden.json": custody.signed(forbiddenPayload),
+    "mapping.json": custody.signed(mappingPayload), "review-1.json": reviewer1.signed(reviewPayload),
     "review-2.json": reviewer2.signed(reviewPayload), "reviewed.json": reviewed,
   };
   for (const [name, value] of Object.entries(sealedFiles)) {
@@ -312,8 +321,8 @@ async function createFixture() {
     admitted.rootBindingSha256, mainReleaseRootSha256: releaseRootSha256,
     questionReceiptSha256: sha256(questionReceipt),
     schemaVersion: "meeting_knowledge.semantic_quality_holdout_root.v1" });
-  const holdoutAuthorizedLocatorIds = holdoutQuestions.map(({ questionId }) =>
-    digest(`locator:${questionId}`));
+  const holdoutAuthorizedLocatorIds = holdoutQuestions.flatMap(({ questionId }) => [
+    digest(`locator:${questionId}`), digest(`distractor:${questionId}`)]).toSorted();
   const holdoutGoldEntries = holdoutQuestions.map((question) => ({ ...question,
     campaignRootSha256: holdoutRootSha256, expectedAbstention:
     isExpectedAbstentionQuestion(question.questionId),
@@ -398,13 +407,52 @@ async function createFixture() {
     spendAuthorityPath: authorityPaths.spend, spendReservationPath: holdoutSpendPath,
     tuningEvidenceDigestsPath: holdoutTuningPath }));
   const configPath = join(root, "operator.json");
-  const executionCorpusPath = join(root, "execution-corpus.json");
-  await writeFile(executionCorpusPath, canonicalJson(custody.signed({ campaignRootSha256:
+  const executionRoot = join(root, "admitted-execution"); await mkdir(executionRoot, { mode: 0o700 });
+  const executionCorpusPath = join(executionRoot, "execution-corpus.json");
+  const executionCorpus = custody.signed({ campaignRootSha256:
     admitted.rootBindingSha256, packets: allQuestions.map((question) => ({ locale:
       question.locale, questionId: question.questionId,
       questionText: `Structural question ${question.questionId}?`,
       scopeTopologyReference: `scope:${question.questionId}`, source: question.source })),
-    schemaVersion: "meeting_knowledge.quality_execution_corpus.v1" })));
+    schemaVersion: "meeting_knowledge.quality_execution_corpus.v1" });
+  await writeFile(executionCorpusPath, canonicalJson(executionCorpus));
+  const structuralLocatorIds = allQuestions.map(({ questionId }) => digest(`locator:${questionId}`));
+  const admittedArtifacts: Readonly<Record<string, unknown>> = {
+    "InputManifest.v4.json": JSON.parse(await readFile(manifestPath, "utf8")) as unknown,
+    "acceptance-receipt.json": acceptance, "automatic-questions.json": automatic,
+    "execution-authorization.json": authorization,
+    "forbidden-locator-manifest.json": custody.signed(forbiddenPayload),
+    "forbidden-locators.json": locator.signed({ campaignRootSha256: admitted.rootBindingSha256,
+      forbiddenLocatorIds: [digest("global-forbidden")], questionSetSha256: sha256(allQuestions),
+      releaseRootSha256, schemaVersion:
+      "meeting_knowledge.semantic_quality_forbidden_locators.v2" }),
+    "gold-relevance.json": goldRelevance.signed({ campaignRootSha256:
+      admitted.rootBindingSha256, entries: allQuestions.map((question) => ({ ...question,
+        campaignRootSha256: admitted.rootBindingSha256, expectedAbstention:
+        isExpectedAbstentionQuestion(question.questionId), releaseRootSha256,
+        relevantLocatorIds: isExpectedAbstentionQuestion(question.questionId) ? [] :
+          [digest(`locator:${question.questionId}`)] })), releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" }),
+    "independent-review-questions.json": reviewed,
+    "locator-inventory.json": locator.signed({ campaignRootSha256: admitted.rootBindingSha256,
+      locatorIds: structuralLocatorIds, releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_locator_inventory.v1" }),
+    "question-review-1.json": reviewer1.signed(reviewPayload),
+    "question-review-2.json": reviewer2.signed(reviewPayload),
+    "turn-to-block-manifest.json": custody.signed(mappingPayload),
+  };
+  for (const [name, value] of Object.entries(admittedArtifacts)) {
+    await writeFile(join(executionRoot, name), canonicalJson(value));
+  }
+  const admittedArtifactNames = [...Object.keys(admittedArtifacts), "execution-corpus.json"];
+  const artifactInventory = await Promise.all(admittedArtifactNames.map(async (path) => ({ path,
+    sha256: sha256(await readFile(join(executionRoot, path))) })));
+  await writeFile(join(executionRoot, "corpus-admission-manifest.json"), canonicalJson({
+    artifactInventory, authorizationComparisonEpochMs: 1,
+    campaignRootSha256: admitted.rootBindingSha256, completionState: "complete",
+    corpusDigestSha256, questionCount: 240, questionSetSha256: sha256(allQuestions),
+    releaseRootSha256, schemaVersion:
+      "meeting_knowledge.semantic_quality_corpus_admission_manifest.v1" }));
   await writeFile(configPath, canonicalJson({ absenceAuthorityPath: authorityPaths.absence,
     adjudicationAuthorityPaths: [authorityPaths.judge1, authorityPaths.judge2,
       authorityPaths.resolver], admissionAuthorityPath: authorityPaths.custody,
@@ -705,7 +753,9 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         const turnId = `turn-${answerIdentity.repetition}-${answerIdentity.questionId}`;
         const plaintext = kind === "final_adjudication" ? Buffer.from(canonicalJson(finalValue)) :
           kind === "retrieval_response" ? Buffer.from(canonicalJson({ ...base,
-            latencyUs: 200_000, rankedLocatorIds: [digest(`locator:${answerIdentity.questionId}`)],
+            latencyUs: 200_000, rankedLocatorIds: [
+              digest(`locator:${answerIdentity.questionId}`),
+              digest(`distractor:${answerIdentity.questionId}`)],
             responseBytesBase64: providerResultBytes.toString("base64"),
             schemaVersion: "meeting_knowledge.semantic_quality_retrieval_evidence.v1",
             scopeViolationLocatorIds: [] })) : kind === "evidence" ? Buffer.from(canonicalJson({
@@ -781,13 +831,9 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       releaseRootSha256: input.releaseRootSha256,
       schemaVersion: "meeting_knowledge.semantic_quality_gold_relevance.v1" });
     const forbiddenLocatorReceipt = input.locator.signed({ campaignRootSha256:
-      outcomes[0]!.campaignRootSha256, entries: input.questions.map((question) => ({
-        campaignRootSha256: outcomes[0]!.campaignRootSha256,
-        forbiddenLocatorIds: [digest(`forbidden:${question.questionId}`)],
-        questionDigestSha256: question.questionDigestSha256, questionId: question.questionId,
-        releaseRootSha256: input.releaseRootSha256 })), releaseRootSha256:
-      input.releaseRootSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_forbidden_locators.v1" });
+      outcomes[0]!.campaignRootSha256, forbiddenLocatorIds: [digest("global-forbidden")],
+      questionSetSha256: sha256(evidenceQuestions), releaseRootSha256: input.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_forbidden_locators.v2" });
     const rootBindingSha256 = sha256({ authorizedLocatorSetSha256: sha256(authorizedLocatorIds),
       campaignRootSha256: outcomes[0]!.campaignRootSha256,
       questionSetSha256: sha256(evidenceQuestions), relevanceAuthoritySha256:
@@ -1063,9 +1109,10 @@ function exactOutcome(attemptId: string, source: {
     expectedAnswer: isAbstention ? "abstain" : "answerable",
     finalAdjudicationSha256: source.finalAdjudicationByAttempt.get(attemptId) ??
       digest(`${attemptId}:final-adjudication`), identity,
-    forbiddenLocatorDigests: [digest(`forbidden:${questionId}`)],
+    forbiddenLocatorDigests: [digest(questionId.startsWith("h-") ?
+      `forbidden:${questionId}` : "global-forbidden")],
     questionDigestSha256: String(request.questionDigestSha256), questionId,
-    rankedLocatorDigests: [locator],
+    rankedLocatorDigests: [locator, digest(`distractor:${questionId}`)],
     relevantLocatorDigests: isAbstention ? [] : [locator],
     repetition, retrievalLatencyUs: 200_000, scopeViolationLocatorIds: [],
     speakerTimeChecks: [{ canonicalTurnId: `turn-${repetition}-${questionId}`,

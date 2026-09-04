@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 import { PrepareFocusedLocatorRetrievalV2Request,
@@ -24,6 +23,8 @@ import { createProductionCanonicalExecutionEvidence, recoverProductionCanonicalO
   "./production-canonical-execution-evidence.js";
 import { createProductionCanonicalQuestionChain,
   type QualificationScopeTopologyPort } from "./production-canonical-question-chain.js";
+import { readCanonicalQualityCampaignJson, readQualityCampaignBytes,
+  readQualityCampaignText } from "./production-execution-corpus-custody.js";
 
 export interface ProductionCanonicalExecutionConnectionConfiguration {
   readonly answerExecutionBindingPath: string;
@@ -59,16 +60,21 @@ export async function createProductionCanonicalExecutorFactory(
   const [artifactKeyText, capabilityValue, executionBindingValue, infinityToken,
     postgresUrl, runtimeToken, topologyKey, topologyValue, topologyPublicKeyPem] =
     await Promise.all([
-      readFile(absolute(config.artifactKeyPath, "canonical artifact key"), "utf8"),
+      readQualityCampaignText(absolute(config.artifactKeyPath, "canonical artifact key"),
+        "canonical artifact key", 16_384),
       readJson(config.infinityCapabilityPath, "Infinity capability"),
       readJson(config.answerExecutionBindingPath, "answer execution binding"),
-      readFile(absolute(config.infinityTokenPath, "Infinity token"), "utf8"),
-      readFile(absolute(config.postgresUrlPath, "PostgreSQL URL"), "utf8"),
-      readFile(absolute(config.runtimeTokenPath, "runtime token"), "utf8"),
-      readFile(absolute(config.topologyKeyPath, "topology HMAC key")),
+      readQualityCampaignText(absolute(config.infinityTokenPath, "Infinity token"),
+        "Infinity token", 16_384),
+      readQualityCampaignText(absolute(config.postgresUrlPath, "PostgreSQL URL"),
+        "PostgreSQL URL", 16_384),
+      readQualityCampaignText(absolute(config.runtimeTokenPath, "runtime token"),
+        "runtime token", 16_384),
+      readQualityCampaignBytes(absolute(config.topologyKeyPath, "topology HMAC key"),
+        "topology HMAC key", 16_384),
       readJson(config.topologyPath, "scope topology"),
-      readFile(absolute(config.topologyAuthority.publicKeyPath,
-        "scope topology authority key"), "utf8"),
+      readQualityCampaignText(absolute(config.topologyAuthority.publicKeyPath,
+        "scope topology authority key"), "scope topology authority key", 16_384),
     ]);
   const artifactKey = Buffer.from(artifactKeyText.trim(), "base64");
   if (artifactKey.byteLength !== 32 || infinityToken.trim() === "" ||
@@ -229,6 +235,18 @@ function validateConfiguration(config: ProductionCanonicalExecutionConnectionCon
       absolute(value, key);
     }
   }
+  const paths = [...Object.entries(config).flatMap(([key, value]) =>
+    (key.endsWith("Path") || key.endsWith("Root")) && typeof value === "string" ?
+      [absolute(value, key)] : []), absolute(config.topologyAuthority.publicKeyPath,
+    "scope topology authority key")];
+  for (let left = 0; left < paths.length; left += 1) {
+    for (let right = left + 1; right < paths.length; right += 1) {
+      if (paths[left] === paths[right] || paths[left]!.startsWith(`${paths[right]!}/`) ||
+        paths[right]!.startsWith(`${paths[left]!}/`)) {
+        throw new Error("canonical execution connection paths overlap");
+      }
+    }
+  }
   if (!Number.isSafeInteger(config.requestTimeoutMs) || config.requestTimeoutMs < 1 ||
     config.requestTimeoutMs > 2_000 || config.artifactKeyId.trim() === "" ||
     !/^https?:\/\//u.test(config.infinityBaseUrl) || config.runtimeAddress.trim() === "") {
@@ -238,7 +256,7 @@ function validateConfiguration(config: ProductionCanonicalExecutionConnectionCon
 }
 
 async function readJson(path: string, label: string): Promise<unknown> {
-  try {return JSON.parse(await readFile(absolute(path, label), "utf8")) as unknown;}
+  try {return await readCanonicalQualityCampaignJson(absolute(path, label), label);}
   catch (error) {throw new Error(`${label} is unavailable or invalid`, { cause: error });}
 }
 function absolute(path: string, label: string): string {

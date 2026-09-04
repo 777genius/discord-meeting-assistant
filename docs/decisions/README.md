@@ -62,7 +62,8 @@
 - [ADR-0062: Initial-roster durable greetings](0062-initial-roster-durable-greetings.md)
 - [ADR-0053: V2-only meeting retrieval composition](0053-v2-only-meeting-retrieval.md)
 - [ADR-0064: Composite retrieval authority fence and candidate isolation](0064-composite-retrieval-authority-fence.md)
-- [ADR-0065: Two-application self-hosting topology](0065-two-application-self-hosting-topology.md)
+- [ADR-0065: Private quality budget-ledger lock adapter](0065-private-quality-budget-ledger-lock-adapter.md)
+- [ADR-0066: Two-application self-hosting topology](0066-two-application-self-hosting-topology.md)
 
 ## Superseded
 

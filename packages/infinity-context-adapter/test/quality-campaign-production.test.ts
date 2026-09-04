@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   admitFinalCampaign, admitIsolatedHoldout, admitMainCampaign, adjudicateOutcome,
@@ -87,6 +87,15 @@ describe("scheduler-owned exact evidence chain", () => {
     expect(() => bindExactExecutionEvidence(evidence, [])).toThrow(/membership differ/u);
   });
 });
+
+function inMemoryCleanupReservations() {
+  let state: "created" | "outcome_unknown" | "completed" = "created"; let evidence: unknown;
+  return { async reserveCleanup() {if (state === "completed") {return { evidence,
+    state: "completed" as const };} return { state };},
+  async markCleanupOutcomeUnknown() {state = "outcome_unknown";},
+  async completeCleanup(input: { readonly evidence: unknown }) {evidence = input.evidence;
+    state = "completed";} };
+}
 
 function signer(keyId: string) {
   const keys = generateKeyPairSync("ed25519");
@@ -596,6 +605,16 @@ function finalFixture() {
 }
 
 const FINAL = finalFixture();
+const openJournals = new Set<DurableAttemptJournal>();
+
+function trackedJournal(root: string, policy: QualityCampaignAuthorityPolicy) {
+  const journal = new DurableAttemptJournal(root, policy); openJournals.add(journal); return journal;
+}
+
+afterEach(async () => {
+  const journals = [...openJournals]; openJournals.clear();
+  await Promise.all(journals.map(async (journal) => {await journal.close();}));
+});
 
 function expectedAttempt(attempt: AttemptIdentity) {
   return { campaignRootSha256: attempt.campaignRootSha256,
@@ -625,14 +644,18 @@ describe("production quality campaign authority", () => {
       reviewerDigestSha256, rubricSetSha256: sha256(all.map(({ questionId,
         rubricDigestSha256 }) => ({ questionId, rubricDigestSha256 }))),
       schemaVersion: "meeting_knowledge.semantic_quality_question_review.v1" };
-    const locatorPayload = { entriesSha256: d("9"),
+    const mappingPayload = { turnMappingsSha256: d("9"),
+      releaseRootSha256: FINAL.release.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1",
+      snapshotSha256: d("a") };
+    const forbiddenPayload = { forbiddenLocatorSetSha256: d("b"),
       releaseRootSha256: FINAL.release.releaseRootSha256,
       schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1",
       snapshotSha256: d("a") };
     const files: Record<string, unknown> = { "acceptance.json": acceptance,
       "authorization.json": authorization, "automatic.json": automatic,
-      "forbidden.json": custodySigner.signed(locatorPayload), "mapping.json":
-      custodySigner.signed(locatorPayload), "review-1.json": reviewer1.signed(reviewPayload),
+      "forbidden.json": custodySigner.signed(forbiddenPayload), "mapping.json":
+      custodySigner.signed(mappingPayload), "review-1.json": reviewer1.signed(reviewPayload),
       "review-2.json": reviewer2.signed(reviewPayload), "reviewed.json": reviewed };
     const manifestPath = join(directory, "InputManifest.v4.json");
     const writeManifest = async () => {
@@ -659,7 +682,7 @@ describe("production quality campaign authority", () => {
       releaseRootSha256: FINAL.release.releaseRootSha256,
       reviewerAuthorityKeyIds: [reviewer2.keyId, reviewer1.keyId] })).rejects
       .toThrow(/not trusted/u);
-    files["mapping.json"] = custodySigner.signed({ ...locatorPayload,
+    files["mapping.json"] = custodySigner.signed({ ...mappingPayload,
       schemaVersion: "foreign.locator.authority.schema" });
     await writeManifest();
     await expect(admitMainCampaign(FINAL.authorities.policy, { authorityKeyId:
@@ -692,7 +715,7 @@ describe("production quality campaign authority", () => {
         identity: attempt, release: FINAL.release.release, request,
         resultDigestSha256: resultEnvelopeSha256,
         state: "terminal_success" })) })) };
-    const journal = new DurableAttemptJournal(await mkdtemp(join(tmpdir(), "quality-journal-")),
+    const journal = trackedJournal(await mkdtemp(join(tmpdir(), "quality-journal-")),
       FINAL.authorities.policy);
     const exact = { campaignRootSha256: CAMPAIGN_ROOT, deadlineEpochMs: 1_500,
       effectReservation: { requestedEncryptedBytes: 100, requestedTokens: 100 },
@@ -720,7 +743,7 @@ describe("production quality campaign authority", () => {
           providerAccounting, requestDigestSha256: sha256(request), resultDigestSha256: d("6"),
           schemaVersion: "meeting_knowledge.semantic_quality_provider_terminal_payload.v4",
           state: "terminal_success" }) })) };
-      expect(await executeReservedExchange({ ...exact, journal: new DurableAttemptJournal(
+      expect(await executeReservedExchange({ ...exact, journal: trackedJournal(
         await mkdtemp(join(tmpdir(), "quality-accounting-")), FINAL.authorities.policy),
       port: invalidPort })).toBe("blocked_evidence");
     }
@@ -729,7 +752,7 @@ describe("production quality campaign authority", () => {
       signedResult: providerAuthority.signed(terminalPayload({ identity: attempt,
         release: FINAL.release.release, request, resultDigestSha256: d("6"),
         state: "terminal_success" })) })) };
-    expect(await executeReservedExchange({ ...exact, journal: new DurableAttemptJournal(
+    expect(await executeReservedExchange({ ...exact, journal: trackedJournal(
       await mkdtemp(join(tmpdir(), "quality-outcome-accounting-")), FINAL.authorities.policy),
     port: outcomeAccountingPort })).toBe("blocked_evidence");
 
@@ -754,7 +777,7 @@ describe("production quality campaign authority", () => {
     ];
     for (const mutation of invalidCases) {
       const blockedPort = { exchange: vi.fn(port.exchange.getMockImplementation()) };
-      const blockedJournal = new DurableAttemptJournal(await mkdtemp(join(tmpdir(),
+      const blockedJournal = trackedJournal(await mkdtemp(join(tmpdir(),
         "quality-blocked-")), FINAL.authorities.policy);
       await expect(executeReservedExchange({ ...exact, ...mutation, journal: blockedJournal,
         port: blockedPort })).rejects.toThrow();
@@ -762,7 +785,7 @@ describe("production quality campaign authority", () => {
     }
     const forgedRelease = { ...FINAL.release.pinned, releaseRootSha256: d("f") };
     const releasePort = { exchange: vi.fn(port.exchange.getMockImplementation()) };
-    await expect(executeReservedExchange({ ...exact, journal: new DurableAttemptJournal(
+    await expect(executeReservedExchange({ ...exact, journal: trackedJournal(
       await mkdtemp(join(tmpdir(), "quality-release-")), FINAL.authorities.policy), port: releasePort,
       release: forgedRelease })).rejects.toThrow(/pinned release/u);
     expect(releasePort.exchange).not.toHaveBeenCalled();
@@ -773,7 +796,7 @@ describe("production quality campaign authority", () => {
     const caller = signer("caller-generated"); const request = Buffer.from("self-authority");
     const trustedSpend = FINAL.spends[0]!; const attempt = FINAL.outcomesByRepetition[0]![0]!.identity;
     const port = { exchange: vi.fn(async () => ({ effect: "unknown" as const })) };
-    const journal = () => new DurableAttemptJournal("/tmp/quality-self-authority-" +
+    const journal = () => trackedJournal("/tmp/quality-self-authority-" +
       randomUUID(), FINAL.authorities.policy);
     const base = { campaignRootSha256: CAMPAIGN_ROOT, deadlineEpochMs: 1_500,
       effectReservation: { requestedEncryptedBytes: 1, requestedTokens: 1 }, identity: attempt,
@@ -821,21 +844,21 @@ describe("production quality campaign authority", () => {
       release: FINAL.release.pinned, request: Buffer.from(identity.questionId),
       signal: ACTIVE_SIGNAL,
       spendReservation: spend });
-    const sharedA = new DurableAttemptJournal(root, FINAL.authorities.policy);
-    const sharedB = new DurableAttemptJournal(root, FINAL.authorities.policy);
+    const sharedA = trackedJournal(root, FINAL.authorities.policy);
+    const sharedB = trackedJournal(root, FINAL.authorities.policy);
     expect(await Promise.all([executeReservedExchange(makeInput(identities[0]!, sharedA)),
       executeReservedExchange(makeInput(identities[1]!, sharedB))])).toEqual([
       "outcome_unknown", "outcome_unknown"]);
     expect(providerCalls).toBe(1);
 
     const sameRoot = await mkdtemp(join(tmpdir(), "quality-same-attempt-"));
-    const sameA = new DurableAttemptJournal(sameRoot, FINAL.authorities.policy);
-    const sameB = new DurableAttemptJournal(sameRoot, FINAL.authorities.policy);
+    const sameA = trackedJournal(sameRoot, FINAL.authorities.policy);
+    const sameB = trackedJournal(sameRoot, FINAL.authorities.policy);
     providerCalls = 0;
     await Promise.all([executeReservedExchange(makeInput(identities[0]!, sameA)),
       executeReservedExchange(makeInput(identities[0]!, sameB))]);
     expect(providerCalls).toBe(1);
-    const restarted = new DurableAttemptJournal(sameRoot, FINAL.authorities.policy);
+    const restarted = trackedJournal(sameRoot, FINAL.authorities.policy);
     expect(await executeReservedExchange(makeInput(identities[0]!, restarted)))
       .toBe("outcome_unknown");
     expect(providerCalls).toBe(1);
@@ -1559,6 +1582,7 @@ describe("production quality campaign final evidence", () => {
         authorityId: FINAL.targetInventoryAuthority.keyId, deleteDerived }, observation: {
         authorityId: FINAL.cleanupAuthority.keyId, observe }, policy: FINAL.authorities.policy,
       protectedEvidence, releaseRootSha256: FINAL.release.releaseRootSha256,
+      reservationStore: inMemoryCleanupReservations(),
       targetInventoryAuthority: FINAL.targetInventoryAuthority,
       targetInventoryAuthorityKeySha256:
         FINAL.release.release.targetInventoryAuthorityKeySha256 } as const;

@@ -309,8 +309,13 @@
     },
     {
       "id": "ADR-0065",
-      "path": "docs/decisions/0065-two-application-self-hosting-topology.md",
-      "immutableDigest": "sha256:c1da4aa4d8ea5cc7967a209a150ba52ac23e0eee0061f655137315ce7f0d29ba"
+      "path": "docs/decisions/0065-private-quality-budget-ledger-lock-adapter.md",
+      "immutableDigest": "sha256:a89095bc18f632f23d0ebdf011353a1d631c22b3750cfcfb6aafde853a677fe6"
+    },
+    {
+      "id": "ADR-0066",
+      "path": "docs/decisions/0066-two-application-self-hosting-topology.md",
+      "immutableDigest": "sha256:365f12c681e58d3626dd07f690a50eea964451925b7e8b9f16123fbff70a102e"
     }
   ]
 }

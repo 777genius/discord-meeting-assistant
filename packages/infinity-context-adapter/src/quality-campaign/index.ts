@@ -18,6 +18,7 @@ export * from "./retention.js";
 export * from "./production-checkpoints.js";
 export * from "./production-authentication.js";
 export * from "./production-cleanup.js";
+export * from "./production-corpus-admission.js";
 export * from "./production-cli.js";
 export * from "./production-canonical-scheduler.js";
 export * from "./production-composition.js";

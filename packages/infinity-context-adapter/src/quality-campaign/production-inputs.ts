@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 import { type AdmittedMainCampaign, type AdmissionAuthority,
@@ -11,6 +10,8 @@ import { type QualityCampaignRelease, QUALITY_AUTHORITY_ROLES,
   QualityCampaignAuthorityPolicy } from "./release.js";
 import type { ProtectedCampaignEvidence, QualityCampaignProductionPorts } from
   "./production-ports.js";
+import { readCanonicalQualityCampaignJson, readQualityCampaignText } from
+  "./production-execution-corpus-custody.js";
 
 export interface ProductionOperatorConfiguration {
   readonly absenceAuthorityPath: string;
@@ -71,6 +72,10 @@ Promise<ProductionOperatorConfiguration> {
     if (key.endsWith("Path") || key.endsWith("Root")) {absolute(String(value), key);}
     if (key.endsWith("Paths")) {for (const item of value as unknown[]) {absolute(String(item), key);}}
   }
+  assertNoPathOverlap(Object.entries(record).flatMap(([key, value]) => key.endsWith("Paths") ?
+    (value as unknown[]).map((item) => absolute(String(item), key)) :
+    key.endsWith("Path") || key.endsWith("Root") ? [absolute(String(value), key)] : []),
+  "production operator configuration");
   return record as unknown as ProductionOperatorConfiguration;
 }
 
@@ -91,7 +96,7 @@ Promise<QualityCampaignAuthorityPolicy> {
 export async function loadProductionAuthority(path: string): Promise<AdmissionAuthority> {
   const record = exactRecord(await readProductionJson(path, "authority"),
     ["keyId", "publicKeyPath"], "authority");
-  return Object.freeze({ keyId: String(record.keyId), publicKeyPem: await readProductionText(
+  return Object.freeze({ keyId: safeId(record.keyId, "authority key ID"), publicKeyPem: await readProductionText(
     absolute(String(record.publicKeyPath), "public key"), "public key") });
 }
 
@@ -165,6 +170,8 @@ export async function loadProductionHoldout(input: { readonly admitted: Admitted
   if (record.schemaVersion !== "meeting_knowledge.semantic_quality_holdout_input.v4") {
     throw new Error("holdout input is invalid");
   }
+  assertNoPathOverlap(Object.entries(record).flatMap(([key, value]) =>
+    key.endsWith("Path") ? [absolute(String(value), key)] : []), "holdout input");
   const authorization = await readProductionJson(absolute(String(record.authorizationReceiptPath),
     "holdout authorization"), "holdout authorization");
   const authorizationReceipt = verifyExternalSignedValue<HoldoutAuthorization>(authorization,
@@ -253,8 +260,8 @@ function assertHoldoutIsolation(value: { readonly authorization: HoldoutAuthoriz
 }
 
 export async function readProductionJson(path: string, label: string): Promise<unknown> {
-  try {return JSON.parse(await readProductionText(absolute(path, label), label)) as unknown;}
-  catch {throw new Error(`${label} is invalid`);}
+  try {return await readCanonicalQualityCampaignJson(absolute(path, label), label);}
+  catch (error) {throw new Error(`${label} is invalid`, { cause: error });}
 }
 export async function readProductionArray(path: string, label: string):
 Promise<readonly unknown[]> {
@@ -263,10 +270,21 @@ Promise<readonly unknown[]> {
   return value as readonly unknown[];
 }
 async function readProductionText(path: string, label: string): Promise<string> {
-  try {return await readFile(absolute(path, label), "utf8");}
-  catch {throw new Error(`${label} is unavailable`);}
+  try {return await readQualityCampaignText(absolute(path, label), label, 8_000_000);}
+  catch (error) {throw new Error(`${label} is unavailable`, { cause: error });}
 }
 function absolute(path: string, label: string): string {
   if (!isAbsolute(path) || path.includes("\0")) {throw new Error(`${label} must be an absolute path`);}
   return resolve(path);
+}
+
+function assertNoPathOverlap(paths: readonly string[], label: string): void {
+  for (let left = 0; left < paths.length; left += 1) {
+    for (let right = left + 1; right < paths.length; right += 1) {
+      if (paths[left] === paths[right] || paths[left]!.startsWith(`${paths[right]!}/`) ||
+        paths[right]!.startsWith(`${paths[left]!}/`)) {
+        throw new Error(`${label} paths overlap`);
+      }
+    }
+  }
 }
