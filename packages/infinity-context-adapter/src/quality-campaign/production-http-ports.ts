@@ -192,14 +192,19 @@ async function requestJson(endpoint: string, token: string, body: unknown,
     if (response.body === null) {throw new Error("production authority response is empty");}
     const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let length = 0;
     try {
-      while (true) {
+      for (;;) {
         const chunk = await reader.read(); if (chunk.done) {break;}
-        length += chunk.value.byteLength;
+        const value: unknown = chunk.value;
+        if (!(value instanceof Uint8Array)) {
+          const error = new Error("production authority response contains an invalid byte chunk");
+          controller.abort(error); throw error;
+        }
+        length += value.byteLength;
         if (length > MAXIMUM_HTTP_RESPONSE_BYTES) {
           controller.abort(new Error("production authority response exceeds its byte limit"));
           throw new Error("production authority response exceeds its byte limit");
         }
-        chunks.push(chunk.value);
+        chunks.push(value);
       }
     } finally {reader.releaseLock();}
     if (length === 0) {throw new Error("production authority response is empty");}

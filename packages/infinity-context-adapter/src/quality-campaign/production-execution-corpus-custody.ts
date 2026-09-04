@@ -71,15 +71,6 @@ async function readCompletedCorpusReceipt(path: string, authority: CorpusAuthori
   } finally {await directory.close();}
 }
 
-export async function readSignedCorpusDocument(path: string, authority: CorpusAuthority,
-  label: string) {
-  if (!isAbsolute(path) || path.includes("\0") || authority.keyId.trim() === "") {
-    throw new Error(`${label} custody configuration is invalid`);
-  }
-  const value = await readCanonicalQualityCampaignJson(resolve(path), label);
-  return verifySignedCorpusValue(value, authority, label);
-}
-
 function verifySignedCorpusValue(value: unknown, authority: CorpusAuthority, label: string) {
   const record = exactRecord(value,
     ["payload", "signatureBase64", "signerKeyId"], `${label} signed document`);

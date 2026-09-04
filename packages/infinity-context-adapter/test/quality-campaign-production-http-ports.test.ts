@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { artifactAttemptIdentity, attemptIdentity, canonicalJson, createHttpQualityCampaignProductionPorts,
   sha256, verifyExternalSignedValue } from "../src/quality-campaign/index.js";
@@ -16,7 +16,7 @@ const REVIEW_KEYS = ["firstEffectEvidence", "firstReceipt", "predecessorPlaintex
 
 afterEach(async () => {await Promise.all(servers.splice(0).map(async (server) => {
   await new Promise<void>((resolve) => {server.close(() => {resolve();});});
-}));});
+})); vi.unstubAllGlobals();});
 
 describe("concrete HTTP production review evidence", () => {
   it("preserves the exact eight-field contract without treating signatures as trusted", async () => {
@@ -83,6 +83,21 @@ describe("concrete HTTP production review evidence", () => {
     const ports = await createHttpQualityCampaignProductionPorts(fixture.connectionsPath);
     await expect(ports.review.receipts(fixture.answerAttempt.attemptId,
       context(Date.now() + 5_000))).rejects.toThrow(/byte limit/u);
+  });
+
+  it("rejects malformed response chunks and releases the response reader", async () => {
+    const fixture = await httpFixture();
+    const ports = await createHttpQualityCampaignProductionPorts(fixture.connectionsPath);
+    const releaseLock = vi.fn();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      body: { getReader: () => ({ read: vi.fn().mockResolvedValue({ done: false,
+        value: "not a byte chunk" }), releaseLock }) },
+      headers: { get: () => null }, ok: true,
+    }));
+
+    await expect(ports.review.receipts(fixture.answerAttempt.attemptId,
+      context(Date.now() + 5_000))).rejects.toThrow(/invalid byte chunk/u);
+    expect(releaseLock).toHaveBeenCalledOnce();
   });
 });
 

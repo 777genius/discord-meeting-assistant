@@ -177,7 +177,7 @@ async function appendDurableClaim(ledger: LedgerFile, identityFile: LedgerFile,
   if (bytes.byteLength > 4096) {throw new Error("budget claim exceeds atomic record bound");}
   const handle = await open(joinFromHandle(ledger.directory, ledger.name), constants.O_WRONLY |
     constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
-  let identity: { readonly dev: number; readonly ino: number; readonly size: number } | undefined;
+  let identity: { readonly dev: number; readonly ino: number; readonly size: number };
   let previousChainSha256: string | null = null;
   try {
     const before = await handle.stat();
@@ -202,7 +202,6 @@ async function appendDurableClaim(ledger: LedgerFile, identityFile: LedgerFile,
     }
     identity = after;
   } finally {await handle.close();}
-  if (identity === undefined) {throw new Error("budget ledger identity was not established");}
   await bindLedgerIdentity(identityFile, ledger.name, identity, previousChainSha256, bytes);
   await ledger.directory.sync();
 }

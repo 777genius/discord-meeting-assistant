@@ -70,7 +70,7 @@ export class ProductionCheckpointStore {
       }
       if (failure !== undefined) {throw new Error("checkpoint store close failed", { cause: failure });}
     })();
-    return await this.closePromise;
+    await this.closePromise;
   }
 
   public async [Symbol.asyncDispose](): Promise<void> {await this.close();}
@@ -227,7 +227,7 @@ async function createOnly(directory: FileHandle, name: string, bytes: string): P
   await directory.sync(); return true;
 }
 
-async function optional(directory: FileHandle, name: string): Promise<unknown | null> {
+async function optional(directory: FileHandle, name: string): Promise<unknown> {
   try {return await readCanonicalQualityCampaignJsonAt(directory, name, "checkpoint", 8_000_000);}
   catch (error) {if ((error as NodeJS.ErrnoException).code === "ENOENT" ||
     (error as Error & { cause?: NodeJS.ErrnoException }).cause?.code === "ENOENT") {return null;}

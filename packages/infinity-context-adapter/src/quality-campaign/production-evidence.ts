@@ -346,7 +346,7 @@ export function verifyExactOutcomeAuthorities(policy: QualityCampaignAuthorityPo
   const forbiddenReceipt = verifyExternalSignedValue<Record<string, unknown>>(
     input.evidence.forbiddenLocatorReceipt, locatorAuthority.keyId,
     locatorAuthority.publicKeyPem, "authoritative forbidden locator inventory");
-  const forbiddenPayload = forbiddenReceipt.payload as Record<string, unknown>;
+  const forbiddenPayload = forbiddenReceipt.payload;
   if (relevancePayload.schemaVersion !== "meeting_knowledge.semantic_quality_gold_relevance.v1" ||
     forbiddenPayload.schemaVersion !== "meeting_knowledge.semantic_quality_forbidden_locators.v1" &&
       forbiddenPayload.schemaVersion !== "meeting_knowledge.semantic_quality_forbidden_locators.v2" ||

@@ -45,8 +45,11 @@ describe("installed quality campaign corpus admission", () => {
     expect(locatorInventory.payload.locatorIds).toContain(sha256("distractor:0"));
     const forbiddenEvidence = await json(join(fixture.outputRoot, "forbidden-locators.json")) as {
       payload: Record<string, unknown> };
-    expect(forbiddenEvidence.payload).toMatchObject({ forbiddenLocatorIds:
-      expect.any(Array), schemaVersion: "meeting_knowledge.semantic_quality_forbidden_locators.v2" });
+    expect(Object.keys(forbiddenEvidence.payload).toSorted()).toEqual(["campaignRootSha256",
+      "forbiddenLocatorIds", "questionSetSha256", "releaseRootSha256", "schemaVersion"]);
+    expect(forbiddenEvidence.payload.schemaVersion)
+      .toBe("meeting_knowledge.semantic_quality_forbidden_locators.v2");
+    expect(Array.isArray(forbiddenEvidence.payload.forbiddenLocatorIds)).toBe(true);
     expect(forbiddenEvidence.payload).not.toHaveProperty("entries");
     const first = await artifactBytes(fixture.outputRoot);
 
@@ -267,7 +270,7 @@ describe("quality campaign corpus admission filesystem hardening", () => {
     const outcomes = await Promise.all(["one", "two"].map(async (suffix) =>
       await runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
         join(fixture.root, `status-race-${suffix}.json`)], corpusAdmissionClock: fixedClock() })));
-    expect(outcomes.toSorted()).toEqual([0, 1]);
+    expect(outcomes.toSorted((left, right) => left - right)).toEqual([0, 1]);
     expect(await json(join(fixture.outputRoot, "corpus-admission-manifest.json")))
       .toMatchObject({ completionState: "complete" });
   });
@@ -451,7 +454,7 @@ async function createFixture(forbiddenCount = 12, inconsistentTurnMapping = fals
   return { custodyAuthority: { keyId: custody.keyId, publicKeyPem: custody.publicKeyPem },
     keyIds: Object.fromEntries(Object.entries(authorities).map(([role, value]) =>
       [role, value.keyId])) as Record<string, string>, outputRoot, phasePath, root,
-    signCustody: custody.signed };
+    signCustody: (payload: unknown) => custody.signed(payload) };
 }
 
 function fixedClock(nowEpochMs = 1_000_000) {return { nowEpochMs: () => nowEpochMs };}

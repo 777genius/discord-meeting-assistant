@@ -95,7 +95,7 @@ export class DurableAttemptJournal implements AttemptJournalPort, CumulativeSpen
       }
       if (failure !== undefined) {throw new Error("attempt journal close failed", { cause: failure });}
     })();
-    return await this.closePromise;
+    await this.closePromise;
   }
 
   public async [Symbol.asyncDispose](): Promise<void> {await this.close();}
