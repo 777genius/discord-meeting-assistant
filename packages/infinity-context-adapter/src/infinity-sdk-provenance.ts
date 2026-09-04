@@ -1,15 +1,24 @@
 export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
-  archiveSha256: "0da25fdb015ce1eea4e538808d28a661ea674333a2425b4b02282b46502a7e0c",
-  commit: "e685b41a12e630b7e787fb2fa26b08c0eb6137d4",
+  archiveSha256: "9b6bd230ae59e73af02039a1fbef4d7e06fc112419adf265229ea05c4b8ae366",
+  commit: "40704f193008f98c52ede93b68a44349907dd2cd",
   developmentPackageLink: "vendor/infinity-context/.upstream/packages/infinity_context_ts_sdk",
-  immutablePackageIntegrity: "sha512-lCIL90wIF9dSme7qhMVdjN/ey+SAGCrmraKc3mak5oyer6ye7ZxbUBPMaCBBApr3+HTO8HduTtUPtqUPbrhJ/A==",
-  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz",
-  packageLockSha256: "3013b04c996f96925391f52b848ddd0610844fccfe67c74d17140b013775dcbc",
-  packageManifestSha256: "146308a393c2e2f2961da477581b15da900c8b16a6e1ff4530ed8aec6057e70b",
+  immutablePackageIntegrity: "sha512-PpLM+eW84DRsNhYDvX02Y+v5hOCuQJMHJoNinyUwclHtizmpDEh4aBcRsCEvgqyQqYh2pD+zsu3VAZdKfbjKAg==",
+  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.4.tgz",
+  packageLockSha256: "c27ee764041ac4e93fd3d19bbf4363590e3dc1641abe4d89c7cbb0cbfc8222da",
+  packageManifestSha256: "218762d671873968552ce568ae1a87bb651e5ca5017db4f6b2953252aa7ae67e",
   packageName: "@infinity-context/sdk",
-  packageTarballIntegrity: "sha512-lCIL90wIF9dSme7qhMVdjN/ey+SAGCrmraKc3mak5oyer6ye7ZxbUBPMaCBBApr3+HTO8HduTtUPtqUPbrhJ/A==",
-  packageTarballSha256: "aae17e2817b198f0f5e4151cdf023fb013370c12a58fe3245ccd92ba5d6b4166",
-  packageVersion: "0.2.1",
+  packageTarballIntegrity: "sha512-PpLM+eW84DRsNhYDvX02Y+v5hOCuQJMHJoNinyUwclHtizmpDEh4aBcRsCEvgqyQqYh2pD+zsu3VAZdKfbjKAg==",
+  packageTarballSha256: "c838fab52ca10d57119f1964d3ab29d71a2c7194047e15a68a6e189af3779bde",
+  packageVersion: "0.2.4",
+  releaseManifestPath:
+    "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.4-release-manifest.json",
+  releaseManifestSha256: "8b675d4f4ee00b3effc4208fe24a65f6406b891d6c33d388dafd73ce4b7f71af",
+  releaseTag: "sdk-v0.2.4",
+  releaseTagObject: "60933db64cdc5796b624d97f463b498b28ae3fca",
+  releaseVerificationReceiptPath:
+    "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.4-release-verification-receipt.json",
+  releaseVerificationReceiptSha256:
+    "4dff2fb23ddf2913332d033d0283b5268e24ce88eee7c854bc26e417ae1946cf",
   retainedLiveQualificationEvidenceSha256: "4f19e430a465294d020e6dc0eebde4a6320913744201fa60700cb75d148065fe",
   retainedLiveQualificationManifestSha256: "sha256:abe694b3e1cf0dcec9d5ff7c0d8b65f30ec5364ac11bb2526bd1c3a3b176c207",
   retainedLiveQualificationSourceLogSha256:
@@ -45,19 +54,19 @@ export const INFINITY_CONTEXT_SDK_PROVENANCE = Object.freeze({
   sourcePinnedEmbeddingProfileDigestSha256:
     "sha256:b183b9d6350dfaf9f874cab9fef993d3ded5060a4a18d972c45ec97def5faf31",
   sourcePinnedServiceRevision:
-    "e685b41a12e630b7e787fb2fa26b08c0eb6137d4",
+    "40704f193008f98c52ede93b68a44349907dd2cd",
   repository: "https://github.com/777genius/infinity-context.git",
-  tree: "d5dc6805c2db3e488a32a4e10c3ae4492ffc59bc",
+  tree: "836cca4d0981f4df73922c5b982975fc9db25ec7",
 });
 
 /** Immutable package identity for the locator-only Retrieval V2 slice. */
 export const INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE = Object.freeze({
   immutablePackageIntegrity:
-    "sha512-lCIL90wIF9dSme7qhMVdjN/ey+SAGCrmraKc3mak5oyer6ye7ZxbUBPMaCBBApr3+HTO8HduTtUPtqUPbrhJ/A==",
-  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.1.tgz",
-  packageManifestSha256: "146308a393c2e2f2961da477581b15da900c8b16a6e1ff4530ed8aec6057e70b",
+    "sha512-PpLM+eW84DRsNhYDvX02Y+v5hOCuQJMHJoNinyUwclHtizmpDEh4aBcRsCEvgqyQqYh2pD+zsu3VAZdKfbjKAg==",
+  immutablePackagePath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.2.4.tgz",
+  packageManifestSha256: "218762d671873968552ce568ae1a87bb651e5ca5017db4f6b2953252aa7ae67e",
   packageName: "@infinity-context/sdk",
-  packageTarballSha256: "aae17e2817b198f0f5e4151cdf023fb013370c12a58fe3245ccd92ba5d6b4166",
-  packageVersion: "0.2.1",
-  reviewedSourceCommit: "e685b41a12e630b7e787fb2fa26b08c0eb6137d4",
+  packageTarballSha256: "c838fab52ca10d57119f1964d3ab29d71a2c7194047e15a68a6e189af3779bde",
+  packageVersion: "0.2.4",
+  reviewedSourceCommit: "40704f193008f98c52ede93b68a44349907dd2cd",
 });

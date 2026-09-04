@@ -41,12 +41,12 @@ export interface InfinityExactDocumentSdkV1 {
   ): Promise<InfinityExactDocumentReconciliationV1>;
 }
 
-/** SDK 0.2.1 reconciles read-only exact identity, but cannot perform an
+/** SDK 0.2.4 reconciles read-only exact identity, but cannot perform an
  * identity-bound delete; the full mutation seam therefore remains gated. */
 export const INFINITY_EXACT_DOCUMENT_RELEASE_GATE = Object.freeze({
   contractVersion: "infinity.document-exact-reconciliation.v1" as const,
   minimumOfficialSdkVersion: "pending-exact-delete-release",
-  publishedSdkVersion: "0.2.1",
+  publishedSdkVersion: "0.2.4",
   satisfiedByPublishedSdk: false,
 });
 

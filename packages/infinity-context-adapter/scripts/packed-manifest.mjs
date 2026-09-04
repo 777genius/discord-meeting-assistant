@@ -32,7 +32,7 @@ if (operation === "prepare") {
     "@discord-meeting/postgres-adapter": "0.1.0",
     "@discord-meeting/subscription-runtime-adapter": "0.1.0",
     "@huggingface/tokenizers": "0.1.3",
-    "@infinity-context/sdk": "0.2.1",
+    "@infinity-context/sdk": "0.2.4",
     "pg": "8.22.0",
   };
   const packed = JSON.stringify(manifest);
