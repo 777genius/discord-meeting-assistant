@@ -4,7 +4,6 @@ import { mkdtemp, open, readFile, rename, stat, writeFile, type FileHandle } fro
   "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
 
@@ -15,7 +14,7 @@ import type { AttemptIdentity, SpendReservation } from
 
 const ledgerName = "budget.jsonl", identityName = "budget.identity.jsonl";
 const sourceUrl = new URL("../src/quality-campaign/attempt-budget-ledger.ts", import.meta.url).href;
-const tsxLoaderPath = fileURLToPath(new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url));
+const tsxLoaderPath = import.meta.resolve("tsx/esm");
 const digest = (value: string) => value.repeat(64);
 const spend = Object.freeze({ allowedCallKinds: ["answer"] as const, campaignRootSha256: digest("a"),
   expiresAtEpochMs: 10_000, maxCalls: 20, maxCallsByKind: { adjudicator_1: 0,
@@ -71,11 +70,16 @@ await new Promise(resolve=>process.once("message",resolve));await handle.close()
   return childPath;
 }
 
-async function writeClaimant(path: string) {
+async function writeClaimant(path: string, pauseAfterFirstSync = false) {
   const childPath = join(path, "claimant.mjs"), configPath = join(path, "claimant.json");
   await writeFile(configPath, JSON.stringify({ identityName, ledgerName, sourceUrl, spend }));
   await writeFile(childPath, `import {constants} from "node:fs";import {open,readFile} from "node:fs/promises";
-const c=JSON.parse(await readFile(process.argv[2],"utf8"));const api=await import(c.sourceUrl);
+const c=JSON.parse(await readFile(process.argv[2],"utf8"));
+${pauseAfterFirstSync ? `const probe=await open(process.argv[1],constants.O_RDONLY);
+const handles=Object.getPrototypeOf(probe);await probe.close();const originalSync=handles.sync;
+let paused=false;handles.sync=async function(){await originalSync.call(this);if(!paused){paused=true;
+process.send({state:"lock_identity_temporary_synced"});await new Promise(resolve=>process.once("message",resolve));}};` : ""}
+const api=await import(c.sourceUrl);
 const directory=await open(process.argv[3],constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
 process.send({state:"ready"});try{const value=await api.claimDurableAttemptBudget({
 admissionId:"admission-2",directory,identity:{attemptId:"attempt-2",callKind:"answer",callOrdinal:2,
@@ -137,9 +141,8 @@ it("releases the inherited flock when a synchronized holder is SIGKILLed", async
 it("publishes no partial final identity when initialization is SIGKILLed", async () => {
   const state = await root();
   try {
-    const claimantFiles = await writeClaimant(state.path);
-    const claimant = fork(claimantFiles.childPath, [claimantFiles.configPath, state.path],
-      { DISCORD_MEETING_TEST_PAUSE_LOCK_IDENTITY_AFTER_SYNC: "1" });
+    const claimantFiles = await writeClaimant(state.path, true);
+    const claimant = fork(claimantFiles.childPath, [claimantFiles.configPath, state.path]);
     expect((await claimant.take()).state).toBe("ready");
     expect((await claimant.take()).state).toBe("lock_identity_temporary_synced");
     const lockPath = join(state.path, `.${ledgerName}.lock`);
@@ -150,6 +153,22 @@ it("publishes no partial final identity when initialization is SIGKILLed", async
     const after = await stat(lockPath);
     expect({ dev: after.dev, ino: after.ino }).toEqual({ dev: before.dev, ino: before.ino });
   } finally {await state.directory.close();}
+}, 15_000);
+
+it("ignores the retired lock-identity pause environment variable while IPC is available", async () => {
+  const state = await root();
+  let claimant: ReturnType<typeof fork> | undefined;
+  try {
+    const claimantFiles = await writeClaimant(state.path);
+    claimant = fork(claimantFiles.childPath, [claimantFiles.configPath, state.path],
+      { DISCORD_MEETING_TEST_PAUSE_LOCK_IDENTITY_AFTER_SYNC: "1" });
+    expect((await claimant.take()).state).toBe("ready");
+    const result = await claimant.take();
+    expect(result.state).toBe("result"); expect(result.error).toBeUndefined();
+    await closed(claimant.child);
+  } finally {
+    claimant?.child.kill("SIGKILL"); await state.directory.close();
+  }
 }, 15_000);
 
 it("fails closed if lock replacement would split cooperating writers", async () => {

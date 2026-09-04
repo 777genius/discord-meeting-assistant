@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer } from "node:https";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -42,6 +42,11 @@ const protoLoader = subscriptionRequire("@grpc/proto-loader") as {
   loadSync(path: string, options: Record<string, unknown>): unknown };
 const grpcServers: TestGrpcServer[] = [];
 let installed!: Awaited<ReturnType<typeof packAndInstall>>;
+let localHttpsFixturePromise: Promise<{
+  readonly certificate: string;
+  readonly certificatePath: string;
+  readonly privateKey: string;
+}> | undefined;
 
 beforeAll(async () => {installed = await packAndInstall();}, 180_000);
 afterAll(async () => {await Promise.all(servers.splice(0).map(async (server) => {
@@ -71,12 +76,14 @@ describe("packed production quality-campaign entrypoint", () => {
     const fixture = await createPackedPreflightFixture(root, installed.consumerRoot);
     const statusPath = join(root, "preflight-status.json");
     await expect(execute(installed.bin, ["preflight", fixture.phasePath, statusPath], {
-      timeout: 30_000 })).rejects.toMatchObject({ code: 20, stderr: "" });
+      env: fixture.childEnvironment, timeout: 30_000 })).rejects.toMatchObject({ code: 20,
+        stderr: "" });
     expect(fixture.releaseRequests()).toBe(1);
     expect(await readFile(statusPath, "utf8")).toMatch(/"status":"paused"/u);
     const executeStatusPath = join(root, "execute-status.json");
     await expect(execute(installed.bin, ["execute", fixture.phasePath, executeStatusPath], {
-      timeout: 60_000 })).rejects.toMatchObject({ code: 21, stderr: "" });
+      env: fixture.childEnvironment, timeout: 60_000 })).rejects.toMatchObject({ code: 21,
+        stderr: "" });
     expect(fixture.providerRequests()).toBe(0);
     expect(fixture.retrievalRequests()).toBeGreaterThan(0);
     expect(await readFile(executeStatusPath, "utf8")).toMatch(/"status":"outcome_unknown"/u);
@@ -101,13 +108,15 @@ describe("packed production quality-campaign entrypoint", () => {
     const full = packedReviewEvidence(answer); fixture.setReviewEvidence(full);
     const script = `const{createHttpQualityCampaignProductionPorts}=await import("@discord-meeting/infinity-context-adapter/quality-campaign");const p=await createHttpQualityCampaignProductionPorts(${JSON.stringify(fixture.connectionsPath)});const r=await p.review.receipts(${JSON.stringify(answer.attemptId)},{deadlineEpochMs:Date.now()+5000,signal:new AbortController().signal});if(Object.keys(r).length!==8||r.firstEffectEvidence.attempt.callKind!=="adjudicator_1"||r.resolverEffectEvidence.attempt.callKind!=="resolver")process.exit(2)`;
     await expect(execute(process.execPath, ["--input-type=module", "--eval", script], {
-      cwd: installed.consumerRoot, timeout: 10_000 })).resolves.toMatchObject({ stderr: "" });
+      cwd: installed.consumerRoot, env: fixture.childEnvironment,
+      timeout: 10_000 })).resolves.toMatchObject({ stderr: "" });
 
     fixture.setReviewEvidence({ firstReceipt: full.firstReceipt,
       rawOutcomeEnvelopeSha256: full.rawOutcomeEnvelopeSha256,
       resolverReceipt: full.resolverReceipt, secondReceipt: full.secondReceipt });
     await expect(execute(process.execPath, ["--input-type=module", "--eval", script], {
-      cwd: installed.consumerRoot, timeout: 10_000 })).rejects.toMatchObject({ code: 1 });
+      cwd: installed.consumerRoot, env: fixture.childEnvironment,
+      timeout: 10_000 })).rejects.toMatchObject({ code: 1 });
   }, 60_000);
 
   it("routes installed adjudication and final admission commands and fails closed on missing phases",
@@ -116,7 +125,8 @@ describe("packed production quality-campaign entrypoint", () => {
       const fixture = await createPackedPreflightFixture(root, installed.consumerRoot);
       for (const command of ["adjudicate", "final-admission"] as const) {
         await expect(execute(installed.bin, [command, fixture.phasePath,
-          join(root, `${command}-status.json`)], { timeout: 30_000 }))
+          join(root, `${command}-status.json`)], { env: fixture.childEnvironment,
+            timeout: 30_000 }))
           .rejects.toMatchObject({ code: 1, stderr: "" });
       }
       expect(fixture.releaseRequests()).toBe(2);
@@ -271,7 +281,10 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const memory = canonicalMemoryFixture();
   const capability = sdkQualificationCapability();
   const retrievalSuccess = sdkRetrievalResponse(memory.selectedLocator, capability);
-  const server = createServer((request, response) => {if (request.url === "/release") {
+  const tls = await localHttpsFixture();
+  const childEnvironment = { ...process.env, NODE_EXTRA_CA_CERTS: tls.certificatePath };
+  const server = createServer({ cert: tls.certificate, key: tls.privateKey },
+    (request, response) => {if (request.url === "/release") {
     observedReleaseRequests += 1; response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(release)); return;} if (request.url === "/review") {
     request.resume(); request.on("end", () => {response.writeHead(200,
@@ -315,7 +328,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   servers.push(server); await new Promise<void>((resolve) => {server.listen(0, "127.0.0.1",
     () => {resolve();});}); const address = server.address();
   if (address === null || typeof address === "string") {throw new Error("fake HTTP bind failed");}
-  const base = `http://127.0.0.1:${address.port}`;
+  const base = `https://127.0.0.1:${address.port}`;
   const { authorities, authorityPaths, policyBindingSha256, policyInput } =
     await createPackedAuthorities(root);
   providerSigner = authorities["main-result"]!;
@@ -486,7 +499,8 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     campaignRootSha256: mainRootSha256, questionDigestSha256: firstQuestion.questionDigestSha256,
     questionId: firstQuestion.questionId, releaseRootSha256, repetition: 1,
     spendReservationSha256: sha256(spendDocuments[0]!) });
-  return { answerPrompts: runtime.prompts, connectionsPath, phasePath, postgresAuditPath,
+  return { answerPrompts: runtime.prompts, childEnvironment, connectionsPath, phasePath,
+    postgresAuditPath,
     recovery: { answerJournalRoot: canonicalExecution.answerJournalRoot,
       artifactKey: new Uint8Array(32).fill(1), artifactRoot: canonicalExecution.artifactRoot,
       attemptId: firstAttempt.attemptId, questionId: firstQuestion.questionId, repetition: 1 as const,
@@ -497,6 +511,23 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     selectedText: memory.selectedText, selectedTurnId: memory.selectedTurnId,
     unselectedText: memory.unselectedText,
     setReviewEvidence(value: unknown) {reviewEvidence = value;} };
+}
+
+async function localHttpsFixture() {
+  localHttpsFixturePromise ??= (async () => {
+    const root = await mkdtemp(join(tmpdir(), "quality-local-tls-"));
+    const certificatePath = join(root, "certificate.pem");
+    const privateKeyPath = join(root, "private-key.pem");
+    await execute("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-sha256", "-nodes",
+      "-keyout", privateKeyPath, "-out", certificatePath, "-days", "1", "-subj",
+      "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost"], {
+      timeout: 10_000 });
+    const [certificate, privateKey] = await Promise.all([
+      readFile(certificatePath, "utf8"), readFile(privateKeyPath, "utf8"),
+    ]);
+    return { certificate, certificatePath, privateKey };
+  })();
+  return await localHttpsFixturePromise;
 }
 
 async function createRoleSeparatedTokens(root: string) {

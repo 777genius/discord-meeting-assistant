@@ -3,7 +3,6 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
 
@@ -18,7 +17,7 @@ import { ProductionCheckpointStore } from
 
 const digest = (value: string) => value.repeat(64);
 const campaignRootSha256 = digest("1"), provider = "pinned-provider";
-const tsxLoaderPath = fileURLToPath(new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url));
+const tsxLoaderPath = import.meta.resolve("tsx/esm");
 
 function fixture() {
   const signers = Object.fromEntries(QUALITY_AUTHORITY_ROLES.map((role) => {
@@ -171,7 +170,8 @@ it("ignores a crash-left unpublished temp reservation", async () => {
       resolver: 0, retrieval: 0 } });
   const attempt = identity(value.releaseRootSha256, sha256(spendReservation), "stale-temp-question");
   const root = await mkdtemp(join(tmpdir(), "quality-stale-temp-"));
-  await writeFile(join(root, `.${attempt.attemptId}.reserved.json.crash.tmp`), "partial");
+  await writeFile(join(root, `.${attempt.attemptId}.reserved.json.` +
+    "00000000-0000-4000-8000-000000000000.tmp"), "partial");
   const journal = new DurableAttemptJournal(root, value.policy);
   const state = await executeReservedExchange({ campaignRootSha256, deadlineEpochMs: 1_500,
     effectReservation: { requestedEncryptedBytes: 1, requestedTokens: 1 }, identity: attempt,
@@ -434,6 +434,8 @@ async function collectChild(child: ChildProcess): Promise<{
   child.stdout?.setEncoding("utf8"); child.stderr?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {stdout += chunk;});
   child.stderr?.on("data", (chunk: string) => {stderr += chunk;});
-  const code = await new Promise<number | null>((resolve) => {child.on("exit", resolve);});
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject); child.once("close", resolve);
+  });
   return { code, stderr, stdout };
 }

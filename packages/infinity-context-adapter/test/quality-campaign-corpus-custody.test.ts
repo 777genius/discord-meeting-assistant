@@ -1,9 +1,10 @@
 import { generateKeyPairSync, sign } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { canonicalJson, sha256 } from "../src/quality-campaign/canonical.js";
 import { loadProductionExecutionCorpus, parseCanonicalQualityCampaignJsonBytes,
@@ -39,7 +40,7 @@ describe("production quality corpus custody", () => {
         evidenceLocators: ["locator-1"], questionId: "q-1" })]);
   });
 
-  it("rejects partial completion and an unlisted entry added during verification", async () => {
+  it("rejects partial completion and an unlisted completed-output entry", async () => {
     const partial = await corpusFixture();
     const partialManifestPath = join(partial.root, "corpus-admission-manifest.json");
     const partialManifest = JSON.parse(await readFile(partialManifestPath, "utf8")) as {
@@ -51,12 +52,40 @@ describe("production quality corpus custody", () => {
       executionPacketPath: partial.executionPath })).rejects.toThrow(/inventory/u);
 
     const extended = await corpusFixture();
-    const loading = loadProductionExecutionCorpus({ authority: extended.authority,
-      campaignRootSha256: extended.campaignRootSha256, expectedQuestionCount: 240,
-      executionPacketPath: extended.executionPath });
-    const rejection = expect(loading).rejects.toThrow(/inventory/u);
     await writeFile(join(extended.root, "unlisted-after-completion.json"), "{}");
-    await rejection;
+    await expect(loadProductionExecutionCorpus({ authority: extended.authority,
+      campaignRootSha256: extended.campaignRootSha256, expectedQuestionCount: 240,
+      executionPacketPath: extended.executionPath })).rejects.toThrow(/inventory/u);
+  });
+
+  it("reads small files within their bound and rejects files already over it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quality-corpus-bounded-read-"));
+    const path = join(root, "bounded.txt");
+    await writeFile(path, "tiny");
+    const allocation = vi.spyOn(Buffer, "allocUnsafe");
+    try {
+      await expect(readQualityCampaignBytes(path, "bounded fixture", 8_000_000))
+        .resolves.toEqual(Buffer.from("tiny"));
+      expect(allocation).toHaveBeenCalledWith(5);
+    } finally {allocation.mockRestore();}
+    await writeFile(path, "12345");
+    await expect(readQualityCampaignBytes(path, "bounded fixture", 4))
+      .rejects.toThrow(/changed or exceeds its byte limit/u);
+  });
+
+  it("rejects deterministic growth after the initial size check", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quality-corpus-growing-read-"));
+    const path = join(root, "growing.txt");
+    await writeFile(path, "tiny");
+    const allocate = Buffer.allocUnsafe.bind(Buffer);
+    const allocation = vi.spyOn(Buffer, "allocUnsafe").mockImplementationOnce((size) => {
+      appendFileSync(path, "!");
+      return allocate(size);
+    });
+    try {
+      await expect(readQualityCampaignBytes(path, "growing fixture", 8_000_000))
+        .rejects.toThrow(/changed or exceeds its byte limit/u);
+    } finally {allocation.mockRestore();}
   });
 
   it("does not allow a caller to reduce the admitted execution cardinality", async () => {
