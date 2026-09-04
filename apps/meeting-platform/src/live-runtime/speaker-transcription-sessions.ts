@@ -54,6 +54,12 @@ export class SpeakerTranscriptionSessions {
     );
   }
 
+  public async recover(packets: readonly LiveVoicePacket[]): Promise<void> {
+    await Promise.all([...groupPacketsBySpeaker(packets)].map(([speakerId, speakerPackets]) =>
+      this.speaker(speakerId).recover(speakerPackets),
+    ));
+  }
+
   public beginFinish(): void {
     for (const speaker of this.speakers.values()) {
       speaker.beginFinish();

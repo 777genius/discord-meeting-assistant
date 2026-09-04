@@ -47,3 +47,28 @@ summary and original recording valid.
   all issued links.
 - A future product site can replace the page while retaining the application
   ports, signed-link contract and Range endpoints.
+
+## Verified legacy recording compatibility
+
+Recording Playback and Meeting Lifecycle own the compatibility adapter at
+`apps/meeting-platform/src/adapters/recording-compatibility/verified-recording-repository.ts`.
+Its sibling `verified-recording-identity.ts` verifies the retained evidence.
+Composition selects it for the shared PostgreSQL meeting repository, so playback
+and post-call processing use the same verified snapshot. Current snapshots bypass
+compatibility. Legacy snapshots are enriched only from the ingress-owned durable
+completion receipt, with an exact recording/manifest/speaker/locator/timeline
+match and complete immutable track identities. Every selected version is read
+and its entire body independently checked against the retained receipt hash and
+size before returning metadata. There is no latest-object lookup or synthesized
+version/checksum, and no use of the derived live packet journal. Missing receipts,
+non-versioned historical objects and conflicting evidence fail closed.
+
+This is read-time compatibility, not a database migration. It does not mutate
+the original recording, stage status, meeting revision or transcript; normal
+post-call CAS saves may subsequently retain the verified metadata. Playback-only
+reads repeat verification. A sanitized verification event identifies the meeting
+and recording for audit. Operators must retain the private completed ingress
+spool alongside the database and immutable object versions. Rows whose historical
+receipt has been lost require recovery of that authoritative evidence; merely
+hashing a current object does not authenticate an old row. Previously terminal
+post-call failures still require the existing explicit recovery workflow.

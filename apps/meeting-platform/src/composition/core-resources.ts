@@ -15,7 +15,7 @@ import type { Logger, PrometheusMetrics } from "@discord-meeting/observability-a
 import {
   PostgresMeetingSourceConfigurationRepository,
   PostgresLiveMeetingRepository,
-  PostgresMeetingRepository,
+  type PostgresMeetingRepository,
   PostgresSummaryPublicationEffectLedger,
   PostgresTranscriptionExecutionBindingStore,
 } from "@discord-meeting/postgres-adapter";
@@ -35,6 +35,7 @@ import {
   TranscriptOutlineSummaryAdapter,
   type SummaryProviderHealth,
 } from "../adapters/outbound/transcript-outline-summary-adapter.js";
+import { VerifiedRecordingRepository } from "../adapters/recording-compatibility/verified-recording-repository.js";
 import type { RecordingDurabilityPort } from "../application/recording-ingress.js";
 import type { PlatformConfig } from "../config.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
@@ -103,7 +104,11 @@ export function createPlatformCoreResources(input: {
     writer: artifactWriter,
   });
   input.cleanup.defer("recording ingress spool", () => recordings.close());
-  const meetings = new PostgresMeetingRepository(pool);
+  const meetings = new VerifiedRecordingRepository(pool, {
+    artifacts: artifactReader,
+    completedRecording: (recordingId) => recordings.completedRecording(recordingId),
+    onVerified: (evidence) => input.logger.info("Verified legacy recording identity", evidence),
+  });
   const transcriptionExecutionBindings = new PostgresTranscriptionExecutionBindingStore(pool);
   const sourceConfigurations = new PostgresMeetingSourceConfigurationRepository(pool);
   const publicationTargets = new DiscordPublicationTargetResolver(

@@ -240,10 +240,13 @@ export class PlatformLiveMeetingRuntime {
     });
     state.projection.restoreFinalCaptions(result.finalizedTurns);
     this.meetings.set(state.meetingId, state);
-    const pending = await this.dependencies.pendingLivePackets?.(state.meetingId);
-    if (pending !== undefined && pending.length > 0) {
-      await this.acceptPackets(state.meetingId, pending);
-    }
+    state.packetRecovery = (async () => {
+      const pending = await this.dependencies.pendingLivePackets?.(state.meetingId);
+      if (pending !== undefined && pending.length > 0) {
+        await state.transcription.recover(pending);
+      }
+    })();
+    await state.packetRecovery;
     this.dependencies.logger.info("Derived live meeting started", {
       meetingId: state.meetingId,
       reused: result.status === "reused",
@@ -268,6 +271,7 @@ export class PlatformLiveMeetingRuntime {
       }
       return;
     }
+    await state.packetRecovery;
     await state.transcription.accept({
       format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 },
       packets,

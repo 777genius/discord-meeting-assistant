@@ -1,3 +1,4 @@
+import type { RecordingArtifactSnapshot } from "@discord-meeting/meeting-core/recording";
 import type {
   AuthoritativeTrackUploadMetadata,
   CraigLifecycleEvent,
@@ -53,6 +54,15 @@ export class DurableCraigRecordingIngress {
       () => ingestPacketBatch(this.#runtime, batch, options),
       options.signal,
     );
+  }
+
+  /** Only the validated terminal receipt can supply historical artifact identity. */
+  public async completedRecording(recordingId: string): Promise<RecordingArtifactSnapshot | undefined> {
+    const receipt = await this.#runtime.spool.readCompleted(recordingId);
+    if (receipt !== undefined && receipt.recordingId !== recordingId) {
+      throw new Error("completion receipt recording identity mismatch");
+    }
+    return receipt?.recording;
   }
 
   public pendingLivePackets(recordingId: string): Promise<readonly DurableLiveVoicePacket[]> {

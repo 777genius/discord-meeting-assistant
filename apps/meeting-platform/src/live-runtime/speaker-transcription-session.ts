@@ -47,6 +47,8 @@ export interface SpeakerTranscriptionSessionDependencies {
 export class SpeakerTranscriptionSession {
   private admissionChain: Promise<void> = Promise.resolve();
   private admissionClosed = false;
+  private deliveryFailed = false;
+  private recoveryBlocked = false;
   private backpressureDegraded = false;
   private chain: Promise<void> = Promise.resolve();
   private inactivityTimer: LiveRuntimeTimerHandle | null = null;
@@ -78,7 +80,7 @@ export class SpeakerTranscriptionSession {
     packets: readonly LiveVoicePacket[],
     deadlineMs: number,
   ): Promise<void> {
-    if (this.admissionClosed) {return;}
+    if (this.admissionClosed || this.recoveryBlocked) {return;}
     const globallyReserved = await this.dependencies.packetAdmission.reserve(
       packets.length,
       deadlineMs,
@@ -107,6 +109,24 @@ export class SpeakerTranscriptionSession {
     const completion = this.admissionChain.then(admission, admission);
     this.admissionChain = completion.catch(() => {});
     await completion;
+  }
+
+  /** Single-packet batches preserve order even across delivery failure/restart. */
+  public async recover(packets: readonly LiveVoicePacket[]): Promise<void> {
+    this.recoveryBlocked = false;
+    for (const packet of packets) {
+      if (this.admissionClosed) { return; }
+      await this.chain;
+      this.deliveryFailed = false;
+      await this.accept([packet], this.dependencies.clock.nowMilliseconds() +
+        this.dependencies.packetBackpressureTimeoutMs);
+      await this.chain;
+      // Do not let a failed send/ack or admission timeout advance the backlog.
+      if (this.deliveryFailed || !this.dependencies.ledger.isDelivered(livePacketIdentity(packet))) {
+        this.recoveryBlocked = true;
+        return;
+      }
+    }
   }
 
   public beginFinish(): void {
@@ -160,6 +180,7 @@ export class SpeakerTranscriptionSession {
       try {
         await this.send(packet);
       } catch (error) {
+        this.deliveryFailed = true;
         this.providerSession.terminate();
         this.logPacketFailure(error);
       } finally {
@@ -205,20 +226,19 @@ export class SpeakerTranscriptionSession {
     readonly packetId: string;
   }): Promise<void> {
     for (let attempt = 1; attempt <= maximumLivePacketDeliveryAttempts; attempt += 1) {
+      let sendStartedAtMs: number;
       try {
         const session = await this.providerSession.open(this.packetFlow.signal);
         if (session === null || this.packetFlow.signal.aborted) {
           return;
         }
-        const sendStartedAtMs = this.dependencies.clock.nowMilliseconds();
+        sendStartedAtMs = this.dependencies.clock.nowMilliseconds();
         await session.sendPacket({
           durationSamples48Khz: input.durationSamples48Khz,
           opus: input.opus,
           packetId: input.packetId,
           relativeTimeMs: input.packet.relativeTimeMs,
         });
-        await this.commitDelivery(input, sendStartedAtMs);
-        return;
       } catch (error) {
         this.providerSession.terminate();
         if (this.packetFlow.signal.aborted) {
@@ -228,7 +248,11 @@ export class SpeakerTranscriptionSession {
           this.rememberRetryablePacket(input.packet, input.packetId);
           throw error;
         }
+        continue;
       }
+      // A durable acknowledgement failure must not repeat the provider send.
+      await this.commitDelivery(input, sendStartedAtMs);
+      return;
     }
   }
 
