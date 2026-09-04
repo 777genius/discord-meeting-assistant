@@ -303,6 +303,7 @@ describe("Discord answer effect transport", () => {
     const receipt = await delivery.create({
       authorityScopeId: guildId,
       deliveryContainerId: containerId,
+      effectId: "meeting-knowledge-answer:v1:question-1",
       marker: "meeting-knowledge-answer:v1:question-1",
       payloadBytes: payload.payloadBytes,
       projectionTargetContainerId: containerId,
@@ -314,7 +315,7 @@ describe("Discord answer effect transport", () => {
     const postedBody = JSON.parse(payload.payloadBytes) as {
       readonly embeds: readonly unknown[];
     };
-    expect(post).toHaveBeenCalledWith(expect.anything(), { body: postedBody });
+    expect(post).toHaveBeenCalledWith(expect.anything(), { body: { ...postedBody, enforce_nonce: true, nonce: "26fd4f95216f74951517ff694" } });
     get.mockResolvedValueOnce(directDeliveryChannelMetadata()).mockResolvedValueOnce([
       authoredAnswerMessage({ embeds: postedBody.embeds, id: receipt }),
     ]);

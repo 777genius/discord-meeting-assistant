@@ -55,7 +55,7 @@ export class InfinityContextLiveFinalizedMemoryAdapter
   readonly #actorKeys: HistoricalRetrievalActorKeyMapper;
   readonly #ids: HistoricalOpaqueIdPort;
   readonly #index: InfinityContextClientV2;
-  readonly #exactDocuments: InfinityExactDocumentSdkV1;
+  readonly #exactDocuments: InfinityExactDocumentSdkV1 | undefined;
   readonly #operationTimeoutMs: number;
   readonly #requestTimeoutMs: number;
 
@@ -75,7 +75,12 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     this.#ids = config.ids;
     this.#operationTimeoutMs = config.operationTimeoutMs;
     this.#requestTimeoutMs = config.requestTimeoutMs;
-    this.#exactDocuments = requireInfinityExactDocumentSdk(config.exactDocuments);
+    // Exact reconciliation is optional at composition time. Do not make
+    // process startup depend on a capability that has not been explicitly
+    // established; production composition omits this projection in that case.
+    this.#exactDocuments = config.exactDocuments === undefined
+      ? undefined
+      : requireInfinityExactDocumentSdk(config.exactDocuments);
     const common = {
       baseUrl: config.baseUrl,
       retryPolicy: { maxAttempts: 1 as const },
@@ -97,6 +102,10 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     if (!validProjection(projection)) {
       return rejected("memory.invalid_live_projection");
     }
+    const exactDocuments = this.#exactDocuments;
+    if (exactDocuments === undefined) {
+      return rejected("memory.live_exact_reconciliation_unavailable");
+    }
     const topology = this.topology(projection);
     const operation = new InfinityOperationDeadline(
       this.#operationTimeoutMs,
@@ -104,7 +113,7 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     );
     try {
       const response = await operation.request(this.#requestTimeoutMs, (signal) =>
-        this.#exactDocuments.reconcileExactDocument({
+        exactDocuments.reconcileExactDocument({
           ...this.exactIdentity(projection, topology),
           signal,
         })
@@ -146,6 +155,9 @@ export class InfinityContextLiveFinalizedMemoryAdapter
   ): Promise<LiveFinalizedMemoryProjectionResultV1> {
     if (!validProjection(projection)) {
       return rejected("memory.invalid_live_projection");
+    }
+    if (this.#exactDocuments === undefined) {
+      return rejected("memory.live_exact_reconciliation_unavailable");
     }
     const topology = this.topology(projection);
     const operation = new InfinityOperationDeadline(
@@ -219,14 +231,38 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     projection: LiveFinalizedMemoryProjectionV1,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<LiveFinalizedMemoryProjectionResultV1> {
-    const result = await this.reconcile(projection, options);
-    if (result.status === "applied") {
+    if (!validProjection(projection)) {
+      return rejected("memory.invalid_live_projection");
+    }
+    const exactDocuments = this.#exactDocuments;
+    if (exactDocuments === undefined) {
+      return rejected("memory.live_exact_reconciliation_unavailable");
+    }
+    const topology = this.topology(projection);
+    const identity = this.exactIdentity(projection, topology);
+    const operation = new InfinityOperationDeadline(
+      this.#operationTimeoutMs,
+      options.signal,
+    );
+    try {
+      const response = await operation.request(this.#requestTimeoutMs, (signal) =>
+        exactDocuments.reconcileExactDocument({ ...identity, signal })
+      );
+      if (response.status === "absent") {
+        return { status: "applied" };
+      }
+      if (!matchesExactIdentity(response, identity) ||
+        response.remoteDocumentId.length === 0) {
+        throw new InfinityContextAdapterContractError(
+          "live memory exact removal reconciliation returned conflicting ownership",
+        );
+      }
       return { status: "not_found" };
+    } catch (error) {
+      return failure(error, "outcome_unknown");
+    } finally {
+      operation.close();
     }
-    if (result.status === "not_found") {
-      return { status: "applied" };
-    }
-    return result;
   }
 
   public async remove(
@@ -236,6 +272,10 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     if (!validProjection(projection)) {
       return rejected("memory.invalid_live_projection");
     }
+    const exactDocuments = this.#exactDocuments;
+    if (exactDocuments === undefined) {
+      return rejected("memory.live_exact_reconciliation_unavailable");
+    }
     const topology = this.topology(projection);
     const operation = new InfinityOperationDeadline(
       this.#operationTimeoutMs,
@@ -243,7 +283,7 @@ export class InfinityContextLiveFinalizedMemoryAdapter
     );
     try {
       const response = await operation.request(this.#requestTimeoutMs, (signal) =>
-        this.#exactDocuments.deleteExactDocument({
+        exactDocuments.deleteExactDocument({
           ...this.exactIdentity(projection, topology),
           deletionIdempotencyKey: `${projection.mutationId}:retire`,
           signal,

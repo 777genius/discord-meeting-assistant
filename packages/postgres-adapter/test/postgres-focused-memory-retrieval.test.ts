@@ -8,8 +8,8 @@ import {
   FinalTranscript,
   type TranscriptTurnSnapshot,
 } from "@discord-meeting/meeting-core/transcription";
-import type { Pool } from "pg";
-import { describe, expect, it } from "vitest";
+import type { Pool, PoolClient } from "pg";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   PostgresFinalReplyEvidence,
@@ -159,6 +159,36 @@ describe("PostgreSQL current-meeting query term policy", () => {
 });
 
 describe("PostgreSQL focused current-meeting memory", () => {
+  it("cancels an in-flight authority read before returning an outcome", async () => {
+    const queryStarted = Promise.withResolvers<void>();
+    let rejectQuery: ((reason?: unknown) => void) | undefined;
+    const release = vi.fn();
+    const client = {
+      processID: 42_424,
+      query: vi.fn(() => {
+        queryStarted.resolve();
+        return new Promise<never>((_resolve, reject) => {rejectQuery = reject;});
+      }),
+      release,
+    } as unknown as PoolClient;
+    const pool = { connect: vi.fn(async () => client) } as unknown as Pool;
+    const cancellation = { cancelAndVerifyInactive: vi.fn(async (backendPid: number) => {
+      expect(backendPid).toBe(42_424);
+      rejectQuery?.(new Error("synthetic focused query cancelled"));
+    }) };
+    const controller = new AbortController();
+    const { input } = retrievalInput(twoHourSnapshot(16), "What changed about Atlas?");
+    const pending = new PostgresFocusedMemoryRetrieval(pool, botId, cancellation)
+      .retrieve({ ...input, signal: controller.signal });
+
+    await queryStarted.promise;
+    controller.abort(new Error("focused retrieval aborted"));
+
+    await expect(pending).rejects.toThrow("focused retrieval aborted");
+    expect(cancellation.cancelAndVerifyInactive).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledWith(true);
+  });
+
   it("returns only bounded focused locators for a short current transcript", async () => {
     const snapshot = twoHourSnapshot(16);
     const retrieval = new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId);
@@ -177,7 +207,7 @@ describe("PostgreSQL focused current-meeting memory", () => {
       ...input,
       question: "Meteorological zephyr calibration?",
     });
-    expect(noHit).toEqual({ schemaVersion: 1, status: "low_coverage" });
+    expect(noHit).toEqual({ authorityGeneration: input.expectedAuthorityGeneration, schemaVersion: 1, status: "low_coverage" });
   });
 
   it("abstains instead of selecting every turn from a nominally small transcript", async () => {
@@ -186,6 +216,7 @@ describe("PostgreSQL focused current-meeting memory", () => {
 
     await expect(new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
       .retrieve(input)).resolves.toEqual({
+        authorityGeneration: input.expectedAuthorityGeneration,
         schemaVersion: 1,
         status: "low_coverage",
       });
@@ -260,11 +291,13 @@ describe("PostgreSQL focused current-meeting memory", () => {
       roomId: "synthetic-room",
       signal: controller.signal,
     })).rejects.toThrow("synthetic acquisition cancellation");
-    expect(queryCalled).toBe(false);
-    expect(releases).toEqual([true]);
-  });
+      expect(queryCalled).toBe(false);
+      expect(releases).toEqual([true]);
+    });
+});
 
-  it("scans a synthetic two-hour corpus but returns only bounded references for local rehydration", async () => {
+describe("PostgreSQL focused two-hour memory", () => {
+    it("scans a synthetic two-hour corpus but returns only bounded references for local rehydration", async () => {
     const snapshot = twoHourSnapshot();
     const pool = snapshotPool(snapshot);
     const { authority, input } = retrievalInput(
@@ -334,8 +367,12 @@ describe("PostgreSQL focused current-meeting memory", () => {
     })).resolves.toEqual({ schemaVersion: 1, status: "stale" });
     await expect(retrieval.retrieve({
       ...russian.input,
+      scopeId: "wrong-scope",
+    })).resolves.toEqual({ schemaVersion: 1, status: "stale" });
+    await expect(retrieval.retrieve({
+      ...russian.input,
       question: "Meteorological zephyr calibration?",
-    })).resolves.toEqual({ schemaVersion: 1, status: "low_coverage" });
+    })).resolves.toEqual({ authorityGeneration: russian.input.expectedAuthorityGeneration, schemaVersion: 1, status: "low_coverage" });
   });
 
   it("selects multi-hop evidence at the start, quarter, and end without returning corpus text", async () => {
@@ -511,7 +548,7 @@ describe("PostgreSQL bounded canonical exact lexical fallback", () => {
     const { input } = retrievalInput(snapshot, "Кто утвердил бюджет запуска?");
 
     await expect(new PostgresFocusedMemoryRetrieval(snapshotPool(snapshot), botId)
-      .retrieve(input)).resolves.toEqual({ schemaVersion: 1, status: "low_coverage" });
+      .retrieve(input)).resolves.toEqual({ authorityGeneration: input.expectedAuthorityGeneration, schemaVersion: 1, status: "low_coverage" });
   });
 
   it("keeps matching current evidence speaker/time-diverse within the bound", async () => {

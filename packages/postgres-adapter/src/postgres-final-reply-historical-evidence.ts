@@ -23,9 +23,13 @@ export async function loadCurrentHistoricalReferenceBatch(
   references: readonly FocusedMemoryReference[],
 ): Promise<CurrentHistoricalReferenceBatch> {
   const eligible = references.filter((reference) =>
-    reference.historicalSource !== undefined && reference.meetingId !== binding.meetingId
+    reference.historicalSource !== undefined
   );
-  const historicalMeetingIds = [...new Set(eligible.map(({ meetingId }) => meetingId))];
+  // The current authoritative meeting is already loaded and fenced by the
+  // caller. Only other meetings need another snapshot read here.
+  const historicalMeetingIds = [...new Set(eligible
+    .filter(({ meetingId }) => meetingId !== binding.meetingId)
+    .map(({ meetingId }) => meetingId))];
   const releaseIds = [...new Set(eligible.map((reference) =>
     reference.historicalSource!.releaseId
   ))];
@@ -77,6 +81,22 @@ interface CurrentHistoricalPlanRow {
   readonly transcript_version: number;
 }
 
+function currentMeetingBindingMatches(
+  reference: FocusedMemoryReference,
+  binding: QuestionBindingSnapshot,
+  plan: HistoricalIndexPlanV1,
+): boolean {
+  if (reference.meetingId !== binding.meetingId) {
+    return true;
+  }
+  return plan.binding.meetingId === binding.meetingId &&
+    plan.binding.acceptedMeetingRevision === binding.meetingRevision &&
+    plan.binding.scopeId === binding.scopeId &&
+    plan.binding.roomId === binding.roomId &&
+    plan.binding.transcriptId === binding.transcriptId &&
+    plan.binding.transcriptVersion === binding.transcriptVersion;
+}
+
 function historicalReferenceMatches(
   reference: FocusedMemoryReference,
   binding: QuestionBindingSnapshot,
@@ -97,7 +117,9 @@ function historicalReferenceMatches(
   const document = plan.documents.find(({ manifest }) =>
     manifest.candidateLocator === source.candidateLocator
   );
-  return row.release_id === plan.binding.releaseId &&
+  const currentMeetingMatches = currentMeetingBindingMatches(reference, binding, plan);
+  return currentMeetingMatches &&
+    row.release_id === plan.binding.releaseId &&
     row.release_id === source.releaseId &&
     row.meeting_id === reference.meetingId &&
     row.meeting_id === plan.binding.meetingId &&

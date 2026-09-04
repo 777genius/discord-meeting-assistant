@@ -305,6 +305,7 @@ function createAnswerPort(input: ProductionCanonicalQuestionChainInput,
 function assertCanonicalRequest(request: FocusedLocatorRetrievalV2RequestSnapshot,
   question: string): void {
   if (request.budgets.candidateLimit !== 100 || request.budgets.resultLimit !== 10 ||
+    !Object.is(request.budgets.neighborRadius, 0) ||
     request.queries.length !== 1 || question.trim().length === 0) {
     throw new Error("qualification request violates Meeting Knowledge ownership");
   }
