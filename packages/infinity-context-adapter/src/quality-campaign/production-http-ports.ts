@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { digest, exactRecord, safeId } from "./canonical.js";
@@ -11,6 +10,8 @@ import { createProductionCanonicalExecutorFactory,
 import type { QualityCampaignRelease } from "./release.js";
 import type { CampaignCallContext, CampaignProviderPorts,
   CampaignReviewEvidence, QualityCampaignProductionPorts } from "./production-ports.js";
+import { readCanonicalQualityCampaignJson, readQualityCampaignBytes, readQualityCampaignText } from
+  "./production-execution-corpus-custody.js";
 
 interface HttpConnectionConfiguration {
   readonly absenceAuthority: HttpAuthority;
@@ -41,6 +42,7 @@ interface HttpConnectionConfiguration {
 }
 interface HttpAuthority { readonly keyId: string; readonly publicKeyPath: string }
 interface HttpReviewer extends HttpAuthority { readonly endpoint: string }
+const MAXIMUM_HTTP_RESPONSE_BYTES = 8_000_000;
 type AbsenceInput = Parameters<QualityCampaignProductionPorts["absence"]["observe"]>[0];
 type DeletionInput = Parameters<QualityCampaignProductionPorts["deletion"]["deleteDerived"]>[0];
 type MainEvidenceInput = Parameters<QualityCampaignProductionPorts["evidence"]["main"]>[0];
@@ -51,7 +53,8 @@ type VaultInput = Parameters<QualityCampaignProductionPorts["review"]["vault"]["
 export async function createHttpQualityCampaignProductionPorts(path: string):
 Promise<QualityCampaignProductionPorts> {
   const config = await load(path);
-  const token = (await readFile(absolute(config.credentialPath), "utf8")).trim();
+  const token = (await readQualityCampaignText(absolute(config.credentialPath),
+    "production provider credential", 16_384)).trim();
   if (token === "") {throw new Error("production provider credential is empty");}
   const mainResultAuthority = await authority(config.providerResultAuthority);
   const holdoutResultAuthority = await authority(config.holdoutProviderResultAuthority);
@@ -65,11 +68,13 @@ Promise<QualityCampaignProductionPorts> {
       resultAuthority, retrieval: exchange(retrieval, token) });
   const evidenceAuthority = await authority(config.evidenceAuthority);
   const mainEvidenceCustody = createLocalEvidenceCustody({ authority: evidenceAuthority,
-    key: decodeAesKey(await readFile(absolute(config.evidenceKeyPath), "utf8")),
+    key: decodeAesKey(await readQualityCampaignText(absolute(config.evidenceKeyPath),
+      "main evidence key", 16_384)),
     keyId: config.evidenceKeyId });
   const holdoutEvidenceCustody = createLocalEvidenceCustody({ authority:
-    await authority(config.holdoutEvidenceAuthority), key: decodeAesKey(await readFile(
-      absolute(config.holdoutEvidenceKeyPath), "utf8")), keyId: config.holdoutEvidenceKeyId });
+    await authority(config.holdoutEvidenceAuthority), key: decodeAesKey(
+      await readQualityCampaignText(absolute(config.holdoutEvidenceKeyPath),
+        "holdout evidence key", 16_384)), keyId: config.holdoutEvidenceKeyId });
   const evidenceCustody = Object.freeze({ open: async (input: Parameters<
     typeof mainEvidenceCustody.open>[0]) => input.kind === "main" ?
       await mainEvidenceCustody.open(input) : await holdoutEvidenceCustody.open(input) });
@@ -82,15 +87,16 @@ Promise<QualityCampaignProductionPorts> {
     artifactCustody: {
       loadKey: async ({ keyId }: { readonly keyId: string }) =>
         keyId === config.artifactCustody.keyId ? {
-        key: await readFile(absolute(config.artifactCustody.keyPath)),
+        key: await readQualityCampaignBytes(absolute(config.artifactCustody.keyPath),
+          "artifact custody key", 16_384),
         authorityKeyId: config.artifactCustody.keyId,
         authorityPublicKeyFingerprintSha256: digest(config.artifactCustody.keyCustodySha256,
           "artifact custody authority fingerprint"),
         keyCustodySha256: config.artifactCustody.keyCustodySha256 } : null,
       readEnvelope: async ({ envelopeSha256 }: { readonly envelopeSha256: string }) => {
         if (!/^[a-f0-9]{64}$/u.test(envelopeSha256)) {return null;}
-        try {return await readFile(join(absolute(config.artifactCustody.envelopeRoot),
-          `${envelopeSha256}.enc.json`));} catch (error) {
+        try {return await readQualityCampaignBytes(join(absolute(config.artifactCustody.envelopeRoot),
+          `${envelopeSha256}.enc.json`), "artifact custody envelope", 8_000_000);} catch (error) {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") {return null;} throw error;
         }
       },
@@ -177,7 +183,36 @@ async function requestJson(endpoint: string, token: string, body: unknown,
       authorization: `Bearer ${token}`, "content-type": "application/json" }, method: "POST",
     signal: controller.signal });
     if (!response.ok) {throw new Error("production authority request failed");}
-    return JSON.parse(await response.text()) as unknown;
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength !== null && (!/^\d+$/u.test(declaredLength) ||
+      Number(declaredLength) > MAXIMUM_HTTP_RESPONSE_BYTES)) {
+      controller.abort(new Error("production authority response exceeds its byte limit"));
+      throw new Error("production authority response exceeds its byte limit");
+    }
+    if (response.body === null) {throw new Error("production authority response is empty");}
+    const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let length = 0;
+    try {
+      for (;;) {
+        const chunk = await reader.read(); if (chunk.done) {break;}
+        const value: unknown = chunk.value;
+        if (!(value instanceof Uint8Array)) {
+          const error = new Error("production authority response contains an invalid byte chunk");
+          controller.abort(error); throw error;
+        }
+        length += value.byteLength;
+        if (length > MAXIMUM_HTTP_RESPONSE_BYTES) {
+          controller.abort(new Error("production authority response exceeds its byte limit"));
+          throw new Error("production authority response exceeds its byte limit");
+        }
+        chunks.push(value);
+      }
+    } finally {reader.releaseLock();}
+    if (length === 0) {throw new Error("production authority response is empty");}
+    const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), length);
+    let value: unknown;
+    try {value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;}
+    catch (error) {throw new Error("production authority response is invalid", { cause: error });}
+    return value;
   } finally {
     clearTimeout(timeout); callContext.signal.removeEventListener("abort", abort);
   }
@@ -193,7 +228,8 @@ async function load(path: string): Promise<HttpConnectionConfiguration> {
     "holdoutProviderResultAuthority", "holdoutRetrievalEndpoint",
     "providerResultAuthority", "rawOutcomeEndpoint", "releaseObservationEndpoint",
     "schemaVersion"];
-  const record = exactRecord(JSON.parse(await readFile(absolute(path), "utf8")) as unknown,
+  const record = exactRecord(await readCanonicalQualityCampaignJson(absolute(path),
+    "production connection configuration"),
     keys, "production connection configuration");
   if (record.schemaVersion !== "meeting_knowledge.semantic_quality_http_connections.v5" ||
     !Array.isArray(record.adjudicators) || record.adjudicators.length !== 3) {
@@ -238,8 +274,9 @@ function decodeCanonicalExecutionConfiguration(value:
 }
 
 async function authority(value: HttpAuthority) {
-  return Object.freeze({ keyId: value.keyId,
-    publicKeyPem: await readFile(absolute(value.publicKeyPath), "utf8") });
+  return Object.freeze({ keyId: safeId(value.keyId, "HTTP authority key ID"),
+    publicKeyPem: await readQualityCampaignText(absolute(value.publicKeyPath),
+      "HTTP authority public key", 16_384) });
 }
 function withoutContext<T extends { readonly context: CampaignCallContext }>(input: T) {
   const { context: _context, ...rest } = input; return rest;
@@ -248,6 +285,7 @@ function absolute(path: string): string {
   if (!isAbsolute(path) || path.includes("\0")) {throw new Error("production path must be absolute");}
   return resolve(path);
 }
+
 
 function decodeAesKey(value: string): Buffer {
   const key = Buffer.from(value.trim(), "base64");

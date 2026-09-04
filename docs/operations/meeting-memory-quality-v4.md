@@ -431,12 +431,83 @@ has this exact boundary shape:
 ```
 
 The separate source harness in
-`test/semantic-quality-v4-production-composition.ts` is invoked only by
-`test/run-semantic-quality-v4.ts --real-execute`. Its private corpus loader
-supports the `human_corpus_v1` profile, but that support is not installed CLI
-admission and is not qualification evidence. Canonical integration into the
-installed production CLI remains pending; do not use the source harness or its
-profile to claim a memory-quality GO.
+`test/semantic-quality-v4-production-composition.ts` remains test-only. Its
+`human_corpus_v1` loader is not part of qualification. A custodian instead uses
+the installed `corpus-admit` phase before preflight. This phase is offline: it
+has no connections document and performs no provider, Discord, network, or
+production-data access. Authorization expiry is compared with the process's
+runtime clock; the untrusted phase document cannot select that epoch.
+
+The phase schema is
+`meeting_knowledge.semantic_quality_corpus_admission_phase.v1`. Its payload has
+the exact fields below; every path is absolute. `outputRoot` must not exist.
+
+```json
+{
+  "schemaVersion": "meeting_knowledge.semantic_quality_corpus_admission_phase.v1",
+  "payload": {
+    "acceptanceReceiptPath": "/custody/acceptance.json",
+    "authorityPolicyPath": "/custody/authority-policy.json",
+    "custodyAuthorityPath": "/custody/artifact-custody-authority.json",
+    "executionAuthorizationPath": "/custody/execution-authorization.json",
+    "executionSignerPath": "/custody/artifact-custody-signer.json",
+    "forbiddenLocatorManifestPath": "/custody/forbidden-manifest.json",
+    "goldRelevanceSignerPath": "/gold/gold-relevance-signer.json",
+    "locatorSignerPath": "/locator/locator-signer.json",
+    "outputRoot": "/handoff/prepared-corpus",
+    "questionReviewReceiptPaths": ["/review/reviewer-1.json", "/review/reviewer-2.json"],
+    "releaseRootSha256": "<64 lowercase hex>",
+    "reviewerAuthorityPaths": ["/review/reviewer-1-authority.json", "/review/reviewer-2-authority.json"],
+    "sealedCorpusPath": "/custody/sealed-corpus.json",
+    "turnToBlockManifestPath": "/custody/turn-to-block-manifest.json"
+  }
+}
+```
+
+The sealed corpus schema is
+`meeting_knowledge.semantic_quality_sealed_corpus.v1`. It binds the release,
+source, frozen snapshot, reviewer set, and exactly 240 entries. Each entry has
+exactly `execution` and `gold`; the corpus additionally carries the closed global
+`forbiddenLocatorIds` set (at most 100 locators) and the real `turnMappings`
+entries (`turnId`, `sourceLocatorId`). Turn IDs are unique; multiple turns may
+belong to the same source block and therefore share a locator. The authorized
+locator inventory covers all mapped source blocks, not only gold evidence.
+`execution` is the
+installed execution-packet contract. `gold` is the separate gold-packet
+contract and declares `answerable` or `must_abstain`; answerable entries require
+evidence and claims, while abstentions prohibit them. Locator IDs are SHA-256
+digests. The set must contain exactly 200 `automatic` and 40
+`independent_review` entries and may use `en`, `ru`, and `mixed` locales.
+
+The command opens every trust/control path through descriptor-pinned,
+no-symlink ancestors and accepts only canonical JSON. It verifies the pinned,
+distinct role keys and all custody/review signatures and bindings before
+publishing. Exact, nested, and array-member path overlap is rejected before any
+output is created. Turn-to-block and forbidden-locator receipts bind
+purpose-separated digests of the real turn/locator mapping and complete global
+forbidden set. Publication creates
+`outputRoot` privately and exclusively, synchronizes each create-only file, and
+writes `corpus-admission-manifest.json` last only after synchronizing the output
+directory, then synchronizes the output and parent directories again. A failed
+publication retains its incomplete private directory for explicit operator
+reconciliation; it is never recursively removed through a pathname that could
+have been substituted. A consumer must reject a
+handoff unless that canonical marker says `completionState: "complete"`, binds
+the runtime `authorizationComparisonEpochMs`, and inventories the exact artifact
+digest. The handoff includes
+`InputManifest.v4.json`, metadata-only question files, a custody-signed
+`execution-corpus.json` without gold, independently signed gold relevance,
+locator and forbidden-locator authority, the two original independently signed
+final-review receipts, and
+`corpus-admission-manifest.json` with exact artifact digests. The ordinary
+`execute` path still opens only `executionCorpusPath`; gold remains available
+only to evidence reconstruction and final admission.
+
+```bash
+/usr/local/bin/pnpm --filter "$PACKAGE" run quality-campaign -- corpus-admit \
+  /absolute/private/corpus-admission-phase.json \
+  /absolute/private/corpus-admission-status.create-only.json
+```
 
 Use exact Node 24.18.0. The aliases below each forward the production command,
 phase path, and create-only status path to the installed CLI. Use a fresh status

@@ -4,9 +4,9 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { artifactAttemptIdentity, attemptIdentity, createHttpQualityCampaignProductionPorts,
+import { artifactAttemptIdentity, attemptIdentity, canonicalJson, createHttpQualityCampaignProductionPorts,
   sha256, verifyExternalSignedValue } from "../src/quality-campaign/index.js";
 
 const servers: ReturnType<typeof createServer>[] = [];
@@ -16,7 +16,7 @@ const REVIEW_KEYS = ["firstEffectEvidence", "firstReceipt", "predecessorPlaintex
 
 afterEach(async () => {await Promise.all(servers.splice(0).map(async (server) => {
   await new Promise<void>((resolve) => {server.close(() => {resolve();});});
-}));});
+})); vi.unstubAllGlobals();});
 
 describe("concrete HTTP production review evidence", () => {
   it("preserves the exact eight-field contract without treating signatures as trusted", async () => {
@@ -77,6 +77,28 @@ describe("concrete HTTP production review evidence", () => {
     await expect(ports.review.receipts(fixture.answerAttempt.attemptId,
       context(Date.now() + 10))).rejects.toThrow();
   });
+
+  it("rejects an authority response that appends beyond the closed byte limit", async () => {
+    const fixture = await httpFixture(); fixture.respondWith("x".repeat(8_000_001));
+    const ports = await createHttpQualityCampaignProductionPorts(fixture.connectionsPath);
+    await expect(ports.review.receipts(fixture.answerAttempt.attemptId,
+      context(Date.now() + 5_000))).rejects.toThrow(/byte limit/u);
+  });
+
+  it("rejects malformed response chunks and releases the response reader", async () => {
+    const fixture = await httpFixture();
+    const ports = await createHttpQualityCampaignProductionPorts(fixture.connectionsPath);
+    const releaseLock = vi.fn();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      body: { getReader: () => ({ read: vi.fn().mockResolvedValue({ done: false,
+        value: "not a byte chunk" }), releaseLock }) },
+      headers: { get: () => null }, ok: true,
+    }));
+
+    await expect(ports.review.receipts(fixture.answerAttempt.attemptId,
+      context(Date.now() + 5_000))).rejects.toThrow(/invalid byte chunk/u);
+    expect(releaseLock).toHaveBeenCalledOnce();
+  });
 });
 
 async function httpFixture() {
@@ -119,7 +141,7 @@ async function httpFixture() {
     runtimeAddress: "127.0.0.1:1", runtimeTokenPath: tokenPath,
     topologyAuthority: authority("provider"), topologyKeyPath: keyPath, topologyPath: keyPath };
   const connectionsPath = join(root, "connections.json");
-  await writeFile(connectionsPath, JSON.stringify({ absenceAuthority: authority("absence"),
+  await writeFile(connectionsPath, canonicalJson({ absenceAuthority: authority("absence"),
     absenceEndpoint: `${endpoint}/absence`, adjudicators: [authority("provider"),
       authority("holdout"), authority("evidence")].map((item) => ({ ...item, endpoint })),
     artifactCustody: { envelopeRoot: root,

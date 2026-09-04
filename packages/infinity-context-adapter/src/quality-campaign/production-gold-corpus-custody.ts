@@ -1,5 +1,5 @@
 import { canonicalJson, digest, exactRecord } from "./canonical.js";
-import { readSignedCorpusDocument } from "./production-execution-corpus-custody.js";
+import { readCompletedCorpusDocument } from "./production-execution-corpus-custody.js";
 import { validateQualificationGoldPacket, type QualificationGoldPacket } from
   "./qualification-corpus-packets.js";
 
@@ -19,8 +19,8 @@ export async function loadProductionGoldCorpusAfterTerminal(input: {
     new Set(input.expectedQuestionIds).size !== input.expectedQuestionIds.length) {
     throw new Error("terminal outcome membership is absent or duplicated");
   }
-  const signed = await readSignedCorpusDocument(input.goldPacketPath, input.authority,
-    "gold corpus");
+  const signed = await readCompletedCorpusDocument(input.goldPacketPath, input.authority,
+    "gold corpus", input.campaignRootSha256);
   const payload = exactRecord(signed.payload, ["campaignRootSha256", "packets",
     "schemaVersion", "terminalOutcomeSetSha256"], "gold corpus payload");
   if (payload.schemaVersion !== "meeting_knowledge.quality_gold_corpus.v1" ||

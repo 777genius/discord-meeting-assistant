@@ -1,14 +1,15 @@
 import { admitMainCampaign, type AdmissionAuthority, type CampaignQuestion } from "./admission.js";
 import { adjudicateOutcome } from "./adjudication.js";
 import { sha256 } from "./canonical.js";
-import { DurableAttemptJournal } from "./attempt-journal.js";
+import { DurableAttemptJournal, withOwnedAttemptJournal } from "./attempt-journal.js";
 import { attemptIdentity } from "./execution.js";
 import { admitFinalCampaign } from "./final-admission.js";
 import { createHoldoutReport } from "./holdout.js";
 import { createOperatorSafeReceipt, type OperatorSafeReceipt } from "./operator-cli.js";
 import { loadPinnedProductionRelease, loadVerifiedProductionSpend,
   withProductionCallContext } from "./production-bootstrap.js";
-import { ProductionCheckpointStore } from "./production-checkpoints.js";
+import { adjudicationCheckpointReceipt, assertAdjudicationCheckpoint,
+  ProductionCheckpointStore, retentionCheckpointReceipt } from "./production-checkpoints.js";
 import { assertDistinctCleanupAuthorities, decodePersistedCleanup,
   executeDerivedCleanup } from "./production-cleanup.js";
 import { reconstructExactHoldoutEvidence, reconstructExactMainEvidence,
@@ -60,6 +61,7 @@ Promise<ProductionCompositionResult> {
     path: config.authoritativeEvidenceInventoryPath, questions: admitted.questions,
     releaseRootSha256: verifiedRelease.releaseRootSha256 });
   const checkpoints = new ProductionCheckpointStore(config.checkpointRoot);
+  try {
   const deadline = await checkpoints.deadline({ campaignRootSha256: admitted.rootBindingSha256,
     nowEpochMs: input.ports.clock.nowEpochMs() }); const { documents: spendDocuments,
     reservations } = await loadVerifiedProductionSpend(policy, { campaignRootSha256:
@@ -100,7 +102,7 @@ Promise<ProductionCompositionResult> {
       admitted.rootBindingSha256, concurrency: config.concurrency, deadlineEpochMs:
       deadline.campaignDeadlineEpochMs, effectVerificationEpochMs: input.ports.clock.nowEpochMs(),
       policy, ports: input.ports, release: pinnedRelease, spendReservations: spendDocuments });
-    const receipt = adjudicationReceipt(admitted.rootBindingSha256, adjudications);
+    const receipt = adjudicationCheckpointReceipt(admitted.rootBindingSha256, adjudications);
     await checkpoints.completePhase({ campaignRootSha256: admitted.rootBindingSha256,
       phase: "adjudicated", receipt });
     return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
@@ -125,7 +127,7 @@ Promise<ProductionCompositionResult> {
     questions: admitted.questions, releaseRootSha256: verifiedRelease.releaseRootSha256,
     releaseDocumentSha256: sha256(pinnedRelease.document), spendReservations: reservations,
     spendReservationSha256ByRepetition: spendDigests });
-    const receipt = retentionReceipt(admitted.rootBindingSha256, reconstructed);
+    const receipt = retentionCheckpointReceipt(admitted.rootBindingSha256, reconstructed);
     await checkpoints.completePhase({ campaignRootSha256: admitted.rootBindingSha256,
       phase: "retained", receipt });
     return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
@@ -149,7 +151,7 @@ Promise<ProductionCompositionResult> {
     questions: admitted.questions, releaseRootSha256: verifiedRelease.releaseRootSha256,
     releaseDocumentSha256: sha256(pinnedRelease.document), spendReservations: reservations,
     spendReservationSha256ByRepetition: spendDigests });
-    if (sha256(retentionReceipt(admitted.rootBindingSha256, reconstructed)) !==
+    if (sha256(retentionCheckpointReceipt(admitted.rootBindingSha256, reconstructed)) !==
       retainedReceiptSha256) {throw new Error("exact retained evidence changed before cleanup");}
     const cleanup = input.command === "cleanup-absence" ?
       await withProductionCallContext(deadline.campaignDeadlineEpochMs, async (context) =>
@@ -157,6 +159,7 @@ Promise<ProductionCompositionResult> {
           campaignRootSha256: admitted.rootBindingSha256, context, policy,
           deletion: input.ports.deletion, observation: input.ports.absence,
           protectedEvidence: custody.protectedEvidence,
+          reservationStore: checkpoints,
           releaseRootSha256: verifiedRelease.releaseRootSha256,
           targetInventoryAuthority: deletionAuthority,
           targetInventoryAuthorityKeySha256:
@@ -174,7 +177,9 @@ Promise<ProductionCompositionResult> {
     }
     const repetitionAuthority = await loadProductionAuthority(config.repetitionAuthorityPath);
     const spendReservationSha256ByRepetition = [spendDigests[1], spendDigests[2], spendDigests[3]] as const;
-    const final = await admitFinalCampaign(policy, { artifactCustody: input.ports.artifactCustody,
+    const spendLedger = new DurableAttemptJournal(config.journalRoot, policy);
+    const final = await withOwnedAttemptJournal(spendLedger, async () =>
+      await admitFinalCampaign(policy, { artifactCustody: input.ports.artifactCustody,
       artifacts: evidence.artifacts,
       campaignByteCeiling: evidence.campaignByteCeiling,
       campaignRootSha256: admitted.rootBindingSha256,
@@ -189,10 +194,10 @@ Promise<ProductionCompositionResult> {
       release: pinnedRelease, repetitionAuthorityKeyId: repetitionAuthority.keyId,
       repetitionEvidence: evidence.repetitionEvidence,
       rootBindingSha256: evidence.finalRootBindingSha256,
-      spendLedger: new DurableAttemptJournal(config.journalRoot, policy),
+      spendLedger,
       spendReservationsByRepetition: spendDocuments as [unknown, unknown, unknown],
       spendReservationSha256ByRepetition, targetInventoryAuthorityKeyId: deletionAuthority.keyId,
-      targetInventoryReceipt: cleanup.targetInventoryReceipt });
+      targetInventoryReceipt: cleanup.targetInventoryReceipt }));
     const receipt = createOperatorSafeReceipt(admitted.rootBindingSha256, {
       cleanupReceiptSha256: cleanup.absenceReceiptSha256,
       finalAdmissionSha256: final.finalAdmissionSha256, qualified: final.qualified });
@@ -214,6 +219,7 @@ Promise<ProductionCompositionResult> {
       admitted.rootBindingSha256, { qualifiedCheckpointSha256 }), status: "completed" };
   }
   throw new Error("unsupported production command");
+  } finally {await checkpoints.close();}
 }
 
 async function runHoldoutCommand(input: { readonly absenceAuthority: AdmissionAuthority;
@@ -265,7 +271,7 @@ Promise<ProductionCompositionResult | null> {
     effectVerificationEpochMs: input.ports.clock.nowEpochMs(), policy: input.policy,
     ports: input.ports, release: input.release,
     spendReservations: holdout.spendReservations });
-    const receipt = adjudicationReceipt(holdoutRootSha256, adjudications);
+    const receipt = adjudicationCheckpointReceipt(holdoutRootSha256, adjudications);
     await input.checkpoints.completePhase({ campaignRootSha256: input.admitted.rootBindingSha256,
       phase: "holdout-adjudicated", receipt });
     return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
@@ -282,7 +288,10 @@ Promise<ProductionCompositionResult | null> {
       spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition });
     assertAdjudicationCheckpoint(adjudicatedReceiptSha256, holdoutRootSha256,
       evidence.adjudications);
-    const metrics = await reconstructExactHoldoutEvidence({ authorityBindings:
+    const spendLedger = new DurableAttemptJournal(input.config.holdoutJournalRoot, input.policy,
+      "holdout_provider_result");
+    const metrics = await withOwnedAttemptJournal(spendLedger, async () =>
+      await reconstructExactHoldoutEvidence({ authorityBindings:
       holdout.authorityBindings, authorityPolicy: input.policy,
       artifactKeyCustodySha256:
         verifyPinnedReleaseDocument(input.policy, input.release).release.artifactKeyCustodySha256,
@@ -295,10 +304,9 @@ Promise<ProductionCompositionResult | null> {
       releaseDocument: input.release,
       releaseDocumentSha256: sha256(input.release.document),
       releaseRootSha256: input.release.releaseRootSha256,
-      spendLedger: new DurableAttemptJournal(input.config.holdoutJournalRoot, input.policy,
-        "holdout_provider_result"),
+      spendLedger,
       spendReservations: holdout.verifiedSpends,
-      spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition });
+      spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition }));
     const targetInventoryAuthority = await loadProductionAuthority(
       input.config.deletionAuthorityPath);
     const targetInventoryReceipt = await readProductionJson(
@@ -312,6 +320,7 @@ Promise<ProductionCompositionResult | null> {
         campaignRootSha256: holdoutRootSha256, context, deletion: input.ports.deletion,
         policy: input.policy,
         observation: input.ports.absence, protectedEvidence: input.custody.protectedEvidence,
+        reservationStore: input.checkpoints,
         releaseRootSha256: input.release.releaseRootSha256, targetInventoryAuthority,
         targetInventoryAuthorityKeySha256: input.targetInventoryAuthorityKeySha256,
         targetInventoryReceipt }));
@@ -373,31 +382,6 @@ Promise<readonly ExactAdjudicationEvidence[]> {
         campaignRootSha256: input.campaignRootSha256, questionId: attempt.questionId,
         repetition: attempt.repetition });
     }));
-}
-
-function adjudicationReceipt(campaignRootSha256: string,
-  adjudications: readonly ExactAdjudicationEvidence[]) {
-  return createOperatorSafeReceipt(campaignRootSha256, {
-    adjudicationCount: adjudications.length,
-    adjudicationSetSha256: sha256(adjudications.map(({ attemptId, decisionDigestSha256,
-      outcomeDigestSha256, resolverReceipt }) => ({ attemptId, decisionDigestSha256,
-      outcomeDigestSha256, resolverReceiptSha256: resolverReceipt === null ? null :
-        sha256(resolverReceipt) })).toSorted((a, b) =>
-        a.attemptId.localeCompare(b.attemptId))) });
-}
-
-function assertAdjudicationCheckpoint(receiptSha256: string, campaignRootSha256: string,
-  adjudications: readonly ExactAdjudicationEvidence[]): void {
-  if (sha256(adjudicationReceipt(campaignRootSha256, adjudications)) !== receiptSha256) {
-    throw new Error("exact adjudication evidence changed or is not locally reconstructed");
-  }
-}
-
-function retentionReceipt(campaignRootSha256: string, reconstructed: Awaited<ReturnType<
-  typeof reconstructExactMainEvidence>>) {
-  return createOperatorSafeReceipt(campaignRootSha256, { inventorySha256:
-    reconstructed.inventorySha256, metricsSha256ByRepetition:
-    reconstructed.metricsSha256ByRepetition, outcomeCount: 720 });
 }
 
 async function boundedMap<T, R>(values: readonly T[], concurrency: number,

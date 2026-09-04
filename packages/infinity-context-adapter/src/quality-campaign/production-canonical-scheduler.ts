@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
 import type { CampaignQuestion } from "./campaign-admission-policy.js";
+import { sha256 } from "./canonical.js";
 import { attemptIdentity } from "./execution.js";
 import type { VerifiedSpendReservation } from "./execution.js";
-import { DurableAttemptJournal } from "./attempt-journal.js";
+import { DurableAttemptJournal, withOwnedAttemptJournal } from "./attempt-journal.js";
 import type { QualificationExecutionPacket, QualificationQuestionExecutorFactoryPort,
   QualificationQuestionOutcome } from "./execute-admitted-qualification-question.js";
 import type { CampaignClockPort } from "./production-ports.js";
@@ -39,6 +40,13 @@ export async function executeCanonicalMainCampaignSchedule(input: {
 }): Promise<CanonicalScheduledCampaignResult> {
   assertScheduleInput(input);
   const journal = new DurableAttemptJournal(input.journalRoot, input.policy);
+  return await withOwnedAttemptJournal(journal, async () =>
+    await executeCanonicalMainCampaignScheduleWithJournal(input, journal));
+}
+
+async function executeCanonicalMainCampaignScheduleWithJournal(input: Parameters<
+  typeof executeCanonicalMainCampaignSchedule>[0], journal: DurableAttemptJournal):
+Promise<CanonicalScheduledCampaignResult> {
   const claimedAttemptIds = new Set<string>();
   for (const reservation of input.reservations) {
     const claims = await journal.loadAdmittedClaims(reservation);
@@ -184,7 +192,8 @@ function assertScheduleInput(input: Parameters<typeof executeCanonicalMainCampai
   const packets = new Map(input.executionPackets.map((packet) => [packet.questionId, packet]));
   if (packets.size !== input.executionPackets.length || input.questions.some((question) => {
     const packet = packets.get(question.questionId);
-    return packet === undefined || packet.locale !== question.locale || packet.source !== question.source;
+    return packet === undefined || packet.locale !== question.locale ||
+      packet.source !== question.source || sha256(packet) !== question.questionDigestSha256;
   })) {
     throw new Error("canonical execution corpus differs from admitted questions");
   }
