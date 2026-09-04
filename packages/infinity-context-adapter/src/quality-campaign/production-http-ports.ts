@@ -289,7 +289,7 @@ function outboundEndpoints(config: HttpConnectionConfiguration): readonly (reado
     ["raw outcome authority endpoint", config.rawOutcomeEndpoint],
     ["release observation authority endpoint", config.releaseObservationEndpoint],
     ...config.adjudicators.map((reviewer, index) =>
-      [`adjudicator ${index + 1} endpoint`, reviewer?.endpoint] as const)];
+      [`adjudicator ${index + 1} endpoint`, reviewer.endpoint] as const)];
 }
 
 function assertAbsoluteHttpsEndpoint(value: unknown, label: string): void {

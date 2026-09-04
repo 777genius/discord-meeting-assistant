@@ -152,8 +152,10 @@ async function httpFixture() {
   const bodies: unknown[] = []; const fetchCalls: { readonly input: string;
     readonly init: RequestInit }[] = [];
   vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, init: RequestInit = {}) => {
-    fetchCalls.push({ input: String(input), init });
-    bodies.push(JSON.parse(String(init.body)) as unknown);
+    fetchCalls.push({ input: typeof input === "string" ? input :
+      input instanceof URL ? input.href : input.url, init });
+    if (typeof init.body !== "string") {throw new Error("expected JSON string request body");}
+    bodies.push(JSON.parse(init.body) as unknown);
     return new Promise<Response>((resolve, reject) => {
       const finish = () => {resolve(new Response(JSON.stringify(responseValue), {
         headers: { "content-type": "application/json" }, status: responseStatus }));};
