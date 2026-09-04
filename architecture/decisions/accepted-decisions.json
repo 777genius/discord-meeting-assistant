@@ -306,6 +306,11 @@
       "id": "ADR-0064",
       "path": "docs/decisions/0064-composite-retrieval-authority-fence.md",
       "immutableDigest": "sha256:cf24d83fe00173de2186ddfab2affb26f6a59a28d997ffee26c134f98068c7c3"
+    },
+    {
+      "id": "ADR-0065",
+      "path": "docs/decisions/0065-private-quality-budget-ledger-lock-adapter.md",
+      "immutableDigest": "sha256:a89095bc18f632f23d0ebdf011353a1d631c22b3750cfcfb6aafde853a677fe6"
     }
   ]
 }

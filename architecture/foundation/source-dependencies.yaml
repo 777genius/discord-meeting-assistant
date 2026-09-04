@@ -356,6 +356,7 @@ boundaries:
     allow:
       boundaries:
         - adapters.infinity-context
+        - adapters.infinity-quality-budget-lock
         - application.infinity-quality-campaign
         - core.meeting.knowledge
       packages:
@@ -369,6 +370,18 @@ boundaries:
         - node:fs
         - node:fs/promises
         - node:path
+      runtimeReferences: []
+  - id: adapters.infinity-quality-budget-lock
+    roots:
+      - packages/infinity-context-adapter/src/quality-campaign/budget-ledger-file-lock.ts
+    entrypoints:
+      - packages/infinity-context-adapter/src/quality-campaign/budget-ledger-file-lock.ts
+    allow:
+      boundaries: []
+      packages: []
+      builtins:
+        - node:child_process
+        - node:fs/promises
       runtimeReferences: []
   - id: adapters.infinity-context
     roots:

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { link, open, unlink, type FileHandle } from "node:fs/promises";
 
+import { acquireLedgerFlock } from "./budget-ledger-file-lock.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { CALL_KINDS, type AttemptIdentity, type CallKind, type SpendReservation } from
   "./execution.js";
@@ -11,8 +11,6 @@ import { joinFromHandle } from "./production-execution-corpus-custody.js";
 const MAXIMUM_LEDGER_BYTES = 64 * 1024 * 1024;
 const MAXIMUM_LOCK_IDENTITY_BYTES = 64 * 1024;
 const MAXIMUM_CHAIN_IDENTITY_BYTES = MAXIMUM_LEDGER_BYTES;
-const FLOCK_PATH = "/usr/bin/flock";
-const LOCK_WAIT_SECONDS = "30";
 
 interface BudgetClaim {
   readonly admissionId: string; readonly attemptId: string; readonly callKind: CallKind;
@@ -93,29 +91,6 @@ async function withLedgerLock<T>(directory: FileHandle, name: string,
     await assertLockPathIdentity(directory, lockName, identity);
     return await task();
   } finally {await lock.close();}
-}
-
-async function acquireLedgerFlock(lock: FileHandle): Promise<void> {
-  const child = spawn(FLOCK_PATH, ["--exclusive", "--timeout", LOCK_WAIT_SECONDS, "3"], {
-    shell: false, stdio: ["ignore", "ignore", "ignore", lock.fd] });
-  const timeout = setTimeout(() => {child.kill("SIGKILL");},
-    (Number(LOCK_WAIT_SECONDS) + 1) * 1_000);
-  try {
-    const result = await new Promise<{ readonly code: number | null; readonly signal: string | null }>(
-      (resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", (code, signal) => {resolve({ code, signal });});
-      });
-    if (result.code !== 0) {
-      throw new Error("budget ledger serialization is unavailable");
-    }
-  } catch (error) {
-    child.kill("SIGKILL");
-    if (child.exitCode === null && child.signalCode === null) {
-      await new Promise<void>((resolve) => {child.once("close", () => {resolve();});});
-    }
-    throw error;
-  } finally {clearTimeout(timeout);}
 }
 
 async function bindAndCheckLockIdentity(directory: FileHandle, lockName: string,
