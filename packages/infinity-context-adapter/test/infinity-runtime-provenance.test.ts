@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 import type { BuildContextInput } from "@infinity-context/sdk";
 import { describe, expect, it } from "vitest";
@@ -103,7 +104,7 @@ describe("Infinity Context official SDK provenance", () => {
 
   it("verifies the retained release evidence offline", () => {
     const output = execFileSync(process.execPath, [
-      new URL("../../../vendor/infinity-context/prepare-official-sdk.mjs", import.meta.url).pathname,
+      fileURLToPath(new URL("../../../vendor/infinity-context/prepare-official-sdk.mjs", import.meta.url)),
       "--verify-only",
     ], { encoding: "utf8" });
     expect(output).toContain("SDK 0.2.4 immutable package verified offline");
