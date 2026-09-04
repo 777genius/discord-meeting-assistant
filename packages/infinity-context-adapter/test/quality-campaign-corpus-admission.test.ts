@@ -1,6 +1,7 @@
+import { spawnSync } from "node:child_process";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rename, symlink, writeFile } from
-  "node:fs/promises";
+import { chmod, chown, lstat, mkdir, mkdtemp, readFile, readdir, rename, symlink,
+  writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -272,8 +273,7 @@ describe("quality campaign corpus admission filesystem hardening", () => {
   });
 
   it("prevalidates status custody and preserves a valid corpus across ambiguous retry", async () => {
-    for (const mutation of ["collision", "output-root", "inside", "symlink-parent",
-      "unwritable"] as const) {
+    for (const mutation of ["collision", "output-root", "inside", "symlink-parent"] as const) {
       const fixture = await createFixture();
       let statusPath: string;
       if (mutation === "collision") {statusPath = fixture.phasePath;}
@@ -281,15 +281,14 @@ describe("quality campaign corpus admission filesystem hardening", () => {
       else if (mutation === "inside") {statusPath = join(fixture.outputRoot, "status.json");}
       else {
         const actual = join(fixture.root, `status-parent-${mutation}`); await mkdir(actual);
-        if (mutation === "symlink-parent") {
-          const linked = join(fixture.root, "linked-status-parent"); await symlink(actual, linked);
-          statusPath = join(linked, "status.json");
-        } else {await chmod(actual, 0o500); statusPath = join(actual, "status.json");}
+        const linked = join(fixture.root, "linked-status-parent"); await symlink(actual, linked);
+        statusPath = join(linked, "status.json");
       }
       await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
         statusPath], corpusAdmissionClock: fixedClock() })).resolves.toBe(1);
       await expect(lstat(fixture.outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
     }
+    await expectUnwritableStatusCustodyFailure();
 
     const fixture = await createFixture(); const statusPath = join(fixture.root, "status.json");
     await expect(runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
@@ -316,6 +315,47 @@ describe("quality campaign corpus admission filesystem hardening", () => {
     await expect(load()).resolves.toHaveLength(240);
   });
 });
+
+async function expectUnwritableStatusCustodyFailure() {
+  const fixture = await createFixture();
+  const statusParent = join(fixture.root, "status-parent-unwritable");
+  const statusPath = join(statusParent, "status.json");
+  const unprivilegedUid = 65_534;
+  const unprivilegedGid = 65_534;
+  const useUnprivilegedChild = process.platform === "linux" && process.getuid?.() === 0;
+  if (useUnprivilegedChild) {
+    for (const path of await readdir(fixture.root, { recursive: true })) {
+      await chown(join(fixture.root, path), unprivilegedUid, unprivilegedGid);
+    }
+    await chown(fixture.root, unprivilegedUid, unprivilegedGid);
+  }
+  await mkdir(statusParent);
+  if (useUnprivilegedChild) {
+    await chown(statusParent, unprivilegedUid, unprivilegedGid);
+  }
+  await chmod(statusParent, 0o500);
+  const runAdmission = async () => {
+    if (!useUnprivilegedChild) {
+      return await runQualityCampaignProductionCli({ argv: ["corpus-admit", fixture.phasePath,
+        statusPath], corpusAdmissionClock: fixedClock() });
+    }
+    const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx/esm"),
+      new URL("./fixtures/quality-corpus-admission-child.ts", import.meta.url).pathname,
+      fixture.phasePath, statusPath], { encoding: "utf8", gid: unprivilegedGid,
+      maxBuffer: 64 * 1_024, timeout: 10_000, uid: unprivilegedUid });
+    expect(child.error).toBeUndefined();
+    expect(child.signal).toBeNull();
+    expect(child.status, child.stderr).not.toBeNull();
+    expect(child.stderr).toBe("");
+    return child.status;
+  };
+  await expect(runAdmission()).resolves.toBe(1);
+  await expect(lstat(fixture.outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  await chmod(statusParent, 0o700);
+  await expect(runAdmission()).resolves.toBe(0);
+  await expect(json(join(fixture.outputRoot, "corpus-admission-manifest.json")))
+    .resolves.toMatchObject({ completionState: "complete" });
+}
 
 async function createFixture(forbiddenCount = 12, inconsistentTurnMapping = false) {
   const root = await mkdtemp(join(tmpdir(), "quality-corpus-admission-test-"));
