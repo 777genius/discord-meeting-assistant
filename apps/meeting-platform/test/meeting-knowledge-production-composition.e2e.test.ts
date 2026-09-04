@@ -288,7 +288,10 @@ describe("Meeting Knowledge V2 production composition", () => {
           ({ path }) => path === "/v1/context/retrieve",
         )).toHaveLength(providerCallsBeforeRevocation);
         const finalReplyMemory = createPersistedFocusedMemoryRoute({
-          current: { retrieve: async () => ({ schemaVersion: 1, status: "low_coverage" }) },
+          current: { retrieve: async () => ({
+            authorityGeneration: "generation-before-revocation",
+            schemaVersion: 1, status: "low_coverage",
+          }) },
           retrievalV2Historical:
             servingRuntime.createFocusedLocatorRetrievalV2(authorization),
         });
