@@ -162,13 +162,14 @@ describe("PostgreSQL focused current-meeting memory", () => {
   it("cancels an in-flight authority read before returning an outcome", async () => {
     const queryStarted = Promise.withResolvers<void>();
     let rejectQuery: ((reason?: unknown) => void) | undefined;
+    const release = vi.fn();
     const client = {
       processID: 42_424,
       query: vi.fn(() => {
         queryStarted.resolve();
         return new Promise<never>((_resolve, reject) => {rejectQuery = reject;});
       }),
-      release: vi.fn(),
+      release,
     } as unknown as PoolClient;
     const pool = { connect: vi.fn(async () => client) } as unknown as Pool;
     const cancellation = { cancelAndVerifyInactive: vi.fn(async (backendPid: number) => {
@@ -185,7 +186,7 @@ describe("PostgreSQL focused current-meeting memory", () => {
 
     await expect(pending).rejects.toThrow("focused retrieval aborted");
     expect(cancellation.cancelAndVerifyInactive).toHaveBeenCalledOnce();
-    expect(client.release).toHaveBeenCalledWith(true);
+    expect(release).toHaveBeenCalledWith(true);
   });
 
   it("returns only bounded focused locators for a short current transcript", async () => {
@@ -290,11 +291,13 @@ describe("PostgreSQL focused current-meeting memory", () => {
       roomId: "synthetic-room",
       signal: controller.signal,
     })).rejects.toThrow("synthetic acquisition cancellation");
-    expect(queryCalled).toBe(false);
-    expect(releases).toEqual([true]);
-  });
+      expect(queryCalled).toBe(false);
+      expect(releases).toEqual([true]);
+    });
+});
 
-  it("scans a synthetic two-hour corpus but returns only bounded references for local rehydration", async () => {
+describe("PostgreSQL focused two-hour memory", () => {
+    it("scans a synthetic two-hour corpus but returns only bounded references for local rehydration", async () => {
     const snapshot = twoHourSnapshot();
     const pool = snapshotPool(snapshot);
     const { authority, input } = retrievalInput(

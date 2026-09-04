@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import { DiscordAnswerDeliveryAdapter, DiscordAnswerPayloadCodec, DiscordHistoricalAuthorizationAdapter,
   DiscordLocalFinalReplyHandler, DiscordQuestionAuthorizationAdapter, DiscordQuestionPrincipalCodec,
   createDiscordOneAttemptAnswerRest } from "@discord-meeting/discord-adapter";
-import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { ChannelType, PermissionFlagsBits, type Client, type REST } from "discord.js";
 import { BoundedDiscordAuthorizationQueue } from "../src/discord-question-authorization.js";
@@ -316,12 +315,7 @@ describe("Discord answer effect transport", () => {
     const postedBody = JSON.parse(payload.payloadBytes) as {
       readonly embeds: readonly unknown[];
     };
-    const expectedNonce = createHash("sha256")
-      .update("meeting-knowledge-answer:v1:question-1", "utf8")
-      .digest("hex").slice(0, 25);
-    expect(post).toHaveBeenCalledWith(expect.anything(), {
-      body: { ...postedBody, enforce_nonce: true, nonce: expectedNonce },
-    });
+    expect(post).toHaveBeenCalledWith(expect.anything(), { body: { ...postedBody, enforce_nonce: true, nonce: "26fd4f95216f74951517ff694" } });
     get.mockResolvedValueOnce(directDeliveryChannelMetadata()).mockResolvedValueOnce([
       authoredAnswerMessage({ embeds: postedBody.embeds, id: receipt }),
     ]);

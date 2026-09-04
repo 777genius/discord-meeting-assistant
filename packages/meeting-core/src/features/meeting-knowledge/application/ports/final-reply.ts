@@ -133,9 +133,7 @@ export type FocusedMemoryRetrievalResult =
   | {
       readonly schemaVersion: 1;
       readonly status:
-        | "pending"
-        | "stale"
-        | "unavailable";
+        "pending" | "stale" | "unavailable";
     };
 
 /**

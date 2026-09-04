@@ -337,8 +337,8 @@ function interleave(current: readonly FocusedMemoryReference[], historical: read
   const historicalLane = dedupe(historical).filter((candidate) => !currentIds.has(canonicalKey(candidate)));
   const output: FocusedMemoryReference[] = [];
   for (let index = 0; output.length < maximum && (index < currentLane.length || index < historicalLane.length); index += 1) {
-    if (currentLane[index] !== undefined) output.push(currentLane[index]!);
-    if (historicalLane[index] !== undefined && output.length < maximum) output.push(historicalLane[index]!);
+    if (currentLane[index] !== undefined) { output.push(currentLane[index]!); }
+    if (historicalLane[index] !== undefined && output.length < maximum) { output.push(historicalLane[index]!); }
   }
   return Object.freeze(output);
 }
@@ -350,7 +350,7 @@ function canonicalKey(reference: FocusedMemoryReference): string {
 }
 function dedupe(references: readonly FocusedMemoryReference[]): FocusedMemoryReference[] {
   const seen = new Set<string>();
-  return references.filter((reference) => { const key = canonicalKey(reference); if (seen.has(key)) return false; seen.add(key); return true; });
+  return references.filter((reference) => { const key = canonicalKey(reference); if (seen.has(key)) { return false; } seen.add(key); return true; });
 }
 
 function decodeLane(value: unknown): FocusedMemoryRetrievalResult | null {
@@ -362,10 +362,10 @@ function decodeLane(value: unknown): FocusedMemoryRetrievalResult | null {
 }
 
 async function settleWithAbort<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (signal === undefined) return operation;
+  if (signal === undefined) { return operation; }
   signal.throwIfAborted();
   let onAbort!: () => void;
-  const aborted = new Promise<never>((_, reject) => { onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError")); signal.addEventListener("abort", onAbort, { once: true }); });
+  const aborted = new Promise<never>((_resolve, reject) => { onAbort = () => { reject(signal.reason ?? new DOMException("Aborted", "AbortError")); }; signal.addEventListener("abort", onAbort, { once: true }); });
   try { return await Promise.race([operation, aborted]); } finally { signal.removeEventListener("abort", onAbort); }
 }
 
