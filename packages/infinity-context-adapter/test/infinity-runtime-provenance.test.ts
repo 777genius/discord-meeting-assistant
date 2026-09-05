@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 import type { BuildContextInput } from "@infinity-context/sdk";
 import { describe, expect, it } from "vitest";
@@ -83,6 +84,10 @@ function assertCompatibility(
 }
 
 describe("Infinity Context official SDK provenance", () => {
+  const repositoryRoot = new URL("../../../", import.meta.url);
+  const retainedDigest = (path: string): string =>
+    "sha256:" + createHash("sha256").update(readFileSync(new URL(path, repositoryRoot))).digest("hex");
+
   it("loads the exact official package through ESM, CJS, and advisory-search types", async () => {
     const esm = await import("@infinity-context/sdk");
     const cjs = createRequire(import.meta.url)("@infinity-context/sdk") as {
@@ -97,7 +102,23 @@ describe("Infinity Context official SDK provenance", () => {
     expect(typedSearch.projectAnchorPolicy).toBe("advisory");
   });
 
-  it("binds the single default Retrieval SDK at 0.2.1", () => {
+  it("verifies the retained release evidence offline", () => {
+    const output = execFileSync(process.execPath, [
+      fileURLToPath(new URL("../../../vendor/infinity-context/prepare-official-sdk.mjs", import.meta.url)),
+      "--verify-only",
+    ], { encoding: "utf8" });
+    expect(output).toContain("SDK 0.2.4 immutable package verified offline");
+  });
+
+  it("binds the single default Retrieval SDK at 0.2.4", () => {
+    expect(INFINITY_CONTEXT_SDK_PROVENANCE).toMatchObject({
+      archiveSha256: "9b6bd230ae59e73af02039a1fbef4d7e06fc112419adf265229ea05c4b8ae366",
+      commit: "40704f193008f98c52ede93b68a44349907dd2cd",
+      tree: "836cca4d0981f4df73922c5b982975fc9db25ec7",
+      releaseTag: "sdk-v0.2.4",
+      releaseTagObject: "60933db64cdc5796b624d97f463b498b28ae3fca",
+      packageLockSha256: "c27ee764041ac4e93fd3d19bbf4363590e3dc1641abe4d89c7cbb0cbfc8222da",
+    });
     const immutablePackage = readFileSync(new URL(
       `../../../${INFINITY_CONTEXT_SDK_PROVENANCE.immutablePackagePath}`,
       import.meta.url,
@@ -119,8 +140,8 @@ describe("Infinity Context official SDK provenance", () => {
       .toBe(INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE.immutablePackageIntegrity);
     expect(INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE).toMatchObject({
       packageName: "@infinity-context/sdk",
-      packageVersion: "0.2.1",
-      reviewedSourceCommit: "e685b41a12e630b7e787fb2fa26b08c0eb6137d4",
+      packageVersion: "0.2.4",
+      reviewedSourceCommit: "40704f193008f98c52ede93b68a44349907dd2cd",
     });
     const packedManifest = execFileSync("tar", [
       "-xOf",
@@ -134,14 +155,15 @@ describe("Infinity Context official SDK provenance", () => {
       .toBe(INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE.packageManifestSha256);
     expect(JSON.parse(packedManifest.toString("utf8"))).toMatchObject({
       name: "@infinity-context/sdk",
-      version: "0.2.1",
+      version: "0.2.4",
     });
+    expect(retainedDigest(INFINITY_CONTEXT_SDK_PROVENANCE.releaseManifestPath))
+      .toBe(`sha256:${INFINITY_CONTEXT_SDK_PROVENANCE.releaseManifestSha256}`);
+    expect(retainedDigest(INFINITY_CONTEXT_SDK_PROVENANCE.releaseVerificationReceiptPath))
+      .toBe(`sha256:${INFINITY_CONTEXT_SDK_PROVENANCE.releaseVerificationReceiptSha256}`);
   });
 
   it("binds the composite exact-head and retained predecessor qualification evidence", () => {
-    const repositoryRoot = new URL("../../../", import.meta.url);
-    const retainedDigest = (path: string): string =>
-      "sha256:" + createHash("sha256").update(readFileSync(new URL(path, repositoryRoot))).digest("hex");
     expect(retainedDigest(INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestPath))
       .toBe(INFINITY_CONTEXT_SDK_PROVENANCE.retainedPredecessorScopedDocumentsManifestSha256);
     expect(retainedDigest(INFINITY_CONTEXT_SDK_PROVENANCE.retainedActiveOnlyQualificationPath))

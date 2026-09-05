@@ -1,8 +1,8 @@
 ---
 id: ADR-0052
-status: accepted
+status: superseded
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0066]
 ---
 
 # ADR-0052: Production-faithful meeting-memory qualification evidence

@@ -188,7 +188,7 @@ function packedRelease(authorities: Record<string, ReturnType<typeof localSigner
     infinityCommitSha256: d("infinity-commit"), infinityImageSha256: d("infinity-image"),
     infinityProfileSha256: d("profile"), infinityReleaseSha256: d("infinity-release"),
     mapperSha256: d("mapper"), model: "gpt-5.6-sol", policySha256: d("policy"),
-    promptSha256: d("prompt"), reasoning: "xhigh", sdkArchiveSha256: d("sdk"),
+    promptSha256: d("prompt"), reasoning: "medium", sdkArchiveSha256: d("sdk"),
     serviceTier: "default", targetInventoryAuthorityKeySha256:
     fingerprint(authorities.deletion!.publicKeyPem), tokenizerSha256: d("tokenizer") };
 }
@@ -397,7 +397,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     maxCallsByKind: { adjudicator_1: 240, adjudicator_2: 240, answer: 240, capability: 240,
       resolver: 240, retrieval: 240 }, maximumEffectDurationMs: 120_000,
     maxTokens: 10_000_000, model: "gpt-5.6-sol", provider: "local-fake-http",
-    reasoning: "xhigh", releaseRootSha256, repetition, serviceTier: "default" }));
+    reasoning: "medium", releaseRootSha256, repetition, serviceTier: "default" }));
   await writeFile(spendReservationsPath, canonicalJson(spendDocuments));
   const protectedEvidence = ["original_craig_recording", "final_transcript", "meeting_database",
     "frozen_snapshot", "frozen_signed_root"].map((kind) => ({ artifactId: `custody-${kind}`,

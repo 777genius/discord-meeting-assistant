@@ -1,11 +1,11 @@
 ---
-id: ADR-0066
+id: ADR-0067
 status: accepted
 supersedes: []
 superseded_by: []
 ---
 
-# ADR-0066: Two-application self-hosting topology
+# ADR-0067: Two-application self-hosting topology
 
 ## Status
 

@@ -6,13 +6,19 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const provenance = Object.freeze({
-  packageManifestSha256: "146308a393c2e2f2961da477581b15da900c8b16a6e1ff4530ed8aec6057e70b",
+  packageManifestSha256: "218762d671873968552ce568ae1a87bb651e5ca5017db4f6b2953252aa7ae67e",
   packageName: "@infinity-context/sdk",
   packageTarballIntegrity:
-    "sha512-lCIL90wIF9dSme7qhMVdjN/ey+SAGCrmraKc3mak5oyer6ye7ZxbUBPMaCBBApr3+HTO8HduTtUPtqUPbrhJ/A==",
-  packageTarballSha256: "aae17e2817b198f0f5e4151cdf023fb013370c12a58fe3245ccd92ba5d6b4166",
-  packageVersion: "0.2.1",
-  reviewedSourceCommit: "e685b41a12e630b7e787fb2fa26b08c0eb6137d4",
+    "sha512-PpLM+eW84DRsNhYDvX02Y+v5hOCuQJMHJoNinyUwclHtizmpDEh4aBcRsCEvgqyQqYh2pD+zsu3VAZdKfbjKAg==",
+  packageTarballSha256: "c838fab52ca10d57119f1964d3ab29d71a2c7194047e15a68a6e189af3779bde",
+  packageVersion: "0.2.4",
+  packageLockSha256: "c27ee764041ac4e93fd3d19bbf4363590e3dc1641abe4d89c7cbb0cbfc8222da",
+  releaseManifestSha256: "8b675d4f4ee00b3effc4208fe24a65f6406b891d6c33d388dafd73ce4b7f71af",
+  releaseReceiptSha256: "4dff2fb23ddf2913332d033d0283b5268e24ce88eee7c854bc26e417ae1946cf",
+  releaseTag: "sdk-v0.2.4",
+  reviewedSourceCommit: "40704f193008f98c52ede93b68a44349907dd2cd",
+  reviewedSourceTree: "836cca4d0981f4df73922c5b982975fc9db25ec7",
+  tagObject: "60933db64cdc5796b624d97f463b498b28ae3fca",
 });
 
 const argumentsSet = new Set(process.argv.slice(2));
@@ -28,7 +34,15 @@ if ([...argumentsSet].some((argument) => !supportedArguments.has(argument))) {
 const vendorRoot = dirname(fileURLToPath(import.meta.url));
 const retainedPackagePath = resolve(
   vendorRoot,
-  "artifacts/infinity-context-sdk-0.2.1.tgz",
+  "artifacts/infinity-context-sdk-0.2.4.tgz",
+);
+const releaseManifestPath = resolve(
+  vendorRoot,
+  "artifacts/infinity-context-sdk-0.2.4-release-manifest.json",
+);
+const releaseReceiptPath = resolve(
+  vendorRoot,
+  "artifacts/infinity-context-sdk-0.2.4-release-verification-receipt.json",
 );
 
 function digest(algorithm, bytes, encoding) {
@@ -65,6 +79,47 @@ if (
   throw new Error("Retained Infinity Context SDK package provenance verification failed");
 }
 verifyPackedMetadata(retained);
+
+const releaseManifestBytes = readFileSync(releaseManifestPath);
+const releaseReceiptBytes = readFileSync(releaseReceiptPath);
+const releaseManifest = JSON.parse(releaseManifestBytes.toString("utf8"));
+const releaseReceipt = JSON.parse(releaseReceiptBytes.toString("utf8"));
+if (
+  digest("sha256", releaseManifestBytes, "hex") !== provenance.releaseManifestSha256 ||
+  digest("sha256", releaseReceiptBytes, "hex") !== provenance.releaseReceiptSha256 ||
+  releaseManifest.repository !== "777genius/infinity-context" ||
+  releaseManifest.schema_version !== "infinity-context-typescript-sdk-release.v1" ||
+  releaseManifest.package_lock_sha256_hex !== provenance.packageLockSha256 ||
+  releaseManifest.artifact_byte_length !== retained.byteLength ||
+  releaseManifest.release_tag !== provenance.releaseTag ||
+  releaseManifest.source_commit !== provenance.reviewedSourceCommit ||
+  releaseManifest.source_git_tree_oid !== provenance.reviewedSourceTree ||
+  releaseManifest.tag_object_oid !== provenance.tagObject ||
+  releaseManifest.artifact_name !== "infinity-context-sdk-0.2.4.tgz" ||
+  releaseManifest.artifact_sha256_hex !== provenance.packageTarballSha256 ||
+  releaseManifest.artifact_sri_sha512 !== provenance.packageTarballIntegrity ||
+  releaseManifest.package_name !== provenance.packageName ||
+  releaseManifest.package_version !== provenance.packageVersion ||
+  releaseReceipt.repository !== "777genius/infinity-context" ||
+  releaseReceipt.tag !== provenance.releaseTag ||
+  releaseReceipt.schema_version !==
+    "infinity-context-typescript-sdk-release-verification-receipt.v1" ||
+  releaseReceipt.release_url !==
+    `https://github.com/777genius/infinity-context/releases/tag/${provenance.releaseTag}` ||
+  releaseReceipt.run_id !== releaseManifest.build_workflow_run_id ||
+  releaseReceipt.run_attempt !== releaseManifest.build_workflow_run_attempt ||
+  releaseReceipt.release_attestation_verified !== true ||
+  !Array.isArray(releaseReceipt.assets) ||
+  releaseReceipt.assets.length !== 2 ||
+  ![
+    [releaseManifest.artifact_name, provenance.packageTarballSha256],
+    ["infinity-context-sdk-release-manifest.json", provenance.releaseManifestSha256],
+  ].every(([name, sha256]) => releaseReceipt.assets.some((asset) =>
+    asset.name === name && asset.sha256_hex === sha256 && asset.attestation_verified === true
+  ))
+) {
+  throw new Error("Retained Infinity Context SDK release evidence verification failed");
+}
 
 process.stdout.write(
   `Infinity Context SDK ${provenance.packageVersion} immutable package verified offline ` +

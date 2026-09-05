@@ -314,8 +314,13 @@
     },
     {
       "id": "ADR-0066",
-      "path": "docs/decisions/0066-two-application-self-hosting-topology.md",
-      "immutableDigest": "sha256:365f12c681e58d3626dd07f690a50eea964451925b7e8b9f16123fbff70a102e"
+      "path": "docs/decisions/0066-authoritative-qualification-corpus-generation.md",
+      "immutableDigest": "sha256:cb0c976cde17a75ba7420c05be260df23af7ae6b4646511c9049f8e631c1957d"
+    },
+    {
+      "id": "ADR-0067",
+      "path": "docs/decisions/0067-two-application-self-hosting-topology.md",
+      "immutableDigest": "sha256:5bb8560bce4e81967c5d7cc27f6645d97bcdda61da0fde4f56cb6f29cd36cdfe"
     }
   ]
 }

@@ -52,7 +52,6 @@
 - [ADR-0048: Exact-head Infinity deletion qualification](0048-exact-head-infinity-deletion-qualification.md)
 - [ADR-0049: Locator-only upstream retrieval with downstream evidence authority](0049-locator-only-upstream-retrieval.md)
 - [ADR-0051: Provider-attested greeting and ready-only recording publication](0051-greeting-playback-and-recording-readiness.md)
-- [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)
 - [ADR-0054: Official-SDK finalized-live memory projection](0054-official-sdk-live-memory-projection.md)
 - [ADR-0055: Deadline-bound durable participant greetings](0055-deadline-bound-durable-participant-greetings.md)
 - [ADR-0056: Terminal-evidence greeting reconciliation](0056-terminal-evidence-greeting-reconciliation.md)
@@ -63,10 +62,12 @@
 - [ADR-0053: V2-only meeting retrieval composition](0053-v2-only-meeting-retrieval.md)
 - [ADR-0064: Composite retrieval authority fence and candidate isolation](0064-composite-retrieval-authority-fence.md)
 - [ADR-0065: Private quality budget-ledger lock adapter](0065-private-quality-budget-ledger-lock-adapter.md)
-- [ADR-0066: Two-application self-hosting topology](0066-two-application-self-hosting-topology.md)
+- [ADR-0066: Bind qualification corpus cardinality to an authoritative generation](0066-authoritative-qualification-corpus-generation.md)
+- [ADR-0067: Two-application self-hosting topology](0067-two-application-self-hosting-topology.md)
 
 ## Superseded
 
+- [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)
 - [ADR-0013: Provider-neutral meeting source boundary](0013-provider-neutral-meeting-source-boundary.md)
 - [ADR-0022: Provider-neutral readable transcript segments](0022-provider-neutral-readable-transcript-segments.md)
 - [ADR-0030: Memory-backed grounded final reply](0030-local-final-reply.md)
