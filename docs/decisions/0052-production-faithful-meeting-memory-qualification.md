@@ -1,8 +1,8 @@
 ---
 id: ADR-0052
-status: accepted
+status: superseded
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0066]
 ---
 
 # ADR-0052: Production-faithful meeting-memory qualification evidence
@@ -29,10 +29,8 @@ unknown-outcome handling and exact original/repair input accounting.
 - One shared production/evaluation request snapshot uses result limit 10,
   evidence limit 16,000 UTF-8 bytes, neighbor radius zero, candidate limit 100,
   at most four queries, a 1,000 ms deadline, and a 16,384-byte response.
-- The real generation-bound RU/EN corpus replaces the 40 unreviewed synthetic
-  candidates. Its observed cardinality is recorded by
-  [ADR-0066](0066-authoritative-qualification-corpus-generation.md), not imposed
-  as a universal decoder schema. Two pinned Ed25519 reviewers bind exact
+- The real path-injected 37-answerable/3-abstention RU/EN corpus replaces the 40
+  unreviewed synthetic candidates. Two pinned Ed25519 reviewers bind exact
   corpus, question, input, and sealed atomic-rubric SHA-256 values.
 - Both original and permitted repair model inputs count exact system prompt,
   user prompt, separators, and output schema. Either exceeding 16,000 UTF-8
@@ -71,10 +69,6 @@ unknown-outcome handling and exact original/repair input accounting.
   and release root. The main workflow root binds exactly 200 sealed automatic
   and 40 independently reviewed questions plus two signed locator authorities
   derived from one frozen authoritative database snapshot.
-- Installed `corpus-admit` seals both the source digest and authoritative
-  snapshot digest. It does not impose a transcript-turn, speaker,
-  answerability, or locale distribution from an older decoder fixture; those
-  properties belong to the immutable generation identified by the digests.
 - A separately authorized 30-question holdout has its own root, key namespace,
   receipts, report, and cleanup. Admission compares all question and locator
   digests against the frozen main-run load inventory; the holdout report is

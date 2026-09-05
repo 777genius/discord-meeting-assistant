@@ -1,7 +1,7 @@
 ---
 id: ADR-0066
 status: accepted
-supersedes: []
+supersedes: [ADR-0052]
 superseded_by: []
 ---
 
@@ -44,6 +44,11 @@ copied into this repository.
 
 ## Decision
 
+- This decision inherits every control in
+  [ADR-0052](0052-production-faithful-meeting-memory-qualification.md) by
+  reference, except its outdated assumed private-corpus cardinality. The
+  controls remain mandatory unless a later accepted decision explicitly
+  supersedes them.
 - A qualification corpus is identified by its immutable authoritative
   generation, sealed source digest, and sealed snapshot digest. Transcript,
   speaker, answerability, and locale counts describe that generation; no such
@@ -64,8 +69,9 @@ copied into this repository.
   index. This legacy candidate therefore requires either authentic lifecycle
   and source admission or a separately approved, signed legacy-import policy,
   followed by derived indexing. Operators must never edit the old production
-  snapshot or synthesize lifecycle-v3 fields to make it admissible; ordinary
-  `corpus-admit` alone cannot make it ready for rehydration.
+  snapshot, fabricate a source or roster, or synthesize lifecycle-v3 fields to
+  make it admissible; ordinary `corpus-admit` alone cannot make it ready for
+  rehydration.
 - The 40 private questions require two truly independent signed exact-binding
   reviews, with independent conflict adjudication when required. Gold remains
   separate from execution. No aggregate count is evidence of question quality,
