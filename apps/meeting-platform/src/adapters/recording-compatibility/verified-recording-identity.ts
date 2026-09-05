@@ -42,7 +42,7 @@ export async function verifyLegacyRecordingIdentity(
     let size = 0;
     for await (const chunk of artifact.body) {
       size += chunk.byteLength;
-      if (size > track.sizeBytes!) { throw new Error("legacy recording artifact size mismatch"); }
+      if (size > track.sizeBytes) { throw new Error("legacy recording artifact size mismatch"); }
       digest.update(chunk);
     }
     if (size !== track.sizeBytes || digest.digest("hex") !== track.checksumSha256) {

@@ -36,14 +36,14 @@ function fixture(
     refreshMeeting: new RefreshLiveMeeting({ meetings, projector: new ProjectionStub(), summarizer: new SummaryStub() }),
     startMeeting: new StartLiveMeeting({ meetings }), transcriber: options.transcriber ?? transcriber,
     markLivePacketDelivered: async (packetId) => {
-      if (options.failAck) { throw new Error("synthetic acknowledgement failure"); }
+      if (options.failAck === true) { throw new Error("synthetic acknowledgement failure"); }
       acknowledgements.push(packetId); durable.delete(packetId);
     },
     pendingLivePackets: async () => {
       reads += 1;
       await options.readGate;
-      if (options.failReadOnce && reads === 1) { throw Object.assign(new Error("synthetic EIO"), { code: "EIO" }); }
-      return options.duplicate
+      if (options.failReadOnce === true && reads === 1) { throw Object.assign(new Error("synthetic EIO"), { code: "EIO" }); }
+      return options.duplicate === true
         ? [...durable.values(), ...durable.values()].toSorted((left, right) => left.sequenceNumber - right.sequenceNumber)
         : [...durable.values()];
     },

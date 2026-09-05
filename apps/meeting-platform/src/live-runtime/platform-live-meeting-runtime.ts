@@ -290,7 +290,7 @@ export class PlatformLiveMeetingRuntime {
     if (initialization === null || initialization === undefined) { return false; }
     let timeout!: LiveRuntimeTimerHandle;
     const expired = new Promise<boolean>((resolve) => {
-      timeout = this.timer.schedule(Math.max(0, deadlineMs - this.clock.nowMilliseconds()), () => resolve(false));
+      timeout = this.timer.schedule(Math.max(0, deadlineMs - this.clock.nowMilliseconds()), () => { resolve(false); });
     });
     try { return await Promise.race([initialization.then(() => true), expired]); }
     finally { this.timer.cancel(timeout); }

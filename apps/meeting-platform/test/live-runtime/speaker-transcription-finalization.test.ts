@@ -24,7 +24,7 @@ function provider() {
   });
   const terminate = vi.fn(() => {
     running = false;
-    rejectFinalize?.(new Error("terminated"));
+    rejectFinalize(new Error("terminated"));
   });
   const transcriber: LiveTranscriptionPort = {
     openSession: async (request) => {
@@ -32,7 +32,7 @@ function provider() {
       return { finalize, terminate, sendPacket: async () => "accepted" };
     },
   };
-  return { transcriber, finalize, terminate, events, complete: () => complete(), running: () => running };
+  return { transcriber, finalize, terminate, events, complete: () => { complete(); }, running: () => running };
 }
 
 it("finish deadline terminates the owned finalizing provider exactly once and releases its slot", async () => {

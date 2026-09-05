@@ -138,15 +138,23 @@ export class SpeakerTranscriptionSession {
     finally { signal.removeEventListener("abort", onAbort); }
   }
 
+  // Read current mutable state across awaits; earlier checks cannot fence later work.
+  private isAdmissionClosed(): boolean { return this.admissionClosed; }
+
+  private hasDeliveryFailed(): boolean { return this.deliveryFailed; }
+
+  private isDeliveryCancelled(): boolean { return this.packetFlow.signal.aborted; }
+
+  private isPacketDeliveryBlocked(): boolean { return this.isDeliveryCancelled() || this.recoveryBlocked; }
+
   private async drainRecovery(packets: readonly LiveVoicePacket[]): Promise<void> {
     this.recoveryBlocked = false;
     for (const packet of packets) {
-      if (this.admissionClosed) { return; }
+      if (this.isAdmissionClosed()) { return; }
       await this.untilCancelled(this.chain);
       this.deliveryFailed = false;
-      if (this.admissionClosed) { return; }
-      const deadline = this.dependencies.clock.nowMilliseconds() +
-        this.dependencies.packetBackpressureTimeoutMs;
+      if (this.isAdmissionClosed()) { return; }
+      const deadline = this.dependencies.clock.nowMilliseconds() + this.dependencies.packetBackpressureTimeoutMs;
       if (!await this.dependencies.packetAdmission.reserve(1, deadline, this.packetFlow.signal)) {
         this.recoveryBlocked = true;
         return;
@@ -154,7 +162,7 @@ export class SpeakerTranscriptionSession {
       await this.admit(packet, deadline);
       await this.untilCancelled(this.chain);
       // Do not let a failed send/ack or admission timeout advance the backlog.
-      if (this.deliveryFailed || !this.dependencies.ledger.isDelivered(livePacketIdentity(packet))) {
+      if (this.hasDeliveryFailed() || !this.dependencies.ledger.isDelivered(livePacketIdentity(packet))) {
         this.recoveryBlocked = true;
         return;
       }
@@ -199,18 +207,15 @@ export class SpeakerTranscriptionSession {
   }
 
   private async reservePacketSlot(packet: LiveVoicePacket, deadlineMs: number): Promise<boolean> {
-    if (this.packetFlow.signal.aborted || this.recoveryBlocked || this.isSuppressed(packet)) { return false; }
-    const hasCapacity = await this.packetFlow.waitForQueueSlot(
-      deadlineMs,
-      this.dependencies.isMeetingFinishing,
-    );
+    if (this.isPacketDeliveryBlocked() || this.isSuppressed(packet)) { return false; }
+    const hasCapacity = await this.packetFlow.waitForQueueSlot(deadlineMs, this.dependencies.isMeetingFinishing);
     if (!hasCapacity) {
       if (!this.dependencies.isMeetingFinishing()) {
         this.noteDegradation("LIVE_PACKET_BACKPRESSURE_TIMEOUT");
       }
       return false;
     }
-    if (this.packetFlow.signal.aborted || this.recoveryBlocked || this.isSuppressed(packet)) { return false; }
+    if (this.isPacketDeliveryBlocked() || this.isSuppressed(packet)) { return false; }
     this.cancelIdleFinalization();
     this.packetFlow.reserveQueueSlot();
     const delivery = async (): Promise<void> => {
@@ -272,14 +277,14 @@ export class SpeakerTranscriptionSession {
         });
       } catch (error) {
         this.providerSession.terminate();
-        if (this.packetFlow.signal.aborted) { return; }
+        if (this.isDeliveryCancelled()) { return; }
         if (attempt === maximumLivePacketDeliveryAttempts) {
           this.rememberRetryablePacket(input.packet, input.packetId);
           throw error;
         }
         continue;
       }
-      if (this.packetFlow.signal.aborted) { return; }
+      if (this.isDeliveryCancelled()) { return; }
       // A durable acknowledgement failure must not repeat the provider send.
       await this.commitDelivery(input, sendStartedAtMs);
       return;

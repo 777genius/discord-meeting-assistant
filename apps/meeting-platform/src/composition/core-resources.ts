@@ -107,7 +107,7 @@ export function createPlatformCoreResources(input: {
   const meetings = new VerifiedRecordingRepository(pool, {
     artifacts: artifactReader,
     completedRecording: (recordingId) => recordings.completedRecording(recordingId),
-    onVerified: (evidence) => input.logger.info("Verified legacy recording identity", evidence),
+    onVerified: (evidence) => { input.logger.info("Verified legacy recording identity", evidence); },
   });
   const transcriptionExecutionBindings = new PostgresTranscriptionExecutionBindingStore(pool);
   const sourceConfigurations = new PostgresMeetingSourceConfigurationRepository(pool);
