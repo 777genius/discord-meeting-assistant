@@ -16,7 +16,7 @@ const RELEASE = Object.freeze({ answerImageSha256: d("answer-image"),
   infinityCommitSha256: d("infinity-commit"), infinityImageSha256: d("infinity-image"),
   infinityProfileSha256: d("profile"), infinityReleaseSha256: d("infinity-release"),
   mapperSha256: d("mapper"), model: "gpt-5.6-sol", policySha256: d("policy"),
-  promptSha256: d("prompt"), reasoning: "xhigh", sdkArchiveSha256: d("sdk"),
+  promptSha256: d("prompt"), reasoning: "medium", sdkArchiveSha256: d("sdk"),
   serviceTier: "default", targetInventoryAuthorityKeySha256: d("inventory"),
   tokenizerSha256: d("tokenizer") } satisfies QualityCampaignRelease);
 

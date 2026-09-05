@@ -20,7 +20,7 @@ const spend = Object.freeze({ allowedCallKinds: ["answer"] as const, campaignRoo
   expiresAtEpochMs: 10_000, maxCalls: 20, maxCallsByKind: { adjudicator_1: 0,
     adjudicator_2: 0, answer: 20, capability: 0, resolver: 0, retrieval: 0 },
   maxEncryptedBytes: 20, maximumEffectDurationMs: 1_000, maxTokens: 20,
-  model: "gpt-5.6-sol", provider: "test", reasoning: "xhigh",
+  model: "gpt-5.6-sol", provider: "test", reasoning: "medium",
   releaseRootSha256: digest("b"), repetition: 1, serviceTier: "default" }) satisfies
   SpendReservation;
 
