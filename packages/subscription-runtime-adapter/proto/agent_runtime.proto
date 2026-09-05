@@ -106,6 +106,9 @@ message AgentRuntimeExecutionAttestation {
   string launcher_sha256 = 10;
   AgentRuntimeSelectedOutputKind selected_output_kind = 11;
   string selected_output_sha256 = 12;
+  // Optional for wire compatibility; required and exactly "default" for the
+  // qualified knowledge-answer purpose.
+  string service_tier = 13;
 }
 
 message AgentRuntimeUsage {

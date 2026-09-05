@@ -29,6 +29,7 @@ export function verifySubscriptionRuntimeAttestation(
     attestation.provider !== subscriptionRuntimeProvider ||
     attestation.model !== profile.model ||
     attestation.reasoningEffort !== profile.reasoningEffort ||
+    attestation.serviceTier !== profile.serviceTier ||
     attestation.runtimeEngine !== expectation.runtimeEngine ||
     attestation.runtimePackageVersion !== expectation.runtimePackageVersion ||
     attestation.launcherSha256 !== expectation.launcherSha256 ||

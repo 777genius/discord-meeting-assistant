@@ -638,12 +638,18 @@ function summaryRequest(profile) {
         reasoningEffort: profile.reasoningEffort,
         responseFormat: "json",
         selectedOutputKind: "structured_output",
+        ...(profile.serviceTier === undefined
+          ? {}
+          : { serviceTier: profile.serviceTier }),
       },
       metadata: {
         model: profile.model,
         policyVersion: profile.policyVersion,
         reasoningEffort: profile.reasoningEffort,
         runtimeOutput: "structured_output",
+        ...(profile.serviceTier === undefined
+          ? {}
+          : { serviceTier: profile.serviceTier }),
       },
       outputSchemaName: profile.outputSchemaName,
     },
@@ -655,6 +661,9 @@ function admissionInput(request, reasoningEffort) {
     model: request.task.metadata.model,
     provider: "codex",
     reasoningEffort,
+    ...(request.task.controls.serviceTier === undefined
+      ? {}
+      : { serviceTier: request.task.controls.serviceTier }),
     request,
   };
 }
@@ -669,7 +678,12 @@ function completedBridgeResult() {
   };
 }
 
-function pinnedTaskArgv(model, reasoningEffort, includeOutputSchema = true) {
+function pinnedTaskArgv(
+  model,
+  reasoningEffort,
+  includeOutputSchema = true,
+  serviceTier,
+) {
   const outputSchemaPath = join(
     "/tmp",
     "subscription-runtime-codex-schema-test",
@@ -688,6 +702,9 @@ function pinnedTaskArgv(model, reasoningEffort, includeOutputSchema = true) {
     'cli_auth_credentials_store="file"',
     "--config",
     `model_reasoning_effort="${reasoningEffort}"`,
+    ...(serviceTier === undefined
+      ? []
+      : ["--config", `service_tier="${serviceTier}"`]),
     "--config",
     'model_verbosity="low"',
     "--config",

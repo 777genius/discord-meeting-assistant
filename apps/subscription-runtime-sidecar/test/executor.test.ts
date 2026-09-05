@@ -206,42 +206,17 @@ describe("SubscriptionRuntimeExecutor execution profiles and output", () => {
   });
 
   it.each([
-    [knowledgeAnswerCanonicalRequest, knowledgeAnswerStructuredOutput],
-    [knowledgeCoverageCanonicalRequest, knowledgeCoverageStructuredOutput],
-  ] as const)("executes and attests the dedicated knowledge purpose %#", async (
-    request,
-    output,
-  ) => {
-    root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
-    const keyFile = join(root, "local-encryption-key");
-    await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
-    const executor = new SubscriptionRuntimeExecutor(
-      options(keyFile, {
-        processRunner: {
-          run: async () => completedProcess({
-            usage: {
-              cacheWriteInputTokens: 0,
-              cachedInputTokens: 0,
-              inputTokens: 200,
-              outputTokens: 40,
-              reasoningOutputTokens: 10,
-              totalTokens: 240,
-            },
-          }, output),
-        },
-      }),
-    );
+    [knowledgeAnswerCanonicalRequest, knowledgeAnswerStructuredOutput, "default"],
+    [knowledgeCoverageCanonicalRequest, knowledgeCoverageStructuredOutput, undefined],
+  ] as const)(
+    "executes and attests the dedicated knowledge purpose %#",
+    executesDedicatedKnowledgePurpose,
+  );
 
-    await expect(executor.execute(request)).resolves.toMatchObject({
-      executionAttestation: {
-        model: "gpt-5.6-sol",
-        purpose: request.context.purpose,
-        reasoningEffort: "medium",
-      },
-      status: "completed",
-      structuredOutput: output,
-    });
-  });
+  it.each([undefined, "fast"])(
+    "rejects completed qualified execution with service-tier proof %s",
+    rejectsChangedQualifiedServiceTierProof,
+  );
 
   it("applies the compact schema only to the incremental purpose", async () => {
     root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
@@ -286,6 +261,82 @@ describe("SubscriptionRuntimeExecutor execution profiles and output", () => {
   });
 
 });
+
+async function executesDedicatedKnowledgePurpose(
+  request:
+    | typeof knowledgeAnswerCanonicalRequest
+    | typeof knowledgeCoverageCanonicalRequest,
+  output:
+    | typeof knowledgeAnswerStructuredOutput
+    | typeof knowledgeCoverageStructuredOutput,
+  serviceTier: "default" | undefined,
+): Promise<void> {
+  root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+  const keyFile = join(root, "local-encryption-key");
+  await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+  const processRequests: ProcessRunRequest[] = [];
+  const executor = new SubscriptionRuntimeExecutor(options(keyFile, {
+    processRunner: {
+      run: async (processRequest) => {
+        processRequests.push(processRequest);
+        return {
+          ...completedProcess({
+            usage: {
+              cacheWriteInputTokens: 0,
+              cachedInputTokens: 0,
+              inputTokens: 200,
+              outputTokens: 40,
+              reasoningOutputTokens: 10,
+              totalTokens: 240,
+            },
+          }, output),
+          ...(serviceTier === undefined ? {} : { serviceTier }),
+        };
+      },
+    },
+  }));
+
+  await expect(executor.execute(request)).resolves.toMatchObject({
+    executionAttestation: {
+      model: "gpt-5.6-sol",
+      purpose: request.context.purpose,
+      reasoningEffort: "medium",
+      ...(serviceTier === undefined ? {} : { serviceTier }),
+    },
+    status: "completed",
+    structuredOutput: output,
+  });
+  expect(processRequests).toHaveLength(1);
+  if (serviceTier === undefined) {
+    expect(processRequests[0]?.args).not.toContain("--service-tier");
+  } else {
+    expect(processRequests[0]?.args).toEqual(
+      expect.arrayContaining(["--service-tier", serviceTier]),
+    );
+  }
+}
+
+async function rejectsChangedQualifiedServiceTierProof(
+  serviceTier: string | undefined,
+): Promise<void> {
+  root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));
+  const keyFile = join(root, "local-encryption-key");
+  await writeFile(keyFile, "private-test-key\n", { mode: 0o600 });
+  const executor = new SubscriptionRuntimeExecutor(options(keyFile, {
+    processRunner: {
+      run: async () => ({
+        ...completedProcess(undefined, knowledgeAnswerStructuredOutput),
+        ...(serviceTier === undefined ? {} : { serviceTier }),
+      }),
+    },
+  }));
+
+  await expect(executor.execute(knowledgeAnswerCanonicalRequest)).resolves
+    .toMatchObject({
+      failure: { code: "provider_output_invalid" },
+      status: "failed",
+    });
+}
 
 describe("SubscriptionRuntimeExecutor telemetry", () => {
   it("preserves Codex JSONL partial telemetry without fabricating cache-write input", async () => {
@@ -409,15 +460,20 @@ describe("SubscriptionRuntimeExecutor telemetry", () => {
     const executor = new SubscriptionRuntimeExecutor(
       options(keyFile, {
         processRunner: {
-          run: async () => completedProcess({
-            usage: {
-              cacheWriteInputTokens: 0,
-              cachedInputTokens: 0,
-              inputTokens: 100,
-              outputTokens,
-              reasoningOutputTokens: 0,
-              totalTokens: 100 + outputTokens,
-            },
+          run: async () => ({
+            ...completedProcess({
+              usage: {
+                cacheWriteInputTokens: 0,
+                cachedInputTokens: 0,
+                inputTokens: 100,
+                outputTokens,
+                reasoningOutputTokens: 0,
+                totalTokens: 100 + outputTokens,
+              },
+            }),
+            ...(request.context.purpose === "discord_meeting.knowledge.answer.v1"
+              ? { serviceTier: "default" }
+              : {}),
           }),
         },
       }),

@@ -27,9 +27,9 @@ export function captureConfiguration(value) {
   if (!isRecord(value)) {
     throw new Error("Codex capture configuration must be an object");
   }
-  const { model, reasoningEffort, target, usagePath } = value;
+  const { model, reasoningEffort, serviceTier, target, usagePath } = value;
   if (
-    !isAdmittedCodexExecution(model, reasoningEffort) ||
+    !isAdmittedCodexExecution(model, reasoningEffort, serviceTier) ||
     typeof target !== "string" ||
     !isAbsolute(target) ||
     typeof usagePath !== "string" ||
@@ -37,10 +37,10 @@ export function captureConfiguration(value) {
   ) {
     throw new Error("Codex capture configuration paths must be absolute");
   }
-  return { model, reasoningEffort, target, usagePath };
+  return { model, reasoningEffort, serviceTier, target, usagePath };
 }
 
-export function isPinnedCodexTaskInvocation(argv, model, reasoningEffort) {
+export function isPinnedCodexTaskInvocation(argv, model, reasoningEffort, serviceTier) {
   if (!Array.isArray(argv)) {
     return false;
   }
@@ -57,7 +57,7 @@ export function isPinnedCodexTaskInvocation(argv, model, reasoningEffort) {
   if (schemaPath !== undefined && !isPinnedOutputSchemaPath(schemaPath)) {
     return false;
   }
-  const expected = pinnedCodexTaskArgv(model, reasoningEffort, schemaPath);
+  const expected = pinnedCodexTaskArgv(model, reasoningEffort, schemaPath, serviceTier);
   return (
     argv.length === expected.length &&
     argv.every((value, index) => value === expected[index])
@@ -103,15 +103,17 @@ export async function createCodexJsonlCapture(stateRoot, captureModuleUrl = impo
   let configuredModel;
   let configuredTarget;
   let configuredReasoningEffort;
+  let configuredServiceTier;
   return {
     configure: (target, profile) => {
       const verifiedTarget = realpathSync(target);
-      const { model, reasoningEffort } = profile;
+      const { model, reasoningEffort, serviceTier } = profile;
       if (configuredTarget !== undefined) {
         if (
           configuredTarget !== verifiedTarget ||
           configuredModel !== model ||
-          configuredReasoningEffort !== reasoningEffort
+          configuredReasoningEffort !== reasoningEffort ||
+          configuredServiceTier !== serviceTier
         ) {
           throw new Error("Codex capture configuration changed after admission");
         }
@@ -125,6 +127,7 @@ export async function createCodexJsonlCapture(stateRoot, captureModuleUrl = impo
           `const configuration = Object.freeze(${JSON.stringify({
             model,
             reasoningEffort,
+            serviceTier,
             target: verifiedTarget,
             usagePath,
           })});`,
@@ -136,6 +139,7 @@ export async function createCodexJsonlCapture(stateRoot, captureModuleUrl = impo
       configuredModel = model;
       configuredTarget = verifiedTarget;
       configuredReasoningEffort = reasoningEffort;
+      configuredServiceTier = serviceTier;
     },
     dispose: async () => rm(root, { force: true, recursive: true }),
     usagePath,

@@ -20,9 +20,11 @@ export interface PersistentCodexCanonicalRequest {
       readonly outputSchema: JsonObject;
       readonly outputSchemaName: string;
       readonly reasoningEffort: string;
+      readonly serviceTier?: string;
     };
     readonly metadata: Readonly<Record<string, string>> & {
       readonly policyVersion: string;
+      readonly serviceTier?: string;
     };
     readonly outputSchemaName: string;
     readonly prompt: string;
@@ -67,6 +69,9 @@ export function profileForPersistentCodexRequest(
       policyVersion: request.task.metadata.policyVersion as SubscriptionRuntimeExecutionProfile["policyVersion"],
       purpose: request.context.purpose as SubscriptionRuntimeExecutionProfile["purpose"],
       reasoningEffort: request.task.controls.reasoningEffort as SubscriptionRuntimeExecutionProfile["reasoningEffort"],
+      ...(request.task.controls.serviceTier === undefined
+        ? {}
+        : { serviceTier: request.task.controls.serviceTier as "default" }),
     },
     outputSchema: request.task.controls.outputSchema,
   };

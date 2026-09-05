@@ -5,8 +5,10 @@ import { join } from "node:path";
 import {
   conversationAnswerExecutionProfile,
   finalSummaryExecutionProfile,
+  knowledgeAnswerExecutionProfile,
   providerConversationAnswerJsonSchema,
   providerMeetingSummaryJsonSchema,
+  providerKnowledgeAnswerJsonSchema,
   type JsonObject,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +22,7 @@ import type { ProcessRunRequest } from "../src/types.js";
 import {
   canonicalRequest,
   conversationCanonicalRequest,
+  knowledgeAnswerCanonicalRequest,
 } from "./fixture.js";
 
 const conversationProfile: PersistentCodexProfile = {
@@ -29,6 +32,10 @@ const conversationProfile: PersistentCodexProfile = {
 const finalSummaryProfile: PersistentCodexProfile = {
   execution: finalSummaryExecutionProfile,
   outputSchema: providerMeetingSummaryJsonSchema,
+};
+const knowledgeAnswerProfile: PersistentCodexProfile = {
+  execution: knowledgeAnswerExecutionProfile,
+  outputSchema: providerKnowledgeAnswerJsonSchema,
 };
 let root: string | undefined;
 let runners: PersistentCodexProcessRunner[] = [];
@@ -192,6 +199,8 @@ describe("PersistentCodexProcessRunner", () => {
       "discord-meeting-discord_meeting-summary-generate-slot-1:worker-1",
     ]);
   });
+
+  it("sets the qualified knowledge tier", setsQualifiedKnowledgeServiceTier);
 
   it("maps an external AbortSignal to the persistent worker and returns cancellation", async () => {
     const fixture = await createFixture();
@@ -527,6 +536,24 @@ class FakeWorker {
   }
 }
 
+async function setsQualifiedKnowledgeServiceTier(): Promise<void> {
+  const fixture = await createFixture();
+  const result = await fixture.runner.run(await requestFor(
+    fixture,
+    "knowledge-answer",
+    knowledgeAnswerCanonicalRequest,
+  ));
+
+  expect(fixture.state.workers).toHaveLength(1);
+  expect(requiredWorker(fixture.state, 0).options).toMatchObject({
+    model: "gpt-5.6-sol",
+    reasoningEffort: "medium",
+    serviceTier: "default",
+  });
+  expect(result.serviceTier).toBe("default");
+  expect(knowledgeAnswerProfile.execution.serviceTier).toBe("default");
+}
+
 async function createFixture(accountCount = 1): Promise<Fixture> {
   const testRoot = await mkdtemp(join(tmpdir(), "persistent-codex-runner-test-"));
   root = testRoot;
@@ -625,6 +652,7 @@ async function requestFor(
       join(fixture.root, "state"),
       "--model",
       controlText(requestPayload, "model"),
+      ...optionalServiceTierArgs(requestPayload),
     ],
     command: fixture.launcherPath,
     cwd: fixture.workspacePath,
@@ -668,6 +696,13 @@ function controlText(
     throw new Error(`Request test fixture is missing ${key}`);
   }
   return value;
+}
+
+function optionalServiceTierArgs(requestPayload: unknown): readonly string[] {
+  const value = (requestPayload as {
+    readonly task?: { readonly controls?: Readonly<Record<string, unknown>> };
+  }).task?.controls?.serviceTier;
+  return typeof value === "string" ? ["--service-tier", value] : [];
 }
 
 function successfulWorkerResult(input: FakeWorkerInput): FakeWorkerResult {

@@ -97,6 +97,7 @@ class RuntimeFake implements SubscriptionRuntimeTransportPort {
   request?: SubscriptionRuntimeAgentTaskRequest;
   readonly requests: SubscriptionRuntimeAgentTaskRequest[] = [];
   reportedPurpose?: string;
+  reportedServiceTier: "default" | undefined = "default";
   readonly results: SubscriptionRuntimeTaskResult[] = [];
   output: JsonObject = {
     claims: [{ evidenceIds: ["evidence-000002"], text: "The release is Monday." }],
@@ -137,6 +138,9 @@ class RuntimeFake implements SubscriptionRuntimeTransportPort {
         provider: "codex",
         purpose: this.reportedPurpose ?? request.context.purpose,
         reasoningEffort: request.task.controls.reasoningEffort,
+        ...(this.reportedServiceTier === undefined
+          ? {}
+          : { serviceTier: this.reportedServiceTier }),
         requestId: request.runId,
         runtimeEngine: subscriptionRuntimeCliEngine,
         runtimePackageVersion: auditedSubscriptionRuntimePackageVersion,
@@ -200,6 +204,7 @@ describe("Meeting Knowledge subscription runtime contract", () => {
       disableTools: true,
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
+      serviceTier: "default",
     });
     const outputSchema = runtime.request?.task.controls.outputSchema as {
       readonly properties: Readonly<Record<string, unknown>>;
@@ -547,11 +552,27 @@ describe("Meeting Knowledge grounding runtime contract", () => {
     });
   });
 
+  it.each([undefined, "fast"])(
+    "rejects missing or substituted service-tier proof (%s)",
+    async (serviceTier) => {
+      const runtime = new RuntimeFake();
+      (runtime as { reportedServiceTier: string | undefined }).reportedServiceTier =
+        serviceTier;
+
+      await expect(adapter(runtime).generate(generationRequest())).resolves.toEqual({
+        code: "invalid_attestation",
+        retryable: false,
+        status: "failed",
+      });
+    },
+  );
+
   it("pins distinct strict answer and coverage profiles", () => {
     expect(knowledgeAnswerExecutionProfile).toMatchObject({
       model: "gpt-5.6-sol",
       purpose: "discord_meeting.knowledge.answer.v1",
       reasoningEffort: "medium",
+      serviceTier: "default",
     });
     expect(knowledgeCoverageExecutionProfile).toMatchObject({
       model: "gpt-5.6-sol",

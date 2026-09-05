@@ -59,6 +59,7 @@ export function reconstructCanonicalRequest(
     profile === undefined ||
     controls.model !== profile.model ||
     controls.reasoningEffort !== profile.reasoningEffort ||
+    controls.serviceTier !== profile.serviceTier ||
     controls.maxOutputTokens !== profile.maxOutputTokens ||
     controls.outputSchemaName !== profile.outputSchemaName
   ) {

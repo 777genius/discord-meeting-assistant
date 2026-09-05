@@ -81,6 +81,9 @@ function resolveCompletedCliResult(
   telemetry: Exclude<TelemetryResult, { readonly status: "invalid" }>,
   evidence: TelemetryEvidence,
 ): SubscriptionRuntimeTaskResult {
+  if (input.execution.serviceTier !== input.profile.serviceTier) {
+    return failedResult("provider_output_invalid");
+  }
   if (
     telemetry.status === "missing" &&
     input.profile.purpose !== subscriptionRuntimeConversationPurpose
@@ -170,6 +173,9 @@ function completedResult(
       schemaVersion: 1,
       selectedOutputKind: "structured_output",
       selectedOutputSha256: canonicalJsonSha256(structuredOutput),
+      ...(input.profile.serviceTier === undefined
+        ? {}
+        : { serviceTier: input.profile.serviceTier }),
     },
     protocolVersion: 1,
     status: "completed",

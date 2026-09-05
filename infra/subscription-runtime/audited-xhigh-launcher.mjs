@@ -29,7 +29,10 @@ export {
   parseBridgeResultJson,
   runCodexJsonlCapture,
 } from "./audited-codex-jsonl-capture.mjs";
-export { admitMeetingSummaryRequest } from "./audited-xhigh-policy.mjs";
+export {
+  admitMeetingSummaryRequest,
+  pinnedCodexTaskArgv,
+} from "./audited-xhigh-policy.mjs";
 
 /**
  * Runs the private bridge while preserving its existing worker policy. The
@@ -43,11 +46,13 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   const requestedModel = optionalArgument(argv, "--model");
   const requestedReasoningEffort =
     process.env.AGENT_RUNTIME_REASONING_EFFORT?.trim();
+  const requestedServiceTier = optionalArgument(argv, "--service-tier");
   const request = JSON.parse(await readFile(inputPath, "utf8"));
   const profile = admitMeetingSummaryRequest({
     model: requestedModel,
     provider,
     reasoningEffort: requestedReasoningEffort,
+    serviceTier: requestedServiceTier,
     request,
   });
 
@@ -96,6 +101,9 @@ function createStrictWorkerFactory({ FileBackendCodexWorker, capture, profile })
     if (model !== profile.model) {
       throw new Error("Model conflicts with the admitted meeting policy");
     }
+    if (input.serviceTier !== profile.serviceTier) {
+      throw new Error("Service tier conflicts with the admitted meeting policy");
+    }
     const admittedCodexBinaryPath = resolveAdmittedExecutable(
       input.codexBinaryPath,
       input.env,
@@ -108,6 +116,9 @@ function createStrictWorkerFactory({ FileBackendCodexWorker, capture, profile })
       model,
       providerInstanceId: input.providerInstanceId,
       reasoningEffort: profile.reasoningEffort,
+      ...(profile.serviceTier === undefined
+        ? {}
+        : { serviceTier: profile.serviceTier }),
       sourceEnv: subscriptionRuntimeChildEnvironment(input.env),
       stateRootDir: input.stateRootDir,
       workspacePath: input.cwd,

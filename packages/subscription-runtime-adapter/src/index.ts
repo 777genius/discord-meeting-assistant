@@ -141,6 +141,7 @@ export {
   subscriptionRuntimeConversationModel,
   subscriptionRuntimeConversationPurpose,
   subscriptionRuntimeConversationReasoningEffort,
+  subscriptionRuntimeDefaultServiceTier,
   subscriptionRuntimeIncrementalMaxOutputTokens,
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalPurpose,

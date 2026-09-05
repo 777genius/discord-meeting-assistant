@@ -15,6 +15,7 @@ import {
   subscriptionRuntimeConversationModel,
   subscriptionRuntimeConversationPurpose,
   subscriptionRuntimeConversationReasoningEffort,
+  subscriptionRuntimeDefaultServiceTier,
   subscriptionRuntimeIncrementalMaxOutputTokens,
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalPurpose,
@@ -38,6 +39,7 @@ interface DeploymentPurposeProfile {
   readonly outputSchemaName: string;
   readonly policyVersion: string;
   readonly reasoningEffort: string;
+  readonly serviceTier?: string | undefined;
 }
 
 type PurposeProfiles = Readonly<Record<string, DeploymentPurposeProfile>>;
@@ -58,6 +60,7 @@ const expectedProfiles: PurposeProfiles = Object.freeze({
     outputSchemaName: knowledgeAnswerOutputSchemaName,
     policyVersion: knowledgeAnswerPolicyVersion,
     reasoningEffort: subscriptionRuntimeReasoningEffort,
+    serviceTier: subscriptionRuntimeDefaultServiceTier,
   }),
   [subscriptionRuntimeKnowledgeCoveragePurpose]: Object.freeze({
     isolatedCwd: "",
@@ -116,7 +119,8 @@ export function assertDeploymentPurposeProfiles(
       actual.model !== expected.model ||
       actual.outputSchemaName !== expected.outputSchemaName ||
       actual.policyVersion !== expected.policyVersion ||
-      actual.reasoningEffort !== expected.reasoningEffort
+      actual.reasoningEffort !== expected.reasoningEffort ||
+      actual.serviceTier !== expected.serviceTier
     ) {
       rejectDeploymentPurposePolicy();
     }

@@ -235,7 +235,12 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
           : { telemetry: { usage: result.usage } }),
         warnings: result.warnings,
       });
-      return persistentCodexBoundedResult(stdout, request.maxStdoutBytes);
+      return {
+        ...persistentCodexBoundedResult(stdout, request.maxStdoutBytes),
+        ...(workerGroup.profile.execution.serviceTier === undefined
+          ? {}
+          : { serviceTier: workerGroup.profile.execution.serviceTier }),
+      };
     } catch (error: unknown) {
       if (timing.timedOut) {
         return persistentCodexTimedOutResult();

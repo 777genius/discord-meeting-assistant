@@ -75,5 +75,8 @@ export function buildCliArgs(
     options.providerInstanceId,
     "--model",
     profile.model,
+    ...(profile.serviceTier === undefined
+      ? []
+      : ["--service-tier", profile.serviceTier]),
   ];
 }
