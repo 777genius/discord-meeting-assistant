@@ -9,6 +9,8 @@ import {
   subscriptionRuntimeKnowledgeAnswerMaxOutputTokens,
   subscriptionRuntimeKnowledgeCoverageMaxOutputTokens,
   subscriptionRuntimeSummaryMaxOutputTokens,
+  type JsonObject,
+  type SubscriptionRuntimeAgentTaskRequest,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -263,12 +265,8 @@ describe("SubscriptionRuntimeExecutor execution profiles and output", () => {
 });
 
 async function executesDedicatedKnowledgePurpose(
-  request:
-    | typeof knowledgeAnswerCanonicalRequest
-    | typeof knowledgeCoverageCanonicalRequest,
-  output:
-    | typeof knowledgeAnswerStructuredOutput
-    | typeof knowledgeCoverageStructuredOutput,
+  request: SubscriptionRuntimeAgentTaskRequest,
+  output: JsonObject,
   serviceTier: "default" | undefined,
 ): Promise<void> {
   root = await mkdtemp(join(tmpdir(), "sidecar-executor-test-"));

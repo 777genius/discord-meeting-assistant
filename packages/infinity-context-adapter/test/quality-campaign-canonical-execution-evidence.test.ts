@@ -147,9 +147,19 @@ describe("canonical execution evidence durability", () => {
         const requests = envelopes.find(({ artifactKind }) => artifactKind === "retrieval_request");
         const responses = envelopes.find(({ artifactKind }) => artifactKind === "retrieval_response");
         expect(artifact).toMatchObject({ attemptId,
-          capabilityAndRetrievalLatencyUs: expect.any(Number),
           requestSha256: requests!.plaintextSha256,
-          responseSha256: responses!.plaintextSha256, routeLatencyUs: expect.any(Number) });
+          responseSha256: responses!.plaintextSha256 });
+        const { capabilityAndRetrievalLatencyUs, routeLatencyUs } = artifact;
+        expect(typeof capabilityAndRetrievalLatencyUs).toBe("number");
+        expect(typeof routeLatencyUs).toBe("number");
+        if (typeof capabilityAndRetrievalLatencyUs !== "number" ||
+          typeof routeLatencyUs !== "number") {
+          throw new TypeError("persisted retrieval timing is not numeric");
+        }
+        expect(Number.isSafeInteger(capabilityAndRetrievalLatencyUs)).toBe(true);
+        expect(Number.isSafeInteger(routeLatencyUs)).toBe(true);
+        expect(routeLatencyUs).toBeGreaterThanOrEqual(0);
+        expect(capabilityAndRetrievalLatencyUs).toBeGreaterThanOrEqual(routeLatencyUs);
         expect(fixture.events).toEqual([
           "spend:capability", "spend:retrieval", "journal:reserve", "http:capability",
           "http:retrieval", "seal:capability_request", "seal:capability_response",
@@ -317,7 +327,7 @@ function syntheticExactExchange(response: Record<string, unknown>) {
   softPreferences: request.softPreferences };
   return { capabilityRequestBytes: new Uint8Array(),
     capabilityResponseBytes: encodeJson({ context: { retrieval: capability } } as JsonValue),
-    requestBytes: encodeJson(sdkRequest as JsonValue),
+    requestBytes: encodeJson(sdkRequest),
     responseBytes: encodeJson(response as JsonValue) };
 }
 
