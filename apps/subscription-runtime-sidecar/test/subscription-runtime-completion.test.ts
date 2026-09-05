@@ -168,7 +168,7 @@ function groundedGenerationRequest(): Parameters<
       mode: "focused_retrieval",
     },
     question: "When is the release?",
-  } as Parameters<SubscriptionRuntimeGroundedAnswerAdapter["generate"]>[0];
+  };
 }
 
 function completedKnowledgeAnswerProcess(): ProcessRunResult {
