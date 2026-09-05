@@ -1,0 +1,131 @@
+services:
+  craig-postgres:
+    image: postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    init: true
+    restart: unless-stopped
+    read_only: true
+    environment:
+      POSTGRES_DB: craig_meeting
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+      POSTGRES_USER: craig_meeting
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/craig/postgres:/var/lib/postgresql
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/craig/postgres-password:/run/secrets/postgres-password:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /var/run/postgresql:rw,noexec,nosuid,nodev,size=16m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U craig_meeting -d craig_meeting"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    networks: [craig-data]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 192
+    stop_grace_period: 30s
+
+  craig-redis:
+    image: redis:8.8.1-alpine@sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb
+    init: true
+    restart: unless-stopped
+    read_only: true
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "60", "1", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/craig/redis:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    networks: [craig-data]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    stop_grace_period: 10s
+
+  craig-migrations:
+    build: &craig-build
+      context: "https://github.com/777genius/craig-meeting-gateway.git?ref=37b86a958b567cb7fcff75946e94fe5e7ee38f42&checksum=37b86a958b567cb7fcff75946e94fe5e7ee38f42"
+      dockerfile: deploy/meeting/Dockerfile
+      args:
+        SOURCE_REVISION: 37b86a958b567cb7fcff75946e94fe5e7ee38f42
+      labels:
+        org.opencontainers.image.revision: 37b86a958b567cb7fcff75946e94fe5e7ee38f42
+        org.opencontainers.image.source: https://github.com/777genius/craig-meeting-gateway
+    image: discord-meeting/craig-meeting-gateway:37b86a958b567cb7fcff75946e94fe5e7ee38f42
+    labels:
+      org.opencontainers.image.revision: 37b86a958b567cb7fcff75946e94fe5e7ee38f42
+      org.opencontainers.image.source: https://github.com/777genius/craig-meeting-gateway
+    init: true
+    restart: "no"
+    read_only: true
+    command: ["migrate"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database-url
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/craig/database-url:/run/secrets/database-url:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=0700,uid=10001,gid=10001
+    depends_on:
+      craig-postgres: { condition: service_healthy }
+    networks: [craig-data]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+
+  craig-bot:
+    build: *craig-build
+    image: discord-meeting/craig-meeting-gateway:37b86a958b567cb7fcff75946e94fe5e7ee38f42
+    labels:
+      org.opencontainers.image.revision: 37b86a958b567cb7fcff75946e94fe5e7ee38f42
+      org.opencontainers.image.source: https://github.com/777genius/craig-meeting-gateway
+    init: true
+    restart: unless-stopped
+    read_only: true
+    environment:
+      CRAIG_LOG_LEVEL: ${CRAIG_LOG_LEVEL:-info}
+      DATABASE_URL_FILE: /run/secrets/database-url
+      DISCORD_APPLICATION_ID: ${DISCORD_CRAIG_APPLICATION_ID:?set the user-owned Craig application ID}
+      DISCORD_BOT_TOKEN_FILE: /run/secrets/discord-bot-token
+      MEETING_AUTO_RECORD_CHANNEL_IDS: ${CRAIG_AUTO_RECORD_CHANNEL_IDS:-}
+      MEETING_AUTO_RECORD_SYNTHETIC_BOT_IDS: ${CRAIG_SYNTHETIC_BOT_IDS:-}
+      MEETING_INTEGRATION_TOKEN_FILE: /run/secrets/meeting-integration-token
+      MEETING_INTEGRATION_URL: http://meeting-platform:4310
+      MEETING_PLAYBACK_ENABLED: "false"
+      POSTGRES_HOST: craig-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: craig-redis
+      REDIS_KEY_PREFIX: "craig-meeting:"
+      REDIS_PORT: "6379"
+    volumes:
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/data/craig/recordings:/app/rec
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/craig/database-url:/run/secrets/database-url:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/craig/discord-bot-token:/run/secrets/discord-bot-token:ro
+      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/platform/craig-bearer-token:/run/secrets/meeting-integration-token:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=0700,uid=10001,gid=10001
+      - /run/craig-config:rw,noexec,nosuid,nodev,size=2m,mode=0700,uid=10001,gid=10001
+    depends_on:
+      craig-postgres: { condition: service_healthy }
+      craig-redis: { condition: service_healthy }
+      craig-migrations: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "node", "/app/deploy/meeting/healthcheck.cjs"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    networks: [craig-data, meeting-internal, meeting-egress]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    stop_signal: SIGINT
+    stop_grace_period: 45s
+
+networks:
+  craig-data:
+    internal: true

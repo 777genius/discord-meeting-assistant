@@ -27,17 +27,17 @@ jobs:
         include:
           - component: meeting-platform
             package_suffix: hosted-test-meeting-platform-candidates
-            context: .
+            context: .build/docker-context
             dockerfile: apps/meeting-platform/Dockerfile
             lockfile: pnpm-lock.yaml
           - component: subscription-runtime-sidecar
             package_suffix: hosted-test-subscription-runtime-sidecar-candidates
-            context: .
+            context: .build/docker-context
             dockerfile: apps/subscription-runtime-sidecar/Dockerfile
             lockfile: pnpm-lock.yaml
           - component: pipecat-runtime
             package_suffix: hosted-test-pipecat-runtime-candidates
-            context: apps/pipecat-runtime
+            context: .build/docker-context
             dockerfile: apps/pipecat-runtime/Dockerfile
             lockfile: apps/pipecat-runtime/uv.lock
     steps:
@@ -63,10 +63,11 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Generate immutable Meeting Platform provenance
-        if: matrix.component == 'meeting-platform'
+      - name: Generate Git-derived Docker context
         shell: bash
-        run: node tooling/generate-build-provenance.mjs
+        run: |
+          node tooling/generate-build-provenance.mjs
+          node tooling/generate-git-build-context.mjs .build/docker-context
 
       - name: Derive immutable image name
         id: image

@@ -240,9 +240,12 @@ export function overlapEvidence(): RetainedE2eEvidenceV2 {
       s3: {
         manifestChecksumSha256: "e".repeat(64),
         manifestLocator: "s3://bucket/meeting-1/manifest.json",
+        manifestRevision: "manifest-version-1",
+        manifestSizeBytes: 1_024,
         sourceChecksumSha256: "f".repeat(64),
         tracks: [
           {
+            artifactRevision: "track-version-a",
             checksumSha256: "1".repeat(64),
             durationMs: 7_000,
             locator: "s3://bucket/meeting-1/a.ogg",
@@ -251,6 +254,7 @@ export function overlapEvidence(): RetainedE2eEvidenceV2 {
             timelineOffsetMs: 100,
           },
           {
+            artifactRevision: "track-version-b",
             checksumSha256: "2".repeat(64),
             durationMs: 7_750,
             locator: "s3://bucket/meeting-1/b.ogg",
@@ -632,10 +636,12 @@ export function retainedV8Evidence(): RetainedReconnectE2eEvidenceV8 {
   const botSpeakerId = "1533877611258708230";
   source.recording.speakerIds.push(botSpeakerId, speakerDId);
   source.recording.s3.tracks.push({
+    artifactRevision: "track-version-botik",
     checksumSha256: "4".repeat(64), durationMs: source.recording.durationMs,
     locator: "s3://bucket/meeting-1/botik.ogg", sizeBytes: 2_000,
     speakerId: botSpeakerId, timelineOffsetMs: 0,
   }, {
+    artifactRevision: "track-version-speaker-d",
     checksumSha256: "5".repeat(64), durationMs: 4_000,
     locator: "s3://bucket/meeting-1/speaker-d.ogg", sizeBytes: 3_000,
     speakerId: speakerDId, timelineOffsetMs: 3_200,

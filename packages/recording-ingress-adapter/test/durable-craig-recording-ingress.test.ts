@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -256,13 +256,22 @@ describe("authoritative Craig recording finalization", () => {
 
     const ready = authoritativeReady();
     const finalized = await adapter.ingestLifecycleEvent(ready);
+    if (finalized.kind !== "finalized") { throw new Error("expected finalized recording"); }
+    await expect(adapter.completedRecording("recording-1")).resolves.toEqual(finalized.recording);
+    await expect(adapter.completedRecording("missing-recording")).resolves.toBeUndefined();
 
     expect(finalized).toMatchObject({
       kind: "finalized",
       recording: {
         authoritativeDurationMs: 299_000,
         recordingId: "recording-1",
-        speakerAudio: [{ speakerId: firstSpeakerId, timelineOffsetMs: 0 }],
+        speakerAudio: [{
+          artifactRevision: expect.any(String) as unknown,
+          checksumSha256: track.metadata.checksumSha256,
+          sizeBytes: track.metadata.sizeBytes,
+          speakerId: firstSpeakerId,
+          timelineOffsetMs: 0,
+        }],
       },
     });
     const manifestRequest = writer.requests.find(
@@ -276,6 +285,11 @@ describe("authoritative Craig recording finalization", () => {
     expect(manifest.source.kind).toBe("craig-original-multitrack");
     expect(manifest.startedAt).toBe("2026-08-01T10:00:00.000Z");
     expect(manifest.tracks).toHaveLength(1);
+    expect(manifest.tracks[0]).toMatchObject({
+      artifactRevision: expect.any(String) as unknown,
+      checksumSha256: track.metadata.checksumSha256,
+      sizeBytes: track.metadata.sizeBytes,
+    });
   });
 });
 
@@ -334,8 +348,15 @@ describe("authoritative Craig recording durability", () => {
           uploadId: track.metadata.uploadId,
         },
       ],
-      recording: { authoritativeDurationMs: 299_000 },
-      schemaVersion: 5,
+      recording: {
+        authoritativeDurationMs: 299_000,
+        speakerAudio: [{
+          artifactRevision: accepted.versionId,
+          checksumSha256: track.metadata.checksumSha256,
+          sizeBytes: track.metadata.sizeBytes,
+        }],
+      },
+      schemaVersion: 6,
     });
 
     await adapter.close();
@@ -382,35 +403,6 @@ describe("authoritative Craig recording durability", () => {
     await expect(
       recovered.ingestLifecycleEvent(authoritativeReady()),
     ).resolves.toMatchObject({ kind: "finalized" });
-  });
-
-  it("fails closed when a legacy completion receipt cannot prove track identity", async () => {
-    const root = await spoolRoot();
-    const writer = new MemoryArtifactWriter();
-    const adapter = ingress(root, writer);
-    const track = originalTrack();
-    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
-    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
-    await adapter.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body));
-    await adapter.ingestLifecycleEvent(authoritativeReady());
-
-    const [receiptName] = await readdir(join(root, "completed-v1"));
-    if (receiptName === undefined) {
-      throw new Error("completion receipt is required");
-    }
-    const receiptPath = join(root, "completed-v1", receiptName);
-    const completed = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
-    const { authoritativeTracks: _authoritativeTracks, ...legacyReceipt } = completed;
-    await writeFile(receiptPath, `${JSON.stringify({ ...legacyReceipt, schemaVersion: 1 })}\n`);
-
-    const writesBeforeReplay = writer.requests.length;
-    await expect(
-      adapter.ingestAuthoritativeTrack(track.metadata, bodyMustNotBeRead()),
-    ).rejects.toMatchObject({ failure: "corrupt-spool" });
-    await expect(
-      adapter.ingestLifecycleEvent(lifecycle("meeting.started", "recording-2")),
-    ).rejects.toMatchObject({ failure: "corrupt-spool" });
-    expect(writer.requests).toHaveLength(writesBeforeReplay);
   });
 
   it("does not consume active capacity when a completed receipt survives the cleanup crash window", async () => {

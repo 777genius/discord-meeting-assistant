@@ -43,7 +43,20 @@ describe("hosted service-level read-only raw probe", () => {
           "--input-type=module",
           "-e",
           s3EvidenceScript,
-          "s3://recordings/meeting-1/manifest.json",
+          JSON.stringify({
+            manifestChecksumSha256: "a".repeat(64),
+            manifestLocator: "s3://recordings/meeting-1/manifest.json",
+            manifestRevision: "manifest-version-1",
+            manifestSizeBytes: 1_024,
+            speakerAudio: [{
+              artifactRevision: "track-version-1",
+              audioLocator: "s3://recordings/meeting-1/speaker.ogg",
+              checksumSha256: "c".repeat(64),
+              sizeBytes: 42,
+              speakerId: "speaker-1",
+              timelineOffsetMs: 0,
+            }],
+          }),
           "meeting-1",
         ]);
         return JSON.stringify(s3());
@@ -70,7 +83,20 @@ describe("hosted service-level read-only raw probe", () => {
     const probe = new SshHostedServiceLevelRawProbe(remote(), commands, clockObserver);
 
     await expect(probe.collectDatabase("meeting-1")).resolves.toEqual(database());
-    await expect(probe.collectS3("s3://recordings/meeting-1/manifest.json", "meeting-1"))
+    await expect(probe.collectS3({
+      manifestChecksumSha256: "a".repeat(64),
+      manifestLocator: "s3://recordings/meeting-1/manifest.json",
+      manifestRevision: "manifest-version-1",
+      manifestSizeBytes: 1_024,
+      speakerAudio: [{
+        artifactRevision: "track-version-1",
+        audioLocator: "s3://recordings/meeting-1/speaker.ogg",
+        checksumSha256: "c".repeat(64),
+        sizeBytes: 42,
+        speakerId: "speaker-1",
+        timelineOffsetMs: 0,
+      }],
+    }, "meeting-1"))
       .resolves.toEqual(s3());
     await expect(probe.collectMeetingPlatformLogs(
       "meeting-1",
@@ -186,10 +212,13 @@ function s3() {
     endedAt: "1970-01-01T00:00:10.000Z",
     manifestChecksumSha256: "a".repeat(64),
     manifestLocator: "s3://recordings/meeting-1/manifest.json",
+    manifestRevision: "manifest-version-1",
+    manifestSizeBytes: 1_024,
     recordingId: "meeting-1",
     sourceChecksumSha256: "b".repeat(64),
     startedAt: "1970-01-01T00:00:01.000Z",
     tracks: [{
+      artifactRevision: "track-version-1",
       checksumSha256: "c".repeat(64),
       durationMs: 9_000,
       locator: "s3://recordings/meeting-1/speaker.ogg",

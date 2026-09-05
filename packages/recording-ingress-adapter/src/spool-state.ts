@@ -1,9 +1,18 @@
 import { RecordingIngressError } from "./errors.js";
 import { parseCompletedAuthoritativeDuration } from "./spool-completed-duration.js";
+import {
+  immutableProducerRevision,
+  assertManifestIdentity,
+  parseStoredSpeakerAudio,
+  reconstructCompletedTrackIdentity,
+  sha256Pattern,
+} from "./spool-state-patterns.js";
+import {
+  assertCompletedTrackIdentity,
+  assertTrackActors,
+} from "./spool-state-completion-validation.js";
 
 type RecordingSpoolStatus = "active" | "aborted" | "finalizing";
-
-const immutableProducerRevision = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 
 function compareOpaqueIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -86,16 +95,22 @@ export interface CompletedRecordingState {
   readonly lifecycleSchemaVersion: 1 | 2 | 3;
   readonly recording: {
     readonly authoritativeDurationMs?: number;
+    readonly manifestChecksumSha256?: string;
     readonly manifestLocator: string;
+    readonly manifestRevision?: string;
+    readonly manifestSizeBytes?: number;
     readonly recordingId: string;
     readonly speakerAudio: readonly {
+      readonly artifactRevision?: string;
       readonly audioLocator: string;
+      readonly checksumSha256?: string;
+      readonly sizeBytes?: number;
       readonly speakerId: string;
       readonly timelineOffsetMs: number;
     }[];
   };
   readonly recordingId: string;
-  readonly schemaVersion: 5;
+  readonly schemaVersion: 5 | 6;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -219,7 +234,7 @@ function parseStoredAuthoritativeTrack(value: unknown): StoredAuthoritativeTrack
     throw new RecordingIngressError("corrupt-spool", "invalid authoritative track metadata");
   }
   const checksumSha256 = stringValue(record.checksumSha256, "authoritativeTracks.checksumSha256");
-  if (!/^[0-9a-f]{64}$/u.test(checksumSha256)) {
+  if (!sha256Pattern.test(checksumSha256)) {
     throw new RecordingIngressError("corrupt-spool", "invalid authoritative track checksum");
   }
   return {
@@ -304,7 +319,8 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
     (record.schemaVersion !== 2 &&
       record.schemaVersion !== 3 &&
       record.schemaVersion !== 4 &&
-      record.schemaVersion !== 5) ||
+      record.schemaVersion !== 5 &&
+      record.schemaVersion !== 6) ||
     !Array.isArray(record.events) ||
     !Array.isArray(record.authoritativeTracks) ||
     !Array.isArray(recording.speakerAudio)
@@ -327,17 +343,23 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
       "completion lifecycle generation and identity provenance do not match",
     );
   }
-  const speakerAudio = recording.speakerAudio.map((value) => {
-    const reference = objectValue(value);
-    if (!Number.isSafeInteger(reference.timelineOffsetMs) || (reference.timelineOffsetMs as number) < 0) {
-      throw new RecordingIngressError("corrupt-spool", "invalid completion timeline offset");
-    }
-    return {
-      audioLocator: stringValue(reference.audioLocator, "audioLocator"),
-      speakerId: stringValue(reference.speakerId, "speakerId"),
-      timelineOffsetMs: reference.timelineOffsetMs as number,
-    };
-  });
+  const storedSpeakerAudio = recording.speakerAudio.map(parseStoredSpeakerAudio);
+  const speakerAudio = reconstructCompletedTrackIdentity(
+    authoritativeTracks,
+    storedSpeakerAudio,
+  );
+  const manifestRevision = optionalString(recording.manifestRevision, "manifestRevision");
+  const manifestChecksumSha256 = optionalString(
+    recording.manifestChecksumSha256,
+    "manifestChecksumSha256",
+  );
+  const manifestSizeBytes = recording.manifestSizeBytes;
+  assertManifestIdentity(
+    record.schemaVersion,
+    manifestRevision,
+    manifestChecksumSha256,
+    manifestSizeBytes,
+  );
   const authoritativeDurationMs = parseCompletedAuthoritativeDuration(
     recording.authoritativeDurationMs,
     record.schemaVersion === 5,
@@ -362,70 +384,18 @@ export function parseCompletedRecordingState(input: unknown): CompletedRecording
       ...(authoritativeDurationMs === undefined
         ? {}
         : { authoritativeDurationMs }),
+      ...(manifestRevision === undefined
+        ? {}
+        : {
+            manifestChecksumSha256: manifestChecksumSha256 as string,
+            manifestRevision,
+            manifestSizeBytes: manifestSizeBytes as number,
+          }),
       manifestLocator: stringValue(recording.manifestLocator, "manifestLocator"),
       recordingId: stringValue(recording.recordingId, "recording.recordingId"),
       speakerAudio,
     },
     recordingId,
-    schemaVersion: 5,
+    schemaVersion: record.schemaVersion === 6 ? 6 : 5,
   };
-}
-
-function assertTrackActors(
-  actors: readonly StoredActor[] | null,
-  speakerAudio: readonly { readonly speakerId: string }[],
-): void {
-  if (actors === null) {
-    return;
-  }
-  const actorIds = new Set(actors.map((actor) => actor.actorId));
-  if (speakerAudio.some((track) => !actorIds.has(track.speakerId))) {
-    throw new RecordingIngressError(
-      "corrupt-spool",
-      "completion receipt has a track without authoritative actor identity",
-    );
-  }
-}
-
-function assertCompletedTrackIdentity(
-  tracks: readonly StoredAuthoritativeTrack[],
-  speakerAudio: readonly {
-    readonly audioLocator: string;
-    readonly speakerId: string;
-    readonly timelineOffsetMs: number;
-  }[],
-): void {
-  if (tracks.length !== speakerAudio.length) {
-    throw new RecordingIngressError(
-      "corrupt-spool",
-      "completion receipt track identity does not match the recording snapshot",
-    );
-  }
-  const referencesBySpeaker = new Map<string, (typeof speakerAudio)[number]>();
-  const uploadIds = new Set<string>();
-  const trackNumbers = new Set<number>();
-  for (const reference of speakerAudio) {
-    if (referencesBySpeaker.has(reference.speakerId)) {
-      throw new RecordingIngressError("corrupt-spool", "completion receipt repeats a speaker");
-    }
-    referencesBySpeaker.set(reference.speakerId, reference);
-  }
-  for (const track of tracks) {
-    if (uploadIds.has(track.uploadId) || trackNumbers.has(track.trackNumber)) {
-      throw new RecordingIngressError("corrupt-spool", "completion receipt repeats a track identity");
-    }
-    uploadIds.add(track.uploadId);
-    trackNumbers.add(track.trackNumber);
-    const reference = referencesBySpeaker.get(track.speakerId);
-    if (
-      reference === undefined ||
-      reference.audioLocator !== track.audioLocator ||
-      reference.timelineOffsetMs !== track.timelineOffsetMs
-    ) {
-      throw new RecordingIngressError(
-        "corrupt-spool",
-        "completion receipt track identity does not match the recording snapshot",
-      );
-    }
-  }
 }

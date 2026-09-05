@@ -596,6 +596,7 @@ boundaries:
       - apps/meeting-platform/src/adapters/outbound/subscription-runtime-farewell-classifier.ts
       - apps/meeting-platform/src/adapters/outbound/system-conversation-delay.ts
       - apps/meeting-platform/src/adapters/outbound/test-only-answer-delivery-crash-injection.ts
+      - apps/meeting-platform/src/adapters/outbound/transcript-outline-summary-adapter.ts
     allow:
       boundaries:
         - adapters.object-storage
@@ -623,6 +624,7 @@ boundaries:
         - zod
       builtins:
         - node:crypto
+        - node:async_hooks
         - node:fs
         - node:fs/promises
         - node:path
@@ -733,6 +735,23 @@ boundaries:
         - fastify
       builtins: []
       runtimeReferences: []
+  - id: apps.meeting-platform.recording-compatibility-adapter
+    roots:
+      - apps/meeting-platform/src/adapters/recording-compatibility
+    entrypoints:
+      - apps/meeting-platform/src/adapters/recording-compatibility/verified-recording-repository.ts
+    allow:
+      boundaries:
+        - adapters.postgres
+        - adapters.object-storage
+        - core.meeting.lifecycle
+      packages:
+        - "@discord-meeting/postgres-adapter"
+        - "@discord-meeting/object-storage-adapter"
+        - "@discord-meeting/meeting-core"
+      builtins:
+        - node:crypto
+      runtimeReferences: []
   - id: apps.meeting-platform.composition
     roots:
       - apps/meeting-platform/src/composition
@@ -749,6 +768,7 @@ boundaries:
       - apps/meeting-platform/src/run-voicetext-semantic-canary.ts
     allow:
       boundaries:
+        - apps.meeting-platform.recording-compatibility-adapter
         - adapters.bullmq
         - adapters.craig-playback
         - adapters.discord

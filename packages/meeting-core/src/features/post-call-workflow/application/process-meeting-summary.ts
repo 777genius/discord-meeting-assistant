@@ -48,6 +48,28 @@ function operationIdentity(operation: string, ...parts: readonly string[]): stri
   return [operation, ...parts.map(identityPart)].join("|");
 }
 
+function immutableArtifactIdentityParts(
+  meeting: Meeting,
+): readonly string[] | null {
+  const parts: string[] = [];
+  for (const reference of meeting.recording.speakerAudio) {
+    if (
+      reference.artifactRevision === undefined ||
+      reference.checksumSha256 === undefined ||
+      reference.sizeBytes === undefined
+    ) {
+      return null;
+    }
+    parts.push(
+      reference.audioLocator,
+      reference.artifactRevision,
+      reference.checksumSha256,
+      String(reference.sizeBytes),
+    );
+  }
+  return parts;
+}
+
 function unexpectedFailure(stage: ProcessingStage, error: unknown): StageFailure {
   return {
     code: `UNEXPECTED_${stage.toUpperCase()}_FAILURE`,
@@ -137,13 +159,28 @@ export class ProcessMeetingSummary {
     }
     throwIfAborted(signal);
 
+    const artifactIdentity = immutableArtifactIdentityParts(meeting);
+    if (artifactIdentity === null) {
+      return this.fail(
+        meeting,
+        "transcription",
+        {
+          code: "IMMUTABLE_ARTIFACT_IDENTITY_REQUIRED",
+          message: "authoritative recording lacks immutable artifact identity",
+          retryable: false,
+        },
+        signal,
+      );
+    }
+
     let result: FinalTranscriptionResult<GeneratedTranscript>;
     try {
       result = await this.transcriber.transcribe({
         idempotencyKey: operationIdentity(
-          "final-transcription:v1",
+          "final-transcription:v2",
           meeting.meetingId,
           meeting.recording.recordingId,
+          ...artifactIdentity,
         ),
         meetingId: meeting.meetingId,
         recording: meeting.recording.toSnapshot(),

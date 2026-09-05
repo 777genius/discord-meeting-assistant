@@ -251,7 +251,7 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
   }
 
   public async collectS3(
-    manifestLocator: string,
+    recording: Parameters<DeploymentEvidenceProbe["collectS3"]>[0],
     recordingId: string,
   ): Promise<S3RecordingEvidence> {
     const output = await this.#dockerExec("meeting-platform", [
@@ -259,7 +259,7 @@ export class SshDeploymentEvidenceProbe implements DeploymentEvidenceProbe {
       "--input-type=module",
       "-e",
       s3EvidenceScript,
-      manifestLocator,
+      JSON.stringify(recording),
       correlationId.parse(recordingId),
     ]);
     return s3OutputSchema.parse(parseLastJsonLine(output));

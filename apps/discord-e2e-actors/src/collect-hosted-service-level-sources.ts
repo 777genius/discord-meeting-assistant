@@ -23,7 +23,7 @@ export interface HostedServiceLevelRawProbe {
   collectClockCompletion(): Promise<unknown>;
   collectDatabase(recordingId: string): Promise<unknown>;
   collectMeetingPlatformLogs(meetingId: string, recordingStartedAt: string): Promise<string>;
-  collectS3(manifestLocator: string, recordingId: string): Promise<unknown>;
+  collectS3(recording: Parameters<import("./e2e-retained-evidence-contracts.js").DeploymentEvidenceProbe["collectS3"]>[0], recordingId: string): Promise<unknown>;
 }
 
 export class HostedServiceLevelSourceCaptureBlockedError extends Error {}
@@ -58,7 +58,7 @@ export async function collectHostedServiceLevelSources(
       throw new Error("Postgres source does not match the requested meeting and recording");
     }
     const s3 = s3OutputSchema.parse(await probe.collectS3(
-      snapshot.recording.manifestLocator,
+      snapshot.recording,
       config.recordingId,
     ));
     const meetingPlatformLogs = await probe.collectMeetingPlatformLogs(

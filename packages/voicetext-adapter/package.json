@@ -9,6 +9,9 @@
   "scripts": {
     "check": "pnpm run typecheck && pnpm run test",
     "test": "vitest run",
+    "test:caddy-routing": "VOICETEXT_CADDY_ADAPT_REQUIRED=1 vitest run test/voicetext-caddy-routing.test.ts",
+    "test:gateway-exact-head": "VOICETEXT_GATEWAY_PROVIDER_CANARY_REQUIRED=1 VOICETEXT_CADDY_ADAPT_REQUIRED=1 vitest run test/voicetext-caddy-routing.test.ts test/voicetext-gateway-provider-canary.e2e.test.ts",
+    "test:gateway-provider-canary": "VOICETEXT_GATEWAY_PROVIDER_CANARY_REQUIRED=1 vitest run test/voicetext-gateway-provider-canary.e2e.test.ts",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {

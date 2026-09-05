@@ -81,7 +81,8 @@ export class PlatformLiveMeetingRuntime {
       return "retry";
     }
     if (event.type === "meeting.started") {
-      await this.recordingOperations.enqueue(event.recordingId, () => this.start(event));
+      const started = await this.recordingOperations.enqueue(event.recordingId, () => this.start(event));
+      await started?.recovery;
       return "accepted";
     }
     if (event.type === "participant.joined" || event.type === "participant.left") {
@@ -96,10 +97,23 @@ export class PlatformLiveMeetingRuntime {
       return "accepted";
     }
     if (event.type === "meeting.connection_lost") {
-      await this.recordingOperations.enqueue(event.recordingId, () =>
-        this.meetings.get(event.recordingId)?.conversation?.disconnect() ?? Promise.resolve()
-      );
+      await this.recordingOperations.enqueue(event.recordingId, () => {
+        const state = this.meetings.get(event.recordingId);
+        if (state !== undefined) {
+          state.packetRecovery = null;
+          state.transcription.cancelRecovery();
+        }
+        return state?.conversation?.disconnect() ?? Promise.resolve();
+      });
       return "accepted";
+    }
+    if (event.type === "meeting.connection_recovered") {
+      const resumed = await this.recordingOperations.enqueue(event.recordingId, async () => {
+        const state = this.meetings.get(event.recordingId);
+        return { recovery: state !== undefined && !state.finishing && state.packetRecovery === null
+          ? this.initializeRecovery(state) : state?.packetRecovery };
+      });
+      await resumed.recovery;
     }
     if (event.type === "recording.authoritative_ready") {
       await sealFinalizedMemory(this.dependencies, event);
@@ -112,9 +126,8 @@ export class PlatformLiveMeetingRuntime {
    * degrades the derived live path without altering authoritative evidence.
    */
   public async acceptVoiceBatch(batch: LiveVoicePacketBatch): Promise<void> {
-    if (this.closed) {
-      return;
-    }
+    if (this.closed) { return; }
+    const deadlineMs = this.clock.nowMilliseconds() + this.packetFlow.packetBackpressureTimeoutMs;
     const packetsByMeeting = new Map<string, LiveVoicePacket[]>();
     for (const packet of batch.packets) {
       const packets = packetsByMeeting.get(packet.recordingId);
@@ -126,17 +139,18 @@ export class PlatformLiveMeetingRuntime {
     }
     await Promise.all(
       [...packetsByMeeting].map(([recordingId, packets]) =>
-        this.recordingOperations.enqueue(recordingId, () =>
-          this.acceptPackets(recordingId, packets)
-        )
+        this.recordingOperations.enqueue(recordingId, async () => {
+          const initialization = this.meetings.get(recordingId)?.packetRecovery;
+          if (await this.waitForPacketRecovery(initialization, deadlineMs)) {
+            await this.acceptPackets(recordingId, packets, deadlineMs);
+          }
+        })
       ),
     );
   }
 
   public prepareForAuthoritativeFinal(recordingId: string): void {
-    if (this.closed) {
-      return;
-    }
+    if (this.closed) { return; }
     void this.recordingOperations.enqueue(recordingId, () => {
       this.finalizer.startTerminalFinish(recordingId, this.clock.nowMilliseconds());
       return Promise.resolve();
@@ -197,10 +211,13 @@ export class PlatformLiveMeetingRuntime {
     return this.closePromise;
   }
 
-  private async start(event: LiveMeetingStartedEvent): Promise<void> {
+  private async start(event: LiveMeetingStartedEvent): Promise<{ recovery: Promise<void> | null } | undefined> {
     await this.finalizer.waitForColdFinish(event.recordingId);
-    if (this.meetings.has(event.recordingId)) {
-      return;
+    const existing = this.meetings.get(event.recordingId);
+    if (existing !== undefined) {
+      const recovery = existing.packetRecovery === null && !existing.finishing
+        ? this.initializeRecovery(existing) : existing.packetRecovery;
+      return { recovery };
     }
     const publicationTargetId = await event.publicationTarget.resolve();
     if (publicationTargetId === null) {
@@ -217,9 +234,7 @@ export class PlatformLiveMeetingRuntime {
       startedAtMs,
     });
     if (result.lifecycleStatus === "ended") {
-      this.dependencies.logger.info("Derived live meeting start reused after terminal commit", {
-        meetingId: event.recordingId,
-      });
+      this.dependencies.logger.info("Derived live meeting start reused after terminal commit", { meetingId: event.recordingId });
       return;
     }
     await registerFinalizedMemory(this.dependencies, event);
@@ -240,22 +255,54 @@ export class PlatformLiveMeetingRuntime {
     });
     state.projection.restoreFinalCaptions(result.finalizedTurns);
     this.meetings.set(state.meetingId, state);
+    const recovery = this.initializeRecovery(state);
     this.dependencies.logger.info("Derived live meeting started", {
-      meetingId: state.meetingId,
-      reused: result.status === "reused",
+      meetingId: state.meetingId, reused: result.status === "reused",
     });
     const terminalEndTime = this.finalizer.rememberedEndTime(state.meetingId);
     if (terminalEndTime !== undefined) {
       await this.finalizer.beginFinish(state, terminalEndTime);
     }
+    return { recovery };
+  }
+
+  private initializeRecovery(state: ActiveLiveMeeting): Promise<void> {
+    let initialization!: Promise<void>;
+    initialization = (async () => {
+      const pending = await this.dependencies.pendingLivePackets?.(state.meetingId);
+      if (state.packetRecovery === initialization && !state.finishing && pending !== undefined) {
+        void state.transcription.recover(pending).catch((error: unknown) => {
+          this.dependencies.logger.warn("Derived live packet recovery failed", {
+            meetingId: state.meetingId,
+            errorName: error instanceof Error ? error.name : "UnknownError",
+          });
+        });
+      }
+    })();
+    state.packetRecovery = initialization;
+    void initialization.catch(() => {
+      if (state.packetRecovery === initialization) { state.packetRecovery = null; }
+    });
+    return initialization;
+  }
+
+  private async waitForPacketRecovery(initialization: Promise<void> | null | undefined, deadlineMs: number): Promise<boolean> {
+    if (initialization === null || initialization === undefined) { return false; }
+    let timeout!: LiveRuntimeTimerHandle;
+    const expired = new Promise<boolean>((resolve) => {
+      timeout = this.timer.schedule(Math.max(0, deadlineMs - this.clock.nowMilliseconds()), () => { resolve(false); });
+    });
+    try { return await Promise.race([initialization.then(() => true), expired]); }
+    finally { this.timer.cancel(timeout); }
   }
 
   private async acceptPackets(
     recordingId: string,
     packets: readonly LiveVoicePacket[],
+    deadlineMs: number,
   ): Promise<void> {
     const state = this.meetings.get(recordingId);
-    if (state === undefined || state.finishing) {
+    if (state === undefined || state.finishing || state.packetRecovery === null) {
       for (const packet of packets) {
         this.dependencies.logger.debug("Live packet skipped without active derived meeting", {
           meetingId: packet.recordingId,
@@ -267,7 +314,7 @@ export class PlatformLiveMeetingRuntime {
     await state.transcription.accept({
       format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 },
       packets,
-    });
+    }, deadlineMs);
   }
 
   private async acceptParticipant(
@@ -317,9 +364,7 @@ export class PlatformLiveMeetingRuntime {
     state.conversation?.observeSpeech(event, state.finishing);
     const turnId = event.isFinal ? stableLiveTranscriptTurnId(event) : undefined;
     state.projection.acceptTranscript(event, turnId, state.finishing);
-    if (!event.isFinal || turnId === undefined) {
-      return;
-    }
+    if (!event.isFinal || turnId === undefined) { return; }
     logFinalizedLiveTranscript({
       clock: this.clock,
       event,
@@ -363,18 +408,14 @@ export class PlatformLiveMeetingRuntime {
   private scheduleDueRefresh(state: ActiveLiveMeeting, nowMs: number): void {
     const projectionDue = state.projection.isDue(nowMs);
     const summaryDue = state.summary.isDue(nowMs);
-    if (state.finishing || state.refreshQueued || (!projectionDue && !summaryDue)) {
-      return;
-    }
+    if (state.finishing || state.refreshQueued || (!projectionDue && !summaryDue)) { return; }
     const projectionDueAtMs = state.projection.dueAtMilliseconds;
     const summaryDueAtMs = state.summary.dueAtMilliseconds;
     state.refreshQueued = true;
     state.conversation?.advance(false);
     this.enqueueDomain(state, async () => {
       try {
-        if (state.finishing) {
-          return;
-        }
+        if (state.finishing) { return; }
         if (projectionDue) {
           await this.refreshProjection(state, nowMs);
         }

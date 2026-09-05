@@ -2,13 +2,15 @@
 
 **Turn every Discord voice meeting into clear, reliable team memory.**
 
-Botik records your meeting and publishes the final notes directly to Discord.
-Your team gets decisions, action items, open questions, and an attached
-speaker-attributed transcript without moving the conversation to another app.
+Botik records your meeting and publishes the result directly to Discord. The
+default self-hosted `transcript-outline` reports only the authoritative turn
+count and attaches the speaker-attributed transcript. Rich decisions, action
+items, open questions, and narrative summaries require optional hosted
+generation and are not part of that default.
 Optional live features add captions, an evolving summary, voice conversation,
 grounded Q&A, historical meeting memory, and private recording playback.
 
-[**Add Botik to Discord**](https://discord.com/oauth2/authorize?client_id=1533224474609057793&integration_type=0&permissions=1133568&scope=bot%20applications.commands)
+[**Self-host Botik with two user-owned Discord applications**](infra/deployment/oss-meeting-topology.md)
 
 ## See the Discord result
 
@@ -28,17 +30,28 @@ playback is enabled.
 | Capability | What your team gets | Availability |
 | --- | --- | --- |
 | Automatic recording | Recording starts when people join the configured voice channel. | Core flow |
-| Final summary | A concise overview, key details, decisions, action items with owners and deadlines, and unresolved questions. | Core flow |
+| Transcript outline | Authoritative turn count plus the complete transcript attachment; no inferred decisions or actions. | Core self-hosted flow |
+| Rich final summary | Overview, decisions, action items, owners, deadlines, and unresolved questions. | Optional hosted generation |
 | Full transcript | Every final result attaches a complete Markdown transcript with speakers and timestamps. | Core flow |
 | Live captions and brief | One Discord post follows the conversation and updates key topics, decisions, actions, and questions during the call. | Optional live mode |
 | Voice assistant | Address Botik for a spoken answer that can be interrupted. Optional greetings and farewells make the assistant present throughout the call. | Optional live mode |
 | Grounded meeting Q&A | Reply to the current final Botik post, or ask by voice when enabled, for an answer tied to accepted transcript evidence. Botik abstains when evidence or authorization is insufficient. | Optional, rollout-gated |
 | Historical meeting memory | Ground answers in authorized previous meetings from the same configured room. | Optional, requires qualified memory serving |
 | Recording playback | Open a private signed link to a synchronized browser player. | Optional deployment feature |
-| Localized output | Final Discord summaries and transcripts have English, Russian, and Ukrainian presentation. Voice flows are qualified in English and Russian. | Depends on the feature |
+| Output presentation | Discord labels and attachments support English, Russian, or Ukrainian; generated title and overview language depends on the selected summary provider. | Depends on the feature |
+| Speech recognition | Recognition languages depend on the selected provider and model. The configured batch/live adapters are implemented and conformance-tested, but this exact OSS revision has no retained provider-quality qualification evidence. | Provider/model-dependent; exact-revision qualification pending |
+
+This is not a claim that any configured provider supports only those languages.
 
 Optional capabilities are enabled independently by each deployment. The core
 post-call flow does not depend on live voice, historical memory, or playback.
+Meeting Platform talks only to the versioned VoiceText contract; configured
+speech providers are implemented, conformance-tested adapters behind the
+self-hosted gateway. The Rust domain/application ports are provider-agnostic.
+Those tests establish contract behavior only: real acoustic qualification
+requires retained exact-revision receipts that bind the provider and model to
+the tested source revision. A new public V1 profile still requires an explicit
+identity/config addition in gateway composition and the Discord consumer.
 
 ## How it works
 
@@ -50,15 +63,16 @@ post-call flow does not depend on live voice, historical memory, or playback.
    mode is enabled, captions and the meeting brief stay in one Discord post
    instead of flooding the channel.
 3. **Leave with a complete handoff.** After the call, Botik reconciles the live
-   draft, when present, with the full recording, publishes the final summary,
-   and attaches the complete transcript without duplicate messages.
-   Playback-enabled deployments also include a private recording link.
+   draft, when present, with the full recording, publishes the minimal outline
+   or an optionally hosted rich summary, and attaches the complete transcript
+   without duplicate messages. Playback-enabled deployments also include a
+   private recording link.
 
 ## Built for trustworthy meeting notes
 
-- **Claims stay connected to the conversation.** Decisions and action items
-  must reference real transcript turns. The attached full summary includes the
-  supporting evidence.
+- **Generated claims stay connected to the conversation.** When optional rich
+  generation is enabled, decisions and action items must reference real
+  transcript turns. The default outline makes no such inferred claims.
 - **The recording remains the source of truth.** Live captions are useful during
   the call, but the final transcript is produced from the original per-speaker
   recording.
@@ -72,22 +86,29 @@ post-call flow does not depend on live voice, historical memory, or playback.
 
 ## Set up your Discord server
 
-1. [Add Botik to Discord](https://discord.com/oauth2/authorize?client_id=1533224474609057793&integration_type=0&permissions=1133568&scope=bot%20applications.commands).
-2. Open any text channel and run `/setup-voice-bot`.
-3. Select the voice channel to record and the text channel that should receive
+1. Create two official applications in the Discord Developer Portal: a
+   user-owned Craig recording application and a separate user-owned Meeting
+   Platform publication application. Create one test bot for each application
+   when qualifying the deployment.
+2. Configure their distinct application IDs and token files as described in the
+   [self-host topology](infra/deployment/oss-meeting-topology.md), then install
+   both applications in an operator-owned private guild. Never use a user token,
+   self-bot, public guild, or a project-operated application ID.
+3. Open any text channel and run `/setup-voice-bot` with the publication bot.
+4. Select the voice channel to record and the text channel that should receive
    final results and, when enabled, live updates.
 
-The current Meeting Platform and isolated Craig Voice Gateway share one official
-bot identity, so the standard deployment needs only one installation. A
-deployment with a separate Craig identity exposes its own explicit second
-installation step.
+The canonical deployment uses two official applications and two installations:
+one user-owned Craig voice bot and one Meeting Platform publication bot. Their
+application IDs and token files are always distinct.
 
 ## Current status
 
 This repository contains the executable V1 vertical slice and production
-packages. The complete recording-to-summary flow is implemented. Live voice,
-grounded Q&A, historical memory, and playback are separately enabled,
-fail-closed capabilities while the project remains under active development.
+packages. The complete recording-to-transcript-outline flow is self-hostable;
+rich generation is implemented as an optional hosted lane. Live voice, grounded
+Q&A, historical memory, and playback are separately enabled, fail-closed
+capabilities while the project remains under active development.
 
 ## Technical overview
 
@@ -96,7 +117,7 @@ original multitrack recording
   -> checksummed per-speaker audio
   -> final transcription
   -> speaker-attributed transcript
-  -> evidence-backed summary
+  -> minimal transcript outline (default) or evidence-backed summary (optional)
   -> idempotent Discord publication
 ```
 
@@ -153,6 +174,11 @@ authoritative pull-request gate.
 Private real-Discord acceptance, Russian and English synthetic fixtures,
 recovery checks, and retained-evidence verification are documented in the
 [E2E runbook](docs/operations/real-e2e-runbook.md).
+
+Those historical/private campaign procedures and any evidence retained outside
+this public checkout do not qualify the current OSS revision. EN/RU acoustic
+quality and all four provider/mode profiles remain pending until a campaign
+receipt binds the exact Meeting Platform and VoiceText source revisions.
 
 `@agent-teams/engineering-foundation` is an exact development-only dependency.
 Production code must never import it.

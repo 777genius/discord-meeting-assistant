@@ -1,9 +1,11 @@
 # Isolated host deployment
 
-This Compose project is isolated under one explicit `DEPLOY_ROOT`, uses unique
-networks and service names, publishes no host ports, and never mounts another
-project's mutable runtime directory. Craig joins `discord-meeting-internal` and
-posts authenticated ingress traffic to `http://meeting-platform:4310`.
+This Compose stack is isolated under one explicit `DEPLOY_ROOT`. Its non-external
+networks use Compose-generated, project-scoped names, its service discovery is
+limited to those networks, and it never mounts another project's mutable runtime
+directory. Use a distinct Compose project name and `DEPLOY_ROOT` for every stack.
+Craig joins the project-scoped `meeting-internal` network and posts authenticated
+ingress traffic to `http://meeting-platform:4310`.
 
 Meeting Platform is deliberately locked to one replica and
 `LIVE_INGRESS_OWNER_MODE=singleton`. Do not scale this service horizontally
@@ -97,6 +99,15 @@ than 2026-10-31, after ADR-0049's full V1 drain and rollback gates pass.
 
 ## VoiceText provider profiles
 
+No private VoiceText URL is a deployment default. To use the separately
+versioned OSS gateway without changing Meeting Platform, add the
+[self-hosted gateway overlay](voicetext-gateway.md). Meeting Platform still
+uses only one VoiceText-compatible URL and machine bearer token; provider keys
+stay in the gateway.
+
+The clean-checkout ownership, bot, storage, TLS, secret, optional-service, and
+single smoke workflow is in the [OSS meeting topology](oss-meeting-topology.md).
+
 VoiceText batch and live recognition are selected independently in Compose:
 
 ```text
@@ -123,6 +134,15 @@ provider credentials, endpoints, SDKs, or probes to Discord. The final batch
 transcript from Craig's authoritative per-speaker Ogg tracks remains the only
 final evidence used by summary, memory, or RAG; live text stays derived.
 
+Recognition languages are provider- and model-dependent. The four selectable
+profiles have deterministic routing and contract coverage. No retained campaign
+in this public repository qualifies English, Russian, or provider acoustic
+quality on the current exact Meeting Platform and VoiceText revisions. Any
+historical/private EN/RU evidence applies only to the revisions named by its
+receipt and is not transferable. Qualification remains closed until a retained
+exact-revision campaign passes with both user-owned official test bots in a
+private test guild.
+
 Rollback is a profile change on the binding-aware release: set both selectors
 back to Deepgram and redeploy the same source revision. Do not code-revert to a
 pre-binding image after migration 0027. Schema readiness intentionally rejects
@@ -132,12 +152,13 @@ rollback path.
 
 ## Infinity Context historical memory
 
-The standard Compose deployment enables the production Infinity Context path
-and fails before container creation unless `INFINITY_CONTEXT_URL` and the full
+The standard Compose deployment leaves Infinity Context disabled. Add
+`compose.infinity-context.yaml` to enable the production path; that overlay
+fails before container creation unless `INFINITY_CONTEXT_URL` and the full
 reviewed `INFINITY_CONTEXT_ACTIVATION` JSON are present. Provision Infinity
 Context separately at the qualified service revision and embedding profile; it
 is not bundled into this Compose project. Its URL must be an HTTP(S) service
-root reachable from the `discord-meeting-egress` network and must not contain
+root reachable from the project-scoped `meeting-egress` network and must not contain
 credentials, a query, or a fragment. Do not use `localhost`: inside Meeting
 Platform that refers to the Platform container.
 
@@ -150,11 +171,13 @@ topology HMAC key and store it in
 Infinity service. Keep the topology key stable across rollouts because rotating
 it changes the opaque remote identities and requires an explicit migration.
 
-Before a local source build, generate provenance from the clean checkout:
+Before a local source build, use the verified wrapper; direct Compose builds are unsupported because local contexts exist only for the lifetime of this command:
 
 ```sh
-pnpm provenance:generate
+node infra/deployment/run-verified-compose.mjs --env-file <deployment.env> -- -f infra/deployment/compose.yaml build
 ```
+
+The wrapper renders and verifies Compose before building. Its context is a `git archive` of `HEAD` plus only the exact generated `.build/meeting-platform-build-provenance.json`; ignored and untracked files never reach the Docker daemon.
 
 Set these non-secret values in the deployment environment file:
 
@@ -167,10 +190,11 @@ INFINITY_CONTEXT_ACTIVATION={"apiVersion":"v1","archiveSha256":"4d96f50ae01f9000
 
 Treat that activation as a reviewed release attestation, not an operator-tuned
 feature flag. Update it only together with retained qualification evidence and
-the pinned SDK provenance in the application release. CI derives commit and
-canonical tree SHA-256 from a clean checkout and embeds the generated root-owned,
-read-only provenance artifact. Docker build arguments and runtime environment
-cannot replace it. Replace the all-`a` digest above with the exact digest echoed
+the pinned SDK provenance in the application release. The deployment generator
+derives the commit and canonical tree SHA-256 from a clean checkout and embeds
+the generated operator-owned, read-only provenance artifact. A matching revision
+environment value is required but cannot replace that Git-derived identity.
+Replace the all-`a` digest above with the exact digest echoed
 by that deployment instance. The digest detects instance drift; semantic
 compatibility comes only from the source-pinned service/profile pair and the
 locally verified tokenizer conformance receipt.
@@ -186,7 +210,7 @@ be from 100 through 60000 ms; the operation timeout must be from 1000 through
 Before the stop-first rollout, validate interpolation with `docker compose
 --env-file <deployment.env> -f infra/deployment/compose.yaml config`. Then verify
 DNS, TLS, routing, and bearer authentication from a disposable container on the
-`discord-meeting-egress` network. The service capability response must identify
+the project-scoped `meeting-egress` network. The service capability response must identify
 `infinity-context`, API `v1`, Qdrant support, the required adapters,
 `service_revision=b77b490cebbf9d80d4204425df3d795b4866ea19`, and these
 activation-bound semantic fields:
@@ -213,10 +237,11 @@ new queue writes under pressure rather than dropping BullMQ state. Meeting
 Platform continuously checks these runtime settings; an invalid policy makes
 the queue readiness probe fail closed.
 
-Set `DISCORD_APPLICATION_ID` and `DISCORD_CRAIG_APPLICATION_ID` to the official
-application identities. They are intentionally equal in the current one-install
-deployment while the code and process boundaries remain separate. Give them
-different values only for an explicit two-install deployment. `DISCORD_LEGACY_GUILD_ID` and
+Create two official applications. Set `DISCORD_PUBLICATION_APPLICATION_ID` to
+the publication bot identity and `DISCORD_CRAIG_APPLICATION_ID` to the separate
+user-owned Craig identity; the values and bot-token files must differ. The
+publication application never records voice, and Craig never publishes Meeting
+Platform results. `DISCORD_LEGACY_GUILD_ID` and
 `DISCORD_LEGACY_VOICE_CHANNEL_ID` are a temporary pair-scoped compatibility
 route for the existing private E2E guild; omit both in a new self-service
 deployment. After Discord login, Meeting Platform fails closed if its configured
@@ -253,14 +278,19 @@ depend on Discord file limits or require downloading the complete recording.
 
 When the host HTTPS proxy belongs to another Compose project, start the narrow
 recording edge with `compose.recording-edge.yaml`. Set `PUBLIC_EDGE_NETWORK` to
-the proxy's Docker network and, if necessary, override
-`MEETING_INTERNAL_NETWORK`. The edge joins both networks but forwards only
-`/recordings/*`; every other path returns `404`. Point the host HTTPS virtual
-host at `recording-edge:8080` and keep TLS termination at that host proxy.
+the proxy's Docker network and set `MEETING_INTERNAL_NETWORK` to the exact
+Compose-generated network name reported for the Meeting Platform project. These
+two networks are explicitly external to the edge project: this overlay is a
+narrow, operator-authorized bridge, not project-isolated networking. The edge
+forwards only `/recordings/*`; every other path returns `404`. Point the host
+HTTPS virtual host at `recording-edge:8080` and keep TLS termination there.
 
 ## Live conversation profile
 
-Live conversation is disabled by default. To enable the provider-neutral path,
+Live conversation is disabled by default and is non-core. The repository has an
+implemented Discord Pipecat conversation profile, but no Pipecat-to-VoiceText
+provider adapter; that adapter remains future/unimplemented. To enable the
+existing provider-neutral conversation path,
 create `${DEPLOY_ROOT}/secrets/platform/conversation-runtime-token`, create an
 empty `${DEPLOY_ROOT}/secrets/pipecat` directory owned by UID `10001`, and start
 this Compose project with `--profile conversation` plus
@@ -301,3 +331,16 @@ The multilingual model handles Russian and English directly and can accept
 additional locale hints without adding a new application profile. The
 deterministic profile remains limited to local and CI E2E and is rejected by
 both production compositions.
+
+## Immutable remote source constants
+
+The authoritative Craig and VoiceText gateway Git URL, full ref, and revision are
+checked in at `infra/deployment/source-pins.json`. Their Compose remote contexts
+repeat the same revision as `ref`, BuildKit `checksum`, image tag, and OCI
+revision label. These pins are release constants, not deployment-environment
+settings; the verified Compose wrapper rejects any rendered mismatch.
+
+With `compose.hosted-summary.yaml`, Meeting Platform waits for the subscription
+runtime sidecar's authenticated gRPC `CheckHealth` response to report `SERVING`.
+The probe reads the mounted service-token file and never sends its value through
+Compose or process arguments.

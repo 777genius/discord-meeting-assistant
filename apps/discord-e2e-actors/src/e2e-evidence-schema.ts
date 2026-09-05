@@ -85,8 +85,11 @@ export const retainedE2eEvidenceV2Schema = z.object({
     s3: z.object({
       manifestChecksumSha256: sha256Schema,
       manifestLocator: identifierSchema,
+      manifestRevision: identifierSchema.optional(),
+      manifestSizeBytes: z.number().int().positive().optional(),
       sourceChecksumSha256: sha256Schema,
       tracks: z.array(z.object({
+        artifactRevision: identifierSchema.optional(),
         checksumSha256: sha256Schema,
         durationMs: z.number().int().positive(),
         locator: identifierSchema,
@@ -332,6 +335,16 @@ export const retainedE2eEvidenceV10Schema = z.union([
   retainedPostCallE2eEvidenceV10Schema,
   retainedVoiceE2eEvidenceV10Schema,
 ]).superRefine((value, context) => {
+  if (
+    value.recording.s3.manifestRevision === undefined ||
+    value.recording.s3.manifestSizeBytes === undefined ||
+    value.recording.s3.tracks.some((track) => track.artifactRevision === undefined)
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "V10 recording evidence requires immutable manifest and track revisions",
+    });
+  }
   if (JSON.stringify(value.release) !== JSON.stringify(value.durabilityQualification.release)) {
     context.addIssue({ code: "custom", message: "V10 durability proof is bound to another release" });
   }
@@ -339,7 +352,8 @@ export const retainedE2eEvidenceV10Schema = z.union([
     value.deployment.meetingPlatform.sourceRevision) {
     context.addIssue({ code: "custom", message: "V10 durability proof is bound to another source revision" });
   }
-  if (value.qualificationKind === "voice") {
+  const validateVoiceGrounding = (): void => {
+    if (value.qualificationKind !== "voice") { return; }
     const grounded = value.conversation.lifecycle.groundedAnswers.filter(
       (observation) => observation.status === "validated",
     );
@@ -362,23 +376,24 @@ export const retainedE2eEvidenceV10Schema = z.union([
         receipt.ttsAttestation === undefined)) {
       context.addIssue({ code: "custom", message: "V10 voice evidence requires one cited grounded answer with complete TTS attestation" });
     }
-    const preparedWithoutAsset = value.conversation.lifecycle.playbackReceipts.some(
-      (receipt) => receipt.playbackKind === "prepared-cue" &&
-        receipt.preparedAssetSha256 === undefined,
-    );
-    const ttsAttestations = receipts.map((receipt) => JSON.stringify(receipt.ttsAttestation));
-    const pipecatDeployment = value.deployment.pipecat?.composeService;
-    const pipecatSourceRevision = value.deployment.pipecat?.sourceRevision;
-    if (preparedWithoutAsset || pipecatDeployment === undefined ||
-      pipecatSourceRevision === undefined || receipts.some((receipt) =>
-        receipt.ttsAttestation?.deployment !== pipecatDeployment ||
-        receipt.ttsAttestation.sourceRevision !== pipecatSourceRevision ||
-        receipt.ttsAttestation.attemptId !== receipt.playbackAttemptId ||
-        receipt.ttsAttestation.turnId !== receipt.turnId) ||
-      new Set(ttsAttestations).size !== 1) {
-      context.addIssue({ code: "custom", message: "V10 voice playback provenance must be versioned and fail closed" });
-    }
-  }
+    const validatePlaybackProvenance = (): void => {
+      const preparedWithoutAsset = value.conversation.lifecycle.playbackReceipts.some(
+        (receipt) => receipt.playbackKind === "prepared-cue" && receipt.preparedAssetSha256 === undefined,
+      );
+      const ttsAttestations = receipts.map((receipt) => JSON.stringify(receipt.ttsAttestation));
+      const pipecatDeployment = value.deployment.pipecat?.composeService;
+      const pipecatSourceRevision = value.deployment.pipecat?.sourceRevision;
+      if (preparedWithoutAsset || pipecatDeployment === undefined || pipecatSourceRevision === undefined ||
+        receipts.some((receipt) => receipt.ttsAttestation?.deployment !== pipecatDeployment ||
+          receipt.ttsAttestation.sourceRevision !== pipecatSourceRevision ||
+          receipt.ttsAttestation.attemptId !== receipt.playbackAttemptId ||
+          receipt.ttsAttestation.turnId !== receipt.turnId) || new Set(ttsAttestations).size !== 1) {
+        context.addIssue({ code: "custom", message: "V10 voice playback provenance must be versioned and fail closed" });
+      }
+    };
+    validatePlaybackProvenance();
+  };
+  validateVoiceGrounding();
 });
 export const retainedE2eEvidenceSchema = z.union([retainedE2eEvidenceV2Schema,
   retainedE2eEvidenceV3Schema, retainedE2eEvidenceV4Schema, retainedE2eEvidenceV5Schema,

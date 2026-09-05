@@ -8,6 +8,24 @@ interface ConversationReadinessEnvironment {
   readonly CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS?: number | undefined;
 }
 
+interface ConversationEnvironment extends ConversationReadinessEnvironment {
+  readonly CONVERSATION_ENABLED: boolean;
+  readonly CONVERSATION_RUNTIME_ADDRESS?: string | undefined;
+  readonly CONVERSATION_RUNTIME_TOKEN_FILE?: string | undefined;
+  readonly CONVERSATION_VOICE_PROFILE_ID: string;
+  readonly E2E_TEST_ONLY_LABEL: boolean;
+  readonly MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED: boolean;
+  readonly NODE_ENV: "development" | "production" | "test";
+  readonly PARTICIPANT_GREETING_PROFILES_JSON: Readonly<Record<string, unknown>>;
+  readonly TRANSCRIPTION_PROVIDER: "speaches" | "voicetext";
+}
+
+interface DiscordApplicationEnvironment {
+  readonly DISCORD_APPLICATION_ID: string;
+  readonly DISCORD_BOTIK_APPLICATION_ID?: string | undefined;
+  readonly DISCORD_CRAIG_APPLICATION_ID: string;
+}
+
 interface MeetingKnowledgeEnvironment {
   readonly CONVERSATION_ENABLED: boolean;
   readonly DISCORD_APPLICATION_ID: string;
@@ -46,6 +64,101 @@ export function validateConversationReadinessEnvironment(
       message:
         "conversation E2E greeting readiness requires observer ID, greeting root and playback readiness",
       path: ["CONVERSATION_E2E_GREETING_PLAYBACK_READINESS_ROOT"],
+    });
+  }
+}
+
+export function validateConversationEnvironment(
+  environment: ConversationEnvironment,
+  context: RefinementCtx,
+): void {
+  const playbackReadinessParts = [
+    environment.CONVERSATION_E2E_PLAYBACK_READINESS_ROOT,
+    environment.CONVERSATION_E2E_PLAYBACK_READINESS_RUN_ID,
+    environment.CONVERSATION_E2E_PLAYBACK_READINESS_TIMEOUT_MS,
+  ];
+  const configuredPlaybackReadinessParts = playbackReadinessParts
+    .filter((value) => value !== undefined).length;
+  if (configuredPlaybackReadinessParts !== 0 && configuredPlaybackReadinessParts !== 3) {
+    context.addIssue({
+      code: "custom",
+      message: "conversation E2E playback readiness root, run ID and timeout must be configured together",
+      path: ["CONVERSATION_E2E_PLAYBACK_READINESS_ROOT"],
+    });
+  }
+  if (configuredPlaybackReadinessParts > 0 && !environment.E2E_TEST_ONLY_LABEL) {
+    context.addIssue({
+      code: "custom",
+      message: "conversation playback readiness is permitted only in an explicitly test-only deployment",
+      path: ["E2E_TEST_ONLY_LABEL"],
+    });
+  }
+  if (configuredPlaybackReadinessParts > 0 && !environment.CONVERSATION_ENABLED) {
+    context.addIssue({
+      code: "custom",
+      message: "conversation playback readiness requires live conversation to be enabled",
+      path: ["CONVERSATION_ENABLED"],
+    });
+  }
+  if (
+    Object.keys(environment.PARTICIPANT_GREETING_PROFILES_JSON).length > 0 &&
+    !environment.CONVERSATION_ENABLED &&
+    !environment.MEETING_KNOWLEDGE_LOCAL_FINAL_REPLY_ENABLED
+  ) {
+    context.addIssue({
+      code: "custom",
+      message:
+        "participant greeting profiles require live conversation or local final reply to be enabled",
+      path: ["PARTICIPANT_GREETING_PROFILES_JSON"],
+    });
+  }
+  if (!environment.CONVERSATION_ENABLED) {
+    return;
+  }
+  if (environment.TRANSCRIPTION_PROVIDER !== "voicetext") {
+    context.addIssue({
+      code: "custom",
+      message: "live conversation requires Voicetext streaming transcription",
+      path: ["TRANSCRIPTION_PROVIDER"],
+    });
+  }
+  if (environment.CONVERSATION_RUNTIME_ADDRESS === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "CONVERSATION_RUNTIME_ADDRESS is required when conversation is enabled",
+      path: ["CONVERSATION_RUNTIME_ADDRESS"],
+    });
+  }
+  if (environment.CONVERSATION_RUNTIME_TOKEN_FILE === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "CONVERSATION_RUNTIME_TOKEN_FILE is required when conversation is enabled",
+      path: ["CONVERSATION_RUNTIME_TOKEN_FILE"],
+    });
+  }
+  if (
+    environment.NODE_ENV === "production" &&
+    environment.CONVERSATION_VOICE_PROFILE_ID.startsWith("deterministic-e2e")
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "deterministic E2E voice profiles are forbidden in production",
+      path: ["CONVERSATION_VOICE_PROFILE_ID"],
+    });
+  }
+}
+
+export function validateDiscordApplicationEnvironment(
+  environment: DiscordApplicationEnvironment,
+  context: RefinementCtx,
+): void {
+  if (
+    environment.DISCORD_APPLICATION_ID === environment.DISCORD_CRAIG_APPLICATION_ID
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "publication and Craig application IDs must be distinct",
+      path: ["DISCORD_CRAIG_APPLICATION_ID"],
     });
   }
 }

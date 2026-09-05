@@ -20,7 +20,6 @@ interface SpeakerTranscriptionProviderSessionDependencies {
 
 /** Owns the provider session, its admission lease and segment identity. */
 export class SpeakerTranscriptionProviderSession {
-  private nextSegment = 1;
   private openingAbortController: AbortController | null = null;
   private session: LiveTranscriptionSession | null = null;
   private sessionLease: LiveSessionRelease | null = null;
@@ -45,18 +44,19 @@ export class SpeakerTranscriptionProviderSession {
     if (lease === null) {
       return null;
     }
+    if (signal.aborted) {
+      lease();
+      return null;
+    }
     this.sessionLease = lease;
     const openingAbortController = new AbortController();
     this.openingAbortController = openingAbortController;
     try {
-      const segment = this.nextSegment;
-      this.nextSegment += 1;
       const session = await this.dependencies.transcriber.openSession({
         idempotencyKey: [
-          "live-transcription:v2",
+          "live-transcription:v3",
           this.dependencies.meetingId,
           this.dependencies.speakerId,
-          segment,
         ].join("|"),
         meetingId: this.dependencies.meetingId,
         onTranscript: this.dependencies.onTranscript,
@@ -92,8 +92,7 @@ export class SpeakerTranscriptionProviderSession {
   public async finalize(failureMessage: string): Promise<void> {
     const session = this.session;
     const lease = this.sessionLease;
-    this.session = null;
-    this.sessionLease = null;
+    // Finalization still owns the session: a finish deadline must terminate it.
     if (session === null) {
       lease?.();
       return;
@@ -101,14 +100,15 @@ export class SpeakerTranscriptionProviderSession {
     try {
       await session.finalize();
     } catch (error) {
-      session.terminate();
+      if (this.session === session) { this.terminate(); }
       this.dependencies.logger.warn(failureMessage, {
         errorName: error instanceof Error ? error.name : "UnknownError",
         meetingId: this.dependencies.meetingId,
         speakerId: this.dependencies.speakerId,
       });
     } finally {
-      lease?.();
+      if (this.session === session) { this.session = null; }
+      if (lease !== null) { this.releaseLease(lease); }
     }
   }
 

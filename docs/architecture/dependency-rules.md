@@ -48,7 +48,7 @@ integration events, application models, and domain events are distinct surfaces.
 ## External systems
 
 Craig, Discord, PostgreSQL, object storage, queues, STT, LLMs, telemetry, and the
-future Pipecat runtime are adapter or composition concerns. Core source must not
+optional Pipecat runtime are adapter or composition concerns. Core source must not
 branch on provider names.
 
 ## Enforcement

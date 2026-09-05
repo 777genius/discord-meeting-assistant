@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { afterAll, describe, expect, it } from "vitest";
+import {
+  DeleteObjectCommand,
+  PutBucketVersioningCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   createS3BinaryArtifactReader,
@@ -41,8 +45,15 @@ async function collect(source: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
 }
 
 describe.skipIf(!integrationEnabled)("S3 adapter against disposable SeaweedFS", () => {
+  const writtenVersions: string[] = [];
+
+  beforeAll(async () => {
+    await client.send(new PutBucketVersioningCommand({ Bucket: bucket, VersioningConfiguration: { Status: "Enabled" } }));
+  });
   afterAll(async () => {
-    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    for (const versionId of writtenVersions) {
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key, VersionId: versionId }));
+    }
     client.destroy();
   });
 
@@ -66,20 +77,36 @@ describe.skipIf(!integrationEnabled)("S3 adapter against disposable SeaweedFS", 
         operationTimeoutMs: 30_000,
       });
 
-      await expect(
-        writer.write({
+      const receipt = await writer.write({
           body: bytes,
           checksumSha256,
           contentType: "application/octet-stream",
           locator,
           metadata: { "fixture-kind": "multipart" },
           sizeBytes: bytes.byteLength,
-        }),
-      ).resolves.toMatchObject({
-        checksumSha256,
+        });
+      expect(receipt).toMatchObject({ checksumSha256, locator, sizeBytes: bytes.byteLength });
+      expect(receipt.versionId).toEqual(expect.any(String));
+      expect(receipt.versionId).not.toBe("null");
+      if (receipt.versionId === undefined) {
+        throw new Error("SeaweedFS did not return an immutable version ID");
+      }
+      const versionId = receipt.versionId;
+      writtenVersions.push(versionId);
+
+      const changedBytes = bytes.slice();
+      changedBytes[0] = (changedBytes[0] ?? 0) + 1;
+      const changedReceipt = await writer.write({
+        body: changedBytes,
+        checksumSha256: createHash("sha256").update(changedBytes).digest("hex"),
+        contentType: "application/octet-stream",
         locator,
-        sizeBytes: bytes.byteLength,
+        metadata: { "fixture-kind": "changed-multipart" },
+        sizeBytes: changedBytes.byteLength,
       });
+      expect(changedReceipt.versionId).toEqual(expect.any(String));
+      expect(changedReceipt.versionId).not.toBe(versionId);
+      writtenVersions.push(changedReceipt.versionId as string);
 
       const artifact = await reader.read({
         expected: {
@@ -88,6 +115,7 @@ describe.skipIf(!integrationEnabled)("S3 adapter against disposable SeaweedFS", 
           sizeBytes: bytes.byteLength,
         },
         locator,
+        revision: versionId,
       });
 
       await expect(collect(artifact.body)).resolves.toEqual(bytes);

@@ -27,10 +27,16 @@ const meetingSnapshotSchema = z.object({
   publicationStage: stage,
   publicationTargetId: identifier,
   recording: z.object({
+    manifestChecksumSha256: sha256,
     manifestLocator: identifier,
+    manifestRevision: identifier,
+    manifestSizeBytes: z.number().int().positive(),
     recordingId: identifier,
     speakerAudio: z.array(z.object({
+      artifactRevision: identifier,
       audioLocator: identifier,
+      checksumSha256: sha256,
+      sizeBytes: z.number().int().positive(),
       speakerId: identifier,
       timelineOffsetMs: z.number().int().nonnegative(),
     })).min(1),
@@ -148,6 +154,9 @@ export function alignS3TracksToSnapshot(
   if (
     s3.recordingId !== snapshot.recording.recordingId ||
     s3.manifestLocator !== snapshot.recording.manifestLocator ||
+    s3.manifestRevision !== snapshot.recording.manifestRevision ||
+    s3.manifestChecksumSha256 !== snapshot.recording.manifestChecksumSha256 ||
+    s3.manifestSizeBytes !== snapshot.recording.manifestSizeBytes ||
     !sha256.safeParse(s3.manifestChecksumSha256).success ||
     !sha256.safeParse(s3.sourceChecksumSha256).success
   ) {
@@ -168,6 +177,9 @@ export function alignS3TracksToSnapshot(
     if (
       expected === undefined ||
       expected.audioLocator !== track.locator ||
+      expected.artifactRevision !== track.artifactRevision ||
+      expected.checksumSha256 !== track.checksumSha256 ||
+      expected.sizeBytes !== track.sizeBytes ||
       expected.timelineOffsetMs !== track.timelineOffsetMs ||
       !sha256.safeParse(track.checksumSha256).success
     ) {

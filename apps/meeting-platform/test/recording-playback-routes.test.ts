@@ -28,7 +28,7 @@ function createContext(
     findByMeetingId: async () => ({
       status,
       tracks: status === "ready"
-        ? [{ audioLocator: "s3://meeting-artifacts/recordings/a.ogg", timelineOffsetMs: 725 }]
+        ? [{ artifactRevision: "v-a", audioLocator: "s3://meeting-artifacts/recordings/a.ogg", checksumSha256: "a".repeat(64), sizeBytes: 10, timelineOffsetMs: 725 }]
         : [],
     }),
   };

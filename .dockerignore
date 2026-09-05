@@ -3,6 +3,11 @@
 **/node_modules
 **/dist
 **/.nx
-coverage
+**/coverage
 .env
-*.log
+.env.*
+**/.env
+**/.env.*
+**/*.log
+.build/*
+!.build/meeting-platform-build-provenance.json

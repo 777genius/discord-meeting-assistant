@@ -20,6 +20,7 @@ export interface SpeakerTranscriptionSessionsDependencies {
   readonly clock: LiveRuntimeClock;
   readonly isMeetingFinishing: () => boolean;
   readonly logger: LiveRuntimeLogger;
+  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
   readonly maximumQueuedPackets: number;
   readonly meetingId: string;
   readonly onTranscript: (event: LiveTranscriptionEvent) => void;
@@ -42,15 +43,33 @@ export class SpeakerTranscriptionSessions {
     private readonly dependencies: SpeakerTranscriptionSessionsDependencies,
   ) {}
 
-  public async accept(batch: LiveVoicePacketBatch): Promise<void> {
-    const deadlineMs = this.dependencies.clock.nowMilliseconds() +
-      this.dependencies.packetBackpressureTimeoutMs;
+  public async accept(
+    batch: LiveVoicePacketBatch,
+    deadlineMs = this.dependencies.clock.nowMilliseconds() + this.dependencies.packetBackpressureTimeoutMs,
+  ): Promise<void> {
     const packetsBySpeaker = groupPacketsBySpeaker(batch.packets);
     await Promise.all(
       [...packetsBySpeaker].map(([speakerId, packets]) =>
         this.speaker(speakerId).accept(packets, deadlineMs),
       ),
     );
+  }
+
+  public async recover(packets: readonly LiveVoicePacket[]): Promise<void> {
+    await Promise.all([...groupPacketsBySpeaker(packets)].map(([speakerId, speakerPackets]) =>
+      this.speaker(speakerId).recover(speakerPackets),
+    ));
+  }
+
+  public cancelRecovery(): boolean {
+    let cancelled = false;
+    for (const [speakerId, speaker] of this.speakers) {
+      if (speaker.cancelRecovery()) {
+        this.speakers.delete(speakerId);
+        cancelled = true;
+      }
+    }
+    return cancelled;
   }
 
   public beginFinish(): void {

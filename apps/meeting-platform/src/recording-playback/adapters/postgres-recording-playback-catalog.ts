@@ -15,11 +15,20 @@ export class PostgresRecordingPlaybackCatalog implements RecordingPlaybackCatalo
     if (meeting === null) {
       return { status: "unavailable", tracks: [] };
     }
-    if (meeting.recording.speakerAudio.length > 0) {
+    if (
+      meeting.recording.speakerAudio.length > 0 &&
+      meeting.recording.speakerAudio.every((track) =>
+        track.artifactRevision !== undefined &&
+        track.checksumSha256 !== undefined &&
+        track.sizeBytes !== undefined)
+    ) {
       return {
         status: "ready",
         tracks: meeting.recording.speakerAudio.map((track) => ({
+          artifactRevision: track.artifactRevision as string,
           audioLocator: track.audioLocator,
+          checksumSha256: track.checksumSha256 as string,
+          sizeBytes: track.sizeBytes as number,
           timelineOffsetMs: track.timelineOffsetMs,
         })),
       };

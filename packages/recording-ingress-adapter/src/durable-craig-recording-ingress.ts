@@ -1,3 +1,4 @@
+import type { RecordingArtifactSnapshot } from "@discord-meeting/meeting-core/recording";
 import type {
   AuthoritativeTrackUploadMetadata,
   CraigLifecycleEvent,
@@ -13,6 +14,11 @@ import type {
 import { ingestAuthoritativeTrack } from "./recording-ingress-authoritative.js";
 import { ingestLifecycleEvent } from "./recording-ingress-lifecycle.js";
 import { ingestPacketBatch } from "./recording-ingress-packet-ingest.js";
+import {
+  markLivePacketDelivered,
+  pendingLivePackets,
+  type DurableLiveVoicePacket,
+} from "./live-delivery-outbox.js";
 import { RecordingIngressRuntime } from "./recording-ingress-runtime.js";
 
 export { DEFAULT_RECORDING_INGRESS_LIMITS } from "./recording-ingress-invariants.js";
@@ -48,6 +54,23 @@ export class DurableCraigRecordingIngress {
       () => ingestPacketBatch(this.#runtime, batch, options),
       options.signal,
     );
+  }
+
+  /** Only the validated terminal receipt can supply historical artifact identity. */
+  public async completedRecording(recordingId: string): Promise<RecordingArtifactSnapshot | undefined> {
+    const receipt = await this.#runtime.spool.readCompleted(recordingId);
+    if (receipt !== undefined && receipt.recordingId !== recordingId) {
+      throw new Error("completion receipt recording identity mismatch");
+    }
+    return receipt?.recording;
+  }
+
+  public pendingLivePackets(recordingId: string): Promise<readonly DurableLiveVoicePacket[]> {
+    return pendingLivePackets(this.#runtime, recordingId);
+  }
+
+  public markLivePacketDelivered(packetId: string): Promise<"marked" | "reused"> {
+    return markLivePacketDelivered(this.#runtime, packetId);
   }
 
   public ingestLifecycleEvent(

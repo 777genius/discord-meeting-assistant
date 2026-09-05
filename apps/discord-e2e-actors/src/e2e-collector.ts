@@ -74,7 +74,7 @@ export async function collectRetainedE2eEvidence(
     snapshot.publication.externalPublicationId, snapshot.publicationTargetId,
   );
   const [observedS3, locatedBeforeDiscord] = await Promise.all([
-    deployment.collectS3(snapshot.recording.manifestLocator, input.recordingId),
+    deployment.collectS3(snapshot.recording, input.recordingId),
     inspectPublishedProjection(discord, snapshot.meetingId, snapshot.publicationTargetId, publication),
   ]);
   const { marker, message: beforeMessage, observation: beforeDiscord } = locatedBeforeDiscord;
@@ -141,6 +141,8 @@ export async function collectRetainedE2eEvidence(
       s3: {
         manifestChecksumSha256: s3.manifestChecksumSha256,
         manifestLocator: s3.manifestLocator,
+        manifestRevision: s3.manifestRevision,
+        manifestSizeBytes: s3.manifestSizeBytes,
         sourceChecksumSha256: s3.sourceChecksumSha256,
         tracks: s3.tracks,
       },

@@ -29,6 +29,7 @@ export interface ActiveLiveMeeting {
   readonly greetings: ParticipantGreetingBridge | undefined;
   readonly meetingId: string;
   readonly projection: LiveProjectionScheduler;
+  packetRecovery: Promise<void> | null;
   refreshQueued: boolean;
   readonly startedAtMs: number;
   readonly summary: LiveSummaryScheduler;
@@ -103,6 +104,9 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     clock: input.clock,
     isMeetingFinishing: () => state.finishing,
     logger: input.dependencies.logger,
+    ...(input.dependencies.markLivePacketDelivered === undefined ? {} : {
+      markLivePacketDelivered: input.dependencies.markLivePacketDelivered,
+    }),
     maximumQueuedPackets: input.packetFlow.maximumQueuedPacketsPerSpeaker,
     packetAdmission: input.packetAdmission,
     meetingId,
@@ -127,6 +131,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     greetings,
     meetingId,
     projection,
+    packetRecovery: null,
     refreshQueued: false,
     startedAtMs: input.startedAtMs,
     summary,

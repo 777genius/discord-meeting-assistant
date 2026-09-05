@@ -66,7 +66,7 @@ async function loadPlatformSecrets(
     readSecret(environment.REDIS_URL_FILE),
     readSecret(environment.S3_ACCESS_KEY_ID_FILE),
     readSecret(environment.S3_SECRET_ACCESS_KEY_FILE),
-    readSecret(environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE),
+    optional(environment.SUBSCRIPTION_RUNTIME_TOKEN_FILE),
     optional(environment.VOICETEXT_SERVICE_TOKEN_FILE),
     loadRecordingPlaybackConfig(environment, readSecret),
     loadProductionBuildProvenance(environment, readBuildProvenance),
@@ -134,7 +134,9 @@ export async function loadPlatformConfigWithParser(
     recordingPlayback,
     s3AccessKeyId,
     s3SecretAccessKey,
-    subscriptionRuntimeToken,
+    ...(subscriptionRuntimeToken === undefined
+      ? {}
+      : { subscriptionRuntimeToken }),
     ...(voicetextServiceToken === undefined ? {} : { voicetextServiceToken }),
     ...(buildProvenance === undefined ? {} : { buildProvenance }),
     ...(twoHourHistoricalQualification === undefined

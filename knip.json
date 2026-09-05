@@ -124,7 +124,7 @@
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "apps/subscription-runtime-sidecar": {
-      "entry": ["src/main.ts", "src/index.ts"],
+      "entry": ["src/main.ts", "src/index.ts", "src/healthcheck.ts"],
       "ignoreDependencies": ["@openai/codex"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },

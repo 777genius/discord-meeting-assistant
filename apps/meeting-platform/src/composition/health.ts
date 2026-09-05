@@ -4,11 +4,15 @@ import {
   type HealthProbe,
 } from "@discord-meeting/observability-adapter";
 import { GrpcPipecatConversationRuntime } from "@discord-meeting/pipecat-runtime-adapter";
-import { SubscriptionRuntimeSummaryAdapter } from "@discord-meeting/subscription-runtime-adapter";
 import type { Client } from "discord.js";
 import type { Pool } from "pg";
 
 import type { PlatformConfig } from "../config.js";
+import type { SummaryProviderHealth } from "../adapters/outbound/transcript-outline-summary-adapter.js";
+
+interface SummaryProviderHealthPort {
+  checkHealth(): Promise<SummaryProviderHealth>;
+}
 
 export interface PostCallDurabilityHealthPort {
   assertPostCallDurability(): void | Promise<void>;
@@ -30,7 +34,7 @@ export function createPlatformHealth(input: {
   readonly postCallDurability: PostCallDurabilityHealthPort;
   readonly queue: { waitUntilReady(): Promise<unknown> };
   readonly redisPolicyReadiness: RedisPolicyReadinessPort;
-  readonly runtime: SubscriptionRuntimeSummaryAdapter;
+  readonly runtime: SummaryProviderHealthPort;
   readonly schemaReadiness: SchemaReadinessPort;
   readonly s3: S3Client;
 }): HealthAggregator {
@@ -45,7 +49,7 @@ function createHealthProbes(input: {
   readonly postCallDurability: PostCallDurabilityHealthPort;
   readonly queue: { waitUntilReady(): Promise<unknown> };
   readonly redisPolicyReadiness: RedisPolicyReadinessPort;
-  readonly runtime: SubscriptionRuntimeSummaryAdapter;
+  readonly runtime: SummaryProviderHealthPort;
   readonly schemaReadiness: SchemaReadinessPort;
   readonly s3: S3Client;
 }): readonly HealthProbe[] {
@@ -111,7 +115,7 @@ function createConversationHealthProbe(
 }
 
 function createSummaryProviderHealthProbe(
-  runtime: SubscriptionRuntimeSummaryAdapter,
+  runtime: SummaryProviderHealthPort,
 ): HealthProbe {
   return {
     check: async () => {
@@ -161,9 +165,11 @@ function isVoicetextHealthy(value: unknown, config: PlatformConfig): boolean {
     return false;
   }
   const expectedProfiles = [
-    liveHealthIdentity(config.voicetext.liveProfile),
     batchHealthIdentity(config.voicetext.batchProfile),
-  ] as const;
+    ...(config.voicetext.liveEnabled === true
+      ? [liveHealthIdentity(config.voicetext.liveProfile)]
+      : []),
+  ];
   const providerProfiles: readonly unknown[] = value.provider_profiles;
   return expectedProfiles.every((identity) => {
     const matching = providerProfiles.filter((profile) =>
