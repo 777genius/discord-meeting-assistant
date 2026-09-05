@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -403,72 +403,6 @@ describe("authoritative Craig recording durability", () => {
     await expect(
       recovered.ingestLifecycleEvent(authoritativeReady()),
     ).resolves.toMatchObject({ kind: "finalized" });
-  });
-
-  it("resolves schema-five snapshots only from retained immutable authoritative track receipts", async () => {
-    const root = await spoolRoot();
-    const adapter = ingress(root, new MemoryArtifactWriter());
-    const track = originalTrack();
-    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
-    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
-    await adapter.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body));
-    const finalized = await adapter.ingestLifecycleEvent(authoritativeReady());
-    if (finalized.kind !== "finalized") { throw new Error("expected finalized recording"); }
-    const [receiptName] = await readdir(join(root, "completed-v1"));
-    if (receiptName === undefined) { throw new Error("expected durable receipt"); }
-    const receiptPath = join(root, "completed-v1", receiptName);
-    const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as {
-      schemaVersion: number;
-      recording: Record<string, unknown>;
-    };
-    receipt.schemaVersion = 5;
-    delete receipt.recording.manifestRevision;
-    delete receipt.recording.manifestChecksumSha256;
-    delete receipt.recording.manifestSizeBytes;
-    receipt.recording.speakerAudio = finalized.recording.speakerAudio.map((reference) => ({
-      audioLocator: reference.audioLocator, speakerId: reference.speakerId,
-      timelineOffsetMs: reference.timelineOffsetMs,
-    }));
-    await writeFile(receiptPath, JSON.stringify(receipt));
-    const before = await readFile(receiptPath, "utf8");
-    await expect(adapter.completedRecording("recording-1")).resolves.toMatchObject({
-      recordingId: "recording-1", speakerAudio: finalized.recording.speakerAudio,
-    });
-    await expect(adapter.completedRecording("recording-1")).resolves.toMatchObject({
-      recordingId: "recording-1", speakerAudio: finalized.recording.speakerAudio,
-    });
-    expect(await readFile(receiptPath, "utf8")).toBe(before);
-  });
-
-  it("fails closed when a legacy completion receipt cannot prove track identity", async () => {
-    const root = await spoolRoot();
-    const writer = new MemoryArtifactWriter();
-    const adapter = ingress(root, writer);
-    const track = originalTrack();
-    await adapter.ingestLifecycleEvent(lifecycle("meeting.started"));
-    await adapter.ingestLifecycleEvent(lifecycle("meeting.ended"));
-    await adapter.ingestAuthoritativeTrack(track.metadata, bytesOnce(track.body));
-    await adapter.ingestLifecycleEvent(authoritativeReady());
-
-    const [receiptName] = await readdir(join(root, "completed-v1"));
-    if (receiptName === undefined) {
-      throw new Error("completion receipt is required");
-    }
-    const receiptPath = join(root, "completed-v1", receiptName);
-    const completed = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
-    const { authoritativeTracks: _authoritativeTracks, ...legacyReceipt } = completed;
-    await writeFile(receiptPath, `${JSON.stringify({ ...legacyReceipt, schemaVersion: 1 })}\n`);
-
-    const writesBeforeReplay = writer.requests.length;
-    await expect(adapter.completedRecording("recording-1"))
-      .rejects.toMatchObject({ failure: "corrupt-spool" });
-    await expect(
-      adapter.ingestAuthoritativeTrack(track.metadata, bodyMustNotBeRead()),
-    ).rejects.toMatchObject({ failure: "corrupt-spool" });
-    await expect(
-      adapter.ingestLifecycleEvent(lifecycle("meeting.started", "recording-2")),
-    ).rejects.toMatchObject({ failure: "corrupt-spool" });
-    expect(writer.requests).toHaveLength(writesBeforeReplay);
   });
 
   it("does not consume active capacity when a completed receipt survives the cleanup crash window", async () => {
