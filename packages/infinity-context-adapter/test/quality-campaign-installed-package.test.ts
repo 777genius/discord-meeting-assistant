@@ -13,7 +13,8 @@ import { admitAcceptedFinalMeeting, buildHistoricalIndexPlan,
   createHistoricalReleaseBinding } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { Meeting } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import { FinalTranscript } from "@discord-meeting/meeting-core/transcription";
-import { canonicalJsonSha256 } from "@discord-meeting/subscription-runtime-adapter";
+import { canonicalJsonSha256, stableSubscriptionRuntimeId } from
+  "@discord-meeting/subscription-runtime-adapter";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { artifactAttemptIdentity, attemptIdentity,
@@ -102,30 +103,33 @@ describe("packed production quality-campaign entrypoint", () => {
     async () => {
     const fixture = await createPackedPreflightFixture(await mkdtemp(join(tmpdir(),
       "quality-canonical-attempts-")), installed.consumerRoot, true);
-    const { createProductionCanonicalExecutorFactory } = await installedCanonicalFactoryModule();
-    const factory = await createProductionCanonicalExecutorFactory(fixture.canonicalExecution);
     const attempts = ([1, 2] as const).map((repetition) => attemptIdentity({ callKind: "answer",
       callOrdinal: 0, campaignRootSha256: fixture.mainRootSha256,
       questionDigestSha256: fixture.firstQuestion.questionDigestSha256,
       questionId: fixture.firstQuestion.questionId, releaseRootSha256: fixture.releaseRootSha256,
       repetition, spendReservationSha256: sha256(fixture.spendDocuments[repetition - 1]!) }));
-    for (const [index, attempt] of attempts.entries()) {
-      const executor = await factory.create({ attemptId: attempt.attemptId,
+    const bindings = attempts.map((attempt, index) => ({ attemptId: attempt.attemptId,
         answerProcessIdentitySha256: fixture.release.answerProcessIdentitySha256,
         campaignRootSha256: fixture.mainRootSha256,
         infinityCapabilitySha256: fixture.release.infinityCapabilitySha256,
         mapperSha256: fixture.release.mapperSha256, questionId: fixture.firstQuestion.questionId,
         releaseRootSha256: fixture.releaseRootSha256, repetition: (index + 1) as 1 | 2,
-        reservation: { reserve: async () => {} }, spendReservationSha256:
-          attempt.spendReservationSha256,
-        tokenizerSha256: fixture.release.tokenizerSha256 });
-      await expect(executor.execute(fixture.firstPacket, { attemptId: attempt.attemptId,
-        signal: new AbortController().signal })).resolves.toMatchObject({ status: "answered" });
-    }
+        spendReservationSha256: attempt.spendReservationSha256,
+        tokenizerSha256: fixture.release.tokenizerSha256 }));
+    const script = `const m=await import(${JSON.stringify(installedCanonicalFactoryUrl())});const f=await m.createProductionCanonicalExecutorFactory(${JSON.stringify(fixture.canonicalExecution)});const outcomes=[];for(const b of ${JSON.stringify(bindings)}){const e=await f.create({...b,reservation:{reserve:async()=>{}}});outcomes.push(await e.execute(${JSON.stringify(fixture.firstPacket)},{attemptId:b.attemptId,signal:new AbortController().signal}))}if(outcomes.some(({status})=>status!=="answered"))process.exit(2);process.stdout.write(JSON.stringify(outcomes.map(({status})=>status)),()=>process.exit(0))`;
+    await expect(execute(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: installed.consumerRoot, env: fixture.childEnvironment, timeout: 60_000,
+    })).resolves.toMatchObject({ stderr: "", stdout: '["answered","answered"]' });
     expect(attempts[0]!.attemptId).not.toBe(attempts[1]!.attemptId);
     const requests = fixture.answerRequests();
     expect(requests).toHaveLength(4); expect(new Set(requests.map(({ runId }) => runId)).size).toBe(4);
     expect(requests.map(({ repair }) => repair)).toEqual([false, true, false, true]);
+    for (const [index, original] of [requests[0]!, requests[2]!].entries()) {
+      expect(original.runId).toBe(stableSubscriptionRuntimeId("knowledge-answer-request", attempts[
+        index]!.attemptId, original.canonicalEvidenceHash, original.policyVersion));
+      expect(requests[index * 2 + 1]!.runId).toBe(stableSubscriptionRuntimeId(
+        "knowledge-answer-provider-output-repair", original.runId));
+    }
   }, 120_000);
 
   it("rejects stale or swapped caller attempt metadata before provider bytes", async () => {
@@ -178,12 +182,10 @@ describe("packed production quality-campaign entrypoint", () => {
 });
 
 async function installedCanonicalFactoryModule() {
-  const path = join(installed.consumerRoot, "node_modules", "@discord-meeting",
-    "infinity-context-adapter", "dist", "quality-campaign",
-    "production-canonical-executor-factory.js");
-  return await import(pathToFileURL(path).href) as typeof import(
-    "../src/quality-campaign/production-canonical-executor-factory.js");
+  return await import(installedCanonicalFactoryUrl()) as typeof import("../src/quality-campaign/production-canonical-executor-factory.js");
 }
+
+function installedCanonicalFactoryUrl() {return pathToFileURL(join(installed.consumerRoot, "node_modules", "@discord-meeting", "infinity-context-adapter", "dist", "quality-campaign", "production-canonical-executor-factory.js")).href;}
 
 async function packAndInstall() {
   const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -714,13 +716,13 @@ async function startPackedGroundedAnswerRuntime(launcherSha256: string, forceRep
   const service = (((loaded.social_monitor as Record<string, unknown>).agent_runtime as
     Record<string, unknown>).v1 as Record<string, unknown>).AgentRuntimeService as
     { service: Record<string, unknown> };
-  const prompts: string[] = [], requests: { readonly repair: boolean; readonly runId: string }[] = [];
+  const prompts: string[] = [], requests: { readonly canonicalEvidenceHash: string; readonly policyVersion: string; readonly repair: boolean; readonly runId: string }[] = [];
   const server = new grpc.Server();
   server.addService(service.service, { runAgentTask: (call: { request: Record<string, unknown> },
     callback: (error: Error | null, response?: unknown) => void) => {
     const request = runtimeRequestFromGrpc(call.request); prompts.push(request.task.prompt);
     const repair = request.task.systemPrompt.includes("A previous generation failed");
-    requests.push(Object.freeze({ repair, runId: request.runId }));
+    requests.push(Object.freeze({ canonicalEvidenceHash: request.context.metadata.meetingId, policyVersion: request.task.metadata.policyVersion, repair, runId: request.runId }));
     if (forceRepair && !repair) {
       callback(null, { failure: { code: "provider_output_invalid", reconnectRequired: false,
         retryable: false, safeMessage: "deterministic repair fixture" }, schemaVersion: 1,
