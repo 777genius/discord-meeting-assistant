@@ -1,6 +1,7 @@
 const subscriptionRuntimeFinalCodexModel = "gpt-5.6-sol";
 const subscriptionRuntimeIncrementalCodexModel = "gpt-5.6-luna";
 const subscriptionRuntimeConversationCodexModel = "gpt-5.6-luna";
+const subscriptionRuntimeDefaultServiceTier = "default";
 
 const profiles = Object.freeze({
   "discord_meeting.conversation.answer": Object.freeze({
@@ -24,6 +25,7 @@ const profiles = Object.freeze({
     purpose: "discord_meeting.knowledge.answer.v1",
     reasoningEffort: "medium",
     responseFormat: "json",
+    serviceTier: subscriptionRuntimeDefaultServiceTier,
   }),
   "discord_meeting.knowledge.coverage_extract.v1": Object.freeze({
     maxOutputTokens: 2_048,
@@ -84,7 +86,12 @@ const childEnvironmentNames = Object.freeze([
  * optional schema file; callers that do forward one receive the same exact
  * fail-closed argv with one admitted generated path.
  */
-export function pinnedCodexTaskArgv(model, reasoningEffort, outputSchemaPath) {
+export function pinnedCodexTaskArgv(
+  model,
+  reasoningEffort,
+  outputSchemaPath,
+  serviceTier,
+) {
   return Object.freeze([
     "exec",
     "--json",
@@ -98,6 +105,9 @@ export function pinnedCodexTaskArgv(model, reasoningEffort, outputSchemaPath) {
     'cli_auth_credentials_store="file"',
     "--config",
     `model_reasoning_effort="${reasoningEffort}"`,
+    ...(serviceTier === undefined
+      ? []
+      : ["--config", `service_tier="${serviceTier}"`]),
     "--config",
     'model_verbosity="low"',
     "--config",
@@ -157,6 +167,7 @@ function admitRequest(input) {
   assertExact(input.provider, profile.provider, "provider");
   assertExact(input.model, profile.model, "CLI model");
   assertExact(input.reasoningEffort, profile.reasoningEffort, "runtime reasoning effort");
+  assertExact(input.serviceTier, profile.serviceTier, "runtime service tier");
   assertExact(controls.model, profile.model, "controls.model");
   assertExact(
     controls.maxOutputTokens,
@@ -164,6 +175,7 @@ function admitRequest(input) {
     "controls.maxOutputTokens",
   );
   assertExact(controls.reasoningEffort, profile.reasoningEffort, "controls.reasoningEffort");
+  assertExact(controls.serviceTier, profile.serviceTier, "controls.serviceTier");
   assertExact(controls.responseFormat, profile.responseFormat, "controls.responseFormat");
   assertExact(controls.selectedOutputKind, profile.outputKind, "controls.selectedOutputKind");
   assertExact(
@@ -174,6 +186,7 @@ function admitRequest(input) {
   assertExact(metadata.model, profile.model, "metadata.model");
   assertExact(metadata.policyVersion, profile.policyVersion, "metadata.policyVersion");
   assertExact(metadata.reasoningEffort, profile.reasoningEffort, "metadata.reasoningEffort");
+  assertExact(metadata.serviceTier, profile.serviceTier, "metadata.serviceTier");
   assertExact(metadata.runtimeOutput, profile.outputKind, "metadata.runtimeOutput");
   assertExact(task.outputSchemaName, profile.outputSchemaName, "task.outputSchemaName");
   if (controls.disableTools !== true || controls.interactive !== false) {
@@ -193,10 +206,12 @@ function profileForRequest(requestValue) {
   return selected;
 }
 
-export function isAdmittedCodexExecution(model, reasoningEffort) {
+export function isAdmittedCodexExecution(model, reasoningEffort, serviceTier) {
   return Object.values(profiles).some(
     (profile) =>
-      profile.model === model && profile.reasoningEffort === reasoningEffort,
+      profile.model === model &&
+      profile.reasoningEffort === reasoningEffort &&
+      profile.serviceTier === serviceTier,
   );
 }
 
@@ -235,8 +250,8 @@ export function optionalArgument(args, name) {
       index += 1;
     }
   }
-  if (new Set(values).size > 1) {
-    throw new Error(`${name} contains conflicting values`);
+  if (values.length > 1) {
+    throw new Error(`${name} must not be repeated`);
   }
   return values[0];
 }

@@ -108,6 +108,7 @@ export class NodeProcessRunner implements ProcessRunnerPort {
           cancelled,
           outputLimitExceeded,
           signal,
+          ...serviceTierEvidence(request.args),
           stderr: Buffer.concat(stderr).toString("utf8"),
           stdout: Buffer.concat(stdout).toString("utf8"),
           timedOut,
@@ -115,6 +116,25 @@ export class NodeProcessRunner implements ProcessRunnerPort {
       });
     });
   }
+}
+
+function serviceTierEvidence(
+  args: readonly string[],
+): { readonly serviceTier?: string } {
+  const indexes = args.flatMap((value, index) =>
+    value === "--service-tier" ? [index] : []);
+  if (indexes.length === 0) {
+    return {};
+  }
+  const values = indexes.map((index) => args[index + 1]);
+  if (
+    values.length !== 1 ||
+    values[0] === undefined ||
+    values[0].startsWith("--")
+  ) {
+    return {};
+  }
+  return { serviceTier: values[0] };
 }
 
 function cancelledResult(): ProcessRunResult {

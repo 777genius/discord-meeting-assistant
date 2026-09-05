@@ -10,6 +10,7 @@ export const subscriptionRuntimeModel = "gpt-5.6-sol" as const;
 export const subscriptionRuntimeIncrementalModel = "gpt-5.6-luna" as const;
 export const subscriptionRuntimeConversationModel = "gpt-5.6-luna" as const;
 export const subscriptionRuntimeReasoningEffort = "medium" as const;
+export const subscriptionRuntimeDefaultServiceTier = "default" as const;
 export const subscriptionRuntimeIncrementalReasoningEffort = "low" as const;
 export const subscriptionRuntimeConversationReasoningEffort = "low" as const;
 export const subscriptionRuntimeSummaryMaxOutputTokens = 8_192 as const;
@@ -72,6 +73,7 @@ export interface SubscriptionRuntimeExecutionProfile {
   readonly reasoningEffort:
     | typeof subscriptionRuntimeIncrementalReasoningEffort
     | typeof subscriptionRuntimeReasoningEffort;
+  readonly serviceTier?: typeof subscriptionRuntimeDefaultServiceTier;
 }
 
 export interface KnowledgeAnswerQualificationExecutionBinding {
@@ -120,6 +122,7 @@ export const knowledgeAnswerExecutionProfile: SubscriptionRuntimeExecutionProfil
   policyVersion: knowledgeAnswerPolicyVersion,
   purpose: subscriptionRuntimeKnowledgeAnswerPurpose,
   reasoningEffort: subscriptionRuntimeReasoningEffort,
+  serviceTier: subscriptionRuntimeDefaultServiceTier,
 });
 
 export const knowledgeCoverageExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
@@ -177,6 +180,7 @@ export interface SubscriptionRuntimeTaskControls extends JsonObject {
   readonly outputSchemaName: SubscriptionRuntimeOutputSchemaName;
   readonly permissionMode: "read-only";
   readonly reasoningEffort: SubscriptionRuntimeExecutionProfile["reasoningEffort"];
+  readonly serviceTier?: typeof subscriptionRuntimeDefaultServiceTier;
   readonly responseFormat: "json";
   readonly runtimeOutput: "structured_output";
   readonly selectedOutputKind: "structured_output";
@@ -211,6 +215,7 @@ export interface SubscriptionRuntimeAgentTaskRequest extends JsonObject {
       readonly policyVersion: SubscriptionRuntimeExecutionProfile["policyVersion"];
       readonly reasoningEffort: SubscriptionRuntimeExecutionProfile["reasoningEffort"];
       readonly runtimeOutput: "structured_output";
+      readonly serviceTier?: typeof subscriptionRuntimeDefaultServiceTier;
       readonly toolsDisabled: "true";
     };
     readonly outputSchemaName: SubscriptionRuntimeOutputSchemaName;
@@ -255,6 +260,7 @@ export interface SubscriptionRuntimeExecutionAttestation {
   readonly schemaVersion: number;
   readonly selectedOutputKind: string;
   readonly selectedOutputSha256: string;
+  readonly serviceTier?: typeof subscriptionRuntimeDefaultServiceTier;
 }
 
 export interface SubscriptionRuntimeUsage {

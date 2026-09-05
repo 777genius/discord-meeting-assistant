@@ -54,6 +54,9 @@ export async function createPersistentCodexWorkerGroup(
       },
       providerInstanceId: account.providerInstanceId,
       reasoningEffort: profile.execution.reasoningEffort,
+      ...(profile.execution.serviceTier === undefined
+        ? {}
+        : { serviceTier: profile.execution.serviceTier }),
       sessionCacheSlots: 1,
       sourceEnv: sourceEnvironment,
       stateRootDir: options.stateRoot,

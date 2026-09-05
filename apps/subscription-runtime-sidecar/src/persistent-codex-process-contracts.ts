@@ -71,6 +71,7 @@ export interface LauncherPolicyModule {
     readonly model: string;
     readonly provider: "codex";
     readonly reasoningEffort: string;
+    readonly serviceTier?: string;
     readonly request: unknown;
   }) => unknown;
 }

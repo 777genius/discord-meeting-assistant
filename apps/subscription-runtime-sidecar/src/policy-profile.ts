@@ -15,6 +15,7 @@ import {
   subscriptionRuntimeConversationModel,
   subscriptionRuntimeConversationPurpose,
   subscriptionRuntimeConversationReasoningEffort,
+  subscriptionRuntimeDefaultServiceTier,
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalPurpose,
   subscriptionRuntimeIncrementalReasoningEffort,
@@ -122,6 +123,7 @@ export function reconstructProfileMetadata(
         subscriptionRuntimeModel,
         knowledgeAnswerPolicyVersion,
         subscriptionRuntimeReasoningEffort,
+        subscriptionRuntimeDefaultServiceTier,
       ),
     };
   }
@@ -166,10 +168,12 @@ export function assertCanonicalProfile(
     valuesDiffer(request.task.controls.maxOutputTokens, profile.maxOutputTokens) ||
     valuesDiffer(request.task.controls.model, profile.model) ||
     valuesDiffer(request.task.controls.reasoningEffort, profile.reasoningEffort) ||
+    request.task.controls.serviceTier !== optionalServiceTier(profile) ||
     request.task.controls.outputSchemaName !== profile.outputSchemaName ||
     valuesDiffer(request.task.metadata.model, profile.model) ||
     request.task.metadata.policyVersion !== profile.policyVersion ||
     valuesDiffer(request.task.metadata.reasoningEffort, profile.reasoningEffort) ||
+    optionalServiceTier(request.task.metadata) !== optionalServiceTier(profile) ||
     request.task.outputSchemaName !== profile.outputSchemaName
   ) {
     throw new RequestPolicyError("canonical request profile is not admitted");
@@ -182,6 +186,9 @@ export function assertCanonicalProfile(
     policyVersion: request.task.metadata.policyVersion,
     reasoningEffort: request.task.metadata.reasoningEffort,
     runtimeOutput: request.task.metadata.runtimeOutput,
+    ...("serviceTier" in request.task.metadata
+      ? { serviceTier: request.task.metadata.serviceTier }
+      : {}),
     toolsDisabled: request.task.metadata.toolsDisabled,
   };
   if (request.context.purpose === subscriptionRuntimePurpose) {
@@ -274,6 +281,7 @@ function fixedTaskMetadata(
   model: SubscriptionRuntimeAgentTaskRequest["task"]["metadata"]["model"],
   policyVersion: SubscriptionRuntimeAgentTaskRequest["task"]["metadata"]["policyVersion"],
   reasoningEffort: SubscriptionRuntimeAgentTaskRequest["task"]["metadata"]["reasoningEffort"],
+  serviceTier?: typeof subscriptionRuntimeDefaultServiceTier,
 ): SubscriptionRuntimeAgentTaskRequest["task"]["metadata"] {
   return {
     executionProfile: "stateless-completion",
@@ -281,10 +289,17 @@ function fixedTaskMetadata(
     policyVersion,
     reasoningEffort,
     runtimeOutput: "structured_output",
+    ...(serviceTier === undefined ? {} : { serviceTier }),
     toolsDisabled: "true",
   };
 }
 
 function valuesDiffer<T extends number | string>(actual: T, expected: T): boolean {
   return actual !== expected;
+}
+
+function optionalServiceTier(value: object): string | undefined {
+  return "serviceTier" in value && typeof value.serviceTier === "string"
+    ? value.serviceTier
+    : undefined;
 }

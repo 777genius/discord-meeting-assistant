@@ -213,6 +213,9 @@ function toGrpcTaskResponse(
       selectedOutputKind: grpcOutputStructured,
       selectedOutputSha256:
         result.executionAttestation.selectedOutputSha256,
+      ...(result.executionAttestation.serviceTier === undefined
+        ? {}
+        : { serviceTier: result.executionAttestation.serviceTier }),
     },
   };
 }

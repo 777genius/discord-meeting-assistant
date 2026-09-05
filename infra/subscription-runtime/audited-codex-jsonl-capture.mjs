@@ -40,8 +40,14 @@ export async function runCodexJsonlCapture(
   configuration,
   environment = process.env,
 ) {
-  const { model, reasoningEffort, target, usagePath } = captureConfiguration(configuration);
-  const captureUsage = isPinnedCodexTaskInvocation(argv, model, reasoningEffort);
+  const { model, reasoningEffort, serviceTier, target, usagePath } =
+    captureConfiguration(configuration);
+  const captureUsage = isPinnedCodexTaskInvocation(
+    argv,
+    model,
+    reasoningEffort,
+    serviceTier,
+  );
   await rm(usagePath, { force: true });
   const decoder = new StringDecoder("utf8");
   let buffered = "";

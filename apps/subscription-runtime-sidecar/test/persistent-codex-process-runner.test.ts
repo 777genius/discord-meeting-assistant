@@ -5,8 +5,10 @@ import { join } from "node:path";
 import {
   conversationAnswerExecutionProfile,
   finalSummaryExecutionProfile,
+  knowledgeAnswerExecutionProfile,
   providerConversationAnswerJsonSchema,
   providerMeetingSummaryJsonSchema,
+  providerKnowledgeAnswerJsonSchema,
   type JsonObject,
 } from "@discord-meeting/subscription-runtime-adapter";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +22,7 @@ import type { ProcessRunRequest } from "../src/types.js";
 import {
   canonicalRequest,
   conversationCanonicalRequest,
+  knowledgeAnswerCanonicalRequest,
 } from "./fixture.js";
 
 const conversationProfile: PersistentCodexProfile = {
@@ -29,6 +32,10 @@ const conversationProfile: PersistentCodexProfile = {
 const finalSummaryProfile: PersistentCodexProfile = {
   execution: finalSummaryExecutionProfile,
   outputSchema: providerMeetingSummaryJsonSchema,
+};
+const knowledgeAnswerProfile: PersistentCodexProfile = {
+  execution: knowledgeAnswerExecutionProfile,
+  outputSchema: providerKnowledgeAnswerJsonSchema,
 };
 let root: string | undefined;
 let runners: PersistentCodexProcessRunner[] = [];
@@ -106,24 +113,7 @@ describe("PersistentCodexProcessRunner", () => {
     runsConcurrentWorkWithoutLimit,
   );
 
-  it("starts with a partially healthy account pool", async () => {
-    const partiallyHealthy = await createFixture(2);
-    partiallyHealthy.state.prewarm = async (worker) => {
-      if (worker.options.workerId ===
-        "discord-meeting-discord_meeting-conversation-answer-slot-1:worker-1") {
-        throw new Error("synthetic unavailable account");
-      }
-    };
-
-    await expect(partiallyHealthy.runner.prewarmAccounts(
-      conversationProfile,
-      partiallyHealthy.environment,
-    )).resolves.toEqual({
-      failures: [{ code: "backend_unavailable", slotId: "slot-1" }],
-      readyAccounts: 1,
-      totalAccounts: 2,
-    });
-  });
+  it("starts with a partially healthy account pool", startsWithPartiallyHealthyPool);
 
   it("fails closed when no account prewarms", async () => {
     const unavailable = await createFixture(2);
@@ -192,6 +182,13 @@ describe("PersistentCodexProcessRunner", () => {
       "discord-meeting-discord_meeting-summary-generate-slot-1:worker-1",
     ]);
   });
+
+  it("sets the qualified knowledge tier", setsQualifiedKnowledgeServiceTier);
+
+  it.each([undefined, "fast"])(
+    "rejects persistent knowledge execution with CLI tier %s",
+    rejectsChangedPersistentKnowledgeTier,
+  );
 
   it("maps an external AbortSignal to the persistent worker and returns cancellation", async () => {
     const fixture = await createFixture();
@@ -315,6 +312,25 @@ describe("PersistentCodexProcessRunner", () => {
 async function identifiesRuntimeEngine(): Promise<void> {
   const fixture = await createFixture();
   expect(fixture.runner.runtimeEngine).toBe("subscription-runtime-app-server");
+}
+
+async function startsWithPartiallyHealthyPool(): Promise<void> {
+  const partiallyHealthy = await createFixture(2);
+  partiallyHealthy.state.prewarm = async (worker) => {
+    if (worker.options.workerId ===
+      "discord-meeting-discord_meeting-conversation-answer-slot-1:worker-1") {
+      throw new Error("synthetic unavailable account");
+    }
+  };
+
+  await expect(partiallyHealthy.runner.prewarmAccounts(
+    conversationProfile,
+    partiallyHealthy.environment,
+  )).resolves.toEqual({
+    failures: [{ code: "backend_unavailable", slotId: "slot-1" }],
+    readyAccounts: 1,
+    totalAccounts: 2,
+  });
 }
 
 async function disposesWorkerOnSeedFailure(): Promise<void> {
@@ -462,6 +478,10 @@ interface FakeWorkerRunOptions {
 }
 
 interface FakeWorkerState {
+  readonly admissionInputs: Array<{
+    readonly request: unknown;
+    readonly serviceTier?: string;
+  }>;
   readonly modulePaths: string[];
   readonly workers: FakeWorker[];
   prewarm: (worker: FakeWorker) => Promise<void>;
@@ -527,6 +547,48 @@ class FakeWorker {
   }
 }
 
+async function setsQualifiedKnowledgeServiceTier(): Promise<void> {
+  const fixture = await createFixture();
+  const result = await fixture.runner.run(await requestFor(
+    fixture,
+    "knowledge-answer",
+    knowledgeAnswerCanonicalRequest,
+  ));
+
+  expect(fixture.state.workers).toHaveLength(1);
+  expect(requiredWorker(fixture.state, 0).options).toMatchObject({
+    model: "gpt-5.6-sol",
+    reasoningEffort: "medium",
+    serviceTier: "default",
+  });
+  expect(result.serviceTier).toBe("default");
+  expect(knowledgeAnswerProfile.execution.serviceTier).toBe("default");
+  expect(fixture.state.admissionInputs).toHaveLength(1);
+  expect(fixture.state.admissionInputs[0]?.serviceTier).toBe("default");
+}
+
+async function rejectsChangedPersistentKnowledgeTier(
+  serviceTier: string | undefined,
+): Promise<void> {
+  const fixture = await createFixture();
+  const request = await requestFor(
+    fixture,
+    "knowledge-answer-changed-tier",
+    knowledgeAnswerCanonicalRequest,
+  );
+  const tierIndex = request.args.indexOf("--service-tier");
+  const args = serviceTier === undefined
+    ? request.args.filter(
+        (_, index) => index !== tierIndex && index !== tierIndex + 1,
+      )
+    : replaceArgument(request.args, "--service-tier", serviceTier);
+
+  await expect(fixture.runner.run({ ...request, args })).rejects.toThrow(
+    "service tier conflicts",
+  );
+  expect(fixture.state.workers).toHaveLength(0);
+}
+
 async function createFixture(accountCount = 1): Promise<Fixture> {
   const testRoot = await mkdtemp(join(tmpdir(), "persistent-codex-runner-test-"));
   root = testRoot;
@@ -552,6 +614,7 @@ async function createFixture(accountCount = 1): Promise<Fixture> {
     writeFile(packageManifestPath, "{}"),
   ]);
   const state: FakeWorkerState = {
+    admissionInputs: [],
     modulePaths: [],
     workers: [],
     prewarm: async () => {},
@@ -573,6 +636,19 @@ async function createFixture(accountCount = 1): Promise<Fixture> {
         : `discord-meeting-summary-v3-slot-${index + 1}`,
     })),
     launcherPath,
+    launcherPolicyLoader: async () => ({
+      admitMeetingSummaryRequest: (input) => {
+        state.admissionInputs.push(input);
+        const requestedTier = (input.request as {
+          readonly task?: {
+            readonly controls?: { readonly serviceTier?: unknown };
+          };
+        }).task?.controls?.serviceTier;
+        if (input.serviceTier !== requestedTier) {
+          throw new Error("service tier conflicts with persistent runner policy");
+        }
+      },
+    }),
     packageManifestPath,
     stateRoot,
     workerModuleLoader: fakeWorkerModuleLoader(state),
@@ -625,6 +701,7 @@ async function requestFor(
       join(fixture.root, "state"),
       "--model",
       controlText(requestPayload, "model"),
+      ...optionalServiceTierArgs(requestPayload),
     ],
     command: fixture.launcherPath,
     cwd: fixture.workspacePath,
@@ -668,6 +745,13 @@ function controlText(
     throw new Error(`Request test fixture is missing ${key}`);
   }
   return value;
+}
+
+function optionalServiceTierArgs(requestPayload: unknown): readonly string[] {
+  const value = (requestPayload as {
+    readonly task?: { readonly controls?: Readonly<Record<string, unknown>> };
+  }).task?.controls?.serviceTier;
+  return typeof value === "string" ? ["--service-tier", value] : [];
 }
 
 function successfulWorkerResult(input: FakeWorkerInput): FakeWorkerResult {
