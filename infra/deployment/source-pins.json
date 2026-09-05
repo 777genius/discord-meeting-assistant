@@ -6,7 +6,7 @@
   },
   "voiceTextGateway": {
     "gitUrl": "https://github.com/777genius/voicetext-gateway.git",
-    "gitRef": "28202aca479bad722289da8d2633d6cfd249c6c1",
-    "revision": "28202aca479bad722289da8d2633d6cfd249c6c1"
+    "gitRef": "c5eb287cc3ea567d67a2a9e6260ed8cf86841a7d",
+    "revision": "c5eb287cc3ea567d67a2a9e6260ed8cf86841a7d"
   }
 }

@@ -63,7 +63,7 @@ observation from the approved deployment probe, not an operator claim copied
 from Compose. Schema
 `voicetext-gateway-running-identity` v1 binds the run ID, exact HTTP/WS origins,
 running container ID, image ID, full repository image digest, pinned gateway
-commit `28202aca479bad722289da8d2633d6cfd249c6c1`, its Git tree, source repository,
+commit `c5eb287cc3ea567d67a2a9e6260ed8cf86841a7d`, its Git tree, source repository,
 and observation time. Its `identitySha256` is the SHA-256 of canonical JSON after
 recursively sorting object keys and omitting that field. The independently
 reviewed digest, commit, tree, image digest, origins, and run ID must all match
