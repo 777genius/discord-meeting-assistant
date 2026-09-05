@@ -45,9 +45,14 @@ interface TelemetryEvidence {
 export function resolveProcessCompletion(
   input: ProcessCompletionInput,
 ): SubscriptionRuntimeTaskResult {
-  const immediateFailure = processExecutionFailure(input.execution);
-  if (immediateFailure !== undefined) {
-    return failedResult(immediateFailure);
+  if (input.execution.timedOut) {
+    return failedResult("task_timeout");
+  }
+  if (input.execution.serviceTier !== input.profile.serviceTier) {
+    return failedResult("task_mode_unsupported");
+  }
+  if (input.execution.outputLimitExceeded) {
+    return failedResult("provider_output_invalid");
   }
   const parsed = parseCliResult(input.execution.stdout);
   if (parsed === undefined) {
@@ -81,9 +86,6 @@ function resolveCompletedCliResult(
   telemetry: Exclude<TelemetryResult, { readonly status: "invalid" }>,
   evidence: TelemetryEvidence,
 ): SubscriptionRuntimeTaskResult {
-  if (input.execution.serviceTier !== input.profile.serviceTier) {
-    return failedResult("task_mode_unsupported");
-  }
   if (
     telemetry.status === "missing" &&
     input.profile.purpose !== subscriptionRuntimeConversationPurpose
@@ -106,15 +108,6 @@ function resolveCompletedCliResult(
     return failedWithEvidence("provider_output_invalid", evidence);
   }
   return completedResult(input, structuredOutput, evidence);
-}
-
-function processExecutionFailure(
-  execution: ProcessRunResult,
-): SubscriptionRuntimeFailureCode | undefined {
-  if (execution.timedOut) {
-    return "task_timeout";
-  }
-  return execution.outputLimitExceeded ? "provider_output_invalid" : undefined;
 }
 
 function parseFailureCode(
