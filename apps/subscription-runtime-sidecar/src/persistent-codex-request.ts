@@ -20,9 +20,11 @@ export interface PersistentCodexCanonicalRequest {
       readonly outputSchema: JsonObject;
       readonly outputSchemaName: string;
       readonly reasoningEffort: string;
+      readonly serviceTier?: string;
     };
     readonly metadata: Readonly<Record<string, string>> & {
       readonly policyVersion: string;
+      readonly serviceTier?: string;
     };
     readonly outputSchemaName: string;
     readonly prompt: string;
@@ -67,6 +69,9 @@ export function profileForPersistentCodexRequest(
       policyVersion: request.task.metadata.policyVersion as SubscriptionRuntimeExecutionProfile["policyVersion"],
       purpose: request.context.purpose as SubscriptionRuntimeExecutionProfile["purpose"],
       reasoningEffort: request.task.controls.reasoningEffort as SubscriptionRuntimeExecutionProfile["reasoningEffort"],
+      ...(request.task.controls.serviceTier === undefined
+        ? {}
+        : { serviceTier: request.task.controls.serviceTier as "default" }),
     },
     outputSchema: request.task.controls.outputSchema,
   };
@@ -106,6 +111,28 @@ export function persistentCodexArgumentValue(
   const value = index === -1 ? undefined : args[index + 1];
   if (value === undefined || value.startsWith("--")) {
     throw new Error(`${flag} is required by persistent runner policy`);
+  }
+  return value;
+}
+
+export function optionalPersistentCodexArgumentValue(
+  args: readonly string[],
+  flag: string,
+): string | undefined {
+  const indexes = args.flatMap((value, index) => value === flag ? [index] : []);
+  if (indexes.length === 0) {
+    return undefined;
+  }
+  if (indexes.length !== 1) {
+    throw new Error(`${flag} must occur exactly once in persistent runner policy`);
+  }
+  const index = indexes[0];
+  if (index === undefined) {
+    throw new Error(`${flag} is missing from persistent runner policy`);
+  }
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value in persistent runner policy`);
   }
   return value;
 }

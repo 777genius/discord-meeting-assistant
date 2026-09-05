@@ -83,7 +83,7 @@ export async function createProductionCanonicalExecutorFactory(
   }
   const capability = decodeCapability(capabilityValue);
   const providerBinding = providerBindingFrom(capability);
-  const executionBinding = decodeExecutionBinding(executionBindingValue);
+  const runtimeBinding = decodeRuntimeBinding(executionBindingValue);
   const topology = decodeTopology(topologyValue, config.topologyAuthority.keyId,
     topologyPublicKeyPem);
   const pool = new Pool({ connectionString: postgresUrl.trim(), connectionTimeoutMillis: 5_000,
@@ -99,7 +99,8 @@ export async function createProductionCanonicalExecutorFactory(
 
   return Object.freeze({ create: async (binding: Parameters<
     QualificationQuestionExecutorFactoryPort["create"]>[0]) => {
-    assertReleaseBinding(binding, config, capability, executionBinding);
+    assertReleaseBinding(binding, config, capability, runtimeBinding);
+    const executionBinding = executionBindingFor(binding, runtimeBinding);
     const evidence = createProductionCanonicalExecutionEvidence({ answerJournalRoot:
       config.answerJournalRoot, artifactKey, artifactKeyId: config.artifactKeyId,
       artifactRoot: config.artifactRoot, attemptId: binding.attemptId,
@@ -116,7 +117,14 @@ export async function createProductionCanonicalExecutorFactory(
     });
     const answer = createGrpcQualifiedGroundedAnswerAdapter({
       beforeProviderCall: async (identity) => {
-        if (identity.attemptId !== binding.attemptId || !answerReserved) {
+        const observed = identity.executionBinding;
+        if (observed === undefined || identity.attemptId !== binding.attemptId ||
+          observed.campaignRunId !== binding.campaignRootSha256 ||
+          observed.stableAttemptId !== binding.attemptId ||
+          !sameRuntimeBinding(observed, runtimeBinding)) {
+          throw new Error("grounded answer provider exchange is not the canonical attempt");
+        }
+        if (!answerReserved) {
           throw new Error("grounded answer provider bytes preceded durable reservation");
         }
       },
@@ -143,7 +151,7 @@ export async function createProductionCanonicalExecutorFactory(
 function assertReleaseBinding(binding: Parameters<QualificationQuestionExecutorFactoryPort[
   "create"]>[0], config: ProductionCanonicalExecutionConnectionConfiguration,
 capability: ReturnType<typeof decodeCapability>,
-execution: KnowledgeAnswerQualificationExecutionBinding): void {
+execution: AnswerRuntimeBinding): void {
   for (const value of [binding.answerProcessIdentitySha256, binding.campaignRootSha256,
     binding.infinityCapabilitySha256, binding.mapperSha256, binding.releaseRootSha256,
     binding.spendReservationSha256, binding.tokenizerSha256]) {digest(value, "canonical release binding");}
@@ -181,18 +189,30 @@ FocusedLocatorRetrievalV2ProviderBinding {
     serviceRevision: capability.service_revision });
 }
 
-const EXECUTION_BINDING_KEYS = ["artifactBindingSha256", "campaignRunId",
+type AnswerRuntimeBinding = Omit<KnowledgeAnswerQualificationExecutionBinding,
+  "campaignRunId" | "stableAttemptId">;
+const RUNTIME_BINDING_KEYS = ["artifactBindingSha256",
   "endpointIdentitySha256", "processIdentitySha256", "promptMapperSha256",
-  "serviceGenerationSha256", "serviceIdentitySha256", "stableAttemptId",
-  "tokenizerSha256"] as const;
-function decodeExecutionBinding(value: unknown): KnowledgeAnswerQualificationExecutionBinding {
-  const record = exactRecord(value, EXECUTION_BINDING_KEYS, "answer execution binding");
-  for (const key of EXECUTION_BINDING_KEYS) {
+  "serviceGenerationSha256", "serviceIdentitySha256", "tokenizerSha256"] as const;
+function decodeRuntimeBinding(value: unknown): AnswerRuntimeBinding {
+  const record = exactRecord(value, RUNTIME_BINDING_KEYS, "answer execution binding");
+  for (const key of RUNTIME_BINDING_KEYS) {
     if (typeof record[key] !== "string" || record[key].length === 0) {
       throw new Error("answer execution binding is invalid");
     }
   }
-  return Object.freeze(record) as unknown as KnowledgeAnswerQualificationExecutionBinding;
+  return Object.freeze(record) as unknown as AnswerRuntimeBinding;
+}
+
+function executionBindingFor(binding: Parameters<QualificationQuestionExecutorFactoryPort[
+  "create"]>[0], runtime: AnswerRuntimeBinding): KnowledgeAnswerQualificationExecutionBinding {
+  return Object.freeze({ ...runtime, campaignRunId: binding.campaignRootSha256,
+    stableAttemptId: binding.attemptId });
+}
+
+function sameRuntimeBinding(execution: KnowledgeAnswerQualificationExecutionBinding,
+  runtime: AnswerRuntimeBinding): boolean {
+  return RUNTIME_BINDING_KEYS.every((key) => execution[key] === runtime[key]);
 }
 
 function decodeTopology(document: unknown, keyId: string,

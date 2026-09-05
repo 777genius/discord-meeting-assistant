@@ -6,6 +6,7 @@ import {
   knowledgeCoverageExecutionProfile,
   providerKnowledgeAnswerJsonSchema,
   providerKnowledgeCoverageExtractJsonSchema,
+  subscriptionRuntimeDefaultServiceTier,
   subscriptionRuntimeProtocolVersion,
   type JsonObject,
   type SubscriptionRuntimeAgentTaskRequest,
@@ -164,6 +165,7 @@ export const knowledgeAnswerCanonicalRequest: SubscriptionRuntimeAgentTaskReques
       outputSchemaName: knowledgeAnswerExecutionProfile.outputSchemaName,
       permissionMode: "read-only",
       reasoningEffort: knowledgeAnswerExecutionProfile.reasoningEffort,
+      serviceTier: subscriptionRuntimeDefaultServiceTier,
       responseFormat: "json",
       runtimeOutput: "structured_output",
       selectedOutputKind: "structured_output",
@@ -175,6 +177,7 @@ export const knowledgeAnswerCanonicalRequest: SubscriptionRuntimeAgentTaskReques
       policyVersion: knowledgeAnswerExecutionProfile.policyVersion,
       reasoningEffort: knowledgeAnswerExecutionProfile.reasoningEffort,
       runtimeOutput: "structured_output",
+      serviceTier: subscriptionRuntimeDefaultServiceTier,
       toolsDisabled: "true",
     },
     outputSchemaName: knowledgeAnswerExecutionProfile.outputSchemaName,
@@ -187,6 +190,15 @@ export const knowledgeAnswerCanonicalRequest: SubscriptionRuntimeAgentTaskReques
   },
   timeoutMs: 180_000,
 };
+
+const {
+  serviceTier: _answerControlsServiceTier,
+  ...knowledgeCoverageControls
+} = knowledgeAnswerCanonicalRequest.task.controls;
+const {
+  serviceTier: _answerMetadataServiceTier,
+  ...knowledgeCoverageMetadata
+} = knowledgeAnswerCanonicalRequest.task.metadata;
 
 export const knowledgeCoverageCanonicalRequest: SubscriptionRuntimeAgentTaskRequest = {
   ...knowledgeAnswerCanonicalRequest,
@@ -205,7 +217,7 @@ export const knowledgeCoverageCanonicalRequest: SubscriptionRuntimeAgentTaskRequ
   task: {
     ...knowledgeAnswerCanonicalRequest.task,
     controls: {
-      ...knowledgeAnswerCanonicalRequest.task.controls,
+      ...knowledgeCoverageControls,
       maxOutputTokens: knowledgeCoverageExecutionProfile.maxOutputTokens,
       model: knowledgeCoverageExecutionProfile.model,
       outputSchema: providerKnowledgeCoverageExtractJsonSchema,
@@ -213,7 +225,7 @@ export const knowledgeCoverageCanonicalRequest: SubscriptionRuntimeAgentTaskRequ
       reasoningEffort: knowledgeCoverageExecutionProfile.reasoningEffort,
     },
     metadata: {
-      ...knowledgeAnswerCanonicalRequest.task.metadata,
+      ...knowledgeCoverageMetadata,
       model: knowledgeCoverageExecutionProfile.model,
       policyVersion: knowledgeCoverageExecutionProfile.policyVersion,
       reasoningEffort: knowledgeCoverageExecutionProfile.reasoningEffort,

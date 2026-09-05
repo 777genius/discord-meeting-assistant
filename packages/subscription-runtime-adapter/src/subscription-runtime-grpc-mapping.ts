@@ -4,6 +4,7 @@ import type {
   SubscriptionRuntimeHealthResult,
   SubscriptionRuntimeTaskResult,
 } from "./subscription-runtime-contract.js";
+import { subscriptionRuntimeDefaultServiceTier } from "./subscription-runtime-contract.js";
 
 import { arrayValue, booleanValue, enumValue, integerValue, jsonObject, optionalString,
   recordValue, requiredString } from "./grpc-value-readers.js";
@@ -52,6 +53,13 @@ export function fromGrpcTaskResponse(input: unknown): SubscriptionRuntimeTaskRes
   }
   const structuredOutput = jsonObject(response.structuredOutputJson, "structuredOutputJson");
   const attestation = recordValue(response.executionAttestation, "executionAttestation");
+  const serviceTier = optionalString(attestation.serviceTier);
+  if (
+    serviceTier !== undefined &&
+    serviceTier !== subscriptionRuntimeDefaultServiceTier
+  ) {
+    throw new Error("Execution attestation service tier is not admitted");
+  }
   const telemetry = partialTelemetry(response.telemetry);
   const usage = completeUsage(response.usage);
   return { executionAttestation: {
@@ -61,6 +69,9 @@ export function fromGrpcTaskResponse(input: unknown): SubscriptionRuntimeTaskRes
     model: requiredString(attestation.model, "model"), provider: providerName(attestation.provider),
     purpose: requiredString(attestation.purpose, "purpose"),
     reasoningEffort: requiredString(attestation.reasoningEffort, "reasoningEffort"),
+    ...(serviceTier === undefined
+      ? {}
+      : { serviceTier }),
     requestId: requiredString(attestation.requestId, "requestId"),
     runtimeEngine: requiredString(attestation.runtimeEngine, "runtimeEngine"),
     runtimePackageVersion: requiredString(attestation.runtimePackageVersion,

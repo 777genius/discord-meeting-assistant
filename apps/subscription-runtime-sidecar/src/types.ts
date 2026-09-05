@@ -60,6 +60,7 @@ export interface ProcessRunResult {
   readonly cancelled?: boolean;
   readonly outputLimitExceeded: boolean;
   readonly signal: NodeJS.Signals | null;
+  readonly serviceTier?: string;
   readonly stderr: string;
   readonly stdout: string;
   readonly timedOut: boolean;

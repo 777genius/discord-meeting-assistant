@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { canonicalJson } from "./canonical.js";
 
 export type SemanticQualityV4ArtifactKind = "adjudication" | "answer" | "evidence" |
@@ -8,7 +10,20 @@ export type SemanticQualityV4ArtifactKind = "adjudication" | "answer" | "evidenc
   "original_model_input" | "original_provider_request" | "original_provider_response" |
   "repair_model_input" | "repair_provider_request" | "repair_provider_response" |
   "raw_outcome" | "response_runtime" | "retrieval_request" | "retrieval_response" |
-  "selected_canonical_turns";
+  "retrieval_observation" | "selected_canonical_turns";
+
+export interface CanonicalRetrievalObservationArtifact {
+  readonly attemptId: string;
+  readonly capabilityAndRetrievalLatencyUs: number;
+  readonly capabilityBytes: number;
+  readonly capabilitySha256: string;
+  readonly requestBytes: number;
+  readonly requestSha256: string;
+  readonly responseBytes: number;
+  readonly responseSha256: string;
+  readonly routeLatencyUs: number;
+  readonly schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v1";
+}
 
 export interface SemanticQualityV4ArtifactReceipt {
   readonly algorithm: "A256GCM";
@@ -46,8 +61,62 @@ const artifactKinds = new Set<unknown>([
   "capability_response", "evidence", "original_model_input", "original_provider_request",
   "original_provider_response", "repair_model_input", "repair_provider_request",
   "repair_provider_response", "raw_outcome", "response_runtime", "retrieval_request",
-  "retrieval_response", "selected_canonical_turns",
+  "retrieval_response", "retrieval_observation", "selected_canonical_turns",
 ]);
+
+export function validateCanonicalRetrievalObservation(input: {
+  readonly attemptId: string;
+  readonly exchange: { readonly capabilityRequestBytes: Uint8Array;
+    readonly capabilityResponseBytes: Uint8Array; readonly requestBytes: Uint8Array;
+    readonly responseBytes: Uint8Array };
+  readonly observation: { readonly capabilityAndRetrievalLatencyUs: number;
+    readonly capabilityBytes: number; readonly capabilitySha256: string;
+    readonly requestBytes: number; readonly requestSha256: string;
+    readonly responseBytes: number; readonly responseSha256: string;
+    readonly routeLatencyUs: number } | null;
+}): CanonicalRetrievalObservationArtifact {
+  if (input.observation === null) {
+    throw new Error("canonical retrieval observation is absent");
+  }
+  const observation = input.observation;
+  if (!attemptPattern.test(input.attemptId)) {
+    throw new Error("canonical retrieval observation attempt is invalid");
+  }
+  if (![observation.capabilityAndRetrievalLatencyUs, observation.routeLatencyUs]
+    .every((value) => Number.isSafeInteger(value) && value >= 0) ||
+    observation.routeLatencyUs > observation.capabilityAndRetrievalLatencyUs) {
+    throw new Error("canonical retrieval observation timing is invalid");
+  }
+  let canonicalCapabilityBytes: Uint8Array;
+  try {
+    canonicalCapabilityBytes = new TextEncoder().encode(canonicalJson(JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(input.exchange.capabilityResponseBytes),
+    ) as unknown));
+  } catch {
+    throw new Error("canonical retrieval observation does not match exact exchange");
+  }
+  const measured = [
+    [observation.capabilityBytes, observation.capabilitySha256, canonicalCapabilityBytes],
+    [observation.requestBytes, observation.requestSha256, input.exchange.requestBytes],
+    [observation.responseBytes, observation.responseSha256, input.exchange.responseBytes],
+  ] as const;
+  if (measured.some(([size, digest, bytes]) => !Number.isSafeInteger(size) || size < 0 ||
+    size !== bytes.byteLength || !isDigest(digest) || sha256(bytes) !== digest)) {
+    throw new Error("canonical retrieval observation does not match exact exchange");
+  }
+  return Object.freeze({ attemptId: input.attemptId,
+    capabilityAndRetrievalLatencyUs: observation.capabilityAndRetrievalLatencyUs,
+    capabilityBytes: observation.capabilityBytes,
+    capabilitySha256: observation.capabilitySha256,
+    requestBytes: observation.requestBytes, requestSha256: observation.requestSha256,
+    responseBytes: observation.responseBytes, responseSha256: observation.responseSha256,
+    routeLatencyUs: observation.routeLatencyUs,
+    schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v1" });
+}
+
+function sha256(value: Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) &&

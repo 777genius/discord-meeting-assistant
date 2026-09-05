@@ -128,6 +128,7 @@ describe("subscription runtime request policy", () => {
       maxOutputTokens: 2_048,
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
+      serviceTier: "default",
     });
     expect(answer.task.controls.outputSchema).toEqual(
       providerKnowledgeAnswerJsonSchema,
@@ -139,6 +140,7 @@ describe("subscription runtime request policy", () => {
     expect(coverage.task.controls.outputSchema).toEqual(
       providerKnowledgeCoverageExtractJsonSchema,
     );
+    expect(coverage.task.controls.serviceTier).toBeUndefined();
   });
 
   it("admits the exact dedicated bounded evidence selector profile", () => {
@@ -285,6 +287,37 @@ describe("subscription runtime request rejection policy", () => {
       controlsJson: JSON.stringify(controls),
       outputSchemaJson: JSON.stringify(providerKnowledgeCoverageExtractJsonSchema),
     }, options)).toThrow("output schema");
+  });
+
+  it.each([undefined, "fast"])(
+    "rejects missing or substituted qualified service tier (%s)",
+    (serviceTier) => {
+      const request = grpcRequest(knowledgeAnswerCanonicalRequest);
+      const controls = JSON.parse(String(request.controlsJson)) as Record<string, unknown>;
+      const metadata = { ...(request.metadata as Record<string, unknown>) };
+      if (serviceTier === undefined) {
+        delete controls.serviceTier;
+        delete metadata.serviceTier;
+      } else {
+        controls.serviceTier = serviceTier;
+        metadata.serviceTier = serviceTier;
+      }
+      expect(() => reconstructCanonicalRequest({
+        ...request,
+        controlsJson: JSON.stringify(controls),
+        metadata,
+      }, options)).toThrow("policy");
+    },
+  );
+
+  it("does not apply the qualified tier to another knowledge purpose", () => {
+    const request = grpcRequest(knowledgeCoverageCanonicalRequest);
+    const controls = JSON.parse(String(request.controlsJson)) as Record<string, unknown>;
+    controls.serviceTier = "default";
+    expect(() => reconstructCanonicalRequest({
+      ...request,
+      controlsJson: JSON.stringify(controls),
+    }, options)).toThrow("profile");
   });
 
   it("fails closed for stale incremental policy and output-budget profiles", () => {
