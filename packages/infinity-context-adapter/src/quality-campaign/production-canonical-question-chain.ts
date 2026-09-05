@@ -23,6 +23,9 @@ import {
 import { assertConstructedHmacHistoricalOpaqueIds,
   type HmacHistoricalOpaqueIds } from "../hmac-historical-ids.js";
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
+import { canonicalJson } from "./canonical.js";
+import { validateCanonicalRetrievalObservation } from
+  "./canonical-execution-artifact-validation.js";
 import type {
   QualificationCanonicalTurn,
   QualificationQuestionExecutionContext,
@@ -54,7 +57,7 @@ export interface QualificationEncryptedAuditPort {
       "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
       "answer_repair_request" | "answer_repair_response" | "capability_request" |
       "capability_response" | "retrieval_request" | "retrieval_response" |
-      "selected_canonical_turns";
+      "retrieval_observation" | "selected_canonical_turns";
     readonly plaintext: Uint8Array }): Promise<void>;
 }
 
@@ -136,23 +139,39 @@ export function createProductionCanonicalQuestionChain(
         throw error;
       }
       let exchange;
+      let observation;
+      let exactExchangeError: unknown;
+      let observationError: unknown;
       try {exchange = input.retrieval.takeExactExchange();}
-      catch (error) {
+      catch (error) {exactExchangeError = error;}
+      try {observation = input.retrieval.takeObservation();}
+      catch (error) {observationError = error;}
+      if (exchange === undefined) {
         await input.journal.terminal({ attemptId, payloadSha256: sha256Json({
-          reason: "retrieval_external_effect_unknown" }), phase: "retrieval",
-        state: "outcome_unknown" });
-        throw new Error("retrieval external effect is unknown and terminal", { cause: error });
+          providerFailureCode: result.status === "available" ? null : result.code,
+          reason: "retrieval_external_effect_unknown",
+          telemetryEvidence: observationError === undefined ? "present" : "missing_or_invalid",
+        }), phase: "retrieval", state: "outcome_unknown" });
+        throw new Error("retrieval external effect is unknown and terminal", {
+          cause: exactExchangeError,
+        });
       }
-      await Promise.all([
-        input.audit.seal({ attemptId, kind: "capability_request",
-          plaintext: exchange.capabilityRequestBytes }),
-        input.audit.seal({ attemptId, kind: "capability_response",
-          plaintext: exchange.capabilityResponseBytes }),
-        input.audit.seal({ attemptId, kind: "retrieval_request",
-          plaintext: exchange.requestBytes }),
-        input.audit.seal({ attemptId, kind: "retrieval_response",
-          plaintext: exchange.responseBytes }),
-      ]);
+      try {
+        await sealRetrievalExchange(input.audit, attemptId, exchange);
+        if (observation === undefined) {throw observationError;}
+        const telemetry = validateCanonicalRetrievalObservation({ attemptId, exchange,
+          observation });
+        await input.audit.seal({ attemptId, kind: "retrieval_observation",
+          plaintext: utf8(canonicalJson(telemetry)) });
+      }
+      catch {
+        const failureReason = result.status === "available" ?
+          "retrieval_observation_evidence_invalid" : result.code;
+        await input.journal.terminal({ attemptId, payloadSha256: sha256Json({
+          reason: failureReason, telemetryEvidence: "missing_or_invalid" }), phase: "retrieval",
+        state: "failed" });
+        return { reason: failureReason, status: "failed" as const };
+      }
       await input.journal.terminal({ attemptId, payloadSha256: sha256Json({ result,
         responseSha256: createHash("sha256").update(exchange.responseBytes).digest("hex") }),
         phase: "retrieval",
@@ -300,6 +319,21 @@ function createAnswerPort(input: ProductionCanonicalQuestionChainInput,
     claims: Object.freeze(generated.answer.claims.map(({ text }) => text)),
     status: "answered" as const });
   } });
+}
+
+async function sealRetrievalExchange(audit: QualificationEncryptedAuditPort, attemptId: string,
+  exchange: ReturnType<InfinityContextRetrievalV2Adapter["takeExactExchange"]>): Promise<void> {
+  const settled = await Promise.allSettled([
+    audit.seal({ attemptId, kind: "capability_request",
+      plaintext: exchange.capabilityRequestBytes }),
+    audit.seal({ attemptId, kind: "capability_response",
+      plaintext: exchange.capabilityResponseBytes }),
+    audit.seal({ attemptId, kind: "retrieval_request", plaintext: exchange.requestBytes }),
+    audit.seal({ attemptId, kind: "retrieval_response", plaintext: exchange.responseBytes }),
+  ]);
+  const failure = settled.find((value): value is PromiseRejectedResult =>
+    value.status === "rejected");
+  if (failure !== undefined) {throw failure.reason;}
 }
 
 function assertCanonicalRequest(request: FocusedLocatorRetrievalV2RequestSnapshot,
