@@ -6,7 +6,7 @@ import { createServer } from "node:https";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { admitAcceptedFinalMeeting, buildHistoricalIndexPlan,
@@ -98,6 +98,49 @@ describe("packed production quality-campaign entrypoint", () => {
     });
   }, 120_000);
 
+  it("binds release-only runtime metadata to each canonical attempt before answer bytes",
+    async () => {
+    const fixture = await createPackedPreflightFixture(await mkdtemp(join(tmpdir(),
+      "quality-canonical-attempts-")), installed.consumerRoot, true);
+    const { createProductionCanonicalExecutorFactory } = await installedCanonicalFactoryModule();
+    const factory = await createProductionCanonicalExecutorFactory(fixture.canonicalExecution);
+    const attempts = ([1, 2] as const).map((repetition) => attemptIdentity({ callKind: "answer",
+      callOrdinal: 0, campaignRootSha256: fixture.mainRootSha256,
+      questionDigestSha256: fixture.firstQuestion.questionDigestSha256,
+      questionId: fixture.firstQuestion.questionId, releaseRootSha256: fixture.releaseRootSha256,
+      repetition, spendReservationSha256: sha256(fixture.spendDocuments[repetition - 1]!) }));
+    for (const [index, attempt] of attempts.entries()) {
+      const executor = await factory.create({ attemptId: attempt.attemptId,
+        answerProcessIdentitySha256: fixture.release.answerProcessIdentitySha256,
+        campaignRootSha256: fixture.mainRootSha256,
+        infinityCapabilitySha256: fixture.release.infinityCapabilitySha256,
+        mapperSha256: fixture.release.mapperSha256, questionId: fixture.firstQuestion.questionId,
+        releaseRootSha256: fixture.releaseRootSha256, repetition: (index + 1) as 1 | 2,
+        reservation: { reserve: async () => {} }, spendReservationSha256:
+          attempt.spendReservationSha256,
+        tokenizerSha256: fixture.release.tokenizerSha256 });
+      await expect(executor.execute(fixture.firstPacket, { attemptId: attempt.attemptId,
+        signal: new AbortController().signal })).resolves.toMatchObject({ status: "answered" });
+    }
+    expect(attempts[0]!.attemptId).not.toBe(attempts[1]!.attemptId);
+    const requests = fixture.answerRequests();
+    expect(requests).toHaveLength(4); expect(new Set(requests.map(({ runId }) => runId)).size).toBe(4);
+    expect(requests.map(({ repair }) => repair)).toEqual([false, true, false, true]);
+  }, 120_000);
+
+  it("rejects stale or swapped caller attempt metadata before provider bytes", async () => {
+    const fixture = await createPackedPreflightFixture(await mkdtemp(join(tmpdir(),
+      "quality-stale-answer-binding-")), installed.consumerRoot);
+    const obsolete = JSON.parse(await readFile(fixture.answerExecutionBindingPath, "utf8")) as
+      Record<string, unknown>;
+    await writeFile(fixture.answerExecutionBindingPath, canonicalJson({ ...obsolete,
+      campaignRunId: "stale-campaign-run", stableAttemptId: "swapped-stable-attempt" }));
+    const module = await installedCanonicalFactoryModule();
+    await expect(module.createProductionCanonicalExecutorFactory(fixture.canonicalExecution))
+      .rejects.toThrow(/answer execution binding/u);
+    expect(fixture.answerRequests()).toEqual([]);
+  });
+
   it("ships the exact fail-closed HTTP review-evidence adapter contract", async () => {
     const root = await mkdtemp(join(tmpdir(), "quality-packed-review-"));
     const fixture = await createPackedPreflightFixture(root, installed.consumerRoot);
@@ -133,6 +176,14 @@ describe("packed production quality-campaign entrypoint", () => {
     }, 60_000);
 
 });
+
+async function installedCanonicalFactoryModule() {
+  const path = join(installed.consumerRoot, "node_modules", "@discord-meeting",
+    "infinity-context-adapter", "dist", "quality-campaign",
+    "production-canonical-executor-factory.js");
+  return await import(pathToFileURL(path).href) as typeof import(
+    "../src/quality-campaign/production-canonical-executor-factory.js");
+}
 
 async function packAndInstall() {
   const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -273,7 +324,7 @@ async function createPackedAdmittedExecutionCorpus(input: PackedAdmittedExecutio
   return executionCorpusPath;
 }
 
-async function createPackedPreflightFixture(root: string, consumerRoot: string) {
+async function createPackedPreflightFixture(root: string, consumerRoot: string, forceAnswerRepair = false) {
   let observedProviderRequests = 0; let observedReleaseRequests = 0;
   let observedRetrievalRequests = 0;
   let release: unknown; let reviewEvidence: unknown = {};
@@ -418,11 +469,10 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   await writeFile(capabilityPath, canonicalJson(capability));
   const answerExecutionBindingPath = join(root, "answer-execution-binding.json");
   await writeFile(answerExecutionBindingPath, canonicalJson({ artifactBindingSha256: d("artifact"),
-    campaignRunId: "packed-campaign", endpointIdentitySha256: d("endpoint"),
+    endpointIdentitySha256: d("endpoint"),
     processIdentitySha256: (release as QualityCampaignRelease).answerProcessIdentitySha256,
     promptMapperSha256: (release as QualityCampaignRelease).mapperSha256,
     serviceGenerationSha256: d("service-generation"), serviceIdentitySha256: d("service"),
-    stableAttemptId: "packed-stable-attempt",
     tokenizerSha256: (release as QualityCampaignRelease).tokenizerSha256 }));
   const topologyKeyPath = join(root, "topology.key");
   await writeFile(topologyKeyPath, Buffer.alloc(32, 7));
@@ -440,7 +490,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
   const postgresUrlPath = join(root, "postgres-url");
   await writeFile(postgresUrlPath, postgresFixturePath);
   const runtime = await startPackedGroundedAnswerRuntime(
-    (release as QualityCampaignRelease).answerProcessIdentitySha256);
+    (release as QualityCampaignRelease).answerProcessIdentitySha256, forceAnswerRepair);
   const endpoint = `${base}/unused`;
   const canonicalExecution = { answerExecutionBindingPath,
     answerJournalRoot: join(root, "canonical-answer-journal"), artifactKeyId: "retention-key",
@@ -499,17 +549,16 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string) 
     campaignRootSha256: mainRootSha256, questionDigestSha256: firstQuestion.questionDigestSha256,
     questionId: firstQuestion.questionId, releaseRootSha256, repetition: 1,
     spendReservationSha256: sha256(spendDocuments[0]!) });
-  return { answerPrompts: runtime.prompts, childEnvironment, connectionsPath, phasePath,
-    postgresAuditPath,
+  return { answerExecutionBindingPath, answerPrompts: runtime.prompts, answerRequests: runtime.requests, canonicalExecution, childEnvironment, connectionsPath,
+    firstPacket: packedExecutionPacket(firstQuestion.questionId, firstQuestion.locale, firstQuestion.source), firstQuestion, mainRootSha256, phasePath, postgresAuditPath,
     recovery: { answerJournalRoot: canonicalExecution.answerJournalRoot,
       artifactKey: new Uint8Array(32).fill(1), artifactRoot: canonicalExecution.artifactRoot,
       attemptId: firstAttempt.attemptId, questionId: firstQuestion.questionId, repetition: 1 as const,
       retrievalJournalRoot: canonicalExecution.retrievalJournalRoot,
       rootBindingSha256: mainRootSha256 }, releaseRequests: () => observedReleaseRequests,
-    providerRequests: () => observedProviderRequests,
+    providerRequests: () => observedProviderRequests, release: release as QualityCampaignRelease, releaseRootSha256,
     retrievalRequests: () => observedRetrievalRequests, selectedLocator: memory.selectedLocator,
-    selectedText: memory.selectedText, selectedTurnId: memory.selectedTurnId,
-    unselectedText: memory.unselectedText,
+    selectedText: memory.selectedText, selectedTurnId: memory.selectedTurnId, spendDocuments, unselectedText: memory.unselectedText,
     setReviewEvidence(value: unknown) {reviewEvidence = value;} };
 }
 
@@ -657,7 +706,7 @@ function sdkRetrievalResponse(locator: string,
     returned_neighbors: 0, returned_seeds: 1 }, candidates: [direct] });
 }
 
-async function startPackedGroundedAnswerRuntime(launcherSha256: string) {
+async function startPackedGroundedAnswerRuntime(launcherSha256: string, forceRepair: boolean) {
   const definition = protoLoader.loadSync(fileURLToPath(new URL(
     "../../subscription-runtime-adapter/proto/agent_runtime.proto", import.meta.url)),
   { defaults: true, enums: String, keepCase: false, longs: String, oneofs: true });
@@ -665,12 +714,18 @@ async function startPackedGroundedAnswerRuntime(launcherSha256: string) {
   const service = (((loaded.social_monitor as Record<string, unknown>).agent_runtime as
     Record<string, unknown>).v1 as Record<string, unknown>).AgentRuntimeService as
     { service: Record<string, unknown> };
-  const prompts: string[] = [];
+  const prompts: string[] = [], requests: { readonly repair: boolean; readonly runId: string }[] = [];
   const server = new grpc.Server();
   server.addService(service.service, { runAgentTask: (call: { request: Record<string, unknown> },
     callback: (error: Error | null, response?: unknown) => void) => {
-    const request = runtimeRequestFromGrpc(call.request);
-    prompts.push(request.task.prompt);
+    const request = runtimeRequestFromGrpc(call.request); prompts.push(request.task.prompt);
+    const repair = request.task.systemPrompt.includes("A previous generation failed");
+    requests.push(Object.freeze({ repair, runId: request.runId }));
+    if (forceRepair && !repair) {
+      callback(null, { failure: { code: "provider_output_invalid", reconnectRequired: false,
+        retryable: false, safeMessage: "deterministic repair fixture" }, schemaVersion: 1,
+      status: "AGENT_RUNTIME_TASK_STATUS_FAILED" }); return;
+    }
     const structuredOutput = { claims: [{ evidenceIds: ["evidence-000001"],
       text: "The launch proposal was approved." }], locale: "en", status: "answered" };
     callback(null, { executionAttestation: { canonicalRequestSha256:
@@ -690,7 +745,7 @@ async function startPackedGroundedAnswerRuntime(launcherSha256: string) {
     });
   });
   grpcServers.push(server);
-  return { address: `127.0.0.1:${port}`, prompts: () => [...prompts] };
+  return { address: `127.0.0.1:${port}`, prompts: () => [...prompts], requests: () => [...requests] };
 }
 
 function runtimeRequestFromGrpc(value: Record<string, unknown>) {
