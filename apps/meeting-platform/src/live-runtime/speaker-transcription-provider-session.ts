@@ -44,6 +44,10 @@ export class SpeakerTranscriptionProviderSession {
     if (lease === null) {
       return null;
     }
+    if (signal.aborted) {
+      lease();
+      return null;
+    }
     this.sessionLease = lease;
     const openingAbortController = new AbortController();
     this.openingAbortController = openingAbortController;
@@ -88,8 +92,7 @@ export class SpeakerTranscriptionProviderSession {
   public async finalize(failureMessage: string): Promise<void> {
     const session = this.session;
     const lease = this.sessionLease;
-    this.session = null;
-    this.sessionLease = null;
+    // Finalization still owns the session: a finish deadline must terminate it.
     if (session === null) {
       lease?.();
       return;
@@ -97,14 +100,15 @@ export class SpeakerTranscriptionProviderSession {
     try {
       await session.finalize();
     } catch (error) {
-      session.terminate();
+      if (this.session === session) { this.terminate(); }
       this.dependencies.logger.warn(failureMessage, {
         errorName: error instanceof Error ? error.name : "UnknownError",
         meetingId: this.dependencies.meetingId,
         speakerId: this.dependencies.speakerId,
       });
     } finally {
-      lease?.();
+      if (this.session === session) { this.session = null; }
+      if (lease !== null) { this.releaseLease(lease); }
     }
   }
 

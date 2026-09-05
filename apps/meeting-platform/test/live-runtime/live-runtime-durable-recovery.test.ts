@@ -9,7 +9,7 @@ afterEach(() => vi.useRealTimers());
 
 function fixture(
   pending: readonly LiveVoicePacket[] = [], failAt?: string, firstSend?: Promise<void>,
-  options: { flow?: LivePacketFlowControl; failAck?: boolean; duplicate?: boolean; failReadOnce?: boolean; readGate?: Promise<void> } = {},
+  options: { transcriber?: LiveTranscriptionPort; flow?: LivePacketFlowControl; failAck?: boolean; duplicate?: boolean; failReadOnce?: boolean; readGate?: Promise<void> } = {},
 ) {
   let failingPacketId = failAt;
   let reads = 0;
@@ -34,7 +34,7 @@ function fixture(
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings), logger,
     refreshMeeting: new RefreshLiveMeeting({ meetings, projector: new ProjectionStub(), summarizer: new SummaryStub() }),
-    startMeeting: new StartLiveMeeting({ meetings }), transcriber,
+    startMeeting: new StartLiveMeeting({ meetings }), transcriber: options.transcriber ?? transcriber,
     markLivePacketDelivered: async (packetId) => {
       if (options.failAck) { throw new Error("synthetic acknowledgement failure"); }
       acknowledgements.push(packetId); durable.delete(packetId);
@@ -345,4 +345,64 @@ it("bounds live admission during a stalled initialization and discards its late 
   await vi.advanceTimersByTimeAsync(20_000);
   expect(f.sends).toHaveLength(0);
   expect(f.durable.size).toBe(513);
+});
+
+
+it("disconnect cancels a lease handoff between two 513-packet speakers before opening, then reconnects", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  const pending = [...backlog(513), ...backlog(513).map((packet) => ({ ...packet, speakerId: "speaker-b" }))];
+  let releaseOpening!: () => void;
+  const openingGate = new Promise<void>((resolve) => { releaseOpening = resolve; });
+  const opens: string[] = [];
+  const active = new Set<string>();
+  const sent: string[] = [];
+  let terminations = 0;
+  const f = fixture(pending, undefined, undefined, {
+    flow: { maximumConcurrentSessions: 1, packetBackpressureTimeoutMs: 100 },
+    transcriber: {
+      openSession: async (request) => {
+        opens.push(request.speakerId);
+        if (opens.length === 2) { await openingGate; }
+        active.add(request.speakerId);
+        return {
+          sendPacket: async (packet) => { sent.push(packet.packetId); return "accepted"; },
+          finalize: async () => { active.delete(request.speakerId); },
+          terminate: () => { terminations += 1; active.delete(request.speakerId); },
+        };
+      },
+    },
+  });
+  const runtime = f.makeRuntime();
+  await runtime.acceptLifecycle(started());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(opens).toEqual([pending[0]!.speakerId]);
+  // Cancelling A synchronously grants B's lease, then cancels B before its continuation.
+  let disconnected = false;
+  const disconnect = runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_lost" })
+    .then(() => { disconnected = true; return null; });
+  await vi.advanceTimersByTimeAsync(100);
+  expect(disconnected).toBe(true);
+  await disconnect;
+  expect(opens).toHaveLength(1);
+  expect(active.size).toBe(0);
+  expect(terminations).toBe(1);
+  const acknowledged = [...f.acknowledgements];
+  await runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_recovered" });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(opens).toHaveLength(2);
+  expect(f.acknowledgements).toEqual(acknowledged);
+  releaseOpening();
+  await vi.advanceTimersByTimeAsync(40_000);
+  expect(f.acknowledgements).toHaveLength(1026);
+  expect(new Set(f.acknowledgements).size).toBe(1026);
+  expect(sent).toEqual(f.acknowledgements);
+  expect(f.durable.size).toBe(0);
+  let closed = false;
+  const close = runtime.close().then(() => { closed = true; return null; });
+  await vi.advanceTimersByTimeAsync(100);
+  expect(closed).toBe(true);
+  await close;
+  expect(active.size).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
 });
