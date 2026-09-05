@@ -250,8 +250,8 @@ export function optionalArgument(args, name) {
       index += 1;
     }
   }
-  if (new Set(values).size > 1) {
-    throw new Error(`${name} contains conflicting values`);
+  if (values.length > 1) {
+    throw new Error(`${name} must not be repeated`);
   }
   return values[0];
 }

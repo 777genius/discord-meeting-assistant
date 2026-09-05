@@ -333,7 +333,7 @@ async function rejectsChangedQualifiedServiceTierProof(
 
   await expect(executor.execute(knowledgeAnswerCanonicalRequest)).resolves
     .toMatchObject({
-      failure: { code: "provider_output_invalid" },
+      failure: { code: "task_mode_unsupported", retryable: false },
       status: "failed",
     });
 }

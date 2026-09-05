@@ -130,6 +130,49 @@ test("passes the admitted default tier to the qualified CLI worker", async (t) =
   assert.equal(runtimeArgv.includes("--service-tier"), false);
 });
 
+for (const [label, serviceTierArguments] of [
+  ["a missing value", ["--service-tier"]],
+  ["a duplicate value", ["--service-tier", "default", "--service-tier", "default"]],
+  ["conflicting values", ["--service-tier", "default", "--service-tier", "fast"]],
+]) {
+  test(`rejects ${label} before invoking the qualified CLI worker`, async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "qualified-tier-launcher-test-"));
+    t.after(async () => rm(root, { force: true, recursive: true }));
+    const requestPath = join(root, "request.json");
+    await writeFile(requestPath, JSON.stringify(knowledgeAnswerRequest()));
+    const previousReasoningEffort = process.env.AGENT_RUNTIME_REASONING_EFFORT;
+    process.env.AGENT_RUNTIME_REASONING_EFFORT = "medium";
+    t.after(() => restoreEnvironment(
+      "AGENT_RUNTIME_REASONING_EFFORT",
+      previousReasoningEffort,
+    ));
+    let workerInvocations = 0;
+
+    await assert.rejects(
+      main(
+        [
+          "--provider", "codex",
+          "--input", requestPath,
+          "--state-root", root,
+          "--model", "gpt-5.6-sol",
+          ...serviceTierArguments,
+        ],
+        {
+          FileBackendCodexWorker: function FakeWorker() {
+            workerInvocations += 1;
+          },
+          runSubscriptionAgentTaskCli: async () => {
+            workerInvocations += 1;
+            return 0;
+          },
+        },
+      ),
+      /--service-tier/u,
+    );
+    assert.equal(workerInvocations, 0);
+  });
+}
+
 function knowledgeAnswerRequest() {
   return requestFor({
     maxOutputTokens: 2_048,

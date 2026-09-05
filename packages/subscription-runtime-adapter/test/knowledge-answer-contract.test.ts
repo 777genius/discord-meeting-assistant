@@ -594,6 +594,27 @@ describe("Meeting Knowledge grounding runtime contract", () => {
   });
 });
 
+it("does not repair a runtime service-tier proof failure", async () => {
+  const runtime = new RuntimeFake();
+  runtime.results.push({
+    failure: {
+      code: "task_mode_unsupported",
+      reconnectRequired: false,
+      retryable: false,
+      safeMessage: "Subscription runtime rejected the answer execution profile",
+    },
+    protocolVersion: 1,
+    status: "failed",
+  });
+
+  await expect(adapter(runtime).generate(generationRequest())).resolves.toEqual({
+    code: "task_mode_unsupported",
+    retryable: false,
+    status: "failed",
+  });
+  expect(runtime.requests).toHaveLength(1);
+});
+
 describe("Meeting Knowledge answer privacy regressions", () => {
   it("does not bind a configured compound name from separated question words", async () => {
     const runtime = new RuntimeFake();

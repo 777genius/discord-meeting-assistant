@@ -113,24 +113,7 @@ describe("PersistentCodexProcessRunner", () => {
     runsConcurrentWorkWithoutLimit,
   );
 
-  it("starts with a partially healthy account pool", async () => {
-    const partiallyHealthy = await createFixture(2);
-    partiallyHealthy.state.prewarm = async (worker) => {
-      if (worker.options.workerId ===
-        "discord-meeting-discord_meeting-conversation-answer-slot-1:worker-1") {
-        throw new Error("synthetic unavailable account");
-      }
-    };
-
-    await expect(partiallyHealthy.runner.prewarmAccounts(
-      conversationProfile,
-      partiallyHealthy.environment,
-    )).resolves.toEqual({
-      failures: [{ code: "backend_unavailable", slotId: "slot-1" }],
-      readyAccounts: 1,
-      totalAccounts: 2,
-    });
-  });
+  it("starts with a partially healthy account pool", startsWithPartiallyHealthyPool);
 
   it("fails closed when no account prewarms", async () => {
     const unavailable = await createFixture(2);
@@ -329,6 +312,25 @@ describe("PersistentCodexProcessRunner", () => {
 async function identifiesRuntimeEngine(): Promise<void> {
   const fixture = await createFixture();
   expect(fixture.runner.runtimeEngine).toBe("subscription-runtime-app-server");
+}
+
+async function startsWithPartiallyHealthyPool(): Promise<void> {
+  const partiallyHealthy = await createFixture(2);
+  partiallyHealthy.state.prewarm = async (worker) => {
+    if (worker.options.workerId ===
+      "discord-meeting-discord_meeting-conversation-answer-slot-1:worker-1") {
+      throw new Error("synthetic unavailable account");
+    }
+  };
+
+  await expect(partiallyHealthy.runner.prewarmAccounts(
+    conversationProfile,
+    partiallyHealthy.environment,
+  )).resolves.toEqual({
+    failures: [{ code: "backend_unavailable", slotId: "slot-1" }],
+    readyAccounts: 1,
+    totalAccounts: 2,
+  });
 }
 
 async function disposesWorkerOnSeedFailure(): Promise<void> {

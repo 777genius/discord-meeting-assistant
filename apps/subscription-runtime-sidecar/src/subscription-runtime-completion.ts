@@ -82,7 +82,7 @@ function resolveCompletedCliResult(
   evidence: TelemetryEvidence,
 ): SubscriptionRuntimeTaskResult {
   if (input.execution.serviceTier !== input.profile.serviceTier) {
-    return failedResult("provider_output_invalid");
+    return failedResult("task_mode_unsupported");
   }
   if (
     telemetry.status === "missing" &&
