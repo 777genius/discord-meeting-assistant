@@ -322,6 +322,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-local-canonical-evidence-reader.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-question-chain.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-execution-evidence.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-executor-factory.ts
@@ -346,6 +347,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-local-canonical-evidence-reader.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-question-chain.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-execution-evidence.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-executor-factory.ts

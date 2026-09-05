@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, unlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,10 +72,46 @@ describe("canonical execution evidence durability", () => {
         plaintext: new TextEncoder().encode(JSON.stringify(outcome)) });
       await expect(recoverProductionCanonicalOutcome({ answerJournalRoot:
         fixture.input.answerJournalRoot, artifactKey: fixture.input.artifactKey,
-        artifactRoot: fixture.input.artifactRoot, attemptId, questionId: fixture.input.questionId,
+        artifactKeyId: fixture.input.artifactKeyId, artifactRoot: fixture.input.artifactRoot,
+        attemptId, questionId: fixture.input.questionId,
         repetition: fixture.input.repetition, retrievalJournalRoot:
         fixture.input.retrievalJournalRoot, rootBindingSha256 }))
         .resolves.toEqual(outcome);
+    });
+
+  it("fails closed for traversal and foreign artifact-kind reads before resolving a path",
+    async () => {
+      const fixture = await evidenceFixture();
+      const read = async (attempt: string, kind: string) => await import(
+        "../src/quality-campaign/production-canonical-execution-evidence.js").then(async (module) =>
+        await module.readProductionCanonicalArtifact({ artifactKey: fixture.input.artifactKey,
+          artifactKeyId: fixture.input.artifactKeyId, artifactRoot: fixture.input.artifactRoot,
+          attemptId: attempt, kind: kind as never, rootBindingSha256 }));
+      await expect(read("../foreign", "answer_normalized_outcome"))
+        .rejects.toThrow("attempt ID is invalid");
+      await expect(read(attemptId, "../../foreign")).rejects.toThrow("artifact kind is invalid");
+    });
+
+  it.each(["receipt", "envelope"] as const)(
+    "treats a present outcome pointer with a missing %s as corruption", async (missing) => {
+      const fixture = await evidenceFixture();
+      const outcome = { citations: [], claims: [], rawRetrievalResponseSha256: "4".repeat(64),
+        reason: "zero_admissible_evidence", retrievalCandidates: [], selectedTurns: [],
+        status: "abstained" as const };
+      await fixture.evidence.audit.seal({ attemptId, kind: "answer_normalized_outcome",
+        plaintext: new TextEncoder().encode(JSON.stringify(outcome)) });
+      const receiptPath = join(fixture.input.artifactRoot, "receipts", attemptId,
+        "answer_normalized_outcome.json");
+      if (missing === "receipt") {await unlink(receiptPath);} else {
+        const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as { envelopeSha256: string };
+        await unlink(join(fixture.input.artifactRoot, `${receipt.envelopeSha256}.enc.json`));
+      }
+      await expect(recoverProductionCanonicalOutcome({ answerJournalRoot:
+        fixture.input.answerJournalRoot, artifactKey: fixture.input.artifactKey,
+        artifactKeyId: fixture.input.artifactKeyId, artifactRoot: fixture.input.artifactRoot,
+        attemptId, questionId: fixture.input.questionId, repetition: fixture.input.repetition,
+        retrievalJournalRoot: fixture.input.retrievalJournalRoot, rootBindingSha256 }))
+        .rejects.toMatchObject({ code: "ENOENT" });
     });
 
   it("seals the exact empty-body capability request without admitting other empty artifacts",
@@ -85,7 +121,27 @@ describe("canonical execution evidence durability", () => {
         plaintext: new Uint8Array() })).resolves.toBeUndefined();
       await expect(fixture.evidence.audit.seal({ attemptId, kind: "retrieval_request",
         plaintext: new Uint8Array() })).rejects.toThrow("artifact binding is invalid");
+      await expect(fixture.evidence.audit.seal({ attemptId, kind: "capability_request",
+        plaintext: new Uint8Array() })).rejects.toThrow();
     });
+
+  it("durably syncs each new receipt directory name before publishing its receipt", async () => {
+    const fixture = await evidenceFixture();
+    const events: string[] = [];
+    const evidence = createProductionCanonicalExecutionEvidence({ ...fixture.input,
+      durabilityFaults: { afterDirectorySync: (path) => {events.push(`directory:${path}`);},
+        afterFileSync: (path) => {events.push(`file:${path}`);} } });
+    await evidence.audit.seal({ attemptId, kind: "capability_request",
+      plaintext: new Uint8Array() });
+    const receiptDirectory = join(fixture.input.artifactRoot, "receipts", attemptId);
+    const receiptFile = join(receiptDirectory, "capability_request.json");
+    expect(events.indexOf(`directory:${join(fixture.input.artifactRoot, "receipts")}`))
+      .toBeLessThan(events.indexOf(`file:${receiptFile}`));
+    expect(events.indexOf(`directory:${receiptDirectory}`))
+      .toBeLessThan(events.indexOf(`file:${receiptFile}`));
+    expect(events.lastIndexOf(`directory:${receiptDirectory}`))
+      .toBeGreaterThan(events.indexOf(`file:${receiptFile}`));
+  });
 
   it("persists attempt/root-bound encrypted canonical measured retrieval telemetry", async () => {
     const fixture = await evidenceFixture();
