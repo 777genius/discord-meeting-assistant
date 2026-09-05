@@ -19,6 +19,8 @@ describe("concrete HTTP production review evidence", () => {
     const fixture = await httpFixture(); const payload = fullReviewEvidence(fixture.answerAttempt);
     fixture.respondWith(payload);
     const ports = await createHttpQualityCampaignProductionPorts(fixture.connectionsPath);
+    await expect(ports.mainCanonicalEvidence.verify({ attempts: [],
+      campaignRootSha256: "a".repeat(64) })).rejects.toThrow(/inventory is empty/u);
     const evidence = await ports.review.receipts(fixture.answerAttempt.attemptId,
       context(Date.now() + 5_000));
 

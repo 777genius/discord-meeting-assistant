@@ -64,7 +64,7 @@ describe("packed production quality-campaign entrypoint", () => {
       "@discord-meeting", "infinity-context-adapter", "package.json"), "utf8")) as unknown;
     expect(JSON.stringify(manifest)).not.toMatch(/workspace:|catalog:/u);
     await expect(execute(process.execPath, ["--input-type=module", "--eval",
-      `const root=await import("@discord-meeting/infinity-context-adapter");const q=await import("@discord-meeting/infinity-context-adapter/quality-campaign");const cli=await import("@discord-meeting/infinity-context-adapter/quality-campaign/cli");if(typeof root.attemptIdentity!=="function"||typeof root.measureQualificationModelInput!=="function"||typeof q.reconstructExactHoldoutEvidence!=="function"||typeof q.verifyExactOutcomeAuthorities!=="function"||q.QUALIFICATION_PROVIDER_INPUT_CONTRACT.answer.maximumInputUtf8Bytes!==16000||typeof cli.runQualityCampaignProductionCli!=="function")process.exit(2);const exact=root.measureQualificationModelInput({outputSchema:"",systemPrompt:"",userPrompt:"😀".repeat(3999)});if(exact.fullInputUtf8Bytes!==15998)process.exit(3);try{root.measureQualificationModelInput({outputSchema:"",systemPrompt:"",userPrompt:"😀".repeat(4000)});process.exit(4)}catch{}`],
+      `const root=await import("@discord-meeting/infinity-context-adapter");const q=await import("@discord-meeting/infinity-context-adapter/quality-campaign");const cli=await import("@discord-meeting/infinity-context-adapter/quality-campaign/cli");if(typeof root.attemptIdentity!=="function"||typeof root.measureQualificationModelInput!=="function"||typeof q.createHttpQualityCampaignProductionPorts!=="function"||typeof q.reconstructExactHoldoutEvidence!=="function"||typeof q.verifyExactOutcomeAuthorities!=="function"||q.QUALIFICATION_PROVIDER_INPUT_CONTRACT.answer.maximumInputUtf8Bytes!==16000||typeof cli.runQualityCampaignProductionCli!=="function")process.exit(2);const exact=root.measureQualificationModelInput({outputSchema:"",systemPrompt:"",userPrompt:"😀".repeat(3999)});if(exact.fullInputUtf8Bytes!==15998)process.exit(3);try{root.measureQualificationModelInput({outputSchema:"",systemPrompt:"",userPrompt:"😀".repeat(4000)});process.exit(4)}catch{}`],
     { cwd: installed.consumerRoot, timeout: 10_000 })).resolves.toMatchObject({ stderr: "" });
     await expect(execute(process.execPath, ["--input-type=module", "--eval",
       `await import("@discord-meeting/infinity-context-adapter/test-support")`], {
@@ -553,8 +553,8 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string, 
     spendReservationSha256: sha256(spendDocuments[0]!) });
   return { answerExecutionBindingPath, answerPrompts: runtime.prompts, answerRequests: runtime.requests, canonicalExecution, childEnvironment, connectionsPath,
     firstPacket: packedExecutionPacket(firstQuestion.questionId, firstQuestion.locale, firstQuestion.source), firstQuestion, mainRootSha256, phasePath, postgresAuditPath,
-    recovery: { answerJournalRoot: canonicalExecution.answerJournalRoot,
-      artifactKey: new Uint8Array(32).fill(1), artifactRoot: canonicalExecution.artifactRoot,
+    recovery: { answerJournalRoot: canonicalExecution.answerJournalRoot, artifactKey:
+      new Uint8Array(32).fill(1), artifactKeyId: canonicalExecution.artifactKeyId, artifactRoot: canonicalExecution.artifactRoot,
       attemptId: firstAttempt.attemptId, questionId: firstQuestion.questionId, repetition: 1 as const,
       retrievalJournalRoot: canonicalExecution.retrievalJournalRoot,
       rootBindingSha256: mainRootSha256 }, releaseRequests: () => observedReleaseRequests,

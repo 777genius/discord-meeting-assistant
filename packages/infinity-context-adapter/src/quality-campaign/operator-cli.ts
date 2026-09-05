@@ -37,7 +37,8 @@ export const SAFE_OPERATOR_DIGESTS = Object.freeze([
   "adjudicationSetSha256", "campaignRootSha256", "cleanupReceiptSha256",
   "corpusAdmissionManifestSha256", "executionCorpusSha256", "goldRelevanceSha256",
   "finalAdmissionSha256", "holdoutCheckpointSha256", "holdoutExecutionSha256",
-  "inventorySha256", "metricsSha256", "qualifiedCheckpointSha256", "releaseRootSha256",
+  "inventorySha256", "localCanonicalInventorySha256", "metricsSha256",
+  "qualifiedCheckpointSha256", "releaseRootSha256",
   "rootBindingSha256", "separateReportSha256", "terminalAttemptSetSha256",
 ] as const);
 export type SafeOperatorBlockerCode = typeof SAFE_OPERATOR_BLOCKER_CODES[number];

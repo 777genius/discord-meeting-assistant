@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- encrypted durability and its one-read authentication share internals */
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -45,6 +46,7 @@ const digestPattern = /^[a-f0-9]{64}$/u;
 const safeQuestionIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const journalStates = new Set<unknown>(["provider_reserved", "failed", "outcome_unknown",
   "succeeded"]);
+const MAXIMUM_ARTIFACT_ENVELOPE_BYTES = 8_000_000;
 
 export function semanticQualityV4AttemptId(input: {
   readonly questionId: string;
@@ -239,39 +241,34 @@ export class SemanticQualityV4EncryptedArtifactStore {
     if (!digestPattern.test(input.envelopeSha256) || input.key.byteLength !== 32) {
       throw new Error("semantic quality V4 encrypted artifact binding is invalid");
     }
-    const bytes = await readFile(join(this.root, `${input.envelopeSha256}.enc.json`));
+    const bytes = await readBoundedFile(join(this.root, `${input.envelopeSha256}.enc.json`),
+      MAXIMUM_ARTIFACT_ENVELOPE_BYTES, "semantic quality V4 artifact envelope");
     if (createHash("sha256").update(bytes).digest("hex") !== input.envelopeSha256) {
       throw new Error("semantic quality V4 artifact envelope digest is invalid");
     }
-    const envelope = decodeArtifactEnvelope(JSON.parse(bytes.toString("utf8")) as unknown);
-    const { algorithm: _algorithm, ciphertextBase64, nonceBase64, tagBase64, ...binding } = envelope;
-    try {
-      const decipher = createDecipheriv("aes-256-gcm", input.key, Buffer.from(nonceBase64, "base64"));
-      decipher.setAAD(Buffer.from(canonicalIntegerJson(binding), "utf8"));
-      decipher.setAuthTag(Buffer.from(tagBase64, "base64"));
-      const plaintext = Buffer.concat([decipher.update(Buffer.from(ciphertextBase64, "base64")),
-        decipher.final()]);
-      if (createHash("sha256").update(plaintext).digest("hex") !== binding.plaintextSha256) {
-        throw new Error("digest");
-      }
-      return plaintext;
-    } catch {
-      throw new Error("semantic quality V4 artifact authentication failed");
-    }
+    return authenticateEnvelope(bytes, input.key).plaintext;
   }
 
   public async verifyReceipt(input: { readonly key: Uint8Array;
     readonly receipt: SemanticQualityV4ArtifactReceipt }): Promise<void> {
+    await this.openReceipt(input);
+  }
+
+  /** Authenticates one bounded read and returns the plaintext from those exact envelope bytes. */
+  public async openReceipt(input: { readonly expectedKeyId?: string; readonly key: Uint8Array;
+    readonly receipt: SemanticQualityV4ArtifactReceipt }): Promise<Uint8Array> {
     const receipt = validateSemanticQualityV4ArtifactReceipt(input.receipt);
     if (receipt.storeIdentitySha256 !== this.storeIdentitySha256) {
       throw new Error("semantic quality V4 artifact receipt belongs to another store");
     }
-    const plaintext = await this.open({ envelopeSha256: receipt.envelopeSha256, key: input.key });
-    if (createHash("sha256").update(plaintext).digest("hex") !== receipt.plaintextSha256) {
-      throw new Error("semantic quality V4 artifact receipt plaintext differs");
+    const bytes = await readBoundedFile(join(this.root, `${receipt.envelopeSha256}.enc.json`),
+      MAXIMUM_ARTIFACT_ENVELOPE_BYTES, "semantic quality V4 artifact envelope");
+    if (bytes.byteLength !== receipt.sizeBytes ||
+      createHash("sha256").update(bytes).digest("hex") !== receipt.envelopeSha256) {
+      throw new Error("semantic quality V4 artifact receipt size or envelope digest differs");
     }
-    const envelope = decodeArtifactEnvelope(JSON.parse(await readFile(
-      join(this.root, `${receipt.envelopeSha256}.enc.json`), "utf8")) as unknown);
+    const authenticated = authenticateEnvelope(bytes, input.key);
+    const { envelope, plaintext } = authenticated;
     if (envelope.artifactKind !== receipt.artifactKind ||
       envelope.attemptId !== receipt.attemptId ||
       envelope.rootBindingSha256 !== receipt.rootBindingSha256 ||
@@ -279,7 +276,59 @@ export class SemanticQualityV4EncryptedArtifactStore {
       envelope.exchangeBindingSha256 !== receipt.exchangeBindingSha256) {
       throw new Error("semantic quality V4 artifact receipt is not envelope-bound");
     }
+    if (input.expectedKeyId !== undefined &&
+      (!safeQuestionIdPattern.test(input.expectedKeyId) || envelope.keyId !== input.expectedKeyId)) {
+      throw new Error("semantic quality V4 artifact key identity differs");
+    }
+    if (createHash("sha256").update(plaintext).digest("hex") !== receipt.plaintextSha256) {
+      throw new Error("semantic quality V4 artifact receipt plaintext differs");
+    }
+    return plaintext;
   }
+}
+
+function authenticateEnvelope(bytes: Buffer, key: Uint8Array): { readonly envelope: ReturnType<
+  typeof decodeArtifactEnvelope>; readonly plaintext: Buffer } {
+  if (key.byteLength !== 32) {
+    throw new Error("semantic quality V4 encrypted artifact binding is invalid");
+  }
+  const envelope = decodeArtifactEnvelope(JSON.parse(bytes.toString("utf8")) as unknown);
+  const { algorithm: _algorithm, ciphertextBase64, nonceBase64, tagBase64, ...binding } = envelope;
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(nonceBase64, "base64"));
+    decipher.setAAD(Buffer.from(canonicalIntegerJson(binding), "utf8"));
+    decipher.setAuthTag(Buffer.from(tagBase64, "base64"));
+    const plaintext = Buffer.concat([decipher.update(Buffer.from(ciphertextBase64, "base64")),
+      decipher.final()]);
+    if (createHash("sha256").update(plaintext).digest("hex") !== binding.plaintextSha256) {
+      throw new Error("digest");
+    }
+    return { envelope, plaintext };
+  } catch {
+    throw new Error("semantic quality V4 artifact authentication failed");
+  }
+}
+
+async function readBoundedFile(path: string, maximumBytes: number, label: string): Promise<Buffer> {
+  const handle = await open(path, "r");
+  try {
+    const metadata = await handle.stat({ bigint: true });
+    if (!metadata.isFile() || metadata.size < 1 || metadata.size > maximumBytes) {
+      throw new Error(`${label} exceeds its byte bound`);
+    }
+    const size = Number(metadata.size);
+    const bytes = Buffer.alloc(size);
+    const { bytesRead } = await handle.read(bytes, 0, size, 0);
+    const eof = Buffer.alloc(1);
+    const { bytesRead: trailingBytes } = await handle.read(eof, 0, 1, size);
+    const after = await handle.stat({ bigint: true });
+    if (bytesRead !== size || trailingBytes !== 0 || after.size !== metadata.size ||
+      after.dev !== metadata.dev || after.ino !== metadata.ino ||
+      after.mtimeNs !== metadata.mtimeNs || after.ctimeNs !== metadata.ctimeNs) {
+      throw new Error(`${label} changed while being read`);
+    }
+    return bytes;
+  } finally {await handle.close();}
 }
 
 function journalEntry(input: {
