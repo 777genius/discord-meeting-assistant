@@ -43,9 +43,10 @@ export class SpeakerTranscriptionSessions {
     private readonly dependencies: SpeakerTranscriptionSessionsDependencies,
   ) {}
 
-  public async accept(batch: LiveVoicePacketBatch): Promise<void> {
-    const deadlineMs = this.dependencies.clock.nowMilliseconds() +
-      this.dependencies.packetBackpressureTimeoutMs;
+  public async accept(
+    batch: LiveVoicePacketBatch,
+    deadlineMs = this.dependencies.clock.nowMilliseconds() + this.dependencies.packetBackpressureTimeoutMs,
+  ): Promise<void> {
     const packetsBySpeaker = groupPacketsBySpeaker(batch.packets);
     await Promise.all(
       [...packetsBySpeaker].map(([speakerId, packets]) =>
@@ -58,6 +59,17 @@ export class SpeakerTranscriptionSessions {
     await Promise.all([...groupPacketsBySpeaker(packets)].map(([speakerId, speakerPackets]) =>
       this.speaker(speakerId).recover(speakerPackets),
     ));
+  }
+
+  public cancelRecovery(): boolean {
+    let cancelled = false;
+    for (const [speakerId, speaker] of this.speakers) {
+      if (speaker.cancelRecovery()) {
+        this.speakers.delete(speakerId);
+        cancelled = true;
+      }
+    }
+    return cancelled;
   }
 
   public beginFinish(): void {

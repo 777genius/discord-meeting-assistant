@@ -3,22 +3,24 @@ import { afterEach, expect, it, vi } from "vitest";
 import { PlatformLiveMeetingRuntime } from "../../src/live-meeting-runtime.js";
 import type { LivePacketFlowControl, LiveVoicePacket, LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
 import { livePacketIdentity } from "../../src/live-runtime/packet-delivery-ledger.js";
-import { logger, MemoryLiveMeetingRepository, packets, ProjectionStub, started, SummaryStub } from "./live-runtime-fixtures.js";
+import { ended, logger, MemoryLiveMeetingRepository, packets, ProjectionStub, started, SummaryStub } from "./live-runtime-fixtures.js";
 
 afterEach(() => vi.useRealTimers());
 
 function fixture(
   pending: readonly LiveVoicePacket[] = [], failAt?: string, firstSend?: Promise<void>,
-  options: { flow?: LivePacketFlowControl; failAck?: boolean; duplicate?: boolean } = {},
+  options: { flow?: LivePacketFlowControl; failAck?: boolean; duplicate?: boolean; failReadOnce?: boolean; readGate?: Promise<void> } = {},
 ) {
   let failingPacketId = failAt;
+  let reads = 0;
+  let terminations = 0;
   const meetings = new MemoryLiveMeetingRepository();
   const durable = new Map(pending.map((packet) => [livePacketIdentity(packet), packet]));
   const sends: string[] = [];
   const acknowledgements: string[] = [];
   const transcriber: LiveTranscriptionPort = {
     openSession: async () => ({
-      finalize: async () => {}, terminate: () => {},
+      finalize: async () => {}, terminate: () => { terminations += 1; },
       sendPacket: async (packet) => {
         sends.push(packet.packetId);
         if (sends.length === 1) { await firstSend; }
@@ -37,11 +39,16 @@ function fixture(
       if (options.failAck) { throw new Error("synthetic acknowledgement failure"); }
       acknowledgements.push(packetId); durable.delete(packetId);
     },
-    pendingLivePackets: async () => options.duplicate
-      ? [...durable.values(), ...durable.values()].sort((left, right) => left.sequenceNumber - right.sequenceNumber)
-      : [...durable.values()],
+    pendingLivePackets: async () => {
+      reads += 1;
+      await options.readGate;
+      if (options.failReadOnce && reads === 1) { throw Object.assign(new Error("synthetic EIO"), { code: "EIO" }); }
+      return options.duplicate
+        ? [...durable.values(), ...durable.values()].toSorted((left, right) => left.sequenceNumber - right.sequenceNumber)
+        : [...durable.values()];
+    },
   });
-  return { acknowledgements, durable, makeRuntime, sends, repair: () => { failingPacketId = undefined; } };
+  return { acknowledgements, durable, makeRuntime, sends, reads: () => reads, terminations: () => terminations, repair: () => { failingPacketId = undefined; } };
 }
 
 function backlog(size: number): LiveVoicePacket[] {
@@ -111,7 +118,7 @@ it("retains a failed batch and later batches for restart without acknowledging u
 });
 
 
-it("holds recovery and concurrent live ingress behind a slow send", async () => {
+it("admits concurrent live ingress while preserving recovery order behind a slow send", async () => {
   vi.useFakeTimers();
   vi.setSystemTime("2026-08-02T10:00:00.000Z");
   let release!: () => void;
@@ -121,8 +128,10 @@ it("holds recovery and concurrent live ingress behind a slow send", async () => 
   const runtime = f.makeRuntime();
   const recovery = runtime.acceptLifecycle(started());
   await vi.advanceTimersByTimeAsync(100);
-  const live = runtime.acceptVoiceBatch({ ...packets(), packets: [pending[513]!] });
+  let admitted = false;
+  const live = runtime.acceptVoiceBatch({ ...packets(), packets: [pending[513]!] }).then(() => { admitted = true; return admitted; });
   await vi.advanceTimersByTimeAsync(100);
+  expect(admitted).toBe(true);
   expect(f.sends).toHaveLength(1);
   expect(f.acknowledgements).toHaveLength(0);
   expect(f.durable.size).toBe(513);
@@ -162,10 +171,178 @@ it("leaves failed acknowledgements durable without resending or advancing the ba
   const f = fixture(pending, undefined, undefined, { failAck: true });
   const runtime = f.makeRuntime();
   await runtime.acceptLifecycle(started());
+  await vi.advanceTimersByTimeAsync(0);
   expect(f.sends).toEqual([livePacketIdentity(pending[0]!)]);
   expect(f.acknowledgements).toHaveLength(0);
   expect(f.durable.size).toBe(513);
   await runtime.acceptVoiceBatch({ ...packets(), packets: [pending[512]!] });
   await runtime.close();
   expect(f.sends).toHaveLength(1);
+});
+
+
+it.each([513, 1025])("admits live packets within two seconds during a healthy %i packet recovery", async (size) => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  const pending = backlog(size + 1);
+  const f = fixture(pending.slice(0, size));
+  const runtime = f.makeRuntime();
+  const recovery = runtime.acceptLifecycle(started());
+  await vi.advanceTimersByTimeAsync(0);
+  let admitted = false;
+  const live = runtime.acceptVoiceBatch({ ...packets(), packets: [pending[size]!] }).then(() => { admitted = true; return admitted; });
+  await vi.advanceTimersByTimeAsync(1_999);
+  expect(admitted).toBe(true);
+  expect(f.sends.length).toBeLessThan(size);
+  await vi.advanceTimersByTimeAsync(size * 20);
+  await live;
+  await recovery;
+  expect(f.sends).toEqual(pending.map(livePacketIdentity));
+  expect(f.acknowledgements).toEqual(f.sends);
+  await runtime.close();
+});
+
+it.each(["end", "disconnect", "shutdown", "restart"] as const)("%s cancels a stalled recovery and fences late sends", async (control) => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const pending = backlog(1025);
+  const f = fixture(pending, undefined, gate, { flow: { packetBackpressureTimeoutMs: 100 } });
+  const runtime = f.makeRuntime();
+  await runtime.acceptLifecycle(started());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.sends).toHaveLength(1);
+  let settled = false;
+  const operation = (control === "end" ? runtime.acceptLifecycle(ended())
+    : control === "disconnect" ? runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_lost" })
+    : control === "restart" ? runtime.releaseForRestart() : runtime.close()).then(() => { settled = true; return settled; });
+  await vi.advanceTimersByTimeAsync(100);
+  expect(settled).toBe(true);
+  await operation;
+  expect(f.terminations()).toBe(1);
+  expect(f.acknowledgements).toHaveLength(0);
+  expect(f.durable.size).toBe(1025);
+  release();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(f.sends).toHaveLength(1);
+  expect(f.acknowledgements).toHaveLength(0);
+  await runtime.close();
+  if (control === "restart") {
+    const restarted = f.makeRuntime();
+    await restarted.acceptLifecycle(started());
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.acknowledgements).toEqual(pending.map(livePacketIdentity));
+    await restarted.close();
+  }
+});
+
+it.each(["end", "disconnect", "shutdown"] as const)("%s controls a healthy 513 packet backlog before its drain finishes", async (control) => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  const pending = backlog(514);
+  const f = fixture(pending.slice(0, 513));
+  const runtime = f.makeRuntime();
+  await runtime.acceptLifecycle(started());
+  const live = runtime.acceptVoiceBatch({ ...packets(), packets: [pending[513]!] });
+  let settled = false;
+  const operation = (control === "end" ? runtime.acceptLifecycle(ended())
+    : control === "disconnect" ? runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_lost" })
+    : runtime.close()).then(() => { settled = true; return settled; });
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(settled).toBe(true);
+  await Promise.all([live, operation]);
+  expect(f.sends.length).toBeLessThan(513);
+  expect(f.durable.size).toBeGreaterThan(0);
+  const sent = [...f.sends];
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(f.sends).toEqual(sent);
+  await runtime.close();
+});
+
+it("rereads after EIO and deduplicates concurrent retried starts before accepting live packets", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  const pending = backlog(515);
+  const f = fixture(pending.slice(0, 513), undefined, undefined, { failReadOnce: true });
+  const runtime = f.makeRuntime();
+  await expect(runtime.acceptLifecycle(started())).rejects.toMatchObject({ code: "EIO" });
+  expect(f.sends).toHaveLength(0);
+  await runtime.acceptVoiceBatch({ ...packets(), packets: [pending[513]!] });
+  expect(f.sends).toHaveLength(0);
+  f.durable.set(livePacketIdentity(pending[513]!), pending[513]!);
+  await Promise.all([runtime.acceptLifecycle(started()), runtime.acceptLifecycle(started())]);
+  await runtime.acceptVoiceBatch({ ...packets(), packets: [pending[514]!] });
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(f.reads()).toBe(2);
+  expect(f.sends).toEqual(pending.map(livePacketIdentity));
+  expect(f.acknowledgements).toEqual(f.sends);
+  await runtime.close();
+});
+
+
+it.each([1, 2])("preserves recovery progress and bounded live admission with %i global slots", async (slots) => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  const pending = backlog(514);
+  const f = fixture(pending.slice(0, 513), undefined, undefined, {
+    flow: { maximumQueuedPacketsGlobally: slots, maximumQueuedPacketsPerSpeaker: 1 },
+  });
+  const runtime = f.makeRuntime();
+  await runtime.acceptLifecycle(started());
+  f.durable.set(livePacketIdentity(pending[513]!), pending[513]!);
+  let admitted = false;
+  const live = runtime.acceptVoiceBatch({ ...packets(), packets: [pending[513]!] }).then(() => { admitted = true; return admitted; });
+  await vi.advanceTimersByTimeAsync(1_999);
+  expect(admitted).toBe(true);
+  await live;
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(f.sends).toEqual(pending.slice(0, slots === 1 ? 513 : 514).map(livePacketIdentity));
+  expect(f.durable.size).toBe(slots === 1 ? 1 : 0);
+  expect(f.acknowledgements).toEqual(f.sends);
+  await runtime.close();
+});
+
+it("reconnect rereads a cancelled backlog without a duplicate drain or late acknowledgement", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const pending = backlog(513);
+  const f = fixture(pending, undefined, gate);
+  const runtime = f.makeRuntime();
+  await runtime.acceptLifecycle(started());
+  await vi.advanceTimersByTimeAsync(0);
+  await runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_lost" });
+  await Promise.all([
+    runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_recovered" }),
+    runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_recovered" }),
+  ]);
+  release();
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(f.reads()).toBe(2);
+  expect(f.sends).toEqual([livePacketIdentity(pending[0]!), ...pending.map(livePacketIdentity)]);
+  expect(f.acknowledgements).toEqual(pending.map(livePacketIdentity));
+  await runtime.close();
+});
+
+it("bounds live admission during a stalled initialization and discards its late read after shutdown", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  let release!: () => void;
+  const readGate = new Promise<void>((resolve) => { release = resolve; });
+  const f = fixture(backlog(513), undefined, undefined, { readGate });
+  const runtime = f.makeRuntime();
+  const start = runtime.acceptLifecycle(started());
+  let admitted = false;
+  const live = runtime.acceptVoiceBatch(packets()).then(() => { admitted = true; return admitted; });
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(admitted).toBe(true);
+  await live;
+  await runtime.close();
+  release();
+  await start;
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(f.sends).toHaveLength(0);
+  expect(f.durable.size).toBe(513);
 });

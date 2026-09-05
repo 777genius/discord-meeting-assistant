@@ -1,24 +1,9 @@
-import {
-  LiveSessionAdmission,
-  GlobalPacketFlowControl,
-  SourceTimelinePacer,
-  SpeakerPacketFlowControl,
-} from "./live-packet-flow-control.js";
-
-import type {
-  LivePacketInspector,
-  LiveRuntimeClock,
-  LiveRuntimeLogger,
-  LiveRuntimeTimer,
-  LiveRuntimeTimerHandle,
-  LiveTranscriptionEvent,
-  LiveTranscriptionPort,
-  LiveVoicePacket,
-} from "./contracts.js";
-import {
-  LivePacketDeliveryLedger,
-  livePacketIdentity,
-} from "./packet-delivery-ledger.js";
+import { LiveSessionAdmission, GlobalPacketFlowControl, SourceTimelinePacer,
+  SpeakerPacketFlowControl } from "./live-packet-flow-control.js";
+import type { LivePacketInspector, LiveRuntimeClock, LiveRuntimeLogger,
+  LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent,
+  LiveTranscriptionPort, LiveVoicePacket } from "./contracts.js";
+import { LivePacketDeliveryLedger, livePacketIdentity } from "./packet-delivery-ledger.js";
 import { SpeakerTranscriptionProviderSession } from "./speaker-transcription-provider-session.js";
 
 const maximumLivePacketDeliveryAttempts = 2;
@@ -49,6 +34,7 @@ export class SpeakerTranscriptionSession {
   private admissionClosed = false;
   private deliveryFailed = false;
   private recoveryBlocked = false;
+  private recovery: Promise<void> | null = null;
   private backpressureDegraded = false;
   private chain: Promise<void> = Promise.resolve();
   private inactivityTimer: LiveRuntimeTimerHandle | null = null;
@@ -81,8 +67,10 @@ export class SpeakerTranscriptionSession {
     deadlineMs: number,
   ): Promise<void> {
     if (this.admissionClosed || this.recoveryBlocked) {return;}
+    // Keep one global slot available for the recovery that deferred live work awaits.
+    const recoveryHeadroom = this.recovery === null ? 0 : 1;
     const globallyReserved = await this.dependencies.packetAdmission.reserve(
-      packets.length,
+      packets.length + recoveryHeadroom,
       deadlineMs,
       this.packetFlow.signal,
     );
@@ -92,13 +80,16 @@ export class SpeakerTranscriptionSession {
       }
       return;
     }
+    if (recoveryHeadroom > 0) { this.dependencies.packetAdmission.release(recoveryHeadroom); }
     if (!this.packetFlow.tryReserveAdmission(packets.length)) {
       this.dependencies.packetAdmission.release(packets.length);
       this.noteDegradation("LIVE_PACKET_ADMISSION_BACKLOG_FULL");
       return;
     }
+    const recovery = this.recovery;
     const admission = async (): Promise<void> => {
       try {
+        if (recovery !== null) { await this.untilCancelled(recovery); }
         for (const packet of packets) {
           await this.admit(packet, deadlineMs);
         }
@@ -108,19 +99,60 @@ export class SpeakerTranscriptionSession {
     };
     const completion = this.admissionChain.then(admission, admission);
     this.admissionChain = completion.catch(() => {});
-    await completion;
+    // Reservations bound deferred live admission while recovery keeps speaker order.
+    if (recovery === null) { await completion; }
   }
 
   /** Single-packet batches preserve order even across delivery failure/restart. */
-  public async recover(packets: readonly LiveVoicePacket[]): Promise<void> {
+  public recover(packets: readonly LiveVoicePacket[]): Promise<void> {
+    if (this.recovery !== null) { return this.recovery; }
+    const recovery = this.drainRecovery(packets).finally(() => {
+      if (this.recovery === recovery) { this.recovery = null; }
+    });
+    this.recovery = recovery;
+    return recovery;
+  }
+
+  public cancelRecovery(): boolean {
+    if (this.recovery === null) { return false; }
+    this.cancelDelivery();
+    return true;
+  }
+
+  private cancelDelivery(): void {
+    this.admissionClosed = true;
+    this.packetFlow.cancel();
+    this.providerSession.abortOpening();
+    this.providerSession.terminate();
+  }
+
+  private async untilCancelled(work: Promise<void>): Promise<void> {
+    const signal = this.packetFlow.signal;
+    let onAbort!: () => void;
+    const cancelled = new Promise<void>((resolve) => {
+      onAbort = resolve;
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) { resolve(); }
+    });
+    try { await Promise.race([work, cancelled]); }
+    finally { signal.removeEventListener("abort", onAbort); }
+  }
+
+  private async drainRecovery(packets: readonly LiveVoicePacket[]): Promise<void> {
     this.recoveryBlocked = false;
     for (const packet of packets) {
       if (this.admissionClosed) { return; }
-      await this.chain;
+      await this.untilCancelled(this.chain);
       this.deliveryFailed = false;
-      await this.accept([packet], this.dependencies.clock.nowMilliseconds() +
-        this.dependencies.packetBackpressureTimeoutMs);
-      await this.chain;
+      if (this.admissionClosed) { return; }
+      const deadline = this.dependencies.clock.nowMilliseconds() +
+        this.dependencies.packetBackpressureTimeoutMs;
+      if (!await this.dependencies.packetAdmission.reserve(1, deadline, this.packetFlow.signal)) {
+        this.recoveryBlocked = true;
+        return;
+      }
+      await this.admit(packet, deadline);
+      await this.untilCancelled(this.chain);
       // Do not let a failed send/ack or admission timeout advance the backlog.
       if (this.deliveryFailed || !this.dependencies.ledger.isDelivered(livePacketIdentity(packet))) {
         this.recoveryBlocked = true;
@@ -132,13 +164,25 @@ export class SpeakerTranscriptionSession {
   public beginFinish(): void {
     this.cancelIdleFinalization();
     this.admissionClosed = true;
+    this.cancelRecovery();
   }
 
   public async finish(): Promise<void> {
     this.cancelIdleFinalization();
-    await this.admissionChain.catch(() => {});
-    await this.chain.catch(() => {});
-    await this.finalize("Derived live speaker finalize failed");
+    let timeout!: LiveRuntimeTimerHandle;
+    const expired = new Promise<void>((resolve) => {
+      timeout = this.dependencies.timer.schedule(this.dependencies.packetBackpressureTimeoutMs, () => {
+        this.cancelDelivery();
+        resolve();
+      });
+    });
+    const finish = async (): Promise<void> => {
+      await this.admissionChain.catch(() => {});
+      await this.chain.catch(() => {});
+      await this.finalize("Derived live speaker finalize failed");
+    };
+    try { await Promise.race([finish(), expired]); }
+    finally { this.dependencies.timer.cancel(timeout); }
   }
 
   private async admit(packet: LiveVoicePacket, deadlineMs: number): Promise<void> {
@@ -154,13 +198,8 @@ export class SpeakerTranscriptionSession {
     }
   }
 
-  private async reservePacketSlot(
-    packet: LiveVoicePacket,
-    deadlineMs: number,
-  ): Promise<boolean> {
-    if (this.isSuppressed(packet)) {
-      return false;
-    }
+  private async reservePacketSlot(packet: LiveVoicePacket, deadlineMs: number): Promise<boolean> {
+    if (this.packetFlow.signal.aborted || this.recoveryBlocked || this.isSuppressed(packet)) { return false; }
     const hasCapacity = await this.packetFlow.waitForQueueSlot(
       deadlineMs,
       this.dependencies.isMeetingFinishing,
@@ -171,14 +210,12 @@ export class SpeakerTranscriptionSession {
       }
       return false;
     }
-    if (this.isSuppressed(packet)) {
-      return false;
-    }
+    if (this.packetFlow.signal.aborted || this.recoveryBlocked || this.isSuppressed(packet)) { return false; }
     this.cancelIdleFinalization();
     this.packetFlow.reserveQueueSlot();
     const delivery = async (): Promise<void> => {
       try {
-        await this.send(packet);
+        await this.untilCancelled(this.send(packet));
       } catch (error) {
         this.deliveryFailed = true;
         this.providerSession.terminate();
@@ -195,9 +232,7 @@ export class SpeakerTranscriptionSession {
 
   private async send(packet: LiveVoicePacket): Promise<void> {
     const packetId = livePacketIdentity(packet);
-    if (this.isSuppressed(packet, packetId)) {
-      return;
-    }
+    if (this.isSuppressed(packet, packetId)) { return; }
     const opus = Buffer.from(packet.payloadBase64, "base64");
     const durationSamples48Khz = this.dependencies.packetInspector
       .durationSamples48Khz(opus);
@@ -206,9 +241,7 @@ export class SpeakerTranscriptionSession {
       packet.relativeTimeMs,
       this.packetFlow.signal,
     );
-    if (earliestPacketAtMs === null) {
-      return;
-    }
+    if (earliestPacketAtMs === null) { return; }
     await this.sendWithBoundedRetry({
       durationSamples48Khz,
       earliestPacketAtMs,
@@ -229,9 +262,7 @@ export class SpeakerTranscriptionSession {
       let sendStartedAtMs: number;
       try {
         const session = await this.providerSession.open(this.packetFlow.signal);
-        if (session === null || this.packetFlow.signal.aborted) {
-          return;
-        }
+        if (session === null || this.packetFlow.signal.aborted) { return; }
         sendStartedAtMs = this.dependencies.clock.nowMilliseconds();
         await session.sendPacket({
           durationSamples48Khz: input.durationSamples48Khz,
@@ -241,15 +272,14 @@ export class SpeakerTranscriptionSession {
         });
       } catch (error) {
         this.providerSession.terminate();
-        if (this.packetFlow.signal.aborted) {
-          return;
-        }
+        if (this.packetFlow.signal.aborted) { return; }
         if (attempt === maximumLivePacketDeliveryAttempts) {
           this.rememberRetryablePacket(input.packet, input.packetId);
           throw error;
         }
         continue;
       }
+      if (this.packetFlow.signal.aborted) { return; }
       // A durable acknowledgement failure must not repeat the provider send.
       await this.commitDelivery(input, sendStartedAtMs);
       return;
@@ -293,12 +323,8 @@ export class SpeakerTranscriptionSession {
 
   private isSuppressed(packet: LiveVoicePacket, packetId?: string): boolean {
     const identity = packetId ?? livePacketIdentity(packet);
-    if (this.dependencies.ledger.isDelivered(identity)) {
-      return true;
-    }
-    if (this.dependencies.ledger.isRetryable(identity)) {
-      return false;
-    }
+    if (this.dependencies.ledger.isDelivered(identity)) { return true; }
+    if (this.dependencies.ledger.isRetryable(identity)) { return false; }
     if (
       this.lastRelativeTimeMs === null ||
       packet.relativeTimeMs >= this.lastRelativeTimeMs
@@ -327,9 +353,7 @@ export class SpeakerTranscriptionSession {
       () => {
         this.inactivityTimer = null;
         const finalize = async (): Promise<void> => {
-          if (this.shouldSkipIdleFinalization()) {
-            return;
-          }
+          if (this.shouldSkipIdleFinalization()) { return; }
           await this.finalize("Derived live idle speaker finalize failed");
         };
         this.chain = this.chain.then(finalize, finalize);
@@ -352,13 +376,8 @@ export class SpeakerTranscriptionSession {
     }
   }
 
-  private rememberRetryablePacket(
-    packet: LiveVoicePacket,
-    packetId: string,
-  ): void {
-    if (!this.dependencies.ledger.markRetryable(packetId)) {
-      return;
-    }
+  private rememberRetryablePacket(packet: LiveVoicePacket, packetId: string): void {
+    if (!this.dependencies.ledger.markRetryable(packetId)) { return; }
     this.dependencies.logger.warn(
       "Derived live transcription packet exhausted bounded delivery retries",
       {
@@ -375,9 +394,7 @@ export class SpeakerTranscriptionSession {
       | "LIVE_PACKET_GLOBAL_BACKLOG_FULL"
       | "LIVE_PACKET_BACKPRESSURE_TIMEOUT",
   ): void {
-    if (this.backpressureDegraded) {
-      return;
-    }
+    if (this.backpressureDegraded) { return; }
     this.backpressureDegraded = true;
     this.dependencies.logger.warn(
       "Derived live transcription degraded after packet backpressure",
@@ -403,9 +420,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private logPacketFailure(error: unknown): void {
-    if (this.dependencies.isMeetingFinishing() || this.packetFlow.signal.aborted) {
-      return;
-    }
+    if (this.dependencies.isMeetingFinishing() || this.packetFlow.signal.aborted) { return; }
     this.dependencies.logger.warn("Derived live transcription packet failed", {
       ...this.logFields(),
       errorName: error instanceof Error ? error.name : "UnknownError",
@@ -413,9 +428,6 @@ export class SpeakerTranscriptionSession {
   }
 
   private logFields(): Readonly<Record<string, unknown>> {
-    return {
-      meetingId: this.dependencies.meetingId,
-      speakerId: this.dependencies.speakerId,
-    };
+    return { meetingId: this.dependencies.meetingId, speakerId: this.dependencies.speakerId };
   }
 }
