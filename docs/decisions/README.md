@@ -29,7 +29,6 @@
 - [ADR-0020: Qualify complete action chains](0020-qualify-complete-action-chains.md)
 - [ADR-0021: Retain complete fragmented action evidence](0021-retain-complete-fragmented-action-evidence.md)
 - [ADR-0023: Backward-compatible readable segments in batch v2](0023-backward-compatible-readable-segments.md)
-- [ADR-0024: Possession-based recording playback](0024-possession-based-recording-playback.md)
 - [ADR-0025: Cumulative live summary and layered Discord evidence](0025-cumulative-live-summary-and-layered-discord-evidence.md)
 - [ADR-0027: Durable meeting source and actor identity](0027-durable-meeting-source-and-actor-identity.md)
 - [ADR-0028: Meeting Knowledge test ownership](0028-meeting-knowledge-test-ownership.md)
@@ -64,9 +63,11 @@
 - [ADR-0065: Private quality budget-ledger lock adapter](0065-private-quality-budget-ledger-lock-adapter.md)
 - [ADR-0066: Bind qualification corpus cardinality to an authoritative generation](0066-authoritative-qualification-corpus-generation.md)
 - [ADR-0067: Two-application self-hosting topology](0067-two-application-self-hosting-topology.md)
+- [ADR-0068: Verified legacy recording compatibility](0068-verified-legacy-recording-compatibility.md)
 
 ## Superseded
 
+- [ADR-0024: Possession-based recording playback](0024-possession-based-recording-playback.md)
 - [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)
 - [ADR-0013: Provider-neutral meeting source boundary](0013-provider-neutral-meeting-source-boundary.md)
 - [ADR-0022: Provider-neutral readable transcript segments](0022-provider-neutral-readable-transcript-segments.md)

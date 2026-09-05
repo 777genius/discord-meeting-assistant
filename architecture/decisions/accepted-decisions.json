@@ -321,6 +321,11 @@
       "id": "ADR-0067",
       "path": "docs/decisions/0067-two-application-self-hosting-topology.md",
       "immutableDigest": "sha256:5bb8560bce4e81967c5d7cc27f6645d97bcdda61da0fde4f56cb6f29cd36cdfe"
+    },
+    {
+      "id": "ADR-0068",
+      "path": "docs/decisions/0068-verified-legacy-recording-compatibility.md",
+      "immutableDigest": "sha256:3eb218142e4158815c1947741b7756033080a3c1d6773cd1e34a96cebf9648db"
     }
   ]
 }
