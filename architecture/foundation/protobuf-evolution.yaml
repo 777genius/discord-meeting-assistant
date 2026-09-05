@@ -7,7 +7,7 @@
   "current": {
     "schemaVersion": 1,
     "contractId": "meeting-platform-rpc",
-    "publicContractVersion": "0.2.0",
+    "publicContractVersion": "0.3.0",
     "bufVersion": "1.72.0",
     "bufConfigDigest": "sha256:4206f76049031d5f0182a10bce67d1f39ab488727f5e28cf41ffd3ce882ed47d",
     "descriptorImageDigest": "sha256:8024be3f0a10e68a393601a85168b80bb70b872bf05ed6fcf63e0d13a2c38a04",
