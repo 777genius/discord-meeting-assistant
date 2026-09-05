@@ -294,7 +294,7 @@ test("generated capture wrapper survives the runtime-pruned environment", async 
   t.after(async () => rm(root, { force: true, recursive: true }));
   const requestPath = join(root, "request.json");
   const codexStubPath = join(root, "codex-stub.mjs");
-  const secret = "must-not-cross-capture-boundary";
+  const secret = "test-fixture-literal";
   const usagePath = () =>
     join(dirname(workerOptions.codexBinaryPath), "usage.json");
   await writeFile(requestPath, JSON.stringify(incrementalRequest()));

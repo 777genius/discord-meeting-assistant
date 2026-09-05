@@ -202,6 +202,11 @@ describe("PersistentCodexProcessRunner", () => {
 
   it("sets the qualified knowledge tier", setsQualifiedKnowledgeServiceTier);
 
+  it.each([undefined, "fast"])(
+    "rejects persistent knowledge execution with CLI tier %s",
+    rejectsChangedPersistentKnowledgeTier,
+  );
+
   it("maps an external AbortSignal to the persistent worker and returns cancellation", async () => {
     const fixture = await createFixture();
     const workerInputStarted = deferred<FakeWorkerInput>();
@@ -471,6 +476,10 @@ interface FakeWorkerRunOptions {
 }
 
 interface FakeWorkerState {
+  readonly admissionInputs: Array<{
+    readonly request: unknown;
+    readonly serviceTier?: string;
+  }>;
   readonly modulePaths: string[];
   readonly workers: FakeWorker[];
   prewarm: (worker: FakeWorker) => Promise<void>;
@@ -552,6 +561,30 @@ async function setsQualifiedKnowledgeServiceTier(): Promise<void> {
   });
   expect(result.serviceTier).toBe("default");
   expect(knowledgeAnswerProfile.execution.serviceTier).toBe("default");
+  expect(fixture.state.admissionInputs).toHaveLength(1);
+  expect(fixture.state.admissionInputs[0]?.serviceTier).toBe("default");
+}
+
+async function rejectsChangedPersistentKnowledgeTier(
+  serviceTier: string | undefined,
+): Promise<void> {
+  const fixture = await createFixture();
+  const request = await requestFor(
+    fixture,
+    "knowledge-answer-changed-tier",
+    knowledgeAnswerCanonicalRequest,
+  );
+  const tierIndex = request.args.indexOf("--service-tier");
+  const args = serviceTier === undefined
+    ? request.args.filter(
+        (_, index) => index !== tierIndex && index !== tierIndex + 1,
+      )
+    : replaceArgument(request.args, "--service-tier", serviceTier);
+
+  await expect(fixture.runner.run({ ...request, args })).rejects.toThrow(
+    "service tier conflicts",
+  );
+  expect(fixture.state.workers).toHaveLength(0);
 }
 
 async function createFixture(accountCount = 1): Promise<Fixture> {
@@ -579,6 +612,7 @@ async function createFixture(accountCount = 1): Promise<Fixture> {
     writeFile(packageManifestPath, "{}"),
   ]);
   const state: FakeWorkerState = {
+    admissionInputs: [],
     modulePaths: [],
     workers: [],
     prewarm: async () => {},
@@ -600,6 +634,19 @@ async function createFixture(accountCount = 1): Promise<Fixture> {
         : `discord-meeting-summary-v3-slot-${index + 1}`,
     })),
     launcherPath,
+    launcherPolicyLoader: async () => ({
+      admitMeetingSummaryRequest: (input) => {
+        state.admissionInputs.push(input);
+        const requestedTier = (input.request as {
+          readonly task?: {
+            readonly controls?: { readonly serviceTier?: unknown };
+          };
+        }).task?.controls?.serviceTier;
+        if (input.serviceTier !== requestedTier) {
+          throw new Error("service tier conflicts with persistent runner policy");
+        }
+      },
+    }),
     packageManifestPath,
     stateRoot,
     workerModuleLoader: fakeWorkerModuleLoader(state),

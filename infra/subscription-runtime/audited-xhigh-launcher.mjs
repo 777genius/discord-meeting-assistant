@@ -69,7 +69,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     });
     const bridge = await captureBridgeOutput(() =>
       runSubscriptionAgentTaskCli(
-        withExactModel(argv, profile.model),
+        withoutArgument(withExactModel(argv, profile.model), "--service-tier"),
         undefined,
         createStrictCodexWorker,
       ),
@@ -101,7 +101,10 @@ function createStrictWorkerFactory({ FileBackendCodexWorker, capture, profile })
     if (model !== profile.model) {
       throw new Error("Model conflicts with the admitted meeting policy");
     }
-    if (input.serviceTier !== profile.serviceTier) {
+    if (
+      input.serviceTier !== undefined &&
+      input.serviceTier !== profile.serviceTier
+    ) {
       throw new Error("Service tier conflicts with the admitted meeting policy");
     }
     const admittedCodexBinaryPath = resolveAdmittedExecutable(
@@ -125,6 +128,18 @@ function createStrictWorkerFactory({ FileBackendCodexWorker, capture, profile })
       ...(input.timeoutMs ? { taskTimeoutMs: input.timeoutMs } : {}),
     });
   };
+}
+
+function withoutArgument(args, name) {
+  const filtered = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === name) {
+      index += 1;
+      continue;
+    }
+    filtered.push(args[index]);
+  }
+  return filtered;
 }
 
 async function runtimeDependencies(overrides) {

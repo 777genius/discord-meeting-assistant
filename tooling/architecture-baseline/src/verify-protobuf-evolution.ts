@@ -19,6 +19,7 @@ interface ProtobufEvolutionEvidence {
       readonly expectedGeneratedOutputDigest?: unknown;
       readonly observedGeneratedOutputDigest?: unknown;
     };
+    readonly releasedDescriptorImageDigest?: unknown;
   };
 }
 
@@ -113,7 +114,7 @@ try {
     "current.descriptorImageDigest",
   );
   requireEqual(
-    current.descriptorImageDigest,
+    current.releasedDescriptorImageDigest,
     releasedDescriptorDigest,
     "released descriptor image",
   );

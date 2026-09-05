@@ -115,6 +115,28 @@ export function persistentCodexArgumentValue(
   return value;
 }
 
+export function optionalPersistentCodexArgumentValue(
+  args: readonly string[],
+  flag: string,
+): string | undefined {
+  const indexes = args.flatMap((value, index) => value === flag ? [index] : []);
+  if (indexes.length === 0) {
+    return undefined;
+  }
+  if (indexes.length !== 1) {
+    throw new Error(`${flag} must occur exactly once in persistent runner policy`);
+  }
+  const index = indexes[0];
+  if (index === undefined) {
+    throw new Error(`${flag} is missing from persistent runner policy`);
+  }
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value in persistent runner policy`);
+  }
+  return value;
+}
+
 export function requiredPersistentCodexEnvironment(
   environment: Readonly<Record<string, string>>,
   name: string,

@@ -8,10 +8,11 @@ import type {
   PersistentCodexWorkerGroup,
 } from "./persistent-codex-process-contracts.js";
 import {
-  persistentCodexArgumentValue,
   assertSamePersistentCodexProfile,
   loadPersistentCodexLauncherPolicy,
+  optionalPersistentCodexArgumentValue,
   parsePersistentCodexRequest,
+  persistentCodexArgumentValue,
   profileForPersistentCodexRequest,
   requiredPersistentCodexEnvironment,
   structuredPersistentCodexOutputSystemPrompt,
@@ -140,6 +141,10 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
     const launcherPolicy = await (
       this.options.launcherPolicyLoader ?? loadPersistentCodexLauncherPolicy
     )(request.command);
+    const serviceTier = optionalPersistentCodexArgumentValue(
+      request.args,
+      "--service-tier",
+    );
     launcherPolicy.admitMeetingSummaryRequest({
       model: persistentCodexArgumentValue(request.args, "--model"),
       provider: "codex",
@@ -147,6 +152,9 @@ export class PersistentCodexProcessRunner implements StreamingProcessRunnerPort 
         request.env,
         "AGENT_RUNTIME_REASONING_EFFORT",
       ),
+      ...(serviceTier === undefined
+        ? {}
+        : { serviceTier }),
       request: canonical,
     });
     const group = await this.group(

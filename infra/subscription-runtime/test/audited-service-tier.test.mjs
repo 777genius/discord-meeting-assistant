@@ -85,6 +85,7 @@ test("passes the admitted default tier to the qualified CLI worker", async (t) =
   ));
 
   let workerOptions;
+  let runtimeArgv;
   function FakeWorker(options) {
     workerOptions = options;
   }
@@ -104,7 +105,8 @@ test("passes the admitted default tier to the qualified CLI worker", async (t) =
         wrapperPath: join(root, "capture-wrapper"),
       }),
       FileBackendCodexWorker: FakeWorker,
-      runSubscriptionAgentTaskCli: async (_argv, _options, createWorker) => {
+      runSubscriptionAgentTaskCli: async (argv, _options, createWorker) => {
+        runtimeArgv = argv;
         createWorker({
           codexBinaryPath: process.execPath,
           cwd: root,
@@ -113,7 +115,6 @@ test("passes the admitted default tier to the qualified CLI worker", async (t) =
           model: "gpt-5.6-sol",
           provider: "codex",
           providerInstanceId: "test-provider",
-          serviceTier: "default",
           stateRootDir: root,
         });
         process.stdout.write(`${JSON.stringify(completedBridgeResult())}\n`);
@@ -126,6 +127,7 @@ test("passes the admitted default tier to the qualified CLI worker", async (t) =
   assert.equal(workerOptions.model, "gpt-5.6-sol");
   assert.equal(workerOptions.reasoningEffort, "medium");
   assert.equal(workerOptions.serviceTier, "default");
+  assert.equal(runtimeArgv.includes("--service-tier"), false);
 });
 
 function knowledgeAnswerRequest() {
