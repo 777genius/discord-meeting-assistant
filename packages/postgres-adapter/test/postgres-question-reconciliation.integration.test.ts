@@ -1,7 +1,7 @@
 import { QuestionBinding, type QuestionBindingSnapshot } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PostgresFinalReplyMaintenance, PostgresQuestionJobStore,
   PostgresSchemaReadiness } from "../src/index.js";
 import { databaseOrSkip, usePostgresIntegrationDatabase } from
@@ -10,15 +10,13 @@ import { questionAdmissionBindingHash } from
   "../src/postgres-meeting-knowledge-codecs.js";
 import { questionReconciliationPageSql } from
   "../src/postgres-question-reconciliation-checkpoint.js";
-import { canonicalFixtureHash, exactPreCompositeFixture,
+import { canonicalFixtureHash,
   serializeQuestionReconciliationFixtureRows } from
   "./postgres-protocol2-recovery.fixture.js";
-
-const questionPolicy = Object.freeze({
-  authorizationPolicyVersion: "discord.participant-current-results.v1",
-  policyEpoch: 1,
-  policyVersion: "meeting-knowledge.focused-memory-final-reply.v2",
-});
+import {
+  crashRecoveryRows, currentBinding, flattenPlanNodes, prepareSparseTerminalCorpus,
+  questionPolicy, seedCrashRecoveryRows, seedDeliveredRecoveryEffects,
+} from "./postgres-question-reconciliation.fixture.js";
 
 usePostgresIntegrationDatabase();
 
@@ -142,77 +140,48 @@ describe("PostgreSQL question reconciliation enumeration readiness", () => {
         reconciliationDisposition === "reconcile")).toBe(true);
     });
 
-  it("uses bounded partial eligible indexes with a sparse terminal corpus",
-    async (context) => {
-      const database = databaseOrSkip(context);
-      await database.query(`INSERT INTO meeting_knowledge.question_jobs (
-        question_id, requester_subject, question_hash, scope_id,
-        final_projection_receipt, authorization_digest, locale, binding_hash,
-        state, outcome, terminal_at, scrubbed_at, expires_at
-      ) SELECT (78000000000000000::bigint + item)::text, $1, $2, $3, $4, $5,
-          'en', $6, 'terminal', 'answered', transaction_timestamp(),
-          transaction_timestamp(), transaction_timestamp() + interval '30 minutes'
-        FROM generate_series(1, 20000) AS item`,
-      ["d".repeat(64), "c".repeat(64), "66666666666666666",
-        "discord:v2:channel:22222222222222222:message:44444444444444444",
-        "a".repeat(64), "b".repeat(64)]);
-      const reservedPayload = '{"content":"not-actionable"}';
-      await database.query(`INSERT INTO meeting_core.answer_effects (
-        effect_id, authority_scope_id, projection_target_container_id,
-        delivery_container_id, reply_to_remote_message_id, marker,
-        payload_bytes, payload_hash, binding_hash, authorization_digest,
-        source_meeting_ids
-      ) SELECT 'meeting-knowledge-answer:v1:' ||
-          (78000000000000000::bigint + item)::text,
-          $1, $2, $2, (78000000000000000::bigint + item)::text,
-          'marker:' || item::text, $3, $4, $5, $6,
-          ARRAY['meeting-sparse'] FROM generate_series(1, 20000) AS item`,
-      ["66666666666666666", "22222222222222222", reservedPayload,
-        createHash("sha256").update(reservedPayload).digest("hex"),
-        "b".repeat(64), "a".repeat(64)]);
-      const active = currentBinding("79999999999999999");
-      await database.query(`INSERT INTO meeting_knowledge.question_jobs (
-        question_id, requester_subject, question_hash, scope_id,
-        final_projection_receipt, authorization_principal_ref,
-        authorization_digest, locale, question_text, binding, binding_hash,
-        expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'en', 'Question?', $8, $9,
-        transaction_timestamp() + interval '30 minutes')`,
-      [active.questionId, active.requesterSubject, active.questionHash, active.scopeId,
-        active.finalProjectionReceipt, active.authorizationPrincipalRef,
-        active.authorizationDigest, active, questionAdmissionBindingHash(active)]);
-      await database.query("ANALYZE meeting_knowledge.question_jobs");
-      await database.query("ANALYZE meeting_core.answer_effects");
-      const client = await database.connect();
-      let explained: { readonly rows: readonly { readonly "QUERY PLAN": unknown }[] };
-      try {
-        explained = await client.query<{ "QUERY PLAN": unknown }>(
+  describe("sparse terminal corpus", () => {
+    const active = currentBinding("79999999999999999");
+    let preparation: Promise<void> | undefined;
+    beforeEach(async (context) => {
+      preparation = undefined;
+      preparation = prepareSparseTerminalCorpus(databaseOrSkip(context), active, context.signal);
+      await preparation;
+    }, 90_000);
+    afterEach(async () => {
+      // Vitest timeouts abort the context, but do not await the hook's work.
+      // Join setup (including rollback/release) before the next root truncation.
+      await preparation;
+    }, 90_000);
+
+    it("uses bounded partial eligible indexes with a sparse terminal corpus",
+      async (context) => {
+        const database = databaseOrSkip(context);
+        const explained = await database.query<{ "QUERY PLAN": unknown }>(
           `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${questionReconciliationPageSql}`,
           [null, 10]);
-      } finally {
-        client.release();
-      }
-      const plan = JSON.stringify(explained.rows[0]?.["QUERY PLAN"]);
-      expect(plan).toContain("question_jobs_reconciliation_active_idx");
-      expect(plan).toContain("answer_effects_question_reconciliation_idx");
-      expect(plan).not.toMatch(
-        /"Node Type":"Seq Scan"[^}]*"Relation Name":"(?:question_jobs|answer_effects)"/u,
-      );
-      const planNodes = flattenPlanNodes(explained.rows[0]?.["QUERY PLAN"]);
-      for (const indexName of ["question_jobs_reconciliation_active_idx",
-        "answer_effects_question_reconciliation_idx"]) {
-        const scans = planNodes.filter((node) => node["Index Name"] === indexName);
-        expect(scans.length).toBeGreaterThan(0);
-        expect(scans.every((node) =>
-          node["Node Type"] === "Index Scan" ||
-          node["Node Type"] === "Index Only Scan")).toBe(true);
-        expect(scans.every((node) => Number(node["Actual Rows"]) <= 10)).toBe(true);
-      }
-      const page = await new PostgresQuestionJobStore(database, questionPolicy)
-        .listActiveQuestionsForReconciliation({ afterQuestionId: null,
-          maximumRows: 10 });
-      expect(page.map(({ questionId }) => questionId)).toEqual([active.questionId]);
-    });
+        const plan = JSON.stringify(explained.rows[0]?.["QUERY PLAN"]);
+        expect(plan).toContain("question_jobs_reconciliation_active_idx");
+        expect(plan).toContain("answer_effects_question_reconciliation_idx");
+        expect(plan).not.toMatch(
+          /"Node Type":"Seq Scan"[^}]*"Relation Name":"(?:question_jobs|answer_effects)"/u,
+        );
+        const planNodes = flattenPlanNodes(explained.rows[0]?.["QUERY PLAN"]);
+        for (const indexName of ["question_jobs_reconciliation_active_idx",
+          "answer_effects_question_reconciliation_idx"]) {
+          const scans = planNodes.filter((node) => node["Index Name"] === indexName);
+          expect(scans.length).toBeGreaterThan(0);
+          expect(scans.every((node) =>
+            node["Node Type"] === "Index Scan" ||
+            node["Node Type"] === "Index Only Scan")).toBe(true);
+          expect(scans.every((node) => Number(node["Actual Rows"]) <= 10)).toBe(true);
+        }
+        const page = await new PostgresQuestionJobStore(database, questionPolicy)
+          .listActiveQuestionsForReconciliation({ afterQuestionId: null,
+            maximumRows: 10 });
+        expect(page.map(({ questionId }) => questionId)).toEqual([active.questionId]);
+      });
+  });
 
   it("upgrades one exact legacy binding once under concurrent leases without starving the queue",
     async (context) => {
@@ -500,26 +469,7 @@ describe("PostgreSQL question reconciliation crash recovery", () => {
 
   it("restarts exhaustively across poison rows, delivered effects, crashes, and cursor CAS",
     async (context) => {
-      const rows: Array<{ readonly binding: unknown; readonly bindingHash: string;
-        readonly groundingPlan: unknown; readonly questionId: string;
-        readonly state: "queued" | "terminal" }> =
-        Array.from({ length: 403 }, (_, index) => {
-        const questionId = String(77_000_000_000_000_000n + BigInt(index));
-        if (index === 350 || index === 400) {
-          return { binding: null, bindingHash: "7".repeat(64), groundingPlan: null,
-            questionId, state: "terminal" };
-        }
-        const binding = currentBinding(questionId);
-        return { binding, bindingHash: questionAdmissionBindingHash(binding),
-          groundingPlan: null, questionId, state: "queued" };
-        });
-      const old = exactPreCompositeFixture();
-      rows.push({ binding: old.binding, bindingHash: old.bindingHash,
-        groundingPlan: old.groundingPlan, questionId: "33333333333333333",
-        state: "queued" });
-      rows.push({ binding: { bindingProtocolVersion: 2, corrupt: true },
-        bindingHash: "6".repeat(64), groundingPlan: null,
-        questionId: "55555555555555555", state: "queued" });
+      const rows = crashRecoveryRows();
       const serializedRows = serializeQuestionReconciliationFixtureRows(rows);
       expect(serializedRows).toHaveLength(405);
       expect(Object.keys(serializedRows[0]!).toSorted()).toEqual([
@@ -528,55 +478,10 @@ describe("PostgreSQL question reconciliation crash recovery", () => {
       expect(serializedRows.map(({ question_id: questionId }) => questionId))
         .toEqual(rows.map(({ questionId }) => questionId));
       const database = databaseOrSkip(context);
-      await database.query(`UPDATE meeting_knowledge.question_reconciliation_checkpoints
-        SET after_question_id = NULL WHERE checkpoint_key = 'discord-active-questions-v1'`);
-      await database.query(
-        `INSERT INTO meeting_knowledge.question_jobs (
-           question_id, requester_subject, question_hash, scope_id,
-           final_projection_receipt, authorization_principal_ref,
-           authorization_digest, locale, question_text, binding, binding_hash,
-           grounding_plan, state, outcome, terminal_at, scrubbed_at, expires_at
-         ) SELECT item.question_id, $2, $3, $4, $5,
-             CASE WHEN item.state = 'terminal' THEN NULL ELSE 'principal:restart' END,
-             $6, 'en',
-             CASE WHEN item.state = 'terminal' THEN NULL ELSE 'Question?' END,
-             item.binding, item.binding_hash, item.grounding_plan, item.state,
-             CASE WHEN item.state = 'terminal' THEN 'answered' ELSE NULL END,
-             CASE WHEN item.state = 'terminal' THEN transaction_timestamp() ELSE NULL END,
-             CASE WHEN item.state = 'terminal' THEN transaction_timestamp() ELSE NULL END,
-             transaction_timestamp() + interval '30 minutes'
-           FROM jsonb_to_recordset($1::jsonb) AS item(
-             question_id text, binding jsonb, binding_hash text,
-             grounding_plan jsonb, state text
-           )`,
-        [JSON.stringify(serializedRows), "d".repeat(64), "c".repeat(64),
-          "66666666666666666",
-          "discord:v2:channel:22222222222222222:message:44444444444444444",
-          "a".repeat(64)],
-      );
+      await seedCrashRecoveryRows(database, serializedRows);
       const deliveredIds = ["55555555555555555", rows[350]!.questionId,
         rows[400]!.questionId];
-      for (const questionId of deliveredIds) {
-        const payload = JSON.stringify({ content: "delivered", message_reference: {
-          channel_id: "22222222222222222", message_id: questionId } });
-        await database.query(
-          `INSERT INTO meeting_core.answer_effects (
-             effect_id, state, authority_scope_id,
-             projection_target_container_id, delivery_container_id,
-             reply_to_remote_message_id, marker, payload_bytes, payload_hash,
-             binding_hash, authorization_digest, source_meeting_ids,
-             request_started_at, external_receipt, settled_at
-           ) VALUES (
-             'meeting-knowledge-answer:v1:' || $1, 'delivered', $2, $3, $3,
-             $1, 'marker:' || $1, $4, $5, $6, $7,
-             ARRAY['meeting-restart'], transaction_timestamp(),
-             'discord-receipt:' || $1, transaction_timestamp()
-           )`,
-          [questionId, "66666666666666666", "22222222222222222", payload,
-            createHash("sha256").update(payload).digest("hex"), "7".repeat(64),
-            "a".repeat(64)],
-        );
-      }
+      await seedDeliveredRecoveryEffects(database, deliveredIds);
 
       const firstProcess = new PostgresQuestionJobStore(database, questionPolicy);
       const firstPage = await firstProcess.listActiveQuestionsForReconciliation({
@@ -690,56 +595,3 @@ describe("PostgreSQL question reconciliation crash recovery", () => {
         questionId === "55555555555555555")).toBeUndefined();
     });
 });
-
-function currentBinding(questionId: string) {
-  return QuestionBinding.create({
-    authorizationDigest: "a".repeat(64),
-    authorizationPolicyVersion: questionPolicy.authorizationPolicyVersion,
-    authorizationPrincipalRef: "principal:restart",
-    botApplicationIdentity: "11111111111111111",
-    bindingProtocolVersion: 2,
-    canonicalEvidenceHash: "b".repeat(64),
-    deliveryContainerId: "22222222222222222",
-    expectedLocale: "en",
-    finalProjectionEpoch: "projection-epoch-restart",
-    finalProjectionReceipt:
-      "discord:v2:channel:22222222222222222:message:44444444444444444",
-    humanActorIds: ["77777777777777777"],
-    meetingId: `meeting-${questionId}`,
-    meetingRevision: 1,
-    memoryGeneration: `focused-memory:v1:${"b".repeat(64)}`,
-    policyVersion: questionPolicy.policyVersion,
-    projectionTargetContainerId: "22222222222222222",
-    questionHash: "c".repeat(64), questionId,
-    requesterSubject: "d".repeat(64),
-    retrievalBinding: {
-      canonicalEvidenceFilters: { relativeTimeInterval: null,
-        requiresSpeakerMatch: false, speakerIds: [] },
-      cutoverEpoch: "restart-r1",
-      localCurrentIdentity: { algorithmId: "canonical_local_exact_lexical_v1",
-        profileFingerprint: "e".repeat(64),
-        profileId: "meeting-knowledge.local-current.v2" },
-      originalQuestion: "Question?", profileFingerprint: "e".repeat(64),
-      provenanceSchemaVersion: 1,
-      retrievalPath: "canonical_local_exact_lexical_v1",
-    },
-    roomId: "room-restart", scopeId: "66666666666666666",
-    transcriptId: "transcript-restart", transcriptVersion: 1,
-  }).toSnapshot();
-}
-
-function flattenPlanNodes(value: unknown): readonly Record<string, unknown>[] {
-  const nodes: Record<string, unknown>[] = [];
-  const visit = (candidate: unknown): void => {
-    if (Array.isArray(candidate)) {
-      for (const item of candidate) {visit(item);}
-      return;
-    }
-    if (typeof candidate !== "object" || candidate === null) {return;}
-    const record = candidate as Record<string, unknown>;
-    if (typeof record["Node Type"] === "string") {nodes.push(record);}
-    for (const nested of Object.values(record)) {visit(nested);}
-  };
-  visit(value);
-  return nodes;
-}
