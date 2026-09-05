@@ -63,6 +63,7 @@
 - [ADR-0053: V2-only meeting retrieval composition](0053-v2-only-meeting-retrieval.md)
 - [ADR-0064: Composite retrieval authority fence and candidate isolation](0064-composite-retrieval-authority-fence.md)
 - [ADR-0065: Private quality budget-ledger lock adapter](0065-private-quality-budget-ledger-lock-adapter.md)
+- [ADR-0066: Bind qualification corpus cardinality to an authoritative generation](0066-authoritative-qualification-corpus-generation.md)
 
 ## Superseded
 
