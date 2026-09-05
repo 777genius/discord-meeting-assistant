@@ -12,7 +12,7 @@ export interface SpendReservation {
   readonly maxCallsByKind: Readonly<Record<CallKind, number>>;
   readonly maximumEffectDurationMs: number;
   readonly maxTokens: number;
-  readonly model: "gpt-5.6-sol"; readonly provider: string; readonly reasoning: "xhigh";
+  readonly model: "gpt-5.6-sol"; readonly provider: string; readonly reasoning: "medium";
   readonly releaseRootSha256: string; readonly repetition: 1 | 2 | 3;
   readonly serviceTier: "default";
 }
