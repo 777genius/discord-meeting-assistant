@@ -733,7 +733,7 @@ async function startPackedGroundedAnswerRuntime(launcherSha256: string, forceRep
     callback(null, { executionAttestation: { canonicalRequestSha256:
       canonicalJsonSha256(request), launcherSha256, model: "gpt-5.6-sol",
     provider: "AGENT_RUNTIME_PROVIDER_CODEX", purpose: request.context.purpose,
-    reasoningEffort: "medium", requestId: request.runId,
+    reasoningEffort: "medium", requestId: request.runId, serviceTier: "default",
     runtimeEngine: "subscription-runtime-cli", runtimePackageVersion: "0.1.0-main.27",
     schemaVersion: 1, selectedOutputKind:
       "AGENT_RUNTIME_SELECTED_OUTPUT_KIND_STRUCTURED_OUTPUT",
@@ -762,7 +762,8 @@ function runtimeRequestFromGrpc(value: Record<string, unknown>) {
     kind: "structured-prompt" as const, metadata: { executionProfile: metadata.executionProfile!,
       model: metadata.model!, policyVersion: metadata.policyVersion!,
       reasoningEffort: metadata.reasoningEffort!, runtimeOutput: metadata.runtimeOutput!,
-      toolsDisabled: metadata.toolsDisabled! }, outputSchemaName: String(controls.outputSchemaName),
+      serviceTier: metadata.serviceTier!, toolsDisabled: metadata.toolsDisabled! },
+    outputSchemaName: String(controls.outputSchemaName),
     prompt: String(value.prompt), systemPrompt: String(value.systemPrompt) },
   timeoutMs: Number(value.timeoutMs) };
 }
