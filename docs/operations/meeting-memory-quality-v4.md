@@ -148,8 +148,9 @@ schema is sealed separately for overall, automated, and real corpora.
 - cross-scope foreign-locator count;
 - citation membership in the admitted local evidence set;
 - exact canonical speaker and exact start/end time accuracy;
-- whole-question final-answer recall over the real campaign's 137 answerable
-  questions (100 automated plus 37 real): expected
+- whole-question final-answer recall over the answerable questions in the exact
+  admitted generation (the frozen automated set plus that generation's
+  independently reviewed set): expected
   gold IDs are deduplicated within a question and the question receives one hit
   only when every expected claim is independently supported. The obsolete
   provider-free structural fixture had 120 answerable questions and is not the
@@ -275,17 +276,47 @@ and cleanup assertions;
 the timeout is not a qualification threshold and does not alter the 240-outcome
 structural runner.
 
-## Production-faithful real-run preflight
+## Authoritative generation preflight
 
-`test:semantic-quality-v4:real-preflight` is path-injected. It accepts no corpus
-text on the command line and prints only digests, safe categories/counts,
-structural ceilings, signed-receipt digests, and the frozen request snapshot.
-The private schema must contain exactly 2,209 ordered turns, eight speakers, 40
-questions (37 answerable, three abstention), 22 EN and 18 RU questions, declared
-safe category counts, evidence IDs, and speaker/time metadata. Prose expected
-answers are never scoring authority; they must be replaced by a pre-sealed
-atomic-claim rubric. Two independent signed exact-binding review receipts are
-mandatory.
+The installed `corpus-admit` command is the production-faithful corpus boundary.
+It accepts no corpus text on the command line and publishes only a private,
+create-only handoff plus a safe digest/count status receipt. As recorded by
+[ADR-0066](../decisions/0066-authoritative-qualification-corpus-generation.md),
+the candidate generation observed from the authoritative PostgreSQL `NEW`
+snapshot on 2026-09-05 is bound to accepted final transcript version 2: it exactly
+matched its saved source JSON and had status `succeeded`; no newer accepted
+transcript existed for that meeting. The snapshot contained 1,779 ordered turns
+from seven speakers. Identity authority classified six speakers as human and
+one as declared automation; excluding that automation speaker's 10 turns
+produced 1,769 ordered, unique human turns from six speakers. The existing
+private 40-question candidate set comprised 29 answerable and 11 abstention
+questions, with 10 EN and 30 RU. These measured counts identify only that
+immutable candidate generation. They are aggregate provenance, not a reusable
+schema, a minimum, or quality evidence.
+
+Read-only authoritative metadata inspection also found no canonical `source`,
+`actors`, `identityProvenance`, `lifecycleGeneration`, or
+`authoritativeDurationMs` on this legacy snapshot, and zero
+`historical_memory_sync` rows for the meeting. The separate identity-authority
+JSON supports only the offline human-turn counts; it does not create sealed
+lifecycle-v3 provenance or an applied historical index. Consequently,
+successful transcription and source-JSON equality do not establish Meeting
+Knowledge admission. Real rehydration remains blocked pending authentic
+canonical lifecycle/source admission or a separately approved, signed
+legacy-import policy, followed by derived indexing. Never edit the old
+production snapshot or synthesize lifecycle-v3 metadata. Ordinary
+`corpus-admit` alone does not make this meeting ready for rehydration.
+
+Do not reshape an authoritative generation to historical fixture counts. The
+installed admission contract instead seals the exact `sourceDigestSha256` and
+`snapshotSha256`, requires exactly 200 `automatic` plus 40
+`independent_review` entries, and derives answerability and locale applicability
+from those sealed entries. Prose expected answers are never scoring authority;
+they must be replaced by a pre-sealed atomic-claim rubric. Two truly independent
+signed exact-binding question-review receipts are mandatory, with conflict
+adjudication where needed. The accepted final transcript and identity authority
+remain the sources for turn order, uniqueness, speaker classification, and
+automation exclusion.
 
 The real corpus replaces the 40 synthetic review candidates. It never augments
 them: one repetition is exactly 200 automated plus 40 real questions, and a
@@ -300,6 +331,12 @@ queries, a 1,000 ms deadline, and a 16,384-byte response. Qualification and a
 future canary must share its exact request snapshot. The full profile must be
 `locator-v2-full-<index digest>` with healthy, qualified `postgres_keyword` and
 `qdrant_dense` lanes; degraded, lexical-only, or drifted profiles fail closed.
+This candidate's execution binding is Infinity Context SDK `0.2.4` and
+`gpt-5.6-sol` with reasoning effort `medium` and service tier `default`. The
+exact source, accepted snapshot, release, request, prompt, policy, tokenizer,
+corpus, rubric, question, reviewer, and adjudication identities must remain
+identical across all three repetitions; any drift requires new receipts and
+executions.
 
 Provider execution uses a create-only stable attempt ID derived from root
 binding, repetition, and question ID. `provider_reserved` is fsynced before
@@ -331,23 +368,24 @@ owns one phase and one create-only monotonic transition:
 
 The production operator transport now lives under
 `packages/infinity-context-adapter/src/quality-campaign`. Its command vocabulary
-is `verify-bind`, `preflight`, `execute`, `resume`, `status`, `adjudicate`,
-`adjudicate-resume`, `retention`, `cleanup-absence`, `final-admission`, and the
-four isolated `holdout-*` phases. It emits only digest/count status receipts.
+is `corpus-admit`, `verify-bind`, `preflight`, `execute`, `resume`, `status`,
+`adjudicate`, `adjudicate-resume`, `retention`, `cleanup-absence`,
+`final-admission`, and the five isolated `holdout-*` commands. It emits only
+digest/count status receipts.
 Exit 0 is completed, 20 is a safe custodian pause, 21 is an outcome with unknown
 external effect, and 1 is invalid or failed. Private text is never a status field.
 
 | Durable stage | Command | Successful meaning |
 | --- | --- | --- |
-| `prepared_admitted` | `real-execute` pre-provider admission | Exact release/corpus/rubric/reviewer/runtime bindings and three spend authorizations are bound |
-| `executing` | `real-execute` | One stable attempt per question/repetition is being reserved and executed |
-| `awaiting_adjudication` | `real-execute` | All 720 terminal raw outcomes and encrypted exchanges exist; exit 20 is a pause, not qualification |
-| `adjudicated` | `real-adjudicate` | Two signed exact-outcome reviews exist for every answer, with an independent resolver for disagreement |
-| `awaiting_retention` | `real-adjudicate` | The exact retained-artifact inventory binding is published; exit 20 |
-| `retained_awaiting_cleanup` | `real-retention` | A signed retention receipt was consumed and a separately authorized derived-index cleanup request is published; exit 20 |
-| `cleaned_awaiting_admission` | `real-cleanup` | Signed cleanup/canonical-absence evidence is durably retained; exit 20 is a pause, not qualification |
-| `cleaned_qualified` | `real-final-admission` | Durable cleanup evidence and every independently signed admission input were consumed and every threshold passed locally |
-| `terminal_unqualified` | `real-cleanup` | Evidence was retained and derived cleanup proved, but a local gate failed; exit 1 |
+| `prepared_admitted` | `execute` pre-provider admission | Exact release/corpus/rubric/reviewer/runtime bindings and three spend authorizations are bound |
+| `executing` | `execute` | One stable attempt per question/repetition is being reserved and executed |
+| `awaiting_adjudication` | `execute` | All 720 terminal raw outcomes and encrypted exchanges exist; exit 20 is a pause, not qualification |
+| `adjudicated` | `adjudicate` | Two signed exact-outcome reviews exist for every answer, with an independent resolver for disagreement |
+| `awaiting_retention` | `adjudicate` | The exact retained-artifact inventory binding is published; exit 20 |
+| `retained_awaiting_cleanup` | `retention` | A signed retention receipt was consumed and a separately authorized derived-index cleanup request is published; exit 20 |
+| `cleaned_awaiting_admission` | `cleanup-absence` | Signed cleanup/canonical-absence evidence is durably retained; exit 20 is a pause, not qualification |
+| `cleaned_qualified` | `final-admission` | Durable cleanup evidence and every independently signed admission input were consumed and every threshold passed locally |
+| `terminal_unqualified` | `cleanup-absence` | Evidence was retained and derived cleanup proved, but a local gate failed; exit 1 |
 
 Every transition binds the exact root and previous transition digest. Files are
 created with `O_EXCL`, fsynced, and exact-byte replay is idempotent. A changed
@@ -387,11 +425,14 @@ precedes each retrieval or answer provider boundary. Missing or tampered raw
 exchange envelopes fail run reconstruction. Artifact retention, derived Infinity
 deletion, and authoritative canonical absence remain distinct signed bindings.
 
-The private decoder derives and exact-compares 37/3 answerable/abstention,
-22/18 EN/RU, and category counts 8/8/7/5/5/4/3. Participant-map keys equal the
-eight canonical speakers; involved speakers occur in cited evidence. The
-declared transcript digest equals the raw transcript file. Five explicit time
-windows are decoded and exact-compared with canonical evidence bounds.
+The older source-harness decoder that exact-compares 2,209 turns, eight
+speakers, 37/3 answerable/abstention, 22/18 EN/RU, category counts
+8/8/7/5/5/4/3, and five time windows is a historical test-only arithmetic
+fixture. It is not invoked by the installed `corpus-admit` path and is not
+authority for a new generation. Installed admission binds the supplied source
+and snapshot digests and the exact reviewed question/rubric material; downstream
+evaluation derives applicable denominators from that immutable admitted
+generation.
 
 The reviewer registry and release artifact binding are authenticated by an
 Ed25519 release root supplied by the independent launcher on an inherited file
@@ -536,13 +577,14 @@ PACKAGE='@discord-meeting/infinity-context-adapter'
   /absolute/private/status-phase.json /absolute/private/status-status.create-only.json
 ```
 
-Exit `0` means a provider-free status query or final `cleaned_qualified`; exit
-`20` means a successful durable pause awaiting a custodian; exit `1` means
-terminal unqualified or a failed gate. Another nonzero exception means no later
-transition was admitted. Neither exit 20 nor a provider-free structural pass is
-a quality qualification. Cleanup scope is `derived_index_only`; the original
-recording, accepted final transcript, and meeting database are never cleanup
-targets.
+For the installed CLI, exit `0` means the requested command completed; only a
+successful `final-admission` reaching `cleaned_qualified` is a qualification.
+Exit `20` means a successful durable pause awaiting a custodian, exit `21`
+means an outcome with unknown external effect, and exit `1` means invalid input,
+a failed gate, or terminal unqualified. Neither admission, exit 20, a status
+query, nor a provider-free structural pass is a quality qualification. Cleanup
+scope is `derived_index_only`; the original recording, accepted final
+transcript, and meeting database are never cleanup targets.
 
 ## Remediation validation — 2026-08-25
 
