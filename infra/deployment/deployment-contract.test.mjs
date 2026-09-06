@@ -192,6 +192,33 @@ test("uses only a Git-derived context and one generated .build artifact", async 
   assert.ok(platformDockerfile.includes("pnpm --filter=@discord-meeting/meeting-platform... --if-present run build"));
 });
 
+test("installs Platform image test workspace dependencies before the mandatory gate", async () => {
+  const dockerfile = await readFile(new URL("apps/meeting-platform/Dockerfile", repositoryRoot), "utf8");
+  const build = dockerfile.split("FROM runtime-base AS build\n")[1]?.split("FROM runtime-base AS runtime\n")[0];
+  assert.ok(build, "Platform must retain its build stage");
+  const commands = build.replace(/\\\r?\n\s*/gu, " ").split(/\s*&&\s*/u).map((command) => command.trim());
+  const installIndex = commands.findIndex((command) => command.startsWith("pnpm install "));
+  assert.ok(installIndex >= 0, "build stage must install dependencies");
+  const install = commands[installIndex];
+  assert.match(install, /(?:^|\s)--frozen-lockfile(?:\s|$)/u);
+  assert.doesNotMatch(install, /(?:^|\s)--prod(?:[=\s]|$)/u);
+  const filters = [...install.matchAll(/--filter(?:=|\s+)(\S+)/gu)].map((match) => match[1]);
+  assert.deepEqual(filters.sort(), [
+    "@discord-meeting/discord-e2e-actors...",
+    "@discord-meeting/meeting-platform...",
+  ], "install both workspace closures, including the test-only native collectors");
+  const buildIndex = commands.indexOf("pnpm --filter=@discord-meeting/meeting-platform... --if-present run build");
+  const gateIndex = commands.indexOf("pnpm --filter @discord-meeting/meeting-platform check:image");
+  assert.ok(buildIndex > installIndex, "production workspace build follows installation");
+  assert.ok(gateIndex > buildIndex, "check:image remains mandatory after the build");
+  const manifest = JSON.parse(await readFile(new URL("apps/meeting-platform/package.json", repositoryRoot), "utf8"));
+  assert.equal(manifest.scripts["check:image"], "pnpm run typecheck && pnpm run test");
+  for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+    assert.equal(manifest[field]?.["@discord-meeting/discord-e2e-actors"], undefined,
+      "test collectors must not become Platform runtime dependencies");
+  }
+});
+
 test("builds sidecar workspace exports before copying them into the runtime image", async () => {
   const dockerfile = await readFile(new URL("apps/subscription-runtime-sidecar/Dockerfile", repositoryRoot), "utf8");
   const [build, runtime] = dockerfile.split(/FROM .* AS runtime\n/u);

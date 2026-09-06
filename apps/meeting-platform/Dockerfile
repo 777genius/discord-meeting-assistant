@@ -16,8 +16,9 @@ WORKDIR /app
 COPY --chown=10001:10001 . .
 # The mandatory PostgreSQL/Testcontainers qualification runs on the host/CI
 # before image construction; BuildKit intentionally has no Docker socket.
+# Platform tests import native collectors from the test-only actor workspace.
 RUN node vendor/infinity-context/prepare-official-sdk.mjs \
-  && pnpm install --frozen-lockfile --filter @discord-meeting/meeting-platform... \
+  && pnpm install --frozen-lockfile --filter @discord-meeting/meeting-platform... --filter @discord-meeting/discord-e2e-actors... \
   && pnpm --filter=@discord-meeting/meeting-platform... --if-present run build \
   && pnpm --filter @discord-meeting/meeting-platform check:image \
   && node vendor/infinity-context/prepare-official-sdk.mjs --cleanup-source \
