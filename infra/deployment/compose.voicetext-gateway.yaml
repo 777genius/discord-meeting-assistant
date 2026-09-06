@@ -114,6 +114,11 @@ services:
 
   meeting-platform:
     environment:
+      # Core OSS startup leaves grounded voice and Retrieval V2 inactive.
+      # Remove the base Compose settings without a host-value fallback; an
+      # empty epoch is invalid and a configured keyring is read unconditionally.
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: !reset null
+      MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE: !reset null
       VOICETEXT_WS_URL: wss://${VOICETEXT_PUBLIC_HOST:?set VoiceText public DNS hostname}/api/v1/transcribe/stream
     depends_on:
       voicetext-edge: { condition: service_healthy }

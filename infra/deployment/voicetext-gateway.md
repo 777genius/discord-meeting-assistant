@@ -117,12 +117,43 @@ official test bot in a private test guild.
 
 ## Validate the configuration
 
-Render the merged configuration before starting anything:
+Use Docker Compose 2.24.4 or newer (the overlay uses `!reset null` to remove
+inherited optional environment entries), plus the Buildx prerequisites above.
+Provision the operator-owned databases, Redis, storage, two official bot
+applications, and base secrets following the
+[core OSS topology](oss-meeting-topology.md#operator-owned-configuration-and-custody).
+Supply your own Deepgram and/or ElevenLabs keys for the selected profiles;
+the provider directory is mounted read-only only into the gateway. No private
+VoiceText backend is needed. Complete public DNS and TLS prerequisites above;
+local ports `18080`/`18443` and an operator CA belong in a separate TEST overlay,
+not the normal public-host configuration.
+
+This quickstart uses the default feature-off scope: conversation, grounded
+voice, local final reply, and Retrieval V2 are inactive; enable no Compose
+profiles. The OSS overlay removes the inherited empty grounded-voice rollout
+epoch and unused actor-keyring path. No dummy epoch or keyring is required.
+Feature validation is unchanged: enabling grounded voice requires its real
+rollout configuration, and Retrieval V2 requires its real actor-key mapping
+authority in a subsequent feature-specific overlay.
+
+From the repository root, with the provisioned `/secure/oss-meeting.env`, render
+all three files together before starting anything:
 
 ```sh
-docker compose --env-file <deployment.env> \
+docker compose --env-file /secure/oss-meeting.env \
   -f infra/deployment/compose.yaml \
+  -f infra/deployment/compose.craig.yaml \
   -f infra/deployment/compose.voicetext-gateway.yaml config
+```
+
+Then start from a clean committed checkout using the provenance-checking wrapper
+(set `MEETING_PLATFORM_SOURCE_REVISION` in that env file to this checkout's HEAD):
+
+```sh
+node infra/deployment/run-verified-compose.mjs --env-file /secure/oss-meeting.env -- \
+  -f infra/deployment/compose.yaml \
+  -f infra/deployment/compose.craig.yaml \
+  -f infra/deployment/compose.voicetext-gateway.yaml up --build --detach --wait
 ```
 
 The overlay exposes only the batch v2/v3, live v2, and health routes. It does

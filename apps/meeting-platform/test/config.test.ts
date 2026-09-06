@@ -17,6 +17,59 @@ function buildProvenance(releaseRevision = "c".repeat(40)) {
 }
 
 describe("platform configuration", () => {
+  it("loads core OSS deployment without inactive knowledge secrets or a dummy epoch", async () => {
+    const compose = await readFile(
+      new URL("../../../infra/deployment/compose.voicetext-gateway.yaml", import.meta.url),
+      "utf8",
+    );
+    // Check the actual overlay directives, then exercise their removal semantics
+    // through the real loader. Docker Compose rendering is a separate deploy gate.
+    const resets = [...compose.matchAll(/^      (\w+): !reset null$/gmu)]
+      .map((match) => match[1]);
+    expect(resets).toEqual([
+      "MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH",
+      "MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE",
+    ]);
+    const base = {
+      ...environment,
+      NODE_ENV: "production",
+      TRANSCRIPTION_PROVIDER: "voicetext",
+      TRANSCRIPTION_LEGACY_EXECUTION_BINDING: "voicetext-batch-v2:deepgram-nova-3",
+      VOICETEXT_WS_URL: "wss://voice.example.com/api/v1/transcribe/stream",
+      VOICETEXT_SERVICE_TOKEN_FILE: "/run/secrets/voicetext-service-token",
+      MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: "",
+    };
+    const reads: string[] = [];
+    const options = {
+      readBuildProvenance: async () => buildProvenance(),
+      readSecret: async (path: string) => {
+        reads.push(path);
+        if (path.includes("meeting-knowledge")) {
+          throw new Error("unused secret read");
+        }
+        return `fixture:${path}`;
+      },
+    };
+    await expect(loadPlatformConfig(base, options.readSecret, options.readBuildProvenance)).rejects.toThrow();
+    expect(reads).toEqual([]);
+    await expect(loadPlatformConfig({
+      ...base, MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH: undefined,
+    }, options.readSecret, options.readBuildProvenance)).rejects.toThrow("unused secret read");
+    reads.length = 0;
+    const merged: Record<string, string | undefined> = { ...base };
+    for (const key of resets) {
+      delete merged[key];
+    }
+    const configured = await loadPlatformConfig(merged, options.readSecret, options.readBuildProvenance);
+    expect(configured.meetingKnowledge?.groundedVoice).toBeUndefined();
+    expect(reads).not.toContain(environment.MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE);
+    expect(reads).not.toContain(environment.MEETING_KNOWLEDGE_PRINCIPAL_KEY_FILE);
+    expect(reads).toContain(base.VOICETEXT_SERVICE_TOKEN_FILE);
+    await expect(loadPlatformConfig({
+      ...merged, MEETING_KNOWLEDGE_GROUNDED_VOICE_ENABLED: "true",
+    }, options.readSecret, options.readBuildProvenance)).rejects.toThrow("grounded voice requires a versioned rollout epoch");
+  });
+
   it("admits public-reply crash injection only in the complete test-only local-reply profile", async () => {
     const root = "/run/e2e-campaign/campaign-1/run-3";
     const configured = await loadPlatformConfig({
