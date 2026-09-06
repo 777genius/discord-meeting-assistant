@@ -28,7 +28,7 @@ const databaseSchema = z.object({
   snapshot: z.unknown(),
 }).strict();
 
-export const ossMissingSourceCapabilities = [
+const ossMissingSourceCapabilities = [
   "Complete correlated Craig/Platform/gateway packet and per-session wire collection",
   "Pinned Craig original-source checksum recomputation from retained original files",
   "Native post-call stage start timestamps and independently retained settlement observations",

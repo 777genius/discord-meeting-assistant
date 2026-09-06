@@ -12,6 +12,10 @@ RUN apt-get update \
 
 FROM runtime-base AS build
 
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY --chown=10001:10001 . .
 # The mandatory PostgreSQL/Testcontainers qualification runs on the host/CI

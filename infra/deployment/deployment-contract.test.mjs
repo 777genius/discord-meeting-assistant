@@ -199,11 +199,25 @@ test("installs Platform image test workspace dependencies before the mandatory g
   const commands = build.replace(/\\\r?\n\s*/gu, " ").split(/\s*&&\s*/u).map((command) => command.trim());
   const installIndex = commands.findIndex((command) => command.startsWith("pnpm install "));
   assert.ok(installIndex >= 0, "build stage must install dependencies");
+  const toolchainIndex = commands.findIndex((command) =>
+    command.startsWith("DEBIAN_FRONTEND=noninteractive apt-get install "));
+  assert.ok(toolchainIndex >= 0 && toolchainIndex < installIndex,
+    "native Opus build tools must be installed before pnpm install");
+  for (const tool of ["python3", "make", "g++"]) {
+    assert.ok(commands[toolchainIndex].split(/\s+/u).includes(tool), `build stage must install ${tool}`);
+  }
+  const [runtimeBase, stages] = dockerfile.split("FROM runtime-base AS build\n");
+  const runtime = stages.split("FROM runtime-base AS runtime\n")[1];
+  assert.ok(runtime, "runtime must derive separately from runtime-base");
+  for (const stage of [runtimeBase, runtime]) {
+    assert.doesNotMatch(stage, /(?:^|\s)(?:python3|make|g\+\+|build-essential)(?:\s|$)/u,
+      "native build tools must stay out of runtime layers");
+  }
   const install = commands[installIndex];
   assert.match(install, /(?:^|\s)--frozen-lockfile(?:\s|$)/u);
   assert.doesNotMatch(install, /(?:^|\s)--prod(?:[=\s]|$)/u);
   const filters = [...install.matchAll(/--filter(?:=|\s+)(\S+)/gu)].map((match) => match[1]);
-  assert.deepEqual(filters.sort(), [
+  assert.deepEqual(filters.toSorted(), [
     "@discord-meeting/discord-e2e-actors...",
     "@discord-meeting/meeting-platform...",
   ], "install both workspace closures, including the test-only native collectors");
