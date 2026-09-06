@@ -17,15 +17,15 @@ The first three rows below are immutable checked-in Compose constants, not deplo
 | Setting | Checked value |
 | --- | --- |
 | `VOICETEXT_GATEWAY_GIT_URL` | `https://github.com/777genius/voicetext-gateway.git` |
-| `VOICETEXT_GATEWAY_GIT_REF` | `1ff925152613f8b9c34beb776987191c30b2afe5` |
-| `VOICETEXT_GATEWAY_SOURCE_REVISION` | `1ff925152613f8b9c34beb776987191c30b2afe5` |
+| `VOICETEXT_GATEWAY_GIT_REF` | `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` |
+| `VOICETEXT_GATEWAY_SOURCE_REVISION` | `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` |
 | `VOICETEXT_PUBLIC_HOST` | operator-supplied DNS name |
 
 BuildKit resolves that exact ref and verifies it with the identical `checksum`
 Git-context query before executing the gateway Dockerfile. This requires Docker
 Buildx 0.28.0 or newer and Dockerfile syntax 1.18 or newer.
 
-The approved source tree is `84f43c52ef305c85596e0be3f44e89710c296055`.
+The approved source tree is `fdb2e59f79beb40623ce831b494ba3ca193c0e05`.
 The gateway adds configurable database pooling with its default of 10 unchanged.
 The isolated native harness selects 1 in its gateway configuration; this source
 pin update does not change Compose defaults or qualify native EN/RU flows.

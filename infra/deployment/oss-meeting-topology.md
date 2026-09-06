@@ -19,7 +19,7 @@ image tag and OCI image/build label.
 | Component | Repository | Exact ref and checksum |
 | --- | --- | --- |
 | Craig Meeting Gateway (ISC) | `https://github.com/777genius/craig-meeting-gateway.git` | `37b86a958b567cb7fcff75946e94fe5e7ee38f42` |
-| OSS VoiceText gateway (Apache-2.0) | `https://github.com/777genius/voicetext-gateway.git` | `1ff925152613f8b9c34beb776987191c30b2afe5` |
+| OSS VoiceText gateway (Apache-2.0) | `https://github.com/777genius/voicetext-gateway.git` | `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` |
 
 The Craig pin implements `craig-lifecycle-v3`; its retained contract manifest
 SHA-256 is `43b58c2661b22039fa432199227318b0d91fbbe1faa669bc0e62a68ddff8f940`
