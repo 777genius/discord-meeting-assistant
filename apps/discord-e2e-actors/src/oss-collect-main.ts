@@ -1,8 +1,9 @@
+import { runOssTrustedCollection } from "./oss-trusted-collection.js";
 import { collectOssDeployment } from "./oss-deployment-collection.js";
 import { assembleOssNativeArchive } from "./oss-native-archive-assembly.js";
 import { collectCraigOriginals } from "./oss-craig-original-collection.js";
 import { z } from "zod";
-import { normalizeDatabase } from "./e2e-retained-evidence-snapshot.js";
+import { normalizeOssDatabase } from "./oss-database.js";
 import { collectOssPublicationFromDiscord } from "./oss-publication-collection.js";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,10 @@ import { collectOssReadonlySnapshot, type OssReadCommand } from "./oss-readonly-
 /** Explicit effect boundary: unlike collect:e2e this only obtains read-only native
  * evidence. It never invokes actors, providers, BullMQ, or process/replay handlers. */
 export async function runOssCollectCommand(args: readonly string[], command?: OssReadCommand) {
+  if (args[0] === "trusted-collect") {
+    requireEvidence(command === undefined, "Trusted collection does not accept runtime adapter injection");
+    return runOssTrustedCollection(args.slice(1));
+  }
   if (args[0] === "deployment") {
     const [, planPath, phase, output, ...extra] = args;
     requireEvidence(planPath && (phase === "before" || phase === "after") && output && extra.length === 0,
@@ -47,7 +52,7 @@ export async function runOssCollectCommand(args: readonly string[], command?: Os
       matchingRecordingCount: z.literal(1), matchingTranscriptCount: z.literal(1), matchingSummaryCount: z.literal(1) }),
       completion: z.object({ events: z.array(z.object({ type: z.string(), occurredAt: z.iso.datetime() })) }),
     }).parse(JSON.parse((await readRegular(recordingId, 64 * 1024 * 1024)).toString("utf8")));
-    const database = normalizeDatabase(native.database).snapshot;
+    const database = normalizeOssDatabase(native.database).snapshot;
     const starts = native.completion.events.filter((event) => event.type === "meeting.started");
     const secrets = process.env.OSS_STT_PUBLICATION_SECRET_DIRECTORY;
     requireEvidence(starts.length === 1 && secrets, "Native recording start and publication credential directory required");

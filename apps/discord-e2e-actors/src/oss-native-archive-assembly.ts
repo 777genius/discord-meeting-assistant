@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from "node:path";
 import { z } from "zod";
 import { canonical, createReceipt, readRegular, requireEvidence as check, sha256, type Artifact } from "./oss-campaign-artifacts.js";
 import { artifactSchema, id, indexSchema, planSchema, runSchema } from "./oss-campaign-profile.js";
-import { normalizeDatabase } from "./e2e-retained-evidence-snapshot.js";
+import { normalizeOssDatabase } from "./oss-database.js";
 import { collectNativeLive, qualifyNativeSession } from "./oss-native-live-collection.js";
 import { collectNativePostCall, qualifyNativePostCall } from "./oss-native-post-call-collection.js";
 import { snapshotSchema, publicationSchema, originalSchema } from "./oss-native-campaign-sources.js";
@@ -17,18 +17,24 @@ const assemblySchema = z.object({ kind: z.literal("oss-native-assembly-v1"), dep
   }).strict()).length(3),
 }).strict();
 
-/** Assemble from independently captured native files. Callers provide paths only,
- * never timings, successful-session lists, transcript text or PASS assertions. */
+/** Assemble retained native inputs. File/byte consistency does not establish
+ * origin; this function never grants custody or writes campaign PASS. */
 export async function assembleOssNativeArchive(input: {
   planPath: string; sourceRoot: string; assemblyPath: string; outputRoot: string;
+  retained?: { planBytes: Buffer; assemblyBytes: Buffer; sources: ReadonlyMap<string, Buffer> };
 }) {
-  const planBytes = await readRegular(input.planPath);
+  const planBytes = input.retained?.planBytes ?? await readRegular(input.planPath);
   const plan = planSchema.parse(JSON.parse(planBytes.toString("utf8")));
-  const assembly = assemblySchema.parse(JSON.parse((await readRegular(input.assemblyPath)).toString("utf8")));
+  const assembly = assemblySchema.parse(JSON.parse((input.retained?.assemblyBytes ?? await readRegular(input.assemblyPath)).toString("utf8")));
   check(assembly.runs.map((run) => run.runId).join() === plan.runs.map((run) => run.runId).join(), "Assembly run order mismatch");
   const sourceRoot = await realpath(input.sourceRoot);
   const read = async (path: string, maxBytes = 64 * 1024 * 1024, allowEmpty = false) => {
     relativePath.parse(path);
+    if (input.retained) {
+      const bytes = input.retained.sources.get(path);
+      check(bytes && bytes.length <= maxBytes && (allowEmpty || bytes.length > 0), "Missing collector-owned source bytes");
+      return Buffer.from(bytes);
+    }
     const full = resolve(sourceRoot, path);
     check(full.startsWith(sourceRoot + sep) && await realpath(full) === full, "Native source escape or symlink");
     return readRegular(full, maxBytes, allowEmpty);
@@ -78,7 +84,7 @@ export async function assembleOssNativeArchive(input: {
         value: publicationSchema.parse(JSON.parse(publicationBytes.toString("utf8"))) });
     }
     const snapshot = snapshots[0]!.value;
-    const db = normalizeDatabase(snapshot.database as Parameters<typeof normalizeDatabase>[0]).snapshot;
+    const db = normalizeOssDatabase(snapshot.database as Parameters<typeof normalizeOssDatabase>[0]).snapshot;
     const publication = publications[0]!.value;
     const originalBytes = await read(source.originalsPath);
     const original = originalSchema.parse(JSON.parse(originalBytes.toString("utf8")));
@@ -109,7 +115,8 @@ export async function assembleOssNativeArchive(input: {
     const stages = qualifyNativePostCall(postCall, db.meetingId);
     const nativeSessions = sessions.filter((session) => session.meetingId === db.meetingId);
     const terminalAtMs = Math.max(stages.at(-1)!.completedAtMs, ...nativeSessions.map((session) => session.rows.at(-1)!.atMs));
-    const transcript = { ...db.transcript, version: String(db.revision) };
+    const transcript = { transcriptId: db.transcript.transcriptId, turns: db.transcript.turns,
+      version: String(db.transcript.version) };
     const attachmentPath = (filename: string) => {
       const matching = publication.attachments.filter((item) => item.filename === filename);
       check(matching.length === 1, "Native attachment absent/duplicated");
@@ -149,5 +156,6 @@ export async function assembleOssNativeArchive(input: {
     await writeFile(full, bytes, { flag: "wx", mode: 0o600 });
   }
   await createReceipt(resolve(outputRoot, "collection.json"), index); // Published last; never a pass receipt.
-  return { kind: index.kind, status: "assembled" as const, artifactCount: artifacts.length };
+  return { kind: index.kind, status: "assembled" as const, artifactCount: artifacts.length,
+    collectionSha256: sha256(`${JSON.stringify(index, null, 2)}\n`) };
 }

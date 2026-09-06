@@ -48,23 +48,25 @@ export function verifyOssQuality(run: OssRun, manifest: Manifest, actorInput: un
     check(events[1]!.atEpochMs >= run.startedAtMs + a.start + 750 &&
       events[2]!.atEpochMs < run.startedAtMs + a.end, "Reconnect must occur during A");
   }
-  const turns = run.transcript.turns;
-  check(new Set(turns.map((turn) => turn.turnId)).size === turns.length, "Duplicate transcript turn");
-  check(turns.every((turn) => windows.some(({ fixture }) => fixture.speakerId === turn.speakerId) &&
-    turn.endMs > turn.startMs && turn.endMs <= run.endedAtMs - run.startedAtMs), "Invalid batch turn");
-  for (const { fixture, start, end } of windows) {
-    const speakerTurns = turns.filter((turn) => turn.speakerId === fixture.speakerId)
-      .sort((left, right) => left.startMs - right.startMs);
-    const actual = speakerTurns.map((turn) => turn.text).join(" ");
-    check(wordErrorRate(fixture.sourceText, actual) <= 0.35, "WER exceeded");
-    check(characterErrorRate(fixture.sourceText, actual) <= 0.20, "CER exceeded");
-    check(fixture.requiredTerms.every((term) =>
-      normalizeTranscriptSemantics(actual).includes(normalizeTranscriptSemantics(term))), "Required term missing");
-    check(speakerTurns.length > 0 &&
-      Math.abs(speakerTurns[0]!.startMs - start - fixture.speechStartOffsetMs) <= 3500 &&
-      Math.abs(speakerTurns.at(-1)!.endMs - end) <= 3500, "Transcript timeline mismatch");
+  // Score the finalized ledger independently; partial revisions are never text evidence.
+  for (const [kind, turns] of [["batch", run.transcript.turns], ["live", run.liveTurns]] as const) {
+    check(new Set(turns.map((turn) => turn.turnId)).size === turns.length, "Duplicate transcript turn");
+    check(turns.every((turn) => windows.some(({ fixture }) => fixture.speakerId === turn.speakerId) &&
+      turn.endMs > turn.startMs && turn.endMs <= run.endedAtMs - run.startedAtMs), `Invalid ${kind} turn`);
+    for (const { fixture, start, end } of windows) {
+      const speakerTurns = turns.filter((turn) => turn.speakerId === fixture.speakerId)
+        .sort((left, right) => left.startMs - right.startMs);
+      const actual = speakerTurns.map((turn) => turn.text).join(" ");
+      check(wordErrorRate(fixture.sourceText, actual) <= 0.35, "WER exceeded");
+      check(characterErrorRate(fixture.sourceText, actual) <= 0.20, "CER exceeded");
+      check(fixture.requiredTerms.every((term) =>
+        normalizeTranscriptSemantics(actual).includes(normalizeTranscriptSemantics(term))), "Required term missing");
+      check(speakerTurns.length > 0 &&
+        Math.abs(speakerTurns[0]!.startMs - start - fixture.speechStartOffsetMs) <= 3500 &&
+        Math.abs(speakerTurns.at(-1)!.endMs - end) <= 3500, "Transcript timeline mismatch");
+    }
+    const overlap = turns.some((left) => turns.some((right) => left.speakerId !== right.speakerId &&
+      left.startMs < right.endMs && right.startMs < left.endMs));
+    check(overlap === (run.scenario !== "sequential"), "Transcript overlap mismatch");
   }
-  const overlap = turns.some((left) => turns.some((right) => left.speakerId !== right.speakerId &&
-    left.startMs < right.endMs && right.startMs < left.endMs));
-  check(overlap === (run.scenario !== "sequential"), "Transcript overlap mismatch");
 }

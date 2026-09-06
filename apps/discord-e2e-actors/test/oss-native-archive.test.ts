@@ -14,8 +14,13 @@ import { collectCraigOriginals, requiredCraigSourceRoot } from "../src/oss-craig
 it.each([false, true])("assembles synthetic native sources with checksum proof=%s", async (withProof) => {
   const root = await mkdtemp(join(tmpdir(), "oss-native-archive-test-"));
   const output = `${root}-archive`;
+  const versionOutput = `${root}-version-archive`;
   try {
     const f = await campaignFixture(root);
+  for (const run of f.runs) {
+    const database = f.files.get(run.databasePath)!.value as { snapshot: { transcript: object } };
+    Object.assign(database.snapshot.transcript, { version: 1, recordingId: run.recordingId });
+  }
     f.plan.target.craigRevision = "37b86a958b567cb7fcff75946e94fe5e7ee38f42";
     f.deployment.targetAfter.craigRevision = f.plan.target.craigRevision;
     await f.save();
@@ -146,7 +151,8 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
     expect(await assembleOssNativeArchive(input)).toMatchObject({ status: "assembled" });
     const archive = await loadArchive(f.planPath, output);
     const report = await verifyOssCampaign(archive, f.manifestBytes);
-    expect(report.status).toBe(withProof ? "passed" : "sources-unverified");
+    expect(report.status).toBe("sources-unverified");
+    expect(report.consistency).toBe(withProof ? "complete" : "incomplete");
     if (withProof) expect(report.missingSourceCapabilities).toEqual([]);
     else expect(report.missingSourceCapabilities.join()).toContain("Prepared Craig job");
     const firstRunPath = archive.index.runs[0]!.evidencePath;
@@ -167,9 +173,12 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
     const qualify = () => runOssCampaignCommand(["qualify", f.planPath, output,
       new URL("./fixtures/manifest.v1.json", import.meta.url).pathname, join(root,"pass.json")]);
     if (withProof) {
-      expect(await qualify()).toMatchObject({ status: "passed" }); // Synthetic validator result only.
+      await expect(qualify()).rejects.toThrow("PASS unavailable");
+      await expect(readFile(join(root,"pass.json"))).rejects.toThrow();
+      await runOssCampaignCommand(["check", f.planPath, output,
+        new URL("./fixtures/manifest.v1.json", import.meta.url).pathname, join(root,"report.json")]);
       await runOssCampaignCommand(["verify", f.planPath, output,
-        new URL("./fixtures/manifest.v1.json", import.meta.url).pathname, join(root,"pass.json")]);
+        new URL("./fixtures/manifest.v1.json", import.meta.url).pathname, join(root,"report.json")]);
       const originalPath = archive.index.nativeSources!.runs[0]!.originalsPath;
       const altered = { ...archive, json: (path: string, system?: Parameters<typeof archive.json>[1]) => {
         const value = archive.json(path, system);
@@ -186,7 +195,21 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
       await expect(qualify()).rejects.toThrow("PASS unavailable");
       await expect(readFile(join(root,"pass.json"))).rejects.toThrow();
     }
+    if (withProof) {
+      for (const source of sources) for (const path of source.snapshots) {
+        const native = JSON.parse(await readFile(join(root, path), "utf8"));
+        native.database.snapshot.revision = 97;
+        await writeFile(join(root, path), JSON.stringify(native));
+      }
+      await assembleOssNativeArchive({ ...input, outputRoot: versionOutput });
+      const assembled = await loadArchive(f.planPath, versionOutput);
+      const run = assembled.json(assembled.index.runs[0]!.evidencePath) as { transcript: { version: string }; databasePath: string };
+      expect(run.transcript.version).toBe("1");
+      expect(assembled.json(run.databasePath)).toMatchObject({ snapshot: { revision: 97,
+        transcript: { version: 1, recordingId: f.runs[0]!.recordingId } } });
+    }
     await writeFile(join(output,"native/live.jsonl"), Buffer.from("truncated"));
     await expect(loadArchive(f.planPath, output)).rejects.toThrow();
-  } finally { await rm(root, { recursive: true, force: true }); await rm(output, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true }); await rm(output, { recursive: true, force: true });
+    await rm(versionOutput, { recursive: true, force: true }); }
 }, 60000);

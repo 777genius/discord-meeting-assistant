@@ -71,13 +71,9 @@ export function verifyNativeCampaignSources(archive: Archive, runs: readonly Oss
     const emitted = nativeSessions.flatMap((session) => {
       check(session.rows.every((row) => row.atMs >= run.startedAtMs && row.atMs <= run.terminalAtMs),
         "Native session outside recording timeline");
-      const audio = session.rows.filter((row) => row.event.type === "audio_send");
       const emittedFinals = session.rows.flatMap(({ event }) => event.type === "transcript_emitted" && event.isFinal ? [event] : []);
-      check(emittedFinals.length > 0 && emittedFinals.every((turn) => turn.endMs <= run.endedAtMs - run.startedAtMs) &&
-        audio.length * 20 + 3500 >= Math.max(...emittedFinals.map((turn) => turn.endMs)) - Math.min(...emittedFinals.map((turn) => turn.startMs)),
-        "Insufficient native Opus coverage");
-      check(audio.every((row) => row.event.type === "audio_send" && row.atMs >= run.startedAtMs + row.event.relativeTimeMs - 3500),
-        "Native audio source timestamp mismatch");
+      check(emittedFinals.length > 0 && emittedFinals.every((turn) => turn.endMs <= run.endedAtMs - run.startedAtMs),
+        "Native transcript outside recording offsets");
       const listed = run.sessions.find((entry) => entry.sessionId === session.providerSessionId)!;
       check(listed.speakerId === session.speakerId && listed.wirePath === sources.livePath,
         "Native speaker/journal binding mismatch");
@@ -102,6 +98,7 @@ export function verifyNativeCampaignSources(archive: Archive, runs: readonly Oss
         publication.observedAtMs >= snapshot.completedAtMs && publication.observedAtMs <= archive.index.capturedAtMs,
         "Native settlement observation ordering mismatch");
       previousObservation = publication.observedAtMs;
+      verifyNativeTranscriptIdentity(snapshot.database, run);
       check(same(snapshot.database, archive.json(run.databasePath)) && same(snapshot.liveTurns, run.liveTurns) &&
         same(snapshot.completion, archive.json(run.completionPath)), "Native database/completion source mismatch");
       check(snapshot.recordingIds.includes(run.recordingId) && new Set(snapshot.recordingIds).size === position + 1,
@@ -157,4 +154,19 @@ export function verifyNativeCampaignSources(archive: Archive, runs: readonly Oss
     }
   }
   return { missingSourceCapabilities: [...missing], sessions: sessions.length };
+}
+
+/** Read the original retained envelope before any general-purpose normalization
+ * can discard transcript identity. Meeting revision is a separate counter. */
+export function verifyNativeTranscriptIdentity(database: unknown, run: OssRun): void {
+  const source = z.object({ snapshot: z.object({
+    revision: time,
+    recording: z.object({ recordingId: id }),
+    transcript: z.object({ transcriptId: id, recordingId: id, version: time.positive() }),
+  }) }).parse(database).snapshot;
+  check(source.recording.recordingId === run.recordingId &&
+    source.transcript.recordingId === run.recordingId &&
+    source.transcript.transcriptId === run.transcript.transcriptId &&
+    String(source.transcript.version) === run.transcript.version,
+    "Native authoritative transcript identity/version mismatch");
 }

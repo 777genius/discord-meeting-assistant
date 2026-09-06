@@ -1,6 +1,8 @@
 # OSS Discord STT native evidence collection
 
-Owner: `apps/discord-e2e-actors` qualification, Voicetext adapter native session
+Owner: `apps/discord-e2e-actors` qualification (including `oss-database.ts` and
+`oss-trusted-collection.ts`, classified by the existing `e2e.discord-actors`
+source root in `architecture/foundation/source-dependencies.yaml`), Voicetext adapter native session
 capture, and Meeting Platform composition/post-call taps. Hosted V10 is unchanged.
 This is private, unreviewed integration. No live collection, provider/Discord call,
 service change, secret access, queue replay or campaign PASS was performed here.
@@ -134,12 +136,29 @@ export PATH="/mnt/volume_ams3_1784742570542/vtoss-astra-y-20260905/tool-cache/no
 export pnpm_config_verify_deps_before_run=false
 ```
 
-On the TEST Docker host, before the first actor starts, run:
+For campaign PASS, the trusted root orchestrator must start one collector process
+before any actor runs. Keep it alive through all three scenarios and journal sealing.
+The collector independently reads Docker identities/configuration, empty initial
+whole-project database inventory, and the initial capture headers. It discovers
+journal and original directories from the exact running containers' bind mounts:
+`/evidence/oss-stt` on Platform and `/app/rec` on Craig. Arbitrary copied archives,
+sidecar declarations, caller flags and injected runtime adapters cannot admit PASS.
 
 ```sh
-pnpm --filter @discord-meeting/meeting-platform exec tsx \
-  ../discord-e2e-actors/src/oss-collect-main.ts deployment "$PLAN" before "$OUT/deployment-before.json"
+OSS_STT_PUBLICATION_SECRET_DIRECTORY="$PUBLICATION_SECRETS" \
+  pnpm --filter @discord-meeting/meeting-platform exec tsx \
+  ../discord-e2e-actors/src/oss-collect-main.ts trusted-collect \
+  "$PLAN" "$FIXTURES/manifest.v1.json" "$NEW_SOURCES" "$NEW_ARCHIVE" "$PASS_RECEIPT"
 ```
+
+Run this command with a private root-owned stdin pipe (or interactively). Wait for
+its `armed` JSON event before starting the first actor. Root controls the official
+actor processes separately using the commands below; the collector performs no
+actor, provider, replay, shutdown or container mutation. Each stdin line is only
+a request to independently read current sources, never a source attestation.
+The finite control sequence has three JSON lines and a final `sealed` line, with
+a one-hour deadline. EOF, failed reads, wrong identities or incomplete evidence
+leave no PASS and retain diagnostics/source files.
 
 Zero initial recordings are mandatory. Arm the existing official `observe:live`
 observer before each actor, with `DISCORD_E2E_LIVE_DURATION_MS=600000`, poll interval
@@ -163,34 +182,45 @@ timeout --signal=TERM --kill-after=10s 300s \
   pnpm --filter @discord-meeting/meeting-platform exec tsx ../discord-e2e-actors/src/main.ts
 ```
 
-Wait for native completion and successful post-call settlement. Collect these two
-commands twice with `N=1`, then `N=2`, using fresh outputs. The second publication
-observation must finish before starting the next scenario. No retry under the same
-run identity; preserve failed captures and originals.
+Wait for native completion and successful post-call settlement, then send one
+JSON line to the running collector's stdin, using that scenario's exact `runId`:
 
-```sh
-pnpm --filter @discord-meeting/meeting-platform exec tsx \
-  ../discord-e2e-actors/src/oss-collect-main.ts snapshot "$PLAN" "$RECORDING_ID" "$OUT/$RUN_ID.snapshot-$N.json"
-OSS_STT_PUBLICATION_SECRET_DIRECTORY="$PUBLICATION_SECRETS" \
-  pnpm --filter @discord-meeting/meeting-platform exec tsx \
-  ../discord-e2e-actors/src/oss-collect-main.ts publication "$PLAN" "$OUT/$RUN_ID.snapshot-$N.json" "$OUT/$RUN_ID.publication-$N.json"
-pnpm --filter @discord-meeting/meeting-platform exec tsx \
-  ../discord-e2e-actors/src/oss-collect-main.ts originals "$PLAN" "$MANIFEST" "$READONLY_ORIGINAL_DIRECTORY" "$PREPARED_JOB" "$OUT/$RUN_ID.originals.json"
+```json
+{"runId":"oss-r1-sequential","recordingId":"ACTUAL_RECORDING_ID","actorPath":"/absolute/root-owned/actor-output.json","preparedJobPath":"RELATIVE_PREPARED_JOB_PATH_UNDER_CRAIG_REC"}
 ```
 
-`PUBLICATION_SECRETS/sut` remains private and outside the archive. `MANIFEST` is the
-complete immutable manifest returned in the snapshot object collection, decoded
-without rewriting JSON. `READONLY_ORIGINAL_DIRECTORY` is this recording's complete
-retained Craig original set (six files only, no nested folders). `PREPARED_JOB` is
-the independently retained producer outbox job for this recording after preparation,
-including its sealed authoritative-ready event and source references. Keep originals on Craig; preserve independent readonly
-copies for assembly. Do not reconstruct original bytes from packet tees or fixtures.
+`actorPath` is supplemental fixture/timing evidence from root's official actor
+orchestrator. `preparedJobPath` selects the original producer job beneath the
+independently discovered Craig recordings bind mount; it is not an arbitrary
+host pathname. Root determines the producer's actual relative outbox path. The
+collector reads the job and all six `${recordingId}.ogg.kind` files directly from
+that runtime mount, and applies the unchanged pinned checksum algorithm.
+It performs two independent DB/object/Discord observations itself. Wait for its
+`settled` event before starting the next scenario, and repeat for overlap and
+reconnect. No retry under the same run identity; preserve failed captures and
+originals. `PUBLICATION_SECRETS/sut` stays private and outside the archive.
 
-After all three second observations, collect `deployment "$PLAN" after` to
-`deployment-after.json` while the containers remain healthy. Require the same
-container/image identities and exactly three project recordings. Then root may
-complete the reviewed Platform's graceful shutdown to seal the native journals;
-copy both journals read-only into the source archive. No worker performs this step.
+After the third `settled` event, wait for `awaiting-seal`. At this point the
+collector has independently checked the final three-recording inventory and
+unchanged healthy container/image/configuration/mount identities. Root can now
+perform the separately reviewed graceful Platform stop to seal the journals.
+Send the literal line `sealed` only when shutdown/drain finishes. The collector
+reads the sealed journals from the previously discovered runtime mount and
+checks that their initial bytes are unchanged. Full native parsing verifies the
+seal and entire capture, not the root's control word.
+
+Assembly consumes collector-owned retained bytes in memory. Admission loads and
+checks the resulting complete archive inventory against the inventory derived
+from those bytes, runs all native/quality/original checks, then writes exactly one
+create-only `oss-discord-stt-trusted-pass-v1` receipt. There is no exported claim
+minting function, signing key, self-signing file or resume-from-archive admission.
+Failed/interrupted collection requires a fresh isolated campaign, not receipt
+promotion. Root and its orchestrator/Docker authority are trusted; this boundary
+does not claim to protect against malicious root controlling containers or code.
+
+The individual `deployment`, `snapshot`, `publication`, `originals` and `assemble`
+commands remain useful for retained diagnostic/replay collections. Their outputs
+alone never authorize the trusted receipt.
 
 ## Assembly and verification
 
@@ -219,20 +249,31 @@ three scenarios retain real Opus/current revision/finalize/time/quality checks;
 batch success cannot stand in for live success. Legacy archives continue through
 the original consistency profile and cannot claim native source coverage.
 
-After `check` and `verify` succeed, root can admit the complete archive with a fresh
-create-only receipt path:
+Offline `check` always returns `status:"sources-unverified"`. Its independent
+`consistency:"complete"` field means all retained source-capability checks passed;
+it is not evidence of origin. Offline `qualify` always refuses to write PASS,
+including for fabricated archives with valid schemas and recomputed hashes.
+Only the complete `trusted-collect` invocation above creates a trusted PASS.
+
+A retained trusted receipt can be replay-checked with:
 
 ```sh
 pnpm --filter @discord-meeting/meeting-platform exec tsx \
-  ../discord-e2e-actors/src/oss-campaign-main.ts qualify "$PLAN" "$NEW_ARCHIVE" "$FIXTURES/manifest.v1.json" "$PASS_RECEIPT"
-pnpm --filter @discord-meeting/meeting-platform exec tsx \
-  ../discord-e2e-actors/src/oss-campaign-main.ts verify "$PLAN" "$NEW_ARCHIVE" "$FIXTURES/manifest.v1.json" "$PASS_RECEIPT"
+  ../discord-e2e-actors/src/oss-campaign-main.ts verify \
+  "$PLAN" "$NEW_ARCHIVE" "$FIXTURES/manifest.v1.json" "$PASS_RECEIPT"
 ```
 
-`qualify` writes only when every required source capability is satisfied. Offline
-synthetic test receipts prove validator behavior only; they are never actual live
-Discord PASS evidence. Root must mechanically integrate the portable patch and
-obtain a fresh physically read-only xhigh review before operational execution.
+Replay rechecks all bytes and the complete receipt inventory, while still returning
+`sources-unverified`: it cannot reauthenticate the receipt's original custody from
+files alone. Keep the original trusted process output/receipt under root custody.
+Offline fixtures never emit the same PASS receipt as trusted collection. Root must
+integrate the patch and obtain the requested independent review before execution.
+
+The OSS-specific database parser preserves numeric `snapshot.transcript.version`
+and `snapshot.transcript.recordingId`; the latter must match the recording. The
+meeting's numeric CAS `snapshot.revision` remains separate. Archive runs encode
+the actual transcript version as a string for compatibility with the existing run
+schema. Missing or mismatched authoritative transcript fields fail closed.
 
 ## Focused offline validation
 

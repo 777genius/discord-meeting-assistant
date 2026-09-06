@@ -1,6 +1,7 @@
+import { normalizeOssDatabase } from "./oss-database.js";
 import { verifyNativeCampaignSources } from "./oss-native-campaign-sources.js";
 import { verifyOssRecording } from "./oss-recording-evidence.js";
-import { normalizeDatabase, assertExactDatabaseCounts } from "./e2e-retained-evidence-snapshot.js";
+import { assertExactDatabaseCounts } from "./e2e-retained-evidence-snapshot.js";
 import { inspectOggOpus } from "./fixture-integrity.js";
 import { z } from "zod";
 import { fixtureManifestV1Schema } from "./e2e-fixture-manifest-schema.js";
@@ -75,7 +76,8 @@ export async function verifyOssCampaign(archive: Archive, fixtureManifestBytes: 
     // These checks establish consistency of retained inputs, not their collection provenance.
     // Native archives must independently satisfy every source capability.
     kind: "oss-discord-stt-evidence-check-v1" as const,
-    status: missingSourceCapabilities.length === 0 ? "passed" as const : "sources-unverified" as const,
+    status: "sources-unverified" as const,
+    consistency: missingSourceCapabilities.length === 0 ? "complete" as const : "incomplete" as const,
     missingSourceCapabilities,
     campaignId: plan.campaignId,
     planSha256: archive.planSha256,
@@ -92,11 +94,11 @@ export async function verifyOssCampaign(archive: Archive, fixtureManifestBytes: 
 
 async function verifyRun(archive: Archive, run: OssRun): Promise<void> {
   verifyOssRecording(archive, run);
-  const database = normalizeDatabase(databaseSchema.parse(archive.json(run.databasePath, "postgres")));
+  const database = normalizeOssDatabase(databaseSchema.parse(archive.json(run.databasePath, "postgres")));
   assertExactDatabaseCounts(database, "OSS terminal collection");
   const snapshot = database.snapshot;
   check(snapshot.meetingId === run.meetingId && snapshot.recording.recordingId === run.recordingId &&
-    run.transcript.version === String(snapshot.revision) &&
+    run.transcript.version === String(snapshot.transcript.version) &&
     snapshot.transcript.transcriptId === run.transcript.transcriptId &&
     same(snapshot.transcript.turns, run.transcript.turns) && same(snapshot.summary, run.summary) &&
     snapshot.publication.externalPublicationId === run.publication.messageId &&

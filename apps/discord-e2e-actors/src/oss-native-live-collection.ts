@@ -124,6 +124,7 @@ export function qualifyNativeSession(rows: readonly NativeLiveRow[]) {
     }
   }
   check(success && ready, "Native session lacks successful terminal");
+  verifyNativeTranscriptMapping(rows);
   return { ...opening, providerSessionId: ready.sessionId, rows };
 }
 
@@ -132,4 +133,48 @@ function opusDurationMs(toc: number): number {
   if (config >= 16) return 2.5 * 2 ** (config & 3);
   if (config >= 12) return 10 * 2 ** (config & 1);
   return [10, 20, 40, 60][config & 3]!;
+}
+
+/** Replay the adapter's reserved packet anchors and start-inclusive/end-exclusive
+ * gap boundaries (VoicetextLiveTimeline). Qualification above proves every send
+ * was ACKed and accepted. Reservation precedes send completion, so a provider
+ * result may legitimately arrive before its audio_accepted journal effect. */
+function verifyNativeTranscriptMapping(rows: readonly NativeLiveRow[]): void {
+  const anchors: Array<{ provider: number; source: number }> = [];
+  let cursor = 0, sourceEnd: number | undefined;
+  const fingerprints = new Set<string>();
+  let expected: Extract<NativeLiveRow["event"], { type: "transcript_emitted" }> | undefined;
+  const map = (ms: number, boundary: "start" | "end") => {
+    check(Number.isSafeInteger(ms * 48) && ms <= cursor, "Native provider segment exceeds accepted audio");
+    const anchor = anchors.findLast(item => boundary === "start" ? item.provider <= ms : item.provider < ms)
+      ?? anchors[0];
+    check(anchor, "Native provider segment lacks accepted audio");
+    return Math.round(anchor.source + ms - anchor.provider);
+  };
+  for (const { event: e } of rows) {
+    if (expected) {
+      check(e.type === "transcript_emitted" && e.startMs === expected.startMs && e.endMs === expected.endMs &&
+        e.text === expected.text && e.isFinal === expected.isFinal, "Native provider/emitted timeline mismatch");
+      expected = undefined;
+      continue;
+    }
+    check(e.type !== "transcript_emitted", "Unmatched native emitted transcript");
+    if (e.type === "audio_send") {
+      if (sourceEnd !== e.relativeTimeMs) anchors.push({ provider: cursor, source: e.relativeTimeMs });
+      cursor += e.durationSamples48Khz / 48;
+      sourceEnd = e.relativeTimeMs + e.durationSamples48Khz / 48;
+    }
+    if (e.type !== "received") continue;
+    const m = e.message;
+    const segment = m.type === "partial" ? m.segment :
+      m.type === "final" || m.type === "segment_final" ? m : null;
+    if (!segment || !segment.text.trim() || anchors.length === 0) continue;
+    const isFinal = m.type !== "partial", text = segment.text.trim();
+    const fingerprint = segment.startMs + "\0" + segment.durationMs + "\0" + text;
+    if (isFinal && fingerprints.has(fingerprint)) continue;
+    if (isFinal) fingerprints.add(fingerprint);
+    expected = { type: "transcript_emitted", startMs: map(segment.startMs, "start"),
+      endMs: map(segment.startMs + segment.durationMs, "end"), text, isFinal };
+  }
+  check(!expected, "Missing native emitted transcript");
 }

@@ -15,6 +15,10 @@ afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root,
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), "oss-campaign-test-")); roots.push(root);
   const fixture = await campaignFixture(root);
+  for (const run of fixture.runs) {
+    const database = fixture.files.get(run.databasePath)!.value as { snapshot: { transcript: object } };
+    Object.assign(database.snapshot.transcript, { version: 1, recordingId: run.recordingId });
+  }
   return { ...fixture, root, verify: async () => {
     await fixture.save();
     return verifyOssCampaign(await loadArchive(fixture.planPath, root), fixture.manifestBytes);
@@ -48,6 +52,25 @@ describe("OSS campaign retained evidence", () => {
     const report = JSON.parse(await readFile(output, "utf8"));
     await writeFile(output, JSON.stringify({ ...report, status: "passed" }));
     await expect(runOssCampaignCommand(["verify", ...args])).rejects.toThrow(/differs/u);
+  }, 60_000);
+  it("retains transcript version independently of meeting revision", async () => {
+    const f = await setup();
+    for (const run of f.runs) {
+      const db = f.files.get(run.databasePath)!.value as { snapshot: { revision: number } };
+      db.snapshot.revision = 97;
+    }
+    expect((await f.verify()).status).toBe("sources-unverified");
+  }, 60_000);
+  it.each(["version", "recordingId"])("rejects missing or changed authoritative transcript %s", async (field) => {
+    const f = await setup();
+    const db = f.files.get(f.runs[0]!.databasePath)!.value as { snapshot: { transcript: Record<string, unknown> } };
+    const previous = db.snapshot.transcript[field];
+    delete db.snapshot.transcript[field];
+    await expect(f.verify()).rejects.toThrow();
+    db.snapshot.transcript[field] = field === "version" ? 2 : "different-recording";
+    await expect(f.verify()).rejects.toThrow();
+    db.snapshot.transcript[field] = previous;
+    expect((await f.verify()).status).toBe("sources-unverified");
   }, 60_000);
   it("preserves an interrupted writer and allows only one concurrent receipt", async () => {
     const f = await setup();
