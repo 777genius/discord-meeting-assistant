@@ -164,7 +164,28 @@ test("uses only a Git-derived context and one generated .build artifact", async 
   assert.equal((workflow.match(/^\s+context: \.build\/docker-context$/gmu) ?? []).length, 3);
   assert.match(generator, /git.*archive/su);
   assert.match(generator, /copyFile\(provenancePath,[\s\S]*meeting-platform-build-provenance\.json/u);
-  assert.ok(platformDockerfile.includes("pnpm --filter=@discord-meeting/infinity-context-adapter... --if-present run build"));
+  assert.ok(platformDockerfile.includes("pnpm --filter=@discord-meeting/meeting-platform... --if-present run build"));
+});
+
+test("builds sidecar workspace exports before copying them into the runtime image", async () => {
+  const dockerfile = await readFile(new URL("apps/subscription-runtime-sidecar/Dockerfile", repositoryRoot), "utf8");
+  const [build, runtime] = dockerfile.split(/FROM .* AS runtime\n/u);
+  const buildCommand = "RUN pnpm --filter=@discord-meeting/subscription-runtime-sidecar... --if-present run build";
+  assert.ok(build.includes(buildCommand));
+  assert.match(build, /COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json \.\//u);
+  for (const name of ["meeting-core", "subscription-runtime-adapter"]) {
+    const packagePath = `packages/${name}`;
+    const copy = `COPY ${packagePath} ./${packagePath}`;
+    assert.ok(build.includes(copy));
+    assert.ok(build.indexOf(copy) < build.indexOf(buildCommand));
+    assert.ok(runtime.includes(`COPY --from=dependencies /app/${packagePath}/dist ./${packagePath}/dist`));
+    const manifest = JSON.parse(await readFile(new URL(`${packagePath}/package.json`, repositoryRoot), "utf8"));
+    assert.equal(manifest.scripts.build, "tsc --project tsconfig.build.json --pretty false");
+    for (const config of ["tsconfig.json", "tsconfig.build.json"]) {
+      await stat(new URL(`${packagePath}/${config}`, repositoryRoot));
+    }
+    assert.equal(manifest.dependencies?.["@agent-teams/engineering-foundation"], undefined);
+  }
 });
 
 test("sanitizes inherited identities and rejects a rendered identity mismatch", () => {
