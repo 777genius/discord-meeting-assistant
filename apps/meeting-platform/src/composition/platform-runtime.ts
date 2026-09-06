@@ -73,6 +73,7 @@ export async function startMeetingPlatform(
       recordingPlayback,
     } = await createPlatformKnowledgeComposition({ cleanup, config, core, logger, metrics });
     const processMeeting = createProcessingRuntime({
+      ...(discordLive.ossNativeEvidence === undefined ? {} : { ossPostCallEvidence: discordLive.ossNativeEvidence.postCall }),
       ...(discordLive.live === undefined ? {} : { live: discordLive.live }),
       liveMeetings: core.liveMeetings,
       logger,
@@ -176,6 +177,7 @@ export async function startMeetingPlatform(
       },
       discord: discordLive.discord,
       guildSetupHandler: discordLive.guildSetupHandler,
+      ...(discordLive.ossNativeEvidence === undefined ? {} : { ossNativeEvidence: discordLive.ossNativeEvidence }),
       ...(historicalMemory === undefined ? {} : { historicalMemory }),
       ...(liveFinalizedMemory === undefined ? {} : { liveFinalizedMemory }),
       logger,

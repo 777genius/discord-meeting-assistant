@@ -41,6 +41,7 @@ export interface PostCallShutdownResources {
 }
 
 export interface MeetingPlatformShutdownResources extends PostCallShutdownResources {
+  readonly ossNativeEvidence?: { seal(): void };
   readonly conversationRuntime?: GrpcPipecatConversationRuntime;
   readonly craigPlayback?: {
     readonly gateway: CraigPlaybackGateway;
@@ -143,6 +144,7 @@ export async function closeMeetingPlatformResources(
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
+  if (failures.length === 0) collectSynchronousCloseFailure(failures, () => input.ossNativeEvidence?.seal());
   const meetingKnowledgeFailures = await collectFailures([
     awaitBounded(
       "Meeting Knowledge local final reply",

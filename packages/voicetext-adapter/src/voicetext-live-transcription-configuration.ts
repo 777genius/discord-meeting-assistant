@@ -1,3 +1,4 @@
+import type { OssNativeEvidenceSink } from "./oss-native-evidence.js";
 import { VoicetextAdapterError } from "./errors.js";
 
 export interface VoicetextLiveTranscriptEvent {
@@ -32,6 +33,7 @@ export interface VoicetextLiveSession {
 }
 
 export interface VoicetextLiveTranscriptionOptions {
+  readonly evidenceSink?: OssNativeEvidenceSink;
   readonly audioAckTimeoutMs?: number;
   readonly endpoint: string;
   readonly finalizeTimeoutMs?: number;
@@ -55,6 +57,7 @@ export interface VoicetextLiveContractIdentity {
 }
 
 export interface ValidatedVoicetextLiveTranscriptionOptions {
+  readonly evidenceSink?: OssNativeEvidenceSink;
   readonly audioAckTimeoutMs: number;
   readonly authorization: string;
   readonly endpoint: URL;
@@ -82,6 +85,7 @@ export function validateVoicetextLiveTranscriptionOptions(
   const language = options.language?.trim();
   const identity = voicetextLiveContractIdentity(options.profile ?? "deepgram-nova-3");
   return {
+    ...(options.evidenceSink === undefined ? {} : { evidenceSink: options.evidenceSink }),
     audioAckTimeoutMs: boundedLiveInteger(options.audioAckTimeoutMs, 10_000, 100, 120_000),
     authorization: "Bearer " + token,
     endpoint,

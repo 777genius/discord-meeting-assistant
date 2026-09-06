@@ -1,3 +1,4 @@
+import { stableLiveSessionUuid } from "./voicetext-live-session-primitives.js";
 import {
   createVoicetextLiveOperationSignal,
   validateVoicetextLiveIdentity,
@@ -41,18 +42,22 @@ export class VoicetextLiveTranscriptionAdapter {
       request.signal,
       this.options.handshakeTimeoutMs,
     );
+    const evidence = this.options.evidenceSink?.open();
+    evidence?.record({ type: "opening", meetingId: request.meetingId, speakerId: request.speakerId,
+      clientSessionId: stableLiveSessionUuid(request.idempotencyKey, request.meetingId, request.speakerId) });
     const socket = await this.connector.connect({
       authorization: this.options.authorization,
       endpoint: this.options.endpoint,
       handshakeTimeoutMs: this.options.handshakeTimeoutMs,
       maxInboundFrameBytes: this.options.maxInboundFrameBytes,
       signal: connectSignal,
-    });
-    const session = new LiveSession(socket, request, this.options);
+    }).catch((error: unknown) => { evidence?.record({ type: "failure" }); throw error; });
+    const session = new LiveSession(socket, request, this.options, evidence);
     try {
       await session.start();
       return session;
     } catch (error) {
+      evidence?.record({ type: "failure" });
       socket.terminate();
       throw error;
     }

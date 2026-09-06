@@ -11,10 +11,10 @@ export async function runOssCampaignCommand(args: readonly string[]) {
   "Usage: oss-campaign-main.js check|verify|qualify PLAN ARCHIVE FIXTURE_MANIFEST REPORT");
   const archive = await loadArchive(planPath, root);
   const receipt = await verifyOssCampaign(archive, await readRegular(manifestPath));
-  requireEvidence(mode !== "qualify",
+  requireEvidence(mode !== "qualify" || receipt.status === "passed",
     `Campaign PASS unavailable: ${receipt.missingSourceCapabilities.join("; ")}. ` +
     "Use check for a sources-unverified consistency report; no pass receipt was written.");
-  if (mode === "check") await createReceipt(receiptPath, receipt);
+  if (mode === "check" || mode === "qualify") await createReceipt(receiptPath, receipt);
   else requireEvidence(same(JSON.parse((await readRegular(receiptPath)).toString("utf8")), receipt),
     "Evidence report differs from reverified artifacts");
   return { kind: "oss-discord-stt-verification", status: receipt.status,

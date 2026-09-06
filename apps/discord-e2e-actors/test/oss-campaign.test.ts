@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import { mkdtemp, readFile, rm, writeFile, symlink } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -12,7 +13,7 @@ import { campaignFixture } from "./oss-campaign-fixture.js";
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 async function setup() {
-  const root = await mkdtemp("/tmp/oss-campaign-test-"); roots.push(root);
+  const root = await mkdtemp(join(tmpdir(), "oss-campaign-test-")); roots.push(root);
   const fixture = await campaignFixture(root);
   return { ...fixture, root, verify: async () => {
     await fixture.save();

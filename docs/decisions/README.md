@@ -76,3 +76,9 @@
 - [ADR-0033: Adaptive bounded current grounding](0033-adaptive-current-grounding.md)
 - [ADR-0058: Exact Craig hosted stack recovery](0058-exact-craig-hosted-stack-recovery.md)
 - [ADR-0050: Persisted Retrieval V2 serving binding and official SDK custody](0050-persisted-retrieval-v2-serving-binding.md)
+
+OSS STT native collection extends the existing Voicetext adapter and Platform
+composition, with qualification owned by `apps/discord-e2e-actors/src/oss-*`.
+The native session journal is opt-in for the isolated TEST project, bounded,
+append-only, and excludes transport configuration and audio bytes. It is evidence
+input, never a standalone campaign PASS. See the [OSS runbook](../../infra/deployment/oss-discord-stt-campaign.md).

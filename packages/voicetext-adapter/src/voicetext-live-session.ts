@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { ossReceivedEvidence, type OssSessionEvidence } from "./oss-native-evidence.js";
 import { VoicetextAdapterError } from "./errors.js";
 import {
   asLiveSessionError, createLiveSessionDeferred, rememberLiveSessionPacketId,
@@ -49,8 +51,9 @@ export class LiveSession implements VoicetextLiveSession {
     private readonly socket: VoicetextWebSocketConnection,
     private readonly request: OpenVoicetextLiveSessionRequest,
     private readonly options: ValidatedVoicetextLiveTranscriptionOptions,
+    private readonly evidence?: OssSessionEvidence,
   ) {
-    this.transcriptEmitter = new VoicetextLiveTranscriptEmitter(request, this.timeline);
+    this.transcriptEmitter = new VoicetextLiveTranscriptEmitter(request, this.timeline, evidence);
     request.signal?.addEventListener("abort", () => { this.terminate(); }, { once: true });
   }
 
@@ -73,6 +76,7 @@ export class LiveSession implements VoicetextLiveSession {
     for (;;) {
       const frame = await this.socket.receive(readySignal);
       if (frame.type === "close") {
+        this.evidence?.record({ type: "close", code: frame.code });
         throw new VoicetextAdapterError("transport_error", "Voicetext closed before the live session became ready", true);
       }
       if (frame.type !== "text") {
@@ -83,6 +87,7 @@ export class LiveSession implements VoicetextLiveSession {
         this.options.maxTranscriptCharsPerSegment,
         this.options.identity,
       );
+      this.evidence?.record(ossReceivedEvidence(message));
       if (message.type === "ready") {
         break;
       }
@@ -125,7 +130,11 @@ export class LiveSession implements VoicetextLiveSession {
       const timelineCheckpoint = this.timeline.checkpoint();
       try {
         this.timeline.reserve(packet.relativeTimeMs, packet.durationSamples48Khz);
+        this.evidence?.record({ type: "audio_send", seq: sequence, packetId: packet.packetId,
+          sha256: createHash("sha256").update(packet.opus).digest("hex"), size: packet.opus.byteLength, toc: packet.opus[0]!,
+          relativeTimeMs: packet.relativeTimeMs, durationSamples48Khz: packet.durationSamples48Khz });
         await this.socket.sendBinary(packet.opus, this.abortController.signal);
+        this.evidence?.record({ type: "audio_sent", seq: sequence });
         this.nextSequence = sequence;
         try {
           await withLiveSessionTimeout(
@@ -137,9 +146,11 @@ export class LiveSession implements VoicetextLiveSession {
           this.closeAfterReceiveFailure(error);
           throw error;
         }
+        this.evidence?.record({ type: "audio_accepted", seq: sequence });
         rememberLiveSessionPacketId(this.packetIds, this.packetIdOrder, packet.packetId);
         return "accepted";
       } catch (error) {
+        this.evidence?.record({ type: "failure" });
         this.ackWaiters.delete(sequence);
         this.timeline.restore(timelineCheckpoint);
         throw error;
@@ -173,6 +184,7 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   public terminate(): void {
+    this.evidence?.record({ type: "terminated" });
     if (this.state !== "closed") {
       this.state = "closed";
       const error = new VoicetextAdapterError(
@@ -212,6 +224,7 @@ export class LiveSession implements VoicetextLiveSession {
       this.abortController.abort(failure);
       await this.pump?.catch(() => {});
     }
+    this.evidence?.record({ type: failure === undefined ? "success" : "failure" });
     if (failure !== undefined) {
       throw asLiveSessionError(failure, "Voicetext live session finalization failed");
     }
@@ -226,7 +239,9 @@ export class LiveSession implements VoicetextLiveSession {
       );
     }
     this.finalizeWaiter = createLiveSessionDeferred();
+    this.evidence?.record({ type: "finalize_send" });
     await this.socket.sendText(JSON.stringify({ type: "finalize" }), this.abortController.signal);
+    this.evidence?.record({ type: "finalize_sent" });
     const result = await this.finalizeWaiter.promise;
     let terminalFailure: unknown;
     try {
@@ -273,6 +288,7 @@ export class LiveSession implements VoicetextLiveSession {
       while (this.state === "active" || this.state === "finalizing") {
         const frame = await this.socket.receive(this.abortController.signal);
         if (frame.type === "close") {
+          this.evidence?.record({ type: "close", code: frame.code });
           this.transportClosed = true;
           if (this.closeState !== "idle" && this.finalizeResultReceived) {
             this.state = "closed";
@@ -304,6 +320,7 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   private handleServerMessage(message: ReturnType<typeof parseServerMessage>): void {
+    this.evidence?.record(ossReceivedEvidence(message));
     if (message.type === "ack") {
       const waiter = this.ackWaiters.get(message.seq);
       if (waiter === undefined) {
@@ -357,6 +374,7 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   private closeAfterReceiveFailure(error: unknown): void {
+    this.evidence?.record({ type: "failure" });
     if (this.state === "closed") {
       return;
     }

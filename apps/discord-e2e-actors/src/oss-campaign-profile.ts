@@ -17,7 +17,8 @@ export const targetSchema = z.object({
   publicationApplicationId: z.literal("1533224474609057793"),
   platformService: z.literal("meeting-platform"),
   craigService: z.literal("craig-bot"),
-  platformRevision: z.literal(baseRevision),
+  // The reviewed integration supplies its exact revision; native collection checks the image source.
+  platformRevision: revision,
   craigRevision: revision,
   gatewayRevision: revision,
   gatewayEndpoint: z.url().refine((value) => {
@@ -64,6 +65,10 @@ export const indexSchema = z.object({
   artifacts: z.array(artifactSchema).min(1).max(10000),
   runs: z.array(z.object({ runId: id, evidencePath: id }).strict()).length(3),
   deploymentPath: id,
+  nativeSources: z.object({ livePath: id, postCallPath: id, deploymentPaths: z.array(id).length(2),
+    runs: z.array(z.object({ runId: id, snapshots: z.array(id).length(2),
+      publications: z.array(id).length(2), originalsPath: id }).strict()).length(3),
+  }).strict().optional(),
 }).strict();
 export const turnSchema = z.object({
   turnId: id, speakerId: id, startMs: time, endMs: time, text: z.string().min(1).max(20000),

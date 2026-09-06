@@ -518,6 +518,8 @@ boundaries:
       builtins:
         - node:child_process
         - node:crypto
+        - node:fs
+        - node:path
         - node:events
         - node:http
         - node:perf_hooks

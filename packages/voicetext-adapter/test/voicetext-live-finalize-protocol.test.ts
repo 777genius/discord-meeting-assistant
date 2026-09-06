@@ -1,3 +1,4 @@
+import type { OssSessionEvidence, OssSessionEvidenceEvent } from "../src/oss-native-evidence.js";
 import { setImmediate as nextTask } from "node:timers/promises";
 
 import { describe, expect, it } from "vitest";
@@ -21,6 +22,23 @@ const terminal = {
 } as const;
 
 describe("VoiceText live finalize terminal evidence", () => {
+  it("captures real parsed receive and send boundaries in order", async () => {
+    const events: OssSessionEvidenceEvent[] = [];
+    await finalize(new FinalizeSocket("compliant"), 1000, { record: (event) => { events.push(event); } });
+    expect(events.map((event) => event.type === "received" ? event.message.type : event.type))
+      .toEqual(["ready", "finalize_send", "finalize_sent", "finalize_complete", "close", "success"]);
+  });
+
+  it("retains native contradictory finalize and failure evidence", async () => {
+    const events: OssSessionEvidenceEvent[] = [];
+    await expect(finalize(new FinalizeSocket("synchronous"), 1000,
+      { record: (event) => { events.push(event); } })).rejects.toThrow();
+    expect(events.filter((event) => event.type === "received" && event.message.type === "finalize_complete"))
+      .toHaveLength(2);
+    expect(events.some((event) => event.type === "failure")).toBe(true);
+    expect(events.some((event) => event.type === "success")).toBe(false);
+  });
+
   it("preserves saw_result beside every terminal status", () => {
     expect(parseServerMessage(
       '{"type":"finalize_complete","status":"flushed","saw_result":true}',
@@ -244,7 +262,7 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
   }
 }
 
-async function finalize(socket: FinalizeSocket, timeoutMs = 1_000): Promise<void> {
+async function finalize(socket: FinalizeSocket, timeoutMs = 1_000, evidence?: OssSessionEvidence): Promise<void> {
   const session = new LiveSession(socket, {
     idempotencyKey: "terminal-evidence",
     meetingId: "meeting-1",
@@ -254,7 +272,7 @@ async function finalize(socket: FinalizeSocket, timeoutMs = 1_000): Promise<void
     endpoint: "wss://voice.example.test/api/v1/transcribe/stream",
     finalizeTimeoutMs: timeoutMs,
     token: "test-machine-token",
-  }));
+  }), evidence);
   await session.start();
   await session.finalize();
 }

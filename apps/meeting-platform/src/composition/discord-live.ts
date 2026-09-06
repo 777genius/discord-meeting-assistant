@@ -1,3 +1,5 @@
+import { createOssNativeEvidence, type OssPlatformEvidence } from "./oss-native-evidence.js";
+import type { OssNativeEvidenceSink } from "@discord-meeting/voicetext-adapter";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -75,6 +77,7 @@ const monotonicUnixNowMilliseconds = (): number =>
   Math.floor(performance.timeOrigin + performance.now());
 
 export interface PlatformDiscordLiveComposition {
+  readonly ossNativeEvidence?: OssPlatformEvidence;
   readonly conversationRuntime?: GrpcPipecatConversationRuntime;
   readonly craigPlaybackGateway: CraigPlaybackGateway;
   readonly discord: Client;
@@ -159,7 +162,9 @@ export async function createPlatformDiscordLiveComposition(input: {
   }
   const groundedAnswers = createVoiceGroundedAnswers(input, discord);
   const conversation = await createConversationResources(input, groundedAnswers, craigPlaybackGateway, conversationRuntime);
+  const evidenceSink = createOssNativeEvidence(input.cleanup);
   const live = createLiveRuntime({
+    ...(evidenceSink === undefined ? {} : { evidenceSink: evidenceSink.live }),
     config: input.config,
     ...(conversation.coordinator === undefined
       ? {}
@@ -269,6 +274,7 @@ export async function createPlatformDiscordLiveComposition(input: {
   }
   return {
     ...(conversationRuntime === undefined ? {} : { conversationRuntime }),
+    ...(evidenceSink === undefined ? {} : { ossNativeEvidence: evidenceSink }),
     craigPlaybackGateway,
     discord,
     guildSetupHandler,
@@ -329,6 +335,7 @@ function createConversationRuntime(
 }
 
 function createLiveRuntime(input: {
+  readonly evidenceSink?: OssNativeEvidenceSink;
   readonly config: PlatformConfig;
   readonly conversationCoordinator?: ConversationCoordinator;
   readonly discordPublisher: DiscordSummaryPublisher;
@@ -383,6 +390,7 @@ function createLiveRuntime(input: {
     projector,
     summarizer,
     transcriber: new VoicetextLiveTranscriptionAdapter({
+      ...(input.evidenceSink === undefined ? {} : { evidenceSink: input.evidenceSink }),
       endpoint: input.config.voicetext.webSocketUrl,
       keyterms: meetingVocabulary,
       language: "multi",

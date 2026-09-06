@@ -1,3 +1,4 @@
+import { verifyNativeCampaignSources } from "./oss-native-campaign-sources.js";
 import { verifyOssRecording } from "./oss-recording-evidence.js";
 import { normalizeDatabase, assertExactDatabaseCounts } from "./e2e-retained-evidence-snapshot.js";
 import { inspectOggOpus } from "./fixture-integrity.js";
@@ -68,12 +69,14 @@ export async function verifyOssCampaign(archive: Archive, fixtureManifestBytes: 
     check(runs[position]!.startedAtMs > runs[position - 1]!.settled[1]!.observedAtMs,
       "Next scenario began before previous terminal collection");
   }
+  const native = index.nativeSources === undefined ? undefined : verifyNativeCampaignSources(archive, runs);
+  const missingSourceCapabilities: readonly string[] = native?.missingSourceCapabilities ?? ossMissingSourceCapabilities;
   return {
     // These checks establish consistency of retained inputs, not their collection provenance.
     // The current sources cannot supply the complete live archive or original checksum proof.
     kind: "oss-discord-stt-evidence-check-v1" as const,
-    status: "sources-unverified" as const,
-    missingSourceCapabilities: ossMissingSourceCapabilities,
+    status: missingSourceCapabilities.length === 0 ? "passed" as const : "sources-unverified" as const,
+    missingSourceCapabilities,
     campaignId: plan.campaignId,
     planSha256: archive.planSha256,
     collectionSha256: archive.indexSha256,
@@ -181,6 +184,7 @@ async function verifyRun(archive: Archive, run: OssRun): Promise<void> {
   check(run.settled[1]!.observedAtMs > run.settled[0]!.observedAtMs, "Independent terminal reads required");
   check(same([...new Set(run.sessions.map((session) => session.speakerId))].sort(), speakers),
     "Missing live speaker session");
+  if (archive.index.nativeSources !== undefined) return; // Complete native journal is checked campaign-wide.
   const finals = run.sessions.flatMap((session) => verifySession(archive, run, session));
   check(new Set(finals.map((turn) => turn.turnId)).size === finals.length, "Duplicate live final effect");
   check(same([...finals].sort((a, b) => a.turnId.localeCompare(b.turnId)),

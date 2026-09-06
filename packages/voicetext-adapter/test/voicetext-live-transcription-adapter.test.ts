@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import type { OssSessionEvidenceEvent } from "../src/oss-native-evidence.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -796,4 +798,28 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
     expect(socket.terminated).toBe(true);
     expect(socket.text.filter(({ type }) => type === "finalize")).toHaveLength(0);
   });
+});
+
+it("captures actual packet hashes, accepted order and every normalized server result", async () => {
+  const events: OssSessionEvidenceEvent[] = [];
+  const socket = new QueueSocket();
+  const adapter = new VoicetextLiveTranscriptionAdapter({
+    endpoint: "wss://offline.test", token: "offline-machine-token",
+    evidenceSink: { open: () => ({ record: (event) => { events.push(event); } }) },
+  }, new SingleSocketConnector(socket));
+  const session = await adapter.openSession({ meetingId: "meeting-1", speakerId: "speaker-1",
+    idempotencyKey: "session-1", onTranscript: () => {} });
+  const opus = Uint8Array.from([0xf8, 0xff, 0xfe]);
+  await session.sendPacket({ opus, packetId: "packet-1", relativeTimeMs: 0, durationSamples48Khz: 960 });
+  await session.sendPacket({ opus, packetId: "packet-1", relativeTimeMs: 0, durationSamples48Khz: 960 });
+  await session.finalize();
+  expect(events.filter((event) => event.type === "audio_send")).toEqual([{
+    type: "audio_send", seq: 1, packetId: "packet-1", size: 3, toc: 0xf8,
+    sha256: createHash("sha256").update(opus).digest("hex"), relativeTimeMs: 0, durationSamples48Khz: 960,
+  }]);
+  expect(events.filter((event) => event.type === "received").map((event) => event.message.type))
+    .toEqual(["ready", "partial", "final", "segment_final", "ack", "finalize_complete"]);
+  expect(events.filter((event) => event.type === "audio_accepted")).toEqual([{ type: "audio_accepted", seq: 1 }]);
+  expect(events.at(-1)).toEqual({ type: "success" });
+  expect(JSON.stringify(events)).not.toContain("offline-machine-token");
 });

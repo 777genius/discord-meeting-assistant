@@ -77,3 +77,16 @@ undeclared dependency, blocked export, or parser error is a failing gate.
 Ast-grep separately rejects ambient wall clock, environment, randomness, and
 timers in domain and application paths. TypeScript remains the type authority;
 Oxlint supplies fast and type-aware lint checks.
+
+The OSS STT test collector is owned by the existing Discord actor qualification
+boundary. Its native live session source is owned by `adapters.voicetext`; the
+optional append-only filesystem sink remains inside that adapter. Meeting Platform
+composition admits and closes the test journal. No application/domain port or
+hosted V10 contract changes are required. These files use the existing fail-closed
+root classifications; the adapter explicitly permits `node:fs` and `node:path`.
+
+The test-only post-call evidence tap lives in Platform composition and wraps
+existing consumer-owned transcription, summary and publishing ports. Its finite
+filesystem journal captures invocation identity and timestamps, not infrastructure
+request payloads. The actor OSS collection boundary consumes the retained native
+bytes. Native capture-to-parser integration tests live in the Platform test root.
