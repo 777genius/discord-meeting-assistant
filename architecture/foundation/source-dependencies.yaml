@@ -827,6 +827,7 @@ boundaries:
         - node:crypto
         - node:events
         - node:fs
+        - node:path
         - node:fs/promises
         - node:http
         - node:url
