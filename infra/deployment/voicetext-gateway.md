@@ -17,13 +17,18 @@ The first three rows below are immutable checked-in Compose constants, not deplo
 | Setting | Checked value |
 | --- | --- |
 | `VOICETEXT_GATEWAY_GIT_URL` | `https://github.com/777genius/voicetext-gateway.git` |
-| `VOICETEXT_GATEWAY_GIT_REF` | `c5eb287cc3ea567d67a2a9e6260ed8cf86841a7d` |
-| `VOICETEXT_GATEWAY_SOURCE_REVISION` | `c5eb287cc3ea567d67a2a9e6260ed8cf86841a7d` |
+| `VOICETEXT_GATEWAY_GIT_REF` | `1ff925152613f8b9c34beb776987191c30b2afe5` |
+| `VOICETEXT_GATEWAY_SOURCE_REVISION` | `1ff925152613f8b9c34beb776987191c30b2afe5` |
 | `VOICETEXT_PUBLIC_HOST` | operator-supplied DNS name |
 
 BuildKit resolves that exact ref and verifies it with the identical `checksum`
 Git-context query before executing the gateway Dockerfile. This requires Docker
 Buildx 0.28.0 or newer and Dockerfile syntax 1.18 or newer.
+
+The approved source tree is `84f43c52ef305c85596e0be3f44e89710c296055`.
+The gateway adds configurable database pooling with its default of 10 unchanged.
+The isolated native harness selects 1 in its gateway configuration; this source
+pin update does not change Compose defaults or qualify native EN/RU flows.
 
 Point public DNS for `VOICETEXT_PUBLIC_HOST` to the host and allow inbound TCP
 80/443 and UDP 443. The overlay derives Meeting Platform's sole VoiceText URL
