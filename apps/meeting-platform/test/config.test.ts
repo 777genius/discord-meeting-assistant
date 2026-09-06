@@ -25,7 +25,7 @@ describe("platform configuration", () => {
     // Check the actual overlay directives, then exercise their removal semantics
     // through the real loader. Docker Compose rendering is a separate deploy gate.
     const resets = [...compose.matchAll(/^      (\w+): !reset null$/gmu)]
-      .map((match) => match[1]);
+      .map((match) => match[1]!);
     expect(resets).toEqual([
       "MEETING_KNOWLEDGE_GROUNDED_VOICE_ROLLOUT_EPOCH",
       "MEETING_KNOWLEDGE_ACTOR_KEYRING_FILE",
