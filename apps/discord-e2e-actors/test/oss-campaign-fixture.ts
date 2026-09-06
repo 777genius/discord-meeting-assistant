@@ -1,4 +1,3 @@
-import { generateKeyPairSync, sign } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
@@ -11,9 +10,7 @@ export async function campaignFixture(root: string) {
   const manifest = fixtureManifestV1Schema.parse(JSON.parse(manifestBytes.toString()));
   const fixtureAudio = await Promise.all(manifest.fixtures.map((fixture) =>
     readFile(new URL(`./fixtures/${fixture.audioPath}`, import.meta.url))));
-  const keys = generateKeyPairSync("ed25519");
   const plan = planSchema.parse({ kind: "oss-discord-stt-plan-v1", campaignId: "offline-test",
-    collectorPublicKeyPem: keys.publicKey.export({ type: "spki", format: "pem" }),
     collectorRevision: "c".repeat(40), target: {
       project: "vtoss-test-oss-8f49a06-r1", testOnly: true,
       guildId: "1533228590643155034", voiceChannelId: "1533228823045214398",
@@ -171,7 +168,6 @@ export async function campaignFixture(root: string) {
       runs: plan.runs.map(({ runId }, i) => ({ runId, evidencePath: `run-${i}.json` })), deploymentPath: "deployment.json" };
     const bytes = Buffer.from(JSON.stringify(index));
     await writeFile(join(root, "collection.json"), bytes);
-    await writeFile(join(root, "collection.sig"), sign(null, bytes, keys.privateKey));
   };
   return { plan, planPath, runs, wires, actors, deployment, files, save, manifestBytes };
 }

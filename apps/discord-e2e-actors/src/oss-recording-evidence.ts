@@ -77,12 +77,17 @@ export function verifyOssRecording(archive: Archive, run: OssRun): void {
   }
   check(!completion.events.some((event) => ["meeting.aborted", "meeting.connection_lost"].includes(event.type)),
     "Recording terminal failure");
+  check(new Set(manifest.tracks.map((track) => track.trackNumber)).size === 2 &&
+    new Set(completion.authoritativeTracks.map((track) => track.trackNumber)).size === 2 &&
+    new Set(completion.authoritativeTracks.map((track) => track.uploadId)).size === 2,
+  "Duplicate native track/upload identity");
   for (const track of run.tracks) {
     const retained = archive.artifact(track.path);
     const declared = manifest.tracks.filter((entry) => entry.speakerId === track.speakerId);
     const accepted = completion.recording.speakerAudio.filter((entry) => entry.speakerId === track.speakerId);
     const stored = completion.authoritativeTracks.filter((entry) => entry.speakerId === track.speakerId);
     check(declared.length === 1 && accepted.length === 1 && stored.length === 1, "Native track bijection missing");
+    check(declared[0]!.trackNumber === stored[0]!.trackNumber, "Native track number mismatch");
     for (const entry of [declared[0]!, accepted[0]!, stored[0]!]) {
       const locator = "locator" in entry ? entry.locator : entry.audioLocator;
       const version = "artifactVersionId" in entry ? entry.artifactVersionId : entry.artifactRevision;

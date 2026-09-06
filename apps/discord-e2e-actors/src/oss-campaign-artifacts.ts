@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, verify } from "node:crypto";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { link, open, realpath, rm } from "node:fs/promises";
 import { resolve, sep } from "node:path";
@@ -52,10 +52,6 @@ export async function loadArchive(planPath: string, rootPath: string): Promise<A
     return readRegular(full, size);
   };
   const indexBytes = await read("collection.json");
-  const signature = await read("collection.sig", 64);
-  const key = createPublicKey(plan.collectorPublicKeyPem);
-  requireEvidence(key.asymmetricKeyType === "ed25519" && signature.length === 64 &&
-    verify(null, indexBytes, key, signature), "Invalid independent collector signature");
   const index = indexSchema.parse(JSON.parse(indexBytes.toString("utf8")));
   const planSha256 = sha256(planBytes);
   requireEvidence(index.planSha256 === planSha256 && index.collectorRevision === plan.collectorRevision,
@@ -67,7 +63,7 @@ export async function loadArchive(planPath: string, rootPath: string): Promise<A
   for (const artifact of index.artifacts) {
     const sourceKey = JSON.stringify(artifact.source);
     requireEvidence(!artifacts.has(artifact.path) && !sources.has(sourceKey) &&
-      !["collection.json", "collection.sig"].includes(artifact.path), "Duplicate artifact/source identity");
+      artifact.path !== "collection.json", "Duplicate artifact/source identity");
     total += artifact.size;
     requireEvidence(total <= 1024 * 1024 * 1024, "Archive exceeds 1 GiB bound");
     const bytes = await read(artifact.path, artifact.size);

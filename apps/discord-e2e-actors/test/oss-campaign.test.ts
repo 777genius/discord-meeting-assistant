@@ -1,6 +1,8 @@
 import { mkdtemp, readFile, rm, writeFile, symlink } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { runOssCampaignCommand } from "../src/oss-campaign-main.js";
 import { createReceipt, loadArchive } from "../src/oss-campaign-artifacts.js";
 import { verifyOssCampaign } from "../src/oss-campaign-verification.js";
 import { verifyOssQuality } from "../src/oss-campaign-quality.js";
@@ -19,16 +21,43 @@ async function setup() {
 }
 
 describe("OSS campaign retained evidence", () => {
-  it("qualifies three isolated scenarios and re-verifies a create-only receipt", async () => {
+  it("checks synthetic consistency without claiming E2E and re-verifies a create-only report", async () => {
     const fixture = await setup();
     const receipt = await fixture.verify();
+    expect(receipt.kind).toBe("oss-discord-stt-evidence-check-v1");
+    expect(receipt.status).toBe("sources-unverified");
+    expect(receipt.missingSourceCapabilities).toHaveLength(3);
     expect(receipt.runs.map((run) => run.scenario)).toEqual(["sequential", "overlap", "reconnect"]);
-    const path = join(fixture.root, "pass.json");
+    const path = join(fixture.root, "report.json");
     await createReceipt(path, receipt);
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(await fixture.verify());
     await expect(createReceipt(path, receipt)).rejects.toThrow();
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(receipt);
   }, 60_000);
+  it("refuses a campaign pass for a wholly fabricated but consistent archive", async () => {
+    const f = await setup(); await f.save();
+    const output = join(f.root, "report.json");
+    const args = [f.planPath, f.root,
+      fileURLToPath(new URL("./fixtures/manifest.v1.json", import.meta.url)), output];
+    await expect(runOssCampaignCommand(["qualify", ...args])).rejects.toThrow(/Campaign PASS unavailable/u);
+    await expect(readFile(output)).rejects.toThrow();
+    expect(await runOssCampaignCommand(["check", ...args])).toMatchObject({ status: "sources-unverified" });
+    expect(await runOssCampaignCommand(["verify", ...args])).toMatchObject({ status: "sources-unverified" });
+    await expect(runOssCampaignCommand(["check", ...args])).rejects.toThrow();
+    const report = JSON.parse(await readFile(output, "utf8"));
+    await writeFile(output, JSON.stringify({ ...report, status: "passed" }));
+    await expect(runOssCampaignCommand(["verify", ...args])).rejects.toThrow(/differs/u);
+  }, 60_000);
+  it("preserves an interrupted writer and allows only one concurrent receipt", async () => {
+    const f = await setup();
+    const output = join(f.root, "report.json");
+    await writeFile(`${output}.pending`, "interrupted");
+    await expect(createReceipt(output, {})).rejects.toThrow();
+    expect(await readFile(`${output}.pending`, "utf8")).toBe("interrupted");
+    await rm(`${output}.pending`);
+    const results = await Promise.allSettled([createReceipt(output, { writer: 1 }), createReceipt(output, { writer: 2 })]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+  });
   const mutations: Array<[string, (fixture: Awaited<ReturnType<typeof setup>>) => void]> = [
     ["non-test target", (f) => { Object.assign(f.plan.target, { project: "production" }); }],
     ["wrong guild", (f) => { Object.assign(f.plan.target, { guildId: "other" }); }],
@@ -65,10 +94,20 @@ describe("OSS campaign retained evidence", () => {
     ["lost overlap", (f) => { f.runs[1]!.transcript.turns[0]!.endMs = 1700; }],
     ["duplicate actor playback", (f) => { f.actors[0]!.events.push(f.actors[0]!.events.at(-1)!); }],
     ["missing reconnect", (f) => { f.actors[2]!.events = f.actors[2]!.events.filter((e) => e.type !== "disconnected"); }],
+    ["deployment observation ends before settlement", (f) => { f.deployment.afterMs = f.runs[2]!.terminalAtMs; }],
     ["deployment changed", (f) => { f.deployment.targetAfter.craigRevision = "e".repeat(40); }],
+    ["database publication target mismatch", (f) => {
+      const db = f.files.get(f.runs[0]!.databasePath)!.value as { snapshot: { publicationTargetId: string } };
+      db.snapshot.publicationTargetId = "other-channel";
+    }],
+    ["duplicate native track number", (f) => {
+      const completion = f.files.get(f.runs[0]!.completionPath)!.value as { authoritativeTracks: Array<{ trackNumber: number }> };
+      completion.authoritativeTracks[1]!.trackNumber = completion.authoritativeTracks[0]!.trackNumber;
+    }],
+    ["duplicate provider session", (f) => { f.runs[0]!.sessions.push(f.runs[0]!.sessions[0]!); }],
     ["unknown schema fields", (f) => { Object.assign(f.runs[0]!, { passed: true }); }],
   ];
-  it.each(mutations)("rejects %s even with a valid collector signature", async (_name, mutate) => {
+  it.each(mutations)("rejects %s even with recomputed artifact checksums", async (_name, mutate) => {
     const fixture = await setup(); mutate(fixture);
     await expect(fixture.verify()).rejects.toThrow();
   }, 60_000);
@@ -82,23 +121,10 @@ describe("OSS campaign retained evidence", () => {
     if (kind === "overlap") run.transcript.turns[0]!.endMs = 1700;
     expect(() => verifyOssQuality(run, manifest, f.actors[1])).toThrow();
   }, 60_000);
-  it("rejects a different plan key and forged index contents", async () => {
+  it("rejects a mismatched plan, altered checksums, missing artifacts and symlinks", async () => {
     const f = await setup(); await f.save();
-    const other = await setup();
-    await writeFile(f.planPath, JSON.stringify({ ...f.plan, collectorPublicKeyPem: other.plan.collectorPublicKeyPem }));
-    await expect(loadArchive(f.planPath, f.root)).rejects.toThrow(/signature/u);
-    await f.save();
-    const indexPath = join(f.root, "collection.json");
-    const index: { capturedAtMs: number } = JSON.parse(await readFile(indexPath, "utf8"));
-    index.capturedAtMs++;
-    await writeFile(indexPath, JSON.stringify(index));
-    await expect(loadArchive(f.planPath, f.root)).rejects.toThrow(/signature/u);
-  }, 60_000);
-  it("rejects forged signatures, altered checksums, missing artifacts and symlinks", async () => {
-    const f = await setup(); await f.save();
-    const signature = join(f.root, "collection.sig");
-    await writeFile(signature, Buffer.alloc(64));
-    await expect(loadArchive(f.planPath, f.root)).rejects.toThrow(/signature/u);
+    await writeFile(f.planPath, JSON.stringify({ ...f.plan, campaignId: "different-plan" }));
+    await expect(loadArchive(f.planPath, f.root)).rejects.toThrow(/identity mismatch/u);
     await f.save();
     const original = join(f.root, "recording-0.original");
     await writeFile(original, "forged-original-0");

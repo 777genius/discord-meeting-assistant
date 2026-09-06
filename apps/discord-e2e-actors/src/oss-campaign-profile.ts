@@ -34,8 +34,6 @@ export const planSchema = z.object({
   kind: z.literal("oss-discord-stt-plan-v1"),
   campaignId: id,
   target: targetSchema,
-  // Public key pinned out of band by the reviewer, never taken from the archive.
-  collectorPublicKeyPem: z.string().min(1).max(4096),
   collectorRevision: revision,
   runs: z.array(z.object({ runId: id, scenario }).strict()).length(3),
 }).strict().superRefine((value, ctx) => {

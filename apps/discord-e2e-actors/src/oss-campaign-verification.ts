@@ -26,6 +26,12 @@ const databaseSchema = z.object({
   snapshot: z.unknown(),
 }).strict();
 
+export const ossMissingSourceCapabilities = [
+  "Complete correlated Craig/Platform/gateway packet and per-session wire collection",
+  "Pinned Craig original-source checksum recomputation from retained original files",
+  "Native post-call stage start timestamps and independently retained settlement observations",
+] as const;
+
 export async function verifyOssCampaign(archive: Archive, fixtureManifestBytes: Buffer) {
   check(sha256(fixtureManifestBytes) === manifestDigest, "Unpinned fixture manifest");
   const manifest = fixtureManifestV1Schema.parse(JSON.parse(fixtureManifestBytes.toString("utf8")));
@@ -41,7 +47,7 @@ export async function verifyOssCampaign(archive: Archive, fixtureManifestBytes: 
     const expected = plan.runs[position]!;
     check(run.runId === expected.runId && run.scenario === expected.scenario &&
       run.campaignId === plan.campaignId, "Run identity mismatch");
-    check(run.startedAtMs >= deployment.beforeMs && run.terminalAtMs <= deployment.afterMs &&
+    check(run.startedAtMs >= deployment.beforeMs && run.settled[1]!.observedAtMs <= deployment.afterMs &&
       deployment.afterMs <= index.capturedAtMs, "Deployment observation window mismatch");
     await verifyRun(archive, run);
     verifyOssQuality(run, manifest, archive.json(run.actorPath, "actor"));
@@ -63,7 +69,11 @@ export async function verifyOssCampaign(archive: Archive, fixtureManifestBytes: 
       "Next scenario began before previous terminal collection");
   }
   return {
-    kind: "oss-discord-stt-campaign-pass-v1" as const,
+    // These checks establish consistency of retained inputs, not their collection provenance.
+    // The current sources cannot supply the complete live archive or original checksum proof.
+    kind: "oss-discord-stt-evidence-check-v1" as const,
+    status: "sources-unverified" as const,
+    missingSourceCapabilities: ossMissingSourceCapabilities,
     campaignId: plan.campaignId,
     planSha256: archive.planSha256,
     collectionSha256: archive.indexSha256,
@@ -86,7 +96,9 @@ async function verifyRun(archive: Archive, run: OssRun): Promise<void> {
     run.transcript.version === String(snapshot.revision) &&
     snapshot.transcript.transcriptId === run.transcript.transcriptId &&
     same(snapshot.transcript.turns, run.transcript.turns) && same(snapshot.summary, run.summary) &&
-    snapshot.publication.externalPublicationId === run.publication.messageId,
+    snapshot.publication.externalPublicationId === run.publication.messageId &&
+    snapshot.publicationTargetId === archive.plan.target.resultsChannelId &&
+    snapshot.recording.speakerAudio.length === run.tracks.length,
   "Retained database snapshot disagrees with OSS evidence");
   const retainedManifest = archive.artifact(run.manifestPath);
   archive.bytes(run.manifestPath, "object-storage");
@@ -103,10 +115,7 @@ async function verifyRun(archive: Archive, run: OssRun): Promise<void> {
     run.lifecycle[2]!.atMs >= run.endedAtMs && run.lifecycle[2]!.atMs <= run.terminalAtMs,
   "Lifecycle/finalize ordering mismatch");
   check(new Set(run.originals).size === run.originals.length, "Duplicate original recording artifact");
-  for (const path of run.originals) {
-    archive.bytes(path, "craig");
-
-  }
+  for (const path of run.originals) archive.bytes(path, "craig");
   const speakers = ["1533227577286852649", "1533228054724346087"];
   check(same(run.tracks.map((track) => track.speakerId).sort(), speakers), "Authoritative track speakers mismatch");
   for (const track of run.tracks) {
