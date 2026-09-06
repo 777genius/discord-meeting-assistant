@@ -8,6 +8,7 @@ import { loadArchive, sha256 } from "../src/oss-campaign-artifacts.js";
 import { verifyOssCampaign } from "../src/oss-campaign-verification.js";
 import { runOssCampaignCommand } from "../src/oss-campaign-main.js";
 import { collectCraigOriginals, requiredCraigSourceRoot } from "../src/oss-craig-original-collection.js";
+import { collectNativeLive, qualifyNativeSession } from "../src/oss-native-live-collection.js";
 
 // Deliberately synthetic source consistency fixture. Actual capture-to-parser
 // regressions are in Meeting Platform. Passing synthetic validation is not live E2E evidence.
@@ -17,10 +18,10 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
   const versionOutput = `${root}-version-archive`;
   try {
     const f = await campaignFixture(root);
-  for (const run of f.runs) {
-    const database = f.files.get(run.databasePath)!.value as { snapshot: { transcript: object } };
-    Object.assign(database.snapshot.transcript, { version: 1, recordingId: run.recordingId });
-  }
+    for (const run of f.runs) {
+      const database = f.files.get(run.databasePath)!.value as { snapshot: { transcript: object } };
+      Object.assign(database.snapshot.transcript, { version: 1, recordingId: run.recordingId });
+    }
     f.plan.target.craigRevision = "37b86a958b567cb7fcff75946e94fe5e7ee38f42";
     f.deployment.targetAfter.craigRevision = f.plan.target.craigRevision;
     await f.save();
@@ -48,6 +49,9 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
           event({ type: "audio_accepted", seq }, atMs);
         }
         event({ type: "received", message: { type: "partial", segment: { startMs: 0, durationMs: turn.endMs - turn.startMs, text: turn.text } } }, run.endedAtMs);
+        // Provider time starts at zero for each speaker/session; the adapter
+        // maps both partials and finals onto the reserved source packet timeline.
+        event({ type: "transcript_emitted", startMs: turn.startMs, endMs: turn.endMs, text: turn.text, isFinal: false }, run.endedAtMs);
         event({ type: "received", message: { type: "final", startMs: 0, durationMs: turn.endMs - turn.startMs, text: turn.text } }, run.endedAtMs);
         event({ type: "transcript_emitted", startMs: turn.startMs, endMs: turn.endMs, text: turn.text, isFinal: true }, run.endedAtMs);
         event({ type: "finalize_send" }, run.endedAtMs);
@@ -131,7 +135,28 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
       const prefix = all.map((row,index) => JSON.stringify({ index: index + 1, ...row }) + "\n").join("");
       return Buffer.from(prefix + JSON.stringify({ index: all.length + 1, atMs: 1000000, type: "capture_seal", priorSha256: sha256(prefix) }) + "\n");
     };
-    await write("live.jsonl", journal("oss-native-live-v1", liveRows, { project: f.plan.target.project }));
+    const liveJournal = journal("oss-native-live-v1", liveRows, { project: f.plan.target.project });
+    const nativeSessions = collectNativeLive(liveJournal, f.plan.target.platformRevision).sessions;
+    expect(nativeSessions.size).toBe(6);
+    for (const rows of nativeSessions.values()) {
+      expect(() => qualifyNativeSession(rows)).not.toThrow();
+      // These mutations preserve the successful terminal and packet ACKs. They
+      // must still fail the real provider-to-source mapping for every scenario.
+      const missingPartial = rows.filter(({ event }) => event.type !== "transcript_emitted" || event.isFinal);
+      expect(() => qualifyNativeSession(missingPartial)).toThrow("Native provider/emitted timeline mismatch");
+      const unshifted = structuredClone(rows);
+      for (const { event } of unshifted) if (event.type === "transcript_emitted") {
+        event.endMs -= event.startMs;
+        event.startMs = 0;
+      }
+      expect(() => qualifyNativeSession(unshifted)).toThrow("Native provider/emitted timeline mismatch");
+      const overrun = structuredClone(rows);
+      for (const { event } of overrun) if (event.type === "received" && event.message.type === "partial" && event.message.segment) {
+        event.message.segment.durationMs += 20;
+      }
+      expect(() => qualifyNativeSession(overrun)).toThrow("Native provider segment exceeds accepted audio");
+    }
+    await write("live.jsonl", liveJournal);
     await write("post-call.jsonl", journal("oss-native-post-call-v1", stageRows));
     const services = [[f.plan.target.platformService, f.plan.target.platformRevision, f.deployment.platformImageDigest],
       [f.plan.target.craigService, f.plan.target.craigRevision, f.deployment.craigImageDigest],
@@ -207,6 +232,9 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
       expect(run.transcript.version).toBe("1");
       expect(assembled.json(run.databasePath)).toMatchObject({ snapshot: { revision: 97,
         transcript: { version: 1, recordingId: f.runs[0]!.recordingId } } });
+      expect(await verifyOssCampaign(assembled, f.manifestBytes)).toMatchObject({
+        status: "sources-unverified", consistency: "complete", missingSourceCapabilities: [],
+      });
     }
     await writeFile(join(output,"native/live.jsonl"), Buffer.from("truncated"));
     await expect(loadArchive(f.planPath, output)).rejects.toThrow();
