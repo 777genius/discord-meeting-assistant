@@ -130,6 +130,31 @@ test("binds local and remote source revision claims to testable identities", asy
   assert.match(craig, new RegExp(`org\\.opencontainers\\.image\\.revision: ${craigRevision}`, "u"));
 });
 
+test("shares the pinned Git-context-capable Craig frontend across both services", async () => {
+  const craig = await deploymentFile("compose.craig.yaml");
+  const migrations = craig.match(/^  craig-migrations:\n(?<body>(?:\n| {4}[^\n]*\n)+)/mu)?.groups?.body;
+  const bot = craig.match(/^  craig-bot:\n(?<body>(?:\n| {4}[^\n]*\n)+)/mu)?.groups?.body;
+  assert.ok(migrations);
+  assert.ok(bot);
+  const build = migrations.match(/^    build: &craig-build\n(?<body>(?: {6}[^\n]*\n)+)/mu)?.groups?.body;
+  assert.equal(build, [
+    `      context: "https://github.com/777genius/craig-meeting-gateway.git?ref=${craigRevision}&checksum=${craigRevision}"`,
+    "      dockerfile: deploy/meeting/Dockerfile",
+    "      args:",
+    "        BUILDKIT_SYNTAX: docker/dockerfile:1.18@sha256:dabfc0969b935b2080555ace70ee69a5261af8a8f1b4df97b9e7fbcf6722eddf",
+    `        SOURCE_REVISION: ${craigRevision}`,
+    "      labels:",
+    `        org.opencontainers.image.revision: ${craigRevision}`,
+    "        org.opencontainers.image.source: https://github.com/777genius/craig-meeting-gateway",
+    "",
+  ].join("\n"));
+  assert.match(bot, /^    build: \*craig-build$/mu);
+  for (const service of [migrations, bot]) {
+    assert.ok(service.includes(`    image: discord-meeting/craig-meeting-gateway:${craigRevision}\n`));
+    assert.ok(service.includes(`      org.opencontainers.image.revision: ${craigRevision}\n`));
+  }
+});
+
 test("keeps exact-revision language and profile qualification pending", async () => {
   const [readme, deploymentReadme, gatewayGuide] = await Promise.all([
     readFile(new URL("README.md", repositoryRoot), "utf8"),

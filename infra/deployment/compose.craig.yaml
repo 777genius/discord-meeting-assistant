@@ -52,6 +52,7 @@ services:
       context: "https://github.com/777genius/craig-meeting-gateway.git?ref=37b86a958b567cb7fcff75946e94fe5e7ee38f42&checksum=37b86a958b567cb7fcff75946e94fe5e7ee38f42"
       dockerfile: deploy/meeting/Dockerfile
       args:
+        BUILDKIT_SYNTAX: docker/dockerfile:1.18@sha256:dabfc0969b935b2080555ace70ee69a5261af8a8f1b4df97b9e7fbcf6722eddf
         SOURCE_REVISION: 37b86a958b567cb7fcff75946e94fe5e7ee38f42
       labels:
         org.opencontainers.image.revision: 37b86a958b567cb7fcff75946e94fe5e7ee38f42
