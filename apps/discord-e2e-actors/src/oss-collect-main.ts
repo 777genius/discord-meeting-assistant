@@ -29,14 +29,14 @@ export async function runOssCollectCommand(args: readonly string[], command?: Os
     return assembleOssNativeArchive({ planPath, sourceRoot, assemblyPath, outputRoot });
   }
   if (args[0] === "originals") {
-    const [, planPath, manifestPath, originalDirectory, output, ...extra] = args;
-    requireEvidence(planPath && manifestPath && originalDirectory && output && extra.length === 0,
-      "Usage: oss-collect-main.js originals PLAN MANIFEST ORIGINAL_DIRECTORY OUTPUT");
+    const [, planPath, manifestPath, originalDirectory, jobPath, output, ...extra] = args;
+    requireEvidence(planPath && manifestPath && originalDirectory && jobPath && output && extra.length === 0,
+      "Usage: oss-collect-main.js originals PLAN MANIFEST ORIGINAL_DIRECTORY PREPARED_JOB OUTPUT");
     const plan = planSchema.parse(JSON.parse((await readRegular(planPath)).toString("utf8")));
     const result = await collectCraigOriginals({ originalDirectory, manifestBytes: await readRegular(manifestPath),
-      craigRevision: plan.target.craigRevision });
+      craigRevision: plan.target.craigRevision, jobBytes: await readRegular(jobPath) });
     await createReceipt(output, result);
-    return { kind: result.kind, recordingId: result.recordingId, status: "source-unavailable" as const };
+    return { kind: result.kind, recordingId: result.recordingId, status: "recomputed" as const };
   }
   const [mode, planPath, recordingId, output, ...extra] = args;
   requireEvidence((mode === "snapshot" || mode === "publication") && planPath && recordingId && output && extra.length === 0,

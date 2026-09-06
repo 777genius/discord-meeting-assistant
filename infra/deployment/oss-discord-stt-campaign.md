@@ -6,7 +6,7 @@ This is private, unreviewed integration. No live collection, provider/Discord ca
 service change, secret access, queue replay or campaign PASS was performed here.
 Root must integrate and obtain a separate physically read-only review before use.
 
-## Supported sources and remaining external source
+## Supported sources
 
 The opt-in native journal captures every attempted live session before connecting,
 including failures; parsed ready/ack/partial/final/finalize_complete/error/close;
@@ -33,21 +33,24 @@ visible text with URLs removed are retained: playback capabilities and signed CD
 URLs never enter the evidence. Two observations establish stability, not replay
 idempotency. **Never run `collect:e2e`: it invokes BullMQ replay.**
 
-The pinned Craig aggregate original-source checksum algorithm is absent from this
-checkout. `originals` implements the documented authoritative manifest contract
-and recomputes each retained original's SHA-256/size, but marks the manifest's
-aggregate checksum **declared**, never recomputed. The exact read-only source root
-needed is:
-
-`/mnt/volume_ams3_1784742570542/vtoss-astra-y-20260905/readonly/craig-37b86a958b567cb7fcff75946e94fe5e7ee38f42`
-
-It must contain the producer source at `37b86a958b567cb7fcff75946e94fe5e7ee38f42`,
-including the original-source checksum implementation used by
-`recording.authoritative_ready`. No producer changes, new hash format, signature,
-or operator PASS assertion is requested. Until this source is supplied and the
-aggregate calculation is connected, native archives remain `sources-unverified`
-and `qualify` exits nonzero without a receipt. All other native source checks run;
-per-file checksums never substitute for the missing aggregate computation.
+The original aggregate is recomputed from the root-verified Craig producer
+`37b86a958b567cb7fcff75946e94fe5e7ee38f42`,
+`apps/bot/src/modules/recorder/meetingIntegration.ts`, source SHA-256
+`a62f880010cc14a76972309ba61b710eec96d49cb46f7cd8064bba029e989f2a`.
+Source context (`.craig-context`) is read-only and must never be staged.
+Preparation and outbox parsing require exactly `data,header1,header2,users,info,log`;
+none is optional (the tolerant info clientId reader does not change preparation).
+Present zero-byte sidecars are retained and hashed; empty does not mean missing.
+Names are exactly `recordingId.ogg.kind`. Every byte checksum and size is recomputed,
+then SHA-256 covers UTF-8 `JSON.stringify` of that ordered array, with object insertion
+keys `kind,relativePath,checksumSha256,sizeBytes`. Sorted-key JSON is incorrect.
+The result must equal the prepared job's `lifecycleV3Snapshot.sealedReady`
+`sourceFilesChecksumSha256` and immutable manifest `source.checksumSha256`.
+Missing/unprepared jobs, missing or duplicate files, aliases and changed originals
+fail closed. Retain the exact prepared job bytes separately from the six originals;
+the collector embeds them losslessly in its evidence. Final verification independently
+rehashes archived originals and checks both aggregate authorities. Legacy collections
+without this proof remain `sources-unverified`; there is no override.
 
 ## Exact target and configuration
 
@@ -172,13 +175,15 @@ OSS_STT_PUBLICATION_SECRET_DIRECTORY="$PUBLICATION_SECRETS" \
   pnpm --filter @discord-meeting/meeting-platform exec tsx \
   ../discord-e2e-actors/src/oss-collect-main.ts publication "$PLAN" "$OUT/$RUN_ID.snapshot-$N.json" "$OUT/$RUN_ID.publication-$N.json"
 pnpm --filter @discord-meeting/meeting-platform exec tsx \
-  ../discord-e2e-actors/src/oss-collect-main.ts originals "$PLAN" "$MANIFEST" "$READONLY_ORIGINAL_DIRECTORY" "$OUT/$RUN_ID.originals.json"
+  ../discord-e2e-actors/src/oss-collect-main.ts originals "$PLAN" "$MANIFEST" "$READONLY_ORIGINAL_DIRECTORY" "$PREPARED_JOB" "$OUT/$RUN_ID.originals.json"
 ```
 
 `PUBLICATION_SECRETS/sut` remains private and outside the archive. `MANIFEST` is the
 complete immutable manifest returned in the snapshot object collection, decoded
 without rewriting JSON. `READONLY_ORIGINAL_DIRECTORY` is this recording's complete
-retained Craig original set. Keep originals on Craig; preserve independent readonly
+retained Craig original set (six files only, no nested folders). `PREPARED_JOB` is
+the independently retained producer outbox job for this recording after preparation,
+including its sealed authoritative-ready event and source references. Keep originals on Craig; preserve independent readonly
 copies for assembly. Do not reconstruct original bytes from packet tees or fixtures.
 
 After all three second observations, collect `deployment "$PLAN" after` to
@@ -214,10 +219,20 @@ three scenarios retain real Opus/current revision/finalize/time/quality checks;
 batch success cannot stand in for live success. Legacy archives continue through
 the original consistency profile and cannot claim native source coverage.
 
-`check` and `verify` presently report the missing external Craig aggregate source.
-`qualify` can write only when every required source capability is satisfied; this
-checkout deliberately has no operator override. Synthetic consistency fixtures
-are not captured E2E and are tested to remain unable to create a PASS receipt.
+After `check` and `verify` succeed, root can admit the complete archive with a fresh
+create-only receipt path:
+
+```sh
+pnpm --filter @discord-meeting/meeting-platform exec tsx \
+  ../discord-e2e-actors/src/oss-campaign-main.ts qualify "$PLAN" "$NEW_ARCHIVE" "$FIXTURES/manifest.v1.json" "$PASS_RECEIPT"
+pnpm --filter @discord-meeting/meeting-platform exec tsx \
+  ../discord-e2e-actors/src/oss-campaign-main.ts verify "$PLAN" "$NEW_ARCHIVE" "$FIXTURES/manifest.v1.json" "$PASS_RECEIPT"
+```
+
+`qualify` writes only when every required source capability is satisfied. Offline
+synthetic test receipts prove validator behavior only; they are never actual live
+Discord PASS evidence. Root must mechanically integrate the portable patch and
+obtain a fresh physically read-only xhigh review before operational execution.
 
 ## Focused offline validation
 
@@ -233,5 +248,5 @@ pnpm --filter @discord-meeting/meeting-platform exec vitest run test/oss-native-
 
 Capture-to-parser integration tests live in the Platform test root so the actor
 package's build root remains unchanged. Test failures, truncation, duplicate or
-omitted sessions/stages, metadata changes and unavailable original-source proof
+omitted sessions/stages, metadata changes and missing prepared original-source proof
 remain disqualifying. Keep dependency-cache symlinks out of the patch.

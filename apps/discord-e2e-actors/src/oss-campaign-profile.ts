@@ -49,7 +49,7 @@ export const artifactSchema = z.object({
     (path) => path.split("/").every((part) => part !== ".." && part !== "." && part !== ""),
   ),
   sha256: digest,
-  size: z.number().int().positive().safe().max(512 * 1024 * 1024),
+  size: z.number().int().nonnegative().safe().max(512 * 1024 * 1024),
   // An immutable source version, not a URL to fetch.
   source: z.object({
     system: z.enum(["actor", "craig", "postgres", "object-storage", "gateway", "discord", "deployment"]),

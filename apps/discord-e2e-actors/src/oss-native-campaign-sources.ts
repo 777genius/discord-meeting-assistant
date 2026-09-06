@@ -1,3 +1,4 @@
+import { verifyCraigOriginalBytes } from "./oss-craig-original-collection.js";
 import { nativeDeploymentSchema } from "./oss-deployment-collection.js";
 import { z } from "zod";
 import { collectNativeLive, qualifyNativeSession } from "./oss-native-live-collection.js";
@@ -20,8 +21,9 @@ export const publicationSchema = z.object({ kind: z.literal("oss-native-publicat
 export const originalSchema = z.object({ kind: z.literal("oss-native-craig-originals-v1"), recordingId: id,
   craigRevision: revision, manifestSha256: digest, files: z.array(z.object({ path: id, size: time, sha256: digest }).strict()),
   declaredSourceFilesChecksumSha256: digest,
-  aggregateRecomputation: z.object({ status: z.literal("source-unavailable"), requiredSourceRoot: id,
+  aggregateRecomputation: z.union([z.object({ status: z.literal("source-unavailable"), requiredSourceRoot: id,
     requiredRevision: revision, requiredCapability: id }).strict(),
+    z.object({ status: z.literal("recomputed"), checksumSha256: digest, jobBase64: z.string().max(24 * 1024 * 1024) }).strict()]),
 }).strict();
 
 /** Binds every normalized field to the complete discovered native capture. No
@@ -137,7 +139,22 @@ export function verifyNativeCampaignSources(archive: Archive, runs: readonly Oss
     check(originals.files.length === inventory.files.length && originals.files.every((file) =>
       inventory.files.some((item) => item.path.endsWith("/" + file.path) && item.size === file.size && item.sha256 === file.sha256)),
       "Native original file inventory mismatch");
-    missing.add(`Pinned Craig aggregate checksum source required: ${originals.aggregateRecomputation.requiredSourceRoot}`);
+    const proof = originals.aggregateRecomputation;
+    if (proof.status === "source-unavailable") {
+      missing.add("Prepared Craig job and recomputed aggregate evidence missing");
+    } else {
+      const jobBytes = Buffer.from(proof.jobBase64, "base64");
+      check(jobBytes.toString("base64") === proof.jobBase64, "Invalid Craig job encoding");
+      const result = verifyCraigOriginalBytes({ craigRevision: originals.craigRevision,
+        manifestBytes: archive.bytes(run.manifestPath, "object-storage"),
+        job: JSON.parse(jobBytes.toString("utf8")), files: originals.files.map(file => {
+          const matches = inventory.files.filter(item => item.path.endsWith("/" + file.path));
+          check(matches.length === 1, "Ambiguous Craig original mapping");
+          return { path: file.path, bytes: archive.bytes(matches[0]!.path, "craig") };
+        }) });
+      check(result.checksumSha256 === proof.checksumSha256 &&
+        result.checksumSha256 === originals.declaredSourceFilesChecksumSha256, "Craig collected aggregate mismatch");
+    }
   }
   return { missingSourceCapabilities: [...missing], sessions: sessions.length };
 }

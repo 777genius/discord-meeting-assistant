@@ -7,11 +7,11 @@ import { assembleOssNativeArchive } from "../src/oss-native-archive-assembly.js"
 import { loadArchive, sha256 } from "../src/oss-campaign-artifacts.js";
 import { verifyOssCampaign } from "../src/oss-campaign-verification.js";
 import { runOssCampaignCommand } from "../src/oss-campaign-main.js";
-import { requiredCraigSourceRoot } from "../src/oss-craig-original-collection.js";
+import { collectCraigOriginals, requiredCraigSourceRoot } from "../src/oss-craig-original-collection.js";
 
 // Deliberately synthetic source consistency fixture. Actual capture-to-parser
-// regressions are in Meeting Platform; this fixture must never become E2E PASS.
-it("assembles all native sources, binds them and refuses unavailable-source PASS", async () => {
+// regressions are in Meeting Platform. Passing synthetic validation is not live E2E evidence.
+it.each([false, true])("assembles synthetic native sources with checksum proof=%s", async (withProof) => {
   const root = await mkdtemp(join(tmpdir(), "oss-native-archive-test-"));
   const output = `${root}-archive`;
   try {
@@ -56,6 +56,28 @@ it("assembles all native sources, binds them and refuses unavailable-source PASS
         stageRows.push({ atMs: stage.startedAtMs, type: "started", stage: stage.stage, meetingId: run.meetingId, attempt },
           { atMs: stage.completedAtMs, type: "succeeded", stage: stage.stage, meetingId: run.meetingId, attempt });
       }
+      const originalDirectory = `originals-${position}`;
+      await mkdir(join(root, originalDirectory));
+      const sourceFiles = [];
+      for (const kind of ["data", "header1", "header2", "users", "info", "log"]) {
+        const bytes = Buffer.from(kind === "log" ? "" : `synthetic-${position}-${kind}`);
+        const relativePath = `${run.recordingId}.ogg.${kind}`;
+        await write(`${originalDirectory}/${relativePath}`, bytes);
+        sourceFiles.push({ kind, relativePath, checksumSha256: sha256(bytes), sizeBytes: bytes.length });
+      }
+      const aggregate = sha256(JSON.stringify(sourceFiles));
+      const job = { recordingId: run.recordingId, sourceFiles, lifecycleV3Snapshot: { sealedReady: {
+        type: "recording.authoritative_ready", recordingId: run.recordingId, sourceFilesChecksumSha256: aggregate } } };
+      if (withProof) {
+        const manifest = f.files.get(run.manifestPath)!.value as { source: { checksumSha256: string } };
+        manifest.source.checksumSha256 = aggregate;
+        const bytes = Buffer.from(JSON.stringify(manifest));
+        const completion = f.files.get(run.completionPath)!.value as { recording: { manifestChecksumSha256: string; manifestSizeBytes: number } };
+        const db = f.files.get(run.databasePath)!.value as { snapshot: { recording: typeof completion.recording } };
+        for (const recording of [completion.recording, db.snapshot.recording]) {
+          recording.manifestChecksumSha256 = sha256(bytes); recording.manifestSizeBytes = bytes.length;
+        }
+      }
       const snapshots = [], publications = [];
       for (let observation = 0; observation < 2; observation++) {
         snapshots.push(await write(`native-snapshot-${position}-${observation}.json`, {
@@ -80,12 +102,16 @@ it("assembles all native sources, binds them and refuses unavailable-source PASS
           }),
         }));
       }
-      const originalDirectory = `originals-${position}`;
-      await mkdir(join(root, originalDirectory));
       const original = f.files.get(run.originals[0]!)!.value as Buffer;
-      await write(`${originalDirectory}/recording.ogg`, original);
+      if (!withProof) {
+        for (const file of sourceFiles) await rm(join(root, originalDirectory, file.relativePath));
+        await write(`${originalDirectory}/recording.ogg`, original);
+      }
       const manifestBytes = Buffer.from(JSON.stringify(f.files.get(run.manifestPath)!.value));
-      const originalsPath = await write(`native-originals-${position}.json`, {
+      const originalsPath = await write(`native-originals-${position}.json`, withProof ? await collectCraigOriginals({
+        originalDirectory: join(root, originalDirectory), manifestBytes, craigRevision: f.plan.target.craigRevision,
+        jobBytes: Buffer.from(JSON.stringify(job)),
+      }) : {
         kind: "oss-native-craig-originals-v1", recordingId: run.recordingId, craigRevision: f.plan.target.craigRevision,
         manifestSha256: sha256(manifestBytes), declaredSourceFilesChecksumSha256: sha256(`offline-source-${position}`),
         files: [{ path: "recording.ogg", size: original.length, sha256: sha256(original) }],
@@ -120,8 +146,9 @@ it("assembles all native sources, binds them and refuses unavailable-source PASS
     expect(await assembleOssNativeArchive(input)).toMatchObject({ status: "assembled" });
     const archive = await loadArchive(f.planPath, output);
     const report = await verifyOssCampaign(archive, f.manifestBytes);
-    expect(report.status).toBe("sources-unverified");
-    expect(report.missingSourceCapabilities.join()).toContain(requiredCraigSourceRoot);
+    expect(report.status).toBe(withProof ? "passed" : "sources-unverified");
+    if (withProof) expect(report.missingSourceCapabilities).toEqual([]);
+    else expect(report.missingSourceCapabilities.join()).toContain("Prepared Craig job");
     const firstRunPath = archive.index.runs[0]!.evidencePath;
     for (const mutation of ["stage", "session", "ledger"] as const) {
       const altered = { ...archive, json: (path: string, system?: Parameters<typeof archive.json>[1]) => {
@@ -137,9 +164,28 @@ it("assembles all native sources, binds them and refuses unavailable-source PASS
       await expect(verifyOssCampaign(altered, f.manifestBytes)).rejects.toThrow();
     }
     await expect(assembleOssNativeArchive(input)).rejects.toThrow();
-    await expect(runOssCampaignCommand(["qualify", f.planPath, output,
-      new URL("./fixtures/manifest.v1.json", import.meta.url).pathname, join(root,"pass.json")])).rejects.toThrow("PASS unavailable");
-    await expect(readFile(join(root,"pass.json"))).rejects.toThrow();
+    const qualify = () => runOssCampaignCommand(["qualify", f.planPath, output,
+      new URL("./fixtures/manifest.v1.json", import.meta.url).pathname, join(root,"pass.json")]);
+    if (withProof) {
+      expect(await qualify()).toMatchObject({ status: "passed" }); // Synthetic validator result only.
+      await runOssCampaignCommand(["verify", f.planPath, output,
+        new URL("./fixtures/manifest.v1.json", import.meta.url).pathname, join(root,"pass.json")]);
+      const originalPath = archive.index.nativeSources!.runs[0]!.originalsPath;
+      const altered = { ...archive, json: (path: string, system?: Parameters<typeof archive.json>[1]) => {
+        const value = archive.json(path, system);
+        if (path === originalPath) (value as { aggregateRecomputation: { checksumSha256: string } }).aggregateRecomputation.checksumSha256 = "f".repeat(64);
+        return value;
+      } };
+      await expect(verifyOssCampaign(altered, f.manifestBytes)).rejects.toThrow("aggregate mismatch");
+      const tampered = { ...archive, bytes: (path: string, system?: Parameters<typeof archive.bytes>[1]) => {
+        const bytes = archive.bytes(path, system);
+        return path.endsWith(".ogg.data") ? Buffer.alloc(bytes.length, 1) : bytes;
+      } };
+      await expect(verifyOssCampaign(tampered, f.manifestBytes)).rejects.toThrow("changed after preparation");
+    } else {
+      await expect(qualify()).rejects.toThrow("PASS unavailable");
+      await expect(readFile(join(root,"pass.json"))).rejects.toThrow();
+    }
     await writeFile(join(output,"native/live.jsonl"), Buffer.from("truncated"));
     await expect(loadArchive(f.planPath, output)).rejects.toThrow();
   } finally { await rm(root, { recursive: true, force: true }); await rm(output, { recursive: true, force: true }); }

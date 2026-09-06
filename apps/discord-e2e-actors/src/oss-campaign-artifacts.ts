@@ -21,11 +21,11 @@ export function canonical(value: unknown): string {
     return item;
   });
 }
-export async function readRegular(path: string, maxBytes = 16 * 1024 * 1024): Promise<Buffer> {
+export async function readRegular(path: string, maxBytes = 16 * 1024 * 1024, allowEmpty = false): Promise<Buffer> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = await handle.stat();
-    requireEvidence(stat.isFile() && stat.size > 0 && stat.size <= maxBytes, "Invalid artifact size/type");
+    requireEvidence(stat.isFile() && (allowEmpty ? stat.size >= 0 : stat.size > 0) && stat.size <= maxBytes, "Invalid artifact size/type");
     const bytes = await handle.readFile();
     requireEvidence(bytes.length === stat.size, "Artifact changed while reading");
     return bytes;
@@ -45,11 +45,11 @@ export async function loadArchive(planPath: string, rootPath: string): Promise<A
   const planBytes = await readRegular(planPath);
   const plan = planSchema.parse(JSON.parse(planBytes.toString("utf8")));
   const root = await realpath(rootPath);
-  const read = async (path: string, size?: number): Promise<Buffer> => {
+  const read = async (path: string, size?: number, allowEmpty = false): Promise<Buffer> => {
     const full = resolve(root, path);
     requireEvidence(full.startsWith(`${root}${sep}`) && await realpath(full) === full,
       "Artifact escape or symlink");
-    return readRegular(full, size);
+    return readRegular(full, size, allowEmpty);
   };
   const indexBytes = await read("collection.json");
   const index = indexSchema.parse(JSON.parse(indexBytes.toString("utf8")));
@@ -66,7 +66,7 @@ export async function loadArchive(planPath: string, rootPath: string): Promise<A
       artifact.path !== "collection.json", "Duplicate artifact/source identity");
     total += artifact.size;
     requireEvidence(total <= 1024 * 1024 * 1024, "Archive exceeds 1 GiB bound");
-    const bytes = await read(artifact.path, artifact.size);
+    const bytes = await read(artifact.path, artifact.size, artifact.source.system === "craig" && /\.ogg\.(data|header1|header2|users|info|log)$/u.test(artifact.path));
     requireEvidence(bytes.length === artifact.size && sha256(bytes) === artifact.sha256,
       `Artifact checksum mismatch: ${artifact.path}`);
     artifacts.set(artifact.path, artifact);

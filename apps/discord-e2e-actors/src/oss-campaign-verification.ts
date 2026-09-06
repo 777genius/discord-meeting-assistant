@@ -73,7 +73,7 @@ export async function verifyOssCampaign(archive: Archive, fixtureManifestBytes: 
   const missingSourceCapabilities: readonly string[] = native?.missingSourceCapabilities ?? ossMissingSourceCapabilities;
   return {
     // These checks establish consistency of retained inputs, not their collection provenance.
-    // The current sources cannot supply the complete live archive or original checksum proof.
+    // Native archives must independently satisfy every source capability.
     kind: "oss-discord-stt-evidence-check-v1" as const,
     status: missingSourceCapabilities.length === 0 ? "passed" as const : "sources-unverified" as const,
     missingSourceCapabilities,

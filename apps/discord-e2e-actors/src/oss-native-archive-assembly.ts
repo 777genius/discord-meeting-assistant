@@ -27,11 +27,11 @@ export async function assembleOssNativeArchive(input: {
   const assembly = assemblySchema.parse(JSON.parse((await readRegular(input.assemblyPath)).toString("utf8")));
   check(assembly.runs.map((run) => run.runId).join() === plan.runs.map((run) => run.runId).join(), "Assembly run order mismatch");
   const sourceRoot = await realpath(input.sourceRoot);
-  const read = async (path: string, maxBytes = 64 * 1024 * 1024) => {
+  const read = async (path: string, maxBytes = 64 * 1024 * 1024, allowEmpty = false) => {
     relativePath.parse(path);
     const full = resolve(sourceRoot, path);
     check(full.startsWith(sourceRoot + sep) && await realpath(full) === full, "Native source escape or symlink");
-    return readRegular(full, maxBytes);
+    return readRegular(full, maxBytes, allowEmpty);
   };
   const liveBytes = await read(assembly.livePath, 256 * 1024 * 1024);
   const postCallBytes = await read(assembly.postCallPath, 1024 * 1024);
@@ -85,14 +85,13 @@ export async function assembleOssNativeArchive(input: {
     const originalsPath = put(`${prefix}/native-originals.json`, "craig", originalBytes);
     const originals: string[] = [];
     for (const file of original.files) {
-      const bytes = await read(`${source.originalDirectory}/${file.path}`, 512 * 1024 * 1024);
+      const bytes = await read(`${source.originalDirectory}/${file.path}`, 512 * 1024 * 1024, true);
       check(bytes.length === file.size && sha256(bytes) === file.sha256, "Retained Craig original changed");
       originals.push(put(`${prefix}/originals/${file.path}`, "craig", bytes));
     }
     const originalInventoryPath = json(`${prefix}/original-inventory.json`, "craig", {
       recordingId: original.recordingId, craigRevision: original.craigRevision,
-      // This is explicitly declared, not recomputed; the native source validator
-      // retains the missing aggregate capability and cannot grant campaign PASS.
+      // Final verification independently recomputes from archived bytes and prepared job.
       sourceFilesChecksumSha256: original.declaredSourceFilesChecksumSha256,
       files: originals.map((path) => ({ path, size: files.get(path)!.length, sha256: sha256(files.get(path)!) })),
     });
