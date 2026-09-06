@@ -33,6 +33,7 @@
     "start": "pnpm run build && node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",
+    "verify:oss-campaign": "pnpm run build && node dist/oss-campaign-main.js",
     "verify:e2e": "pnpm run build && node dist/verify-retained-evidence.js",
     "verify:campaign": "pnpm run build && node dist/verify-campaign.js",
     "verify:hosted-pass": "pnpm run build && node dist/verify-hosted-campaign-pass.js",
