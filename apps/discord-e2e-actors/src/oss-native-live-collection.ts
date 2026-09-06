@@ -3,22 +3,30 @@ import { createHash } from "node:crypto";
 import { digest, id, revision, time } from "./oss-campaign-profile.js";
 import { requireEvidence as check } from "./oss-campaign-artifacts.js";
 
-const segment = { startMs: time, durationMs: time, text: z.string().max(65536),
-  confidence: z.number().min(0).max(1).optional() };
+const segmentShape = {
+  startMs: time, durationMs: time, text: z.string().max(65536),
+  confidence: z.number().min(0).max(1).optional()
+};
 const message = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("ready"), sessionId: z.uuid(),
-    model: z.enum(["nova-3", "scribe_v2_realtime"]), provider: z.enum(["deepgram", "elevenlabs"]) }).strict(),
+  z.object({
+    type: z.literal("ready"), sessionId: z.uuid(),
+    model: z.enum(["nova-3", "scribe_v2_realtime"]), provider: z.enum(["deepgram", "elevenlabs"])
+  }).strict(),
   z.object({ type: z.literal("ack"), seq: time.positive() }).strict(),
-  z.object({ type: z.literal("partial"), segment: z.object(segment).strict().nullable() }).strict(),
-  z.object({ type: z.enum(["final", "segment_final"]), ...segment }).strict(),
-  z.object({ type: z.literal("finalize_complete"), sawResult: z.boolean(),
-    status: z.enum(["flushed", "no_provider", "timeout"]) }).strict(),
+  z.object({ type: z.literal("partial"), segment: z.object(segmentShape).strict().nullable() }).strict(),
+  z.object({ type: z.enum(["final", "segment_final"]), ...segmentShape }).strict(),
+  z.object({
+    type: z.literal("finalize_complete"), sawResult: z.boolean(),
+    status: z.enum(["flushed", "no_provider", "timeout"])
+  }).strict(),
   z.object({ type: z.enum(["error", "usage_update", "resumed"]) }).strict(),
 ]);
 const event = z.discriminatedUnion("type", [
   z.object({ type: z.literal("opening"), meetingId: id, speakerId: id, clientSessionId: z.uuid() }).strict(),
-  z.object({ type: z.literal("audio_send"), seq: time.positive(), packetId: id, sha256: digest,
-    size: time.min(2).max(1275), toc: time.max(255), relativeTimeMs: time, durationSamples48Khz: z.literal(960) }).strict(),
+  z.object({
+    type: z.literal("audio_send"), seq: time.positive(), packetId: id, sha256: digest,
+    size: time.min(2).max(1275), toc: time.max(255), relativeTimeMs: time, durationSamples48Khz: z.literal(960)
+  }).strict(),
   z.object({ type: z.enum(["audio_sent", "audio_accepted"]), seq: time.positive() }).strict(),
   z.object({ type: z.enum(["finalize_send", "finalize_sent", "terminated", "failure", "success"]) }).strict(),
   z.object({ type: z.literal("close"), code: time }).strict(),
@@ -26,8 +34,10 @@ const event = z.discriminatedUnion("type", [
   z.object({ type: z.literal("received"), message }).strict(),
 ]);
 const base = { index: time.positive(), atMs: time };
-const header = z.object({ ...base, type: z.literal("capture_start"), kind: z.literal("oss-native-live-v1"),
-  project: z.literal("vtoss-test-oss-8f49a06-r1"), revision }).strict();
+const header = z.object({
+  ...base, type: z.literal("capture_start"), kind: z.literal("oss-native-live-v1"),
+  project: z.literal("vtoss-test-oss-8f49a06-r1"), revision
+}).strict();
 const rowSchema = z.object({ ...base, session: z.uuid(), event }).strict();
 const seal = z.object({ ...base, type: z.literal("capture_seal"), priorSha256: digest }).strict();
 export type NativeLiveRow = z.infer<typeof rowSchema>;
@@ -41,10 +51,7 @@ export function collectNativeLive(bytes: Buffer, expectedRevision: string) {
   const lines = bytes.toString("utf8").split("\n");
   lines.pop();
   check(lines.length >= 2 && lines.length <= 1000000, "Invalid native journal row bound");
-  const parse = (line: string) => {
-    check(Buffer.byteLength(line) <= 128 * 1024, "Native journal row exceeds bound");
-    return JSON.parse(line) as unknown;
-  };
+
   const start = header.parse(parse(lines[0]!));
   check(start.index === 1 && start.revision === expectedRevision, "Native journal revision mismatch");
   const end = seal.parse(parse(lines.at(-1)!));
@@ -75,63 +82,89 @@ export function collectNativeLive(bytes: Buffer, expectedRevision: string) {
 export function qualifyNativeSession(rows: readonly NativeLiveRow[]) {
   const opening = rows[0]?.event;
   check(opening?.type === "opening", "Native session opening required");
-  let ready: Extract<z.infer<typeof message>, { type: "ready" }> | undefined;
-  let sent = 0, ack = 0, accepted = 0, finalized = 0, finalizeSent = 0;
-  let completed = false, closed = false, success = false;
-  let partials = 0, finals = 0;
+  const state: {
+    ready: Extract<z.infer<typeof message>, { type: "ready" }> | undefined;
+    sent: number; ack: number; accepted: number; finalized: number; finalizeSent: number;
+    completed: boolean; closed: boolean; success: boolean; partials: number; finals: number;
+  } = {
+    ready: undefined, sent: 0, ack: 0, accepted: 0, finalized: 0, finalizeSent: 0,
+    completed: false, closed: false, success: false, partials: 0, finals: 0
+  };
   const sentEffects = new Set<number>();
   const packets = new Set<string>();
   let relativeTime = -1;
   for (const row of rows.slice(1)) {
     const e = row.event;
-    check(!success && e.type !== "failure" && e.type !== "terminated", "Failed or late native session event");
+    check(!state.success && e.type !== "failure" && e.type !== "terminated", "Failed or late native session event");
     switch (e.type) {
       case "opening": throw new Error("Duplicate native opening");
-      case "audio_send":
-        check(ready && !finalized && sent === accepted && e.seq === sent + 1 &&
-          !packets.has(e.packetId) && e.relativeTimeMs > relativeTime &&
-          (e.toc & 7) === 0 && opusDurationMs(e.toc) === 20, "Native audio ordering mismatch");
-        packets.add(e.packetId); relativeTime = e.relativeTimeMs; sent++; break;
-      case "audio_sent":
-        check(e.seq <= sent && !sentEffects.has(e.seq), "Native send completion mismatch");
-        sentEffects.add(e.seq); break;
-      case "audio_accepted":
-        check(e.seq === accepted + 1 && e.seq <= ack && sentEffects.has(e.seq), "Native accepted audio mismatch");
-        accepted++; break;
-      case "finalize_send":
-        check(ready && !finalized && sent > 0 && sent === accepted && ack === sent,
-          "Native finalize ordering mismatch"); finalized++; break;
-      case "finalize_sent": check(finalized === 1 && !finalizeSent, "Native duplicate finalize send"); finalizeSent++; break;
-      case "received": {
-        const m = e.message;
-        check(!closed && !completed, "Native receive after terminal");
-        if (m.type === "ready") { check(!ready && !sent, "Native duplicate ready"); ready = m; }
-        else if (m.type === "ack") {
-          check(!finalized && m.seq === ack + 1 && m.seq <= sent, "Native acknowledgement mismatch"); ack++;
-        } else if (m.type === "partial") { check(ready && sent > 0 && m.segment !== null, "Invalid native partial"); partials++; }
-        else if (m.type === "final" || m.type === "segment_final") {
-          check(ready && sent > 0 && m.durationMs > 0 && m.text.length > 0, "Invalid native final"); finals++;
-        } else if (m.type === "finalize_complete") {
-          check(finalized === 1 && m.status === "flushed" && m.sawResult && finals > 0,
-            "Native finalize failed"); completed = true;
-        } else check(m.type !== "error", "Native provider error");
-        break;
-      }
+      case "audio_send": case "audio_sent": case "audio_accepted": acceptAudio(e); break;
+      case "finalize_send": case "finalize_sent": finalize(e.type); break;
+      case "received": receive(e.message); break;
       case "transcript_emitted":
-        check(ready && !completed && !closed && e.endMs > e.startMs, "Invalid emitted native transcript"); break;
-      case "close": check(completed && !closed && e.code === 1000, "Native close failed"); closed = true; break;
-      case "success": check(closed && finalizeSent === 1 && partials > 0, "Native session incomplete"); success = true; break;
+        verifyEmission(e); break;
+      case "close": close(e.code); break;
+      case "success": check(state.closed && state.finalizeSent === 1 && state.partials > 0, "Native session incomplete"); state.success = true; break;
     }
   }
-  check(success && ready, "Native session lacks successful terminal");
+  check(state.success && state.ready, "Native session lacks successful terminal");
   verifyNativeTranscriptMapping(rows);
-  return { ...opening, providerSessionId: ready.sessionId, rows };
+  return { ...opening, providerSessionId: state.ready.sessionId, rows };
+  function close(code: number): void {
+    check(state.completed && !state.closed && code === 1000, "Native close failed");
+    state.closed = true;
+  }
+
+  function receive(m: z.infer<typeof message>): void {
+    check(!state.closed && !state.completed, "Native receive after terminal");
+    if (m.type === "ready") { check(!state.ready && !state.sent, "Native duplicate ready"); state.ready = m; }
+    else if (m.type === "ack") {
+      check(!state.finalized && m.seq === state.ack + 1 && m.seq <= state.sent, "Native acknowledgement mismatch"); state.ack++;
+    } else if (m.type === "partial") { check(state.ready && state.sent > 0 && m.segment !== null, "Invalid native partial"); state.partials++; }
+    else if (m.type === "final" || m.type === "segment_final") {
+      check(state.ready && state.sent > 0 && m.durationMs > 0 && m.text.length > 0, "Invalid native final"); state.finals++;
+    } else if (m.type === "finalize_complete") {
+      verifyFinalizeComplete(m); state.completed = true;
+    } else { check(m.type !== "error", "Native provider error"); }
+  }
+  function acceptAudio(e: Extract<NativeLiveRow["event"], { type: "audio_send" | "audio_sent" | "audio_accepted" }>): void {
+    switch (e.type) {
+      case "audio_send":
+        check(state.ready && !state.finalized && state.sent === state.accepted && e.seq === state.sent + 1 &&
+          !packets.has(e.packetId) && e.relativeTimeMs > relativeTime &&
+          (e.toc & 7) === 0 && opusDurationMs(e.toc) === 20, "Native audio ordering mismatch");
+        packets.add(e.packetId); relativeTime = e.relativeTimeMs; state.sent++; break;
+      case "audio_sent":
+        check(e.seq <= state.sent && !sentEffects.has(e.seq), "Native send completion mismatch");
+        sentEffects.add(e.seq); break;
+      case "audio_accepted":
+        check(e.seq === state.accepted + 1 && e.seq <= state.ack && sentEffects.has(e.seq), "Native accepted audio mismatch");
+        state.accepted++; break;
+    }
+  }
+  function finalize(type: "finalize_send" | "finalize_sent"): void {
+    switch (type) {
+      case "finalize_send":
+        check(state.ready && !state.finalized && state.sent > 0 && state.sent === state.accepted && state.ack === state.sent,
+          "Native finalize ordering mismatch"); state.finalized++; break;
+      case "finalize_sent": check(state.finalized === 1 && !state.finalizeSent, "Native duplicate finalize send"); state.finalizeSent++; break;
+    }
+  }
+  function verifyFinalizeComplete(m: Extract<z.infer<typeof message>, { type: "finalize_complete" }>): void {
+    check(state.finalized === 1 && m.status === "flushed" && m.sawResult && state.finals > 0,
+      "Native finalize failed");
+  }
+
+  function verifyEmission(e: Extract<NativeLiveRow["event"], { type: "transcript_emitted" }>): void {
+    check(state.ready && !state.completed && !state.closed && e.endMs > e.startMs, "Invalid emitted native transcript");
+  }
+
 }
 
 function opusDurationMs(toc: number): number {
   const config = toc >> 3;
-  if (config >= 16) return 2.5 * 2 ** (config & 3);
-  if (config >= 12) return 10 * 2 ** (config & 1);
+  if (config >= 16) { return 2.5 * 2 ** (config & 3); }
+  if (config >= 12) { return 10 * 2 ** (config & 1); }
   return [10, 20, 40, 60][config & 3]!;
 }
 
@@ -160,21 +193,28 @@ function verifyNativeTranscriptMapping(rows: readonly NativeLiveRow[]): void {
     }
     check(e.type !== "transcript_emitted", "Unmatched native emitted transcript");
     if (e.type === "audio_send") {
-      if (sourceEnd !== e.relativeTimeMs) anchors.push({ provider: cursor, source: e.relativeTimeMs });
+      if (sourceEnd !== e.relativeTimeMs) { anchors.push({ provider: cursor, source: e.relativeTimeMs }); }
       cursor += e.durationSamples48Khz / 48;
       sourceEnd = e.relativeTimeMs + e.durationSamples48Khz / 48;
     }
-    if (e.type !== "received") continue;
+    if (e.type !== "received") { continue; }
     const m = e.message;
     const segment = m.type === "partial" ? m.segment :
       m.type === "final" || m.type === "segment_final" ? m : null;
-    if (!segment || !segment.text.trim() || anchors.length === 0) continue;
+    if (!segment || !segment.text.trim() || anchors.length === 0) { continue; }
     const isFinal = m.type !== "partial", text = segment.text.trim();
     const fingerprint = segment.startMs + "\0" + segment.durationMs + "\0" + text;
-    if (isFinal && fingerprints.has(fingerprint)) continue;
-    if (isFinal) fingerprints.add(fingerprint);
-    expected = { type: "transcript_emitted", startMs: map(segment.startMs, "start"),
-      endMs: map(segment.startMs + segment.durationMs, "end"), text, isFinal };
+    if (isFinal && fingerprints.has(fingerprint)) { continue; }
+    if (isFinal) { fingerprints.add(fingerprint); }
+    expected = {
+      type: "transcript_emitted", startMs: map(segment.startMs, "start"),
+      endMs: map(segment.startMs + segment.durationMs, "end"), text, isFinal
+    };
   }
   check(!expected, "Missing native emitted transcript");
+}
+
+function parse(line: string): unknown {
+  check(Buffer.byteLength(line) <= 128 * 1024, "Native journal row exceeds bound");
+  return JSON.parse(line) as unknown;
 }

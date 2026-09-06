@@ -19,10 +19,12 @@ async function setup() {
     const database = fixture.files.get(run.databasePath)!.value as { snapshot: { transcript: object } };
     Object.assign(database.snapshot.transcript, { version: 1, recordingId: run.recordingId });
   }
-  return { ...fixture, root, verify: async () => {
-    await fixture.save();
-    return verifyOssCampaign(await loadArchive(fixture.planPath, root), fixture.manifestBytes);
-  } };
+  return {
+    ...fixture, root, verify: async () => {
+      await fixture.save();
+      return verifyOssCampaign(await loadArchive(fixture.planPath, root), fixture.manifestBytes);
+    }
+  };
 }
 
 describe("OSS campaign retained evidence", () => {
@@ -43,13 +45,13 @@ describe("OSS campaign retained evidence", () => {
     const f = await setup(); await f.save();
     const output = join(f.root, "report.json");
     const args = [f.planPath, f.root,
-      fileURLToPath(new URL("./fixtures/manifest.v1.json", import.meta.url)), output];
+    fileURLToPath(new URL("./fixtures/manifest.v1.json", import.meta.url)), output];
     await expect(runOssCampaignCommand(["qualify", ...args])).rejects.toThrow(/Campaign PASS unavailable/u);
     await expect(readFile(output)).rejects.toThrow();
     expect(await runOssCampaignCommand(["check", ...args])).toMatchObject({ status: "sources-unverified" });
     expect(await runOssCampaignCommand(["verify", ...args])).toMatchObject({ status: "sources-unverified" });
     await expect(runOssCampaignCommand(["check", ...args])).rejects.toThrow();
-    const report = JSON.parse(await readFile(output, "utf8"));
+    const report = JSON.parse(await readFile(output, "utf8")) as Record<string, unknown>;
     await writeFile(output, JSON.stringify({ ...report, status: "passed" }));
     await expect(runOssCampaignCommand(["verify", ...args])).rejects.toThrow(/differs/u);
   }, 60_000);
@@ -139,11 +141,11 @@ describe("OSS campaign retained evidence", () => {
     const f = await setup();
     const manifest = fixtureManifestV1Schema.parse(JSON.parse(f.manifestBytes.toString()));
     const run = f.runs[1]!;
-    if (kind === "text") run.transcript.turns[0]!.text = "unrelated";
-    if (kind === "terms") run.transcript.turns[0]!.text = run.transcript.turns[0]!.text.replaceAll("PostgreSQL", "database");
-    if (kind === "timeline") run.transcript.turns[0]!.startMs += 4000;
-    if (kind === "overlap") run.transcript.turns[0]!.endMs = 1700;
-    expect(() => verifyOssQuality(run, manifest, f.actors[1])).toThrow();
+    if (kind === "text") { run.transcript.turns[0]!.text = "unrelated"; }
+    if (kind === "terms") { run.transcript.turns[0]!.text = run.transcript.turns[0]!.text.replaceAll("PostgreSQL", "database"); }
+    if (kind === "timeline") { run.transcript.turns[0]!.startMs += 4000; }
+    if (kind === "overlap") { run.transcript.turns[0]!.endMs = 1700; }
+    expect(() => { verifyOssQuality(run, manifest, f.actors[1]); }).toThrow();
   }, 60_000);
   it("rejects a mismatched plan, altered checksums, missing artifacts and symlinks", async () => {
     const f = await setup(); await f.save();

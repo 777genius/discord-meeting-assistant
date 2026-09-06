@@ -3,7 +3,7 @@ import { z } from "zod";
 export const digest = z.string().regex(/^[a-f0-9]{64}$/u);
 export const revision = z.string().regex(/^[a-f0-9]{40}$/u);
 export const id = z.string().min(1).max(256);
-export const time = z.number().int().nonnegative().safe();
+export const time = z.number().int().nonnegative();
 export const scenario = z.enum(["sequential", "overlap", "reconnect"]);
 export const baseRevision = "8f49a06128307bfcd13d8cb7a95e00daa528f2ea";
 export const manifestDigest = "6ecf3ae9570937da48465bab1d87563c47c0e1b3c1ef46191c0143c3fad3ff79";
@@ -49,7 +49,7 @@ export const artifactSchema = z.object({
     (path) => path.split("/").every((part) => part !== ".." && part !== "." && part !== ""),
   ),
   sha256: digest,
-  size: z.number().int().nonnegative().safe().max(512 * 1024 * 1024),
+  size: z.number().int().nonnegative().max(512 * 1024 * 1024),
   // An immutable source version, not a URL to fetch.
   source: z.object({
     system: z.enum(["actor", "craig", "postgres", "object-storage", "gateway", "discord", "deployment"]),
@@ -65,9 +65,12 @@ export const indexSchema = z.object({
   artifacts: z.array(artifactSchema).min(1).max(10000),
   runs: z.array(z.object({ runId: id, evidencePath: id }).strict()).length(3),
   deploymentPath: id,
-  nativeSources: z.object({ livePath: id, postCallPath: id, deploymentPaths: z.array(id).length(2),
-    runs: z.array(z.object({ runId: id, snapshots: z.array(id).length(2),
-      publications: z.array(id).length(2), originalsPath: id }).strict()).length(3),
+  nativeSources: z.object({
+    livePath: id, postCallPath: id, deploymentPaths: z.array(id).length(2),
+    runs: z.array(z.object({
+      runId: id, snapshots: z.array(id).length(2),
+      publications: z.array(id).length(2), originalsPath: id
+    }).strict()).length(3),
   }).strict().optional(),
 }).strict();
 export const turnSchema = z.object({
@@ -120,16 +123,22 @@ export const wireSchema = z.object({
   sessionId: id, recordingId: id, meetingId: id, speakerId: id,
   gatewayEndpoint: id,
   events: z.array(z.discriminatedUnion("type", [
-    z.object({ ...eventBase, type: z.literal("ready"), encoding: z.literal("opus"),
-      sampleRate: z.literal(48000), channels: z.literal(1) }).strict(),
-    z.object({ ...eventBase, type: z.literal("audio"), seq: z.number().int().positive(),
-      craigPacketPath: id, gatewayPacketPath: id, offset: time, size: z.number().int().min(2).max(1275) }).strict(),
+    z.object({
+      ...eventBase, type: z.literal("ready"), encoding: z.literal("opus"),
+      sampleRate: z.literal(48000), channels: z.literal(1)
+    }).strict(),
+    z.object({
+      ...eventBase, type: z.literal("audio"), seq: z.number().int().positive(),
+      craigPacketPath: id, gatewayPacketPath: id, offset: time, size: z.number().int().min(2).max(1275)
+    }).strict(),
     z.object({ ...eventBase, type: z.literal("ack"), seq: z.number().int().positive() }).strict(),
     z.object({ ...eventBase, type: z.literal("partial"), turn: turnSchema }).strict(),
     z.object({ ...eventBase, type: z.literal("final"), turn: turnSchema }).strict(),
     z.object({ ...eventBase, type: z.literal("finalize") }).strict(),
-    z.object({ ...eventBase, type: z.literal("finalize_complete"),
-      status: z.literal("flushed"), sawResult: z.literal(true) }).strict(),
+    z.object({
+      ...eventBase, type: z.literal("finalize_complete"),
+      status: z.literal("flushed"), sawResult: z.literal(true)
+    }).strict(),
     z.object({ ...eventBase, type: z.literal("closed"), code: z.literal(1000) }).strict(),
   ])).min(8).max(100000),
 }).strict();

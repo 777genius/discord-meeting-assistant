@@ -1,9 +1,10 @@
+import { createLiveSessionConfig } from "./voicetext-live-session-config.js";
 import { createHash } from "node:crypto";
 import { ossReceivedEvidence, type OssSessionEvidence } from "./oss-native-evidence.js";
 import { VoicetextAdapterError } from "./errors.js";
 import {
   asLiveSessionError, createLiveSessionDeferred, rememberLiveSessionPacketId,
-  requireLiveSessionActive, stableLiveSessionUuid, validateLiveSessionFinalizeStatus,
+  requireLiveSessionActive, validateLiveSessionFinalizeStatus,
   validateLiveSessionPacket, withLiveSessionTimeout,
   type LiveSessionDeferred,
 } from "./voicetext-live-session-primitives.js";
@@ -17,7 +18,6 @@ import {
 } from "./voicetext-live-transcription-configuration.js";
 import {
   parseServerMessage,
-  type VoicetextConfigMessage,
   type VoicetextFinalizeComplete,
 } from "./protocol.js";
 import { VoicetextLiveTimeline } from "./voicetext-live-timeline.js";
@@ -58,19 +58,7 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   public async start(): Promise<void> {
-    const config: VoicetextConfigMessage = {
-      capabilities: ["finalize_ack"],
-      channels: 1,
-      client_session_id: stableLiveSessionUuid(this.request.idempotencyKey, this.request.meetingId, this.request.speakerId),
-      encoding: "opus",
-      ...(this.options.keyterms.length === 0 ? {} : { keyterms: this.options.keyterms }),
-      language: this.options.language,
-      model: this.options.identity.model,
-      protocol_v: 2,
-      provider: this.options.identity.provider,
-      sample_rate: 48_000,
-      type: "config",
-    };
+    const config = createLiveSessionConfig(this.request, this.options);
     await this.socket.sendText(JSON.stringify(config), this.abortController.signal);
     const readySignal = createVoicetextLiveOperationSignal(this.request.signal, this.options.readyTimeoutMs);
     for (;;) {

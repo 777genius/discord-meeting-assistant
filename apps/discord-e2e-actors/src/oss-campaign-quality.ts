@@ -20,7 +20,7 @@ export function verifyOssQuality(run: OssRun, manifest: Manifest, actorInput: un
     const proof = actor.fixtures.filter((entry) => entry.fixtureId === fixture.fixtureId);
     check(proof.length === 1 && proof[0]!.audioSha256 === fixture.audioSha256 &&
       proof[0]!.sourceSha256 === fixture.sourceSha256 && proof[0]!.durationMs === fixture.durationMs,
-    "Actor fixture checksum mismatch");
+      "Actor fixture checksum mismatch");
     const events = actor.events.filter((event) => event.actorName === fixture.actorName);
     const expected = run.scenario === "reconnect" && fixture.actorName === "speaker-b"
       ? ["ready", "disconnected", "ready", "playback-start", "playback-end"]
@@ -31,9 +31,11 @@ export function verifyOssQuality(run: OssRun, manifest: Manifest, actorInput: un
     check(start.fixtureId === fixture.fixtureId && end.fixtureId === fixture.fixtureId &&
       end.atEpochMs > start.atEpochMs &&
       Math.abs(end.atEpochMs - start.atEpochMs - fixture.durationMs) <= 3500,
-    "Invalid fixture playback window");
-    return { start: start.atEpochMs - run.startedAtMs, end: end.atEpochMs - run.startedAtMs,
-      fixture };
+      "Invalid fixture playback window");
+    return {
+      start: start.atEpochMs - run.startedAtMs, end: end.atEpochMs - run.startedAtMs,
+      fixture
+    };
   });
   const [a, b] = windows;
   check(a && b, "Two fixture windows required");
@@ -42,7 +44,7 @@ export function verifyOssQuality(run: OssRun, manifest: Manifest, actorInput: un
   } else {
     check(b.start >= a.start + 750 && b.start < a.end && a.start < b.end, "Playback overlap missing");
   }
-  if (run.scenario === "overlap") check(b.start - a.start <= 4250, "Overlap delay mismatch");
+  if (run.scenario === "overlap") { check(b.start - a.start <= 4250, "Overlap delay mismatch"); }
   if (run.scenario === "reconnect") {
     const events = actor.events.filter((event) => event.actorName === "speaker-b");
     check(events[1]!.atEpochMs >= run.startedAtMs + a.start + 750 &&
@@ -55,7 +57,7 @@ export function verifyOssQuality(run: OssRun, manifest: Manifest, actorInput: un
       turn.endMs > turn.startMs && turn.endMs <= run.endedAtMs - run.startedAtMs), `Invalid ${kind} turn`);
     for (const { fixture, start, end } of windows) {
       const speakerTurns = turns.filter((turn) => turn.speakerId === fixture.speakerId)
-        .sort((left, right) => left.startMs - right.startMs);
+        .toSorted((left, right) => left.startMs - right.startMs);
       const actual = speakerTurns.map((turn) => turn.text).join(" ");
       check(wordErrorRate(fixture.sourceText, actual) <= 0.35, "WER exceeded");
       check(characterErrorRate(fixture.sourceText, actual) <= 0.20, "CER exceeded");

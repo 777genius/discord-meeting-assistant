@@ -13,16 +13,30 @@ describe("native post-call collection through processing ports", () => {
       const journal = new OssPostCallEvidence(directory, revision);
       const called: string[] = [];
       const ports = journal.wrap({
-        transcriber: { transcribe: async () => { called.push("transcription"); return {
-          ok: true, value: { transcriptId: "transcript", version: 1, turns: [] },
-        }; } },
-        summarizer: { generate: async () => { called.push("summary"); return {
-          ok: true, value: { summaryId: "summary", transcriptId: "transcript", version: 1,
-            title: "title", overview: "overview", decisions: [], actionItems: [], topics: [], openQuestions: [] },
-        }; } },
-        publisher: { publish: async () => { called.push("publication"); return {
-          ok: true, value: { externalPublicationId: "message" },
-        }; } },
+        transcriber: {
+          transcribe: async () => {
+            called.push("transcription"); return {
+              ok: true, value: { transcriptId: "transcript", version: 1, turns: [] },
+            };
+          }
+        },
+        summarizer: {
+          generate: async () => {
+            called.push("summary"); return {
+              ok: true, value: {
+                summaryId: "summary", transcriptId: "transcript", version: 1,
+                title: "title", overview: "overview", decisions: [], actionItems: [], topics: [], openQuestions: []
+              },
+            };
+          }
+        },
+        publisher: {
+          publish: async () => {
+            called.push("publication"); return {
+              ok: true, value: { externalPublicationId: "message" },
+            };
+          }
+        },
       });
       // Only meeting identity is read by the native tap; delegates stand in for external effects.
       const request = { meetingId: "meeting", token: "never-retain-token", url: "https://never-retain" };
@@ -48,13 +62,15 @@ describe("native post-call collection through processing ports", () => {
     try {
       const journal = new OssPostCallEvidence(directory, revision);
       const delegate = async () => {
-        if (throws) throw new Error("never-retain-error-secret");
+        if (throws) { throw new Error("never-retain-error-secret"); }
         return { ok: false as const, failure: { code: "failure", message: "never-retain-message", retryable: true } };
       };
-      const ports = journal.wrap({ transcriber: { transcribe: delegate },
-        summarizer: { generate: delegate }, publisher: { publish: delegate } });
+      const ports = journal.wrap({
+        transcriber: { transcribe: delegate },
+        summarizer: { generate: delegate }, publisher: { publish: delegate }
+      });
       const operation = ports.transcriber.transcribe({ meetingId: "meeting" } as Parameters<typeof ports.transcriber.transcribe>[0]);
-      if (throws) await expect(operation).rejects.toThrow(); else await expect(operation).resolves.toMatchObject({ ok: false });
+      if (throws) { await expect(operation).rejects.toThrow(); } else { await expect(operation).resolves.toMatchObject({ ok: false }); }
       journal.seal();
       const bytes = readFileSync(join(directory, "post-call-native.jsonl"));
       expect(bytes.toString()).not.toContain("never-retain");

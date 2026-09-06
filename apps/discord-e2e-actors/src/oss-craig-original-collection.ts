@@ -8,7 +8,8 @@ export const requiredCraigSourceRoot =
   "/mnt/volume_ams3_1784742570542/vtoss-astra-y-20260905/readonly/craig-37b86a958b567cb7fcff75946e94fe5e7ee38f42";
 const pinnedCraigRevision = "37b86a958b567cb7fcff75946e94fe5e7ee38f42";
 const recordingId = z.string().regex(/^[0-9A-Za-z_-]{1,128}$/u);
-const manifestSource = z.object({ recordingId,
+const manifestSource = z.object({
+  recordingId,
   source: z.object({ kind: z.literal("craig-original-multitrack"), checksumSha256: digest }).strict(),
 });
 
@@ -17,17 +18,24 @@ const manifestSource = z.object({ recordingId,
 // create/parseOriginalRecordingJob requires all six files. Optional integrity
 // metadata before preparation is mandatory after authoritativeReady; no file is optional.
 const kinds = ["data", "header1", "header2", "users", "info", "log"] as const;
-const jobSchema = z.object({ recordingId,
-  sourceFiles: z.array(z.object({ kind: z.enum(kinds), relativePath: id,
-    checksumSha256: digest, sizeBytes: z.number().int().nonnegative() })).length(6),
-  lifecycleV3Snapshot: z.object({ sealedReady: z.object({
-    type: z.literal("recording.authoritative_ready"), recordingId: id,
-    sourceFilesChecksumSha256: digest,
-  }).passthrough() }),
+const jobSchema = z.object({
+  recordingId,
+  sourceFiles: z.array(z.object({
+    kind: z.enum(kinds), relativePath: id,
+    checksumSha256: digest, sizeBytes: z.number().int().nonnegative()
+  })).length(6),
+  lifecycleV3Snapshot: z.object({
+    sealedReady: z.object({
+      type: z.literal("recording.authoritative_ready"), recordingId: id,
+      sourceFilesChecksumSha256: digest,
+    }).loose()
+  }),
 });
 
-export function verifyCraigOriginalBytes(input: { manifestBytes: Buffer; job: unknown;
-  files: Array<{ path: string; bytes: Buffer }>; craigRevision: string }) {
+export function verifyCraigOriginalBytes(input: {
+  manifestBytes: Buffer; job: unknown;
+  files: Array<{ path: string; bytes: Buffer }>; craigRevision: string
+}) {
   check(revision.parse(input.craigRevision) === pinnedCraigRevision, "Unpinned Craig original source");
   const manifest = manifestSource.parse(JSON.parse(input.manifestBytes.toString("utf8")));
   const job = jobSchema.parse(input.job);
@@ -39,7 +47,7 @@ export function verifyCraigOriginalBytes(input: { manifestBytes: Buffer; job: un
     const source = job.sourceFiles.find(file => file.kind === kind)!;
     const relativePath = `${job.recordingId}.ogg.${kind}`;
     check(source.relativePath === relativePath, "Craig source path alias");
-    const file = input.files.find(file => file.path === relativePath);
+    const file = input.files.find(entry => entry.path === relativePath);
     check(file, "Craig original source missing");
     const checksumSha256 = sha256(file.bytes), sizeBytes = file.bytes.length;
     check(source.checksumSha256 === checksumSha256 && source.sizeBytes === sizeBytes, "Craig original changed after preparation");
@@ -74,11 +82,14 @@ export async function collectCraigOriginals(input: {
   }
   const job: unknown = JSON.parse(input.jobBytes.toString("utf8"));
   const verified = verifyCraigOriginalBytes({ ...input, job, files: originals });
-  return { kind: "oss-native-craig-originals-v1" as const, recordingId: verified.recordingId,
+  return {
+    kind: "oss-native-craig-originals-v1" as const, recordingId: verified.recordingId,
     craigRevision: input.craigRevision, manifestSha256: sha256(input.manifestBytes),
     files: originals.map(({ path, bytes }) => ({ path, size: bytes.length, sha256: sha256(bytes) })),
     declaredSourceFilesChecksumSha256: verified.checksumSha256,
-    aggregateRecomputation: { status: "recomputed" as const, checksumSha256: verified.checksumSha256,
-      jobBase64: input.jobBytes.toString("base64") },
+    aggregateRecomputation: {
+      status: "recomputed" as const, checksumSha256: verified.checksumSha256,
+      jobBase64: input.jobBytes.toString("base64")
+    },
   };
 }

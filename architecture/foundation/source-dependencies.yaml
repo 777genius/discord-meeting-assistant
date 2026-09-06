@@ -504,6 +504,7 @@ boundaries:
         - node:crypto
         - node:url
       runtimeReferences: []
+  # Includes voicetext-live-session-config.ts: same session owner and closed adapter dependencies.
   - id: adapters.voicetext
     roots:
       - packages/voicetext-adapter/src

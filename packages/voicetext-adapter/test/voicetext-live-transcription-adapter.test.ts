@@ -120,7 +120,7 @@ class QueueSocket implements VoicetextWebSocketConnection {
 class SingleSocketConnector implements VoicetextWebSocketConnector {
   public readonly requests: VoicetextWebSocketConnectRequest[] = [];
 
-  public constructor(public readonly socket: QueueSocket) {}
+  public constructor(public readonly socket: QueueSocket) { }
 
   public connect(
     request: VoicetextWebSocketConnectRequest,
@@ -240,7 +240,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     const session = await adapter(socket, profile).openSession({
       idempotencyKey: "live-session-profile",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
 
@@ -278,7 +278,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     await expect(adapter(socket).openSession({
       idempotencyKey: "live-session-invalid-ready",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     })).rejects.toMatchObject({ code: "protocol_error", retryable: false });
     expect(socket.binary).toEqual([]);
@@ -352,7 +352,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: "live-session-1",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
 
@@ -373,7 +373,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: "live-session-no-provider",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
 
@@ -390,7 +390,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: "live-session-no-provider-after-audio",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
     await session.sendPacket({
@@ -415,7 +415,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: "live-session-timeout",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
 
@@ -435,7 +435,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: "live-session-ack-paced",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
 
@@ -475,7 +475,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
       const session = await adapter(socket).openSession({
         idempotencyKey: "live-session-ack-timeout",
         meetingId: "meeting-1",
-        onTranscript: () => {},
+        onTranscript: () => { },
         speakerId: "speaker-a",
       });
       const first = session.sendPacket({
@@ -509,7 +509,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: `live-session-${_label}-ack`,
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
     const packet = session.sendPacket({
@@ -522,7 +522,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
     for (const acknowledgement of acknowledgements) {
       socket.enqueue(acknowledgement);
     }
-    await packet.catch(() => {});
+    await packet.catch(() => { });
     await vi.waitFor(() => {
       expect(socket.terminated).toBe(true);
     });
@@ -540,7 +540,7 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: "live-session-single-finalize",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
     const packet = session.sendPacket({
@@ -569,7 +569,7 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: "live-session-disconnect-before-finalize",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
     const packet = session.sendPacket({
@@ -604,7 +604,7 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: "live-session-close-failure",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
 
@@ -702,7 +702,7 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: "live-session-concurrent-send",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
     const first = session.sendPacket({
@@ -732,7 +732,7 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
       const session = await adapter(socket).openSession({
         idempotencyKey: "live-session-local-timeout",
         meetingId: "meeting-1",
-        onTranscript: () => {},
+        onTranscript: () => { },
         speakerId: "speaker-a",
       });
       const finalization = session.finalize();
@@ -758,7 +758,7 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
       const session = await adapter(socket).openSession({
         idempotencyKey: "live-session-local-timeout-close-failure",
         meetingId: "meeting-1",
-        onTranscript: () => {},
+        onTranscript: () => { },
         speakerId: "speaker-a",
       });
       const finalization = session.finalize();
@@ -779,7 +779,7 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
     const session = await adapter(socket).openSession({
       idempotencyKey: "live-session-terminate-finalize-race",
       meetingId: "meeting-1",
-      onTranscript: () => {},
+      onTranscript: () => { },
       speakerId: "speaker-a",
     });
     const packet = session.sendPacket({
@@ -803,12 +803,14 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
 it("captures actual packet hashes, accepted order and every normalized server result", async () => {
   const events: OssSessionEvidenceEvent[] = [];
   const socket = new QueueSocket();
-  const adapter = new VoicetextLiveTranscriptionAdapter({
+  const capturingAdapter = new VoicetextLiveTranscriptionAdapter({
     endpoint: "wss://offline.test", token: "offline-machine-token",
     evidenceSink: { open: () => ({ record: (event) => { events.push(event); } }) },
   }, new SingleSocketConnector(socket));
-  const session = await adapter.openSession({ meetingId: "meeting-1", speakerId: "speaker-1",
-    idempotencyKey: "session-1", onTranscript: () => {} });
+  const session = await capturingAdapter.openSession({
+    meetingId: "meeting-1", speakerId: "speaker-1",
+    idempotencyKey: "session-1", onTranscript: () => { }
+  });
   const opus = Uint8Array.from([0xf8, 0xff, 0xfe]);
   await session.sendPacket({ opus, packetId: "packet-1", relativeTimeMs: 0, durationSamples48Khz: 960 });
   await session.sendPacket({ opus, packetId: "packet-1", relativeTimeMs: 0, durationSamples48Khz: 960 });

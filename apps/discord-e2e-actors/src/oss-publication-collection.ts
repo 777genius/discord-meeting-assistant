@@ -13,11 +13,15 @@ export interface OssPublicationReads {
   readMessage(channelId: string, messageId: string): Promise<unknown>;
   download(url: string): Promise<Buffer>;
 }
-const attachmentSchema = z.object({ id: z.string().regex(/^\d+$/u), filename: z.string(),
-  size: z.number().int().positive().max(1024 * 1024), url: z.string() });
-const messageSchema = z.object({ id: z.string(), channel_id: z.string(),
+const attachmentSchema = z.object({
+  id: z.string().regex(/^\d+$/u), filename: z.string(),
+  size: z.number().int().positive().max(1024 * 1024), url: z.string()
+});
+const messageSchema = z.object({
+  id: z.string(), channel_id: z.string(),
   author: z.object({ id: z.string(), bot: z.literal(true) }), timestamp: z.iso.datetime({ offset: true }),
-  edited_timestamp: z.string().nullable(), attachments: z.array(attachmentSchema).length(2) });
+  edited_timestamp: z.string().nullable(), attachments: z.array(attachmentSchema).length(2)
+});
 
 /** Existing readonly projection observer supplies the whole matching-message set;
  * exact REST reads supply immutable message and attachment identities. */
@@ -34,7 +38,7 @@ export async function collectOssPublication(input: {
   const observations = await reads.observer.poll({ resultChannelId: channelId, createdSinceMilliseconds: input.startedAtMs });
   const matches = observations.flatMap((projection) => projection.messages.filter((message) =>
     message.authorId === plan.target.publicationApplicationId && message.embeds.some((embed) =>
-      embed.footerText?.includes(marker) || embed.url === `https://meeting-platform.invalid/projection/${encodeURIComponent(marker)}`
+      embed.footerText?.includes(marker) === true || embed.url === `https://meeting-platform.invalid/projection/${encodeURIComponent(marker)}`
     )).map((message) => ({ projection, message })));
   check(matches.length === 1 && matches[0]!.message.id === input.messageId &&
     matches[0]!.projection.container.kind === "channel-message", "Missing/duplicate final Discord publication");
@@ -43,7 +47,7 @@ export async function collectOssPublication(input: {
     message.author.id === plan.target.publicationApplicationId && Date.parse(message.timestamp) >= input.startedAtMs &&
     Date.parse(message.timestamp) === matches[0]!.message.createdAtMilliseconds,
     "Discord observer/message identity mismatch");
-  check(message.attachments.map((item) => item.filename).sort().join() === "meeting-summary.md,meeting-transcript.md",
+  check(message.attachments.map((item) => item.filename).toSorted().join() === "meeting-summary.md,meeting-transcript.md",
     "Missing full Discord evidence attachments");
   const attachments = [];
   for (const attachment of message.attachments) {
@@ -57,13 +61,17 @@ export async function collectOssPublication(input: {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
       .replace(/\[([^\]\r\n]+)\]\(https?:\/\/[^)\r\n]+\)/gu, "$1")
       .replace(/https?:\/\/[^\s<>]+/gu, "[URL omitted]");
-    attachments.push({ id: attachment.id, filename: attachment.filename,
-      sizeBytes: bytes.length, sha256: sha256(bytes), text });
+    attachments.push({
+      id: attachment.id, filename: attachment.filename,
+      sizeBytes: bytes.length, sha256: sha256(bytes), text
+    });
   }
-  return { kind: "oss-native-publication-v1" as const, meetingId: input.meetingId,
+  return {
+    kind: "oss-native-publication-v1" as const, meetingId: input.meetingId,
     observedAtMs: Date.now(), messageId: message.id, channelId, authorId: message.author.id,
     createdAtMs: Date.parse(message.timestamp), editedAt: message.edited_timestamp,
-    matchingFinalMessageIds: matches.map(({ message: item }) => item.id), attachments };
+    matchingFinalMessageIds: matches.map(({ message: item }) => item.id), attachments
+  };
 }
 
 /** Called only by the explicit collector CLI after source/deployment review. */
@@ -76,14 +84,15 @@ export async function collectOssPublicationFromDiscord(input: Parameters<typeof 
   const operation = async () => {
     await reader.connect(token);
     check(reader.authenticatedUserId() === input.plan.target.publicationApplicationId, "Official publication bot mismatch");
-    return collectOssPublication(input, { observer: reader,
+    return collectOssPublication(input, {
+      observer: reader,
       readChannel: (id) => rest.get(Routes.channel(id)),
       readMessage: (channel, message) => rest.get(Routes.channelMessage(channel, message)),
       download: async (url) => {
         const response = await fetch(url, { signal: AbortSignal.timeout(15_000), redirect: "error" });
         check(response.ok && response.body, "Discord attachment download failed");
         const chunks: Uint8Array[] = []; let size = 0;
-        for await (const chunk of response.body) {
+        for await (const chunk of response.body as ReadableStream<Uint8Array>) {
           size += chunk.length; check(size <= 1024 * 1024, "Discord attachment bound exceeded"); chunks.push(chunk);
         }
         return Buffer.concat(chunks);
@@ -92,7 +101,7 @@ export async function collectOssPublicationFromDiscord(input: Parameters<typeof 
   };
   try {
     return await Promise.race([operation(), new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new Error("OSS Discord read deadline exceeded")), 60_000);
+      timer = setTimeout(() => { reject(new Error("OSS Discord read deadline exceeded")); }, 60_000);
     })]);
   } finally { clearTimeout(timer); await reader.close(); }
 }

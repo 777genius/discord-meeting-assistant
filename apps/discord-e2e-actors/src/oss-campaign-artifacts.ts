@@ -5,7 +5,8 @@ import { resolve, sep } from "node:path";
 import { indexSchema, planSchema, type OssPlan } from "./oss-campaign-profile.js";
 
 export function requireEvidence(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
+  const satisfied = Boolean(condition);
+  if (!satisfied) { throw new Error(message); }
 }
 export function sha256(bytes: string | Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -16,7 +17,7 @@ export function same(left: unknown, right: unknown): boolean {
 export function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) => {
     if (item !== null && typeof item === "object" && !Array.isArray(item)) {
-      return Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)));
+      return Object.fromEntries(Object.entries(item).toSorted(([a], [b]) => a.localeCompare(b)));
     }
     return item;
   });
@@ -84,8 +85,10 @@ export async function loadArchive(planPath: string, rootPath: string): Promise<A
     requireEvidence(found !== undefined, `Missing retained bytes: ${path}`);
     return found;
   };
-  return { plan, planSha256, index, indexSha256: sha256(indexBytes), artifact, bytes,
-    json: (path, system) => JSON.parse(bytes(path, system).toString("utf8")) as unknown };
+  return {
+    plan, planSha256, index, indexSha256: sha256(indexBytes), artifact, bytes,
+    json: (path, system) => JSON.parse(bytes(path, system).toString("utf8")) as unknown
+  };
 }
 
 // The temporary filename is deterministic: concurrent or interrupted writers fail closed.

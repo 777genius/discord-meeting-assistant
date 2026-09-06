@@ -6,8 +6,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { campaignFixture } from "./oss-campaign-fixture.js";
 import { sha256 } from "../src/oss-campaign-artifacts.js";
 
-const mocks = vi.hoisted(() => ({ deployment: vi.fn(), snapshot: vi.fn(), docker: vi.fn(), publication: vi.fn(),
-  originals: vi.fn(), assemble: vi.fn(), load: vi.fn(), verify: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  deployment: vi.fn(), snapshot: vi.fn(), docker: vi.fn(), publication: vi.fn(),
+  originals: vi.fn(), assemble: vi.fn(), load: vi.fn(), verify: vi.fn()
+}));
 vi.mock("../src/oss-deployment-collection.js", () => ({ collectOssDeployment: mocks.deployment }));
 vi.mock("../src/oss-readonly-collection.js", () => ({ collectOssReadonlySnapshot: mocks.snapshot, runOssReadCommand: mocks.docker }));
 vi.mock("../src/oss-publication-collection.js", () => ({ collectOssPublicationFromDiscord: mocks.publication }));
@@ -32,41 +34,49 @@ async function setup() {
   const journals = join(root, "runtime-journals"), craig = join(root, "runtime-craig");
   await mkdir(journals); await mkdir(craig);
   const header = Buffer.from('{"type":"capture_start"}\n');
-  for (const name of ["live-native.jsonl", "post-call-native.jsonl"]) await writeFile(join(journals, name), header);
+  for (const name of ["live-native.jsonl", "post-call-native.jsonl"]) { await writeFile(join(journals, name), header); }
   const services = [{ containerId: "a".repeat(12) }, { containerId: "b".repeat(12) }];
-  const mounts = (source: string, destination: string) => [{ Type: "bind", Source: source, Destination: destination }];
+
   mocks.docker.mockImplementation(async (args: string[]) => {
-    if (args[0] === "inspect") return JSON.stringify(args.at(-1) === services[0]!.containerId
-      ? mounts(journals, "/evidence/oss-stt") : mounts(craig, "/app/rec"));
+    if (args[0] === "inspect") {
+return JSON.stringify(args.at(-1) === services[0]!.containerId
+        ? mounts(journals, "/evidence/oss-stt") : mounts(craig, "/app/rec"));
+}
     return JSON.stringify(["/evidence/oss-stt", f.plan.target.project, f.plan.target.platformRevision, "true"]);
   });
   mocks.deployment.mockImplementation(async ({ phase }: { phase: string }) => {
-    if (phase === "after") for (const name of ["live-native.jsonl", "post-call-native.jsonl"])
-      await writeFile(join(journals, name), Buffer.concat([header, Buffer.from('{"type":"capture_seal"}\n')]));
+    if (phase === "after") {
+for (const name of ["live-native.jsonl", "post-call-native.jsonl"]) { await writeFile(join(journals, name), Buffer.concat([header, Buffer.from('{"type":"capture_seal"}\n')])); }
+}
     return { services, config: {}, phase };
   });
   const control = [];
   for (const run of f.runs) {
     const jobPath = `${run.recordingId}.job.json`;
     await writeFile(join(craig, jobPath), JSON.stringify({ recordingId: run.recordingId }));
-    for (const kind of ["data", "header1", "header2", "users", "info", "log"])
-      await writeFile(join(craig, `${run.recordingId}.ogg.${kind}`), Buffer.from(kind));
-    control.push(JSON.stringify({ runId: run.runId, recordingId: run.recordingId,
-      actorPath: join(root, run.actorPath), preparedJobPath: jobPath }));
+    for (const kind of ["data", "header1", "header2", "users", "info", "log"]) { await writeFile(join(craig, `${run.recordingId}.ogg.${kind}`), Buffer.from(kind)); }
+    control.push(JSON.stringify({
+      runId: run.runId, recordingId: run.recordingId,
+      actorPath: join(root, run.actorPath), preparedJobPath: jobPath
+    }));
   }
   mocks.snapshot.mockImplementation(async ({ recordingId }: { recordingId: string }) => {
     const run = f.runs.find((item) => item.recordingId === recordingId)!;
     const db = structuredClone(f.files.get(run.databasePath)!.value) as { snapshot: { transcript: object } };
     Object.assign(db.snapshot.transcript, { version: 3, recordingId });
-    return { database: db, completion: { events: [{ type: "meeting.started", occurredAt: new Date(run.startedAtMs).toISOString() }] },
-      objects: [{ base64: Buffer.from("manifest-runtime-bytes").toString("base64") }] };
+    return {
+      database: db, completion: { events: [{ type: "meeting.started", occurredAt: new Date(run.startedAtMs).toISOString() }] },
+      objects: [{ base64: Buffer.from("manifest-runtime-bytes").toString("base64") }]
+    };
   });
   mocks.publication.mockResolvedValue({ runtime: "discord-read" });
   mocks.originals.mockImplementation(async ({ jobBytes }: { jobBytes: Buffer }) => {
     const { recordingId } = JSON.parse(jobBytes.toString()) as { recordingId: string };
-    return { files: ["data", "header1", "header2", "users", "info", "log"].map((kind) => ({
-      path: `${recordingId}.ogg.${kind}`, sha256: sha256(Buffer.from(kind)),
-    })) };
+    return {
+      files: ["data", "header1", "header2", "users", "info", "log"].map((kind) => ({
+        path: `${recordingId}.ogg.${kind}`, sha256: sha256(Buffer.from(kind)),
+      }))
+    };
   });
   mocks.assemble.mockResolvedValue({ collectionSha256: "collected-inventory" });
   mocks.load.mockResolvedValue({ planSha256: sha256(await readFile(f.planPath)), indexSha256: "collected-inventory" });
@@ -76,19 +86,19 @@ async function setup() {
   vi.spyOn(process.stdout, "write").mockReturnValue(true);
   const receipt = join(root, "pass.json");
   const args = [f.planPath, new URL("./fixtures/manifest.v1.json", import.meta.url).pathname,
-    join(root, "retained"), join(root, "archive"), receipt];
+  join(root, "retained"), join(root, "archive"), receipt];
   return { args, receipt, journals };
 }
 it("independently collects all runtime sources before binding retained bytes and creating a distinct PASS", async () => {
   const { args, receipt } = await setup();
   expect(await runOssTrustedCollection(args)).toMatchObject({ kind: "oss-discord-stt-trusted-pass-v1", status: "passed" });
-  expect(mocks.deployment.mock.calls.map(([input]) => input.phase)).toEqual(["before", "after"]);
+  expect(mocks.deployment.mock.calls.map(([input]) => (input as { phase: string }).phase)).toEqual(["before", "after"]);
   expect(mocks.snapshot).toHaveBeenCalledTimes(6);
   expect(mocks.publication).toHaveBeenCalledTimes(6);
   expect(mocks.originals).toHaveBeenCalledTimes(3);
-  const assembly = mocks.assemble.mock.calls[0]![0];
-  expect(assembly.retained.sources.get("live-native.jsonl").toString()).toContain("capture_seal");
-  expect(assembly.retained.sources.get("originals-0/recording-0.ogg.data").toString()).toBe("data");
+  const assembly = mocks.assemble.mock.calls[0]![0] as Parameters<typeof import("../src/oss-native-archive-assembly.js").assembleOssNativeArchive>[0];
+  expect(assembly.retained!.sources.get("live-native.jsonl")!.toString()).toContain("capture_seal");
+  expect(assembly.retained!.sources.get("originals-0/recording-0.ogg.data")!.toString()).toBe("data");
   expect(JSON.parse(await readFile(receipt, "utf8"))).toMatchObject({ origin: "root-runtime-collection", status: "passed" });
   expect(mocks.verify.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.assemble.mock.invocationCallOrder[0]!);
 });
@@ -100,10 +110,10 @@ it.each(["deployment", "snapshot", "publication", "originals", "assemble", "veri
   });
 it.each(["inventory", "incomplete", "mount", "preexisting-journal"])("denies %s custody mismatch", async (kind) => {
   const { args, receipt, journals } = await setup();
-  if (kind === "inventory") mocks.load.mockResolvedValue({ planSha256: "forged", indexSha256: "collected-inventory" });
-  if (kind === "incomplete") mocks.verify.mockResolvedValue({ consistency: "incomplete", missingSourceCapabilities: ["native source"] });
-  if (kind === "mount") mocks.docker.mockResolvedValue("[]");
-  if (kind === "preexisting-journal") await writeFile(join(journals, "live-native.jsonl"), '{"type":"capture_start"}\n{"type":"opening"}\n');
+  if (kind === "inventory") { mocks.load.mockResolvedValue({ planSha256: "forged", indexSha256: "collected-inventory" }); }
+  if (kind === "incomplete") { mocks.verify.mockResolvedValue({ consistency: "incomplete", missingSourceCapabilities: ["native source"] }); }
+  if (kind === "mount") { mocks.docker.mockResolvedValue("[]"); }
+  if (kind === "preexisting-journal") { await writeFile(join(journals, "live-native.jsonl"), '{"type":"capture_start"}\n{"type":"opening"}\n'); }
   await expect(runOssTrustedCollection(args)).rejects.toThrow();
   await expect(readFile(receipt)).rejects.toThrow();
 });
@@ -111,3 +121,5 @@ it("does not expose command injection as a runtime admission bypass", async () =
   await expect(runOssCollectCommand(["trusted-collect"], vi.fn())).rejects.toThrow("does not accept runtime adapter injection");
   expect(mocks.deployment).not.toHaveBeenCalled();
 });
+
+const mounts = (source: string, destination: string) => [{ Type: "bind", Source: source, Destination: destination }];

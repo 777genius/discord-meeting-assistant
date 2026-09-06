@@ -144,7 +144,7 @@ export async function closeMeetingPlatformResources(
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
-  if (failures.length === 0) collectSynchronousCloseFailure(failures, () => input.ossNativeEvidence?.seal());
+  if (failures.length === 0) { collectSynchronousCloseFailure(failures, () => input.ossNativeEvidence?.seal()); }
   const meetingKnowledgeFailures = await collectFailures([
     awaitBounded(
       "Meeting Knowledge local final reply",

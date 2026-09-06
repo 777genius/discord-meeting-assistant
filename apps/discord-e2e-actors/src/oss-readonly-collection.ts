@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
 import { z } from "zod";
 import { normalizeDatabase, assertExactDatabaseCounts } from "./e2e-retained-evidence-snapshot.js";
-import { completionReceiptsScript, postgresEvidenceQuery, replayTargetContainerFormat,
-  imageProvenanceFormat, s3EvidenceScript } from "./ssh-deployment-probe-scripts.js";
+import {
+  completionReceiptsScript, postgresEvidenceQuery, replayTargetContainerFormat,
+  imageProvenanceFormat, s3EvidenceScript
+} from "./ssh-deployment-probe-scripts.js";
 import { requireEvidence as check, sha256 } from "./oss-campaign-artifacts.js";
 import { planSchema, turnSchema, type OssPlan } from "./oss-campaign-profile.js";
 
@@ -11,12 +13,17 @@ export type OssReadCommand = (args: readonly string[]) => Promise<string>;
  * omit child stderr because Docker/provider diagnostics may include credentials. */
 export const runOssReadCommand: OssReadCommand = (args) => new Promise((resolve, reject) => {
   execFile("docker", [...args], { timeout: 30_000, maxBuffer: 64 * 1024 * 1024, encoding: "utf8" },
-    (error, stdout) => error ? reject(new Error("OSS read-only source command failed")) : resolve(stdout));
+    (error, stdout) => {
+      if (error !== null) { reject(new Error("OSS read-only source command failed")); }
+      else { resolve(stdout); }
+    });
 });
 const opaque = /^[A-Za-z0-9_-]{1,128}$/u;
 const container = z.string().regex(/^[a-f0-9]{12,64}$/u);
-const databaseEnvelope = z.object({ snapshot: z.unknown(), matchingMeetingCount: z.literal(1),
-  matchingRecordingCount: z.literal(1), matchingTranscriptCount: z.literal(1), matchingSummaryCount: z.literal(1) }).strict();
+const databaseEnvelope = z.object({
+  snapshot: z.unknown(), matchingMeetingCount: z.literal(1),
+  matchingRecordingCount: z.literal(1), matchingTranscriptCount: z.literal(1), matchingSummaryCount: z.literal(1)
+}).strict();
 export const inventoryQuery = `SELECT COALESCE(jsonb_agg(snapshot->'recording'->>'recordingId' ORDER BY meeting_id)
  FILTER (WHERE snapshot->'recording'->>'recordingId' IS NOT NULL),'[]'::jsonb)::text FROM meeting_core.meetings;`;
 const liveQuery = (meetingId: string) => `SELECT COALESCE(jsonb_agg(jsonb_build_object(
@@ -75,16 +82,21 @@ export async function collectOssReadonlySnapshot(input: {
   ])));
   const matches = receipts.filter((receipt) => receipt.recordingId === input.recordingId);
   check(matches.length === 1 && matches[0]!.schemaVersion === 6, "Native completion missing or ambiguous");
-  const objects = z.array(z.object({ locator: z.string().min(1), revision: z.string().min(1),
+  const objects = z.array(z.object({
+    locator: z.string().min(1), revision: z.string().min(1),
     sizeBytes: z.number().int().positive().max(16 * 1024 * 1024),
     checksumSha256: z.string().regex(/^[a-f0-9]{64}$/u), base64: z.string().max(24 * 1024 * 1024),
   }).strict()).length(3).parse(JSON.parse(await run(["exec", "-w", "/app/apps/meeting-platform", platform,
     "node", "--input-type=module", "-e", immutableGetScript, JSON.stringify(snapshot.recording), input.recordingId])));
   const expectedObjects = [
-    { locator: snapshot.recording.manifestLocator, revision: snapshot.recording.manifestRevision,
-      checksum: snapshot.recording.manifestChecksumSha256, size: snapshot.recording.manifestSizeBytes },
-    ...snapshot.recording.speakerAudio.map((track) => ({ locator: track.audioLocator, revision: track.artifactRevision,
-      checksum: track.checksumSha256, size: track.sizeBytes })),
+    {
+      locator: snapshot.recording.manifestLocator, revision: snapshot.recording.manifestRevision,
+      checksum: snapshot.recording.manifestChecksumSha256, size: snapshot.recording.manifestSizeBytes
+    },
+    ...snapshot.recording.speakerAudio.map((track) => ({
+      locator: track.audioLocator, revision: track.artifactRevision,
+      checksum: track.checksumSha256, size: track.sizeBytes
+    })),
   ];
   check(expectedObjects.length === objects.length, "Readonly object cardinality mismatch");
   for (const [index, object] of objects.entries()) {
@@ -96,21 +108,23 @@ export async function collectOssReadonlySnapshot(input: {
     check(bytes.toString("base64") === object.base64 && bytes.length === object.sizeBytes &&
       sha256(bytes) === object.checksumSha256, "Native immutable object bytes mismatch");
   }
-  return { kind: "oss-native-readonly-snapshot-v1" as const, project: plan.target.project,
+  return {
+    kind: "oss-native-readonly-snapshot-v1" as const, project: plan.target.project,
     platformRevision: plan.target.platformRevision, platformImageId: imageId, startedAtMs,
     completedAtMs: Date.now(), observedAtMs, recordingIds, database, liveTurns,
-    completion: matches[0]!, objects };
+    completion: matches[0]!, objects
+  };
 }
 
 export async function findOssTestContainer(plan: OssPlan, run: OssReadCommand, service: string) {
-    const ids = (await run(["ps", "--filter", `label=com.docker.compose.project=${plan.target.project}`,
-      "--filter", `label=com.docker.compose.service=${service}`, "--format", "{{.ID}}"])).trim().split(/\s+/u);
-    check(ids.length === 1, "Exactly one healthy TEST source container required");
-    const id = container.parse(ids[0]);
-    const labels = JSON.parse(await run(["inspect", "--format", replayTargetContainerFormat, id])) as Record<string, unknown>;
-    check(labels.composeProject === plan.target.project && labels.composeService === service &&
-      (service !== plan.target.platformService || labels.testOnly === "true"), "Read-only source TEST admission mismatch");
-    check((await run(["inspect", "--format", "{{.State.Health.Status}}", id])).trim() === "healthy",
-      "Read-only source container is unhealthy");
-    return id;
+  const ids = (await run(["ps", "--filter", `label=com.docker.compose.project=${plan.target.project}`,
+    "--filter", `label=com.docker.compose.service=${service}`, "--format", "{{.ID}}"])).trim().split(/\s+/u);
+  check(ids.length === 1, "Exactly one healthy TEST source container required");
+  const id = container.parse(ids[0]);
+  const labels = JSON.parse(await run(["inspect", "--format", replayTargetContainerFormat, id])) as Record<string, unknown>;
+  check(labels.composeProject === plan.target.project && labels.composeService === service &&
+    (service !== plan.target.platformService || labels.testOnly === "true"), "Read-only source TEST admission mismatch");
+  check((await run(["inspect", "--format", "{{.State.Health.Status}}", id])).trim() === "healthy",
+    "Read-only source container is unhealthy");
+  return id;
 }

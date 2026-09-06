@@ -17,26 +17,18 @@ import { artifactSchema, manifestDigest, planSchema } from "./oss-campaign-profi
 // of scope. Files, hashes, declarations and offline assembly alone grant no custody.
 export async function runOssTrustedCollection(args: readonly string[]) {
   const [planPath, manifestPath, sourceRootInput, outputRoot, receiptPath, ...extra] = args;
-  check(planPath && manifestPath && sourceRootInput && outputRoot && receiptPath && extra.length === 0,
+  check(nonempty(planPath) && nonempty(manifestPath) && nonempty(sourceRootInput) && nonempty(outputRoot) && nonempty(receiptPath) && extra.length === 0,
     "Usage: trusted-collect PLAN FIXTURE_MANIFEST NEW_SOURCES NEW_ARCHIVE PASS_RECEIPT (root control on stdin)");
   const planBytes = await readRegular(planPath), fixtureBytes = await readRegular(manifestPath);
   const plan = planSchema.parse(JSON.parse(planBytes.toString("utf8")));
   check(sha256(fixtureBytes) === manifestDigest, "Unpinned fixture manifest");
   const secrets = process.env.OSS_STT_PUBLICATION_SECRET_DIRECTORY;
-  check(secrets, "Official publication credential directory required");
+  check(nonempty(secrets), "Official publication credential directory required");
   const before = await collectOssDeployment({ plan, phase: "before" });
   const platform = before.services[0]!.containerId, craig = before.services[1]!.containerId;
-  const mounts = async (container: string) => z.array(z.object({
-    Type: z.enum(["bind", "volume", "tmpfs"]), Source: z.string(), Destination: z.string(),
-  })).parse(JSON.parse(await runOssReadCommand(["inspect", "--format", "{{json .Mounts}}", container])));
+
   const platformMounts = await mounts(platform), craigMounts = await mounts(craig);
-  const mountRoot = async (entries: Awaited<ReturnType<typeof mounts>>, destination: string) => {
-    const matches = entries.filter((entry) => entry.Destination === destination && entry.Type === "bind");
-    check(matches.length === 1, "Exact runtime source bind mount required");
-    const path = resolve(matches[0]!.Source);
-    check(await realpath(path) === path, "Runtime source mount symlink");
-    return path;
-  };
+
   const journalRoot = await mountRoot(platformMounts, "/evidence/oss-stt");
   const craigRoot = await mountRoot(craigMounts, "/app/rec");
   const captureConfig = JSON.parse(await runOssReadCommand(["exec", platform, "node", "-e",
@@ -44,12 +36,7 @@ export async function runOssTrustedCollection(args: readonly string[]) {
   ])) as unknown;
   check(same(captureConfig, ["/evidence/oss-stt", plan.target.project, plan.target.platformRevision, "true"]),
     "Current runtime journal configuration mismatch");
-  const readSource = async (root: string, path: string, max = 512 * 1024 * 1024, empty = false) => {
-    artifactSchema.shape.path.parse(path);
-    const full = resolve(root, path);
-    check(full.startsWith(root + sep) && await realpath(full) === full, "Runtime source path escape/symlink");
-    return readRegular(full, max, empty);
-  };
+
   const journalNames = ["live-native.jsonl", "post-call-native.jsonl"];
   const initial = [];
   for (const name of journalNames) {
@@ -84,8 +71,9 @@ export async function runOssTrustedCollection(args: readonly string[]) {
     process.stdout.write(`${JSON.stringify({ status: "armed", campaignId: plan.campaignId })}\n`);
     for (const [position, run] of plan.runs.entries()) {
       const next = await control.next();
-      check(!next.done, "Missing root run control");
-      const request = z.object({ runId: z.literal(run.runId), recordingId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
+      check(next.done !== true, "Missing root run control");
+      const request = z.object({
+        runId: z.literal(run.runId), recordingId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
         actorPath: z.string().min(1), preparedJobPath: artifactSchema.shape.path,
       }).strict().parse(JSON.parse(next.value));
       const snapshots = [], publications = [];
@@ -95,8 +83,10 @@ export async function runOssTrustedCollection(args: readonly string[]) {
         const events = z.object({ events: z.array(z.object({ type: z.string(), occurredAt: z.iso.datetime() })) })
           .parse(snapshot.completion).events.filter((event) => event.type === "meeting.started");
         check(events.length === 1, "Native recording start missing/duplicate");
-        const publication = await collectOssPublicationFromDiscord({ plan, meetingId: db.meetingId,
-          messageId: db.publication.externalPublicationId, startedAtMs: Date.parse(events[0]!.occurredAt) }, secrets);
+        const publication = await collectOssPublicationFromDiscord({
+          plan, meetingId: db.meetingId,
+          messageId: db.publication.externalPublicationId, startedAtMs: Date.parse(events[0]!.occurredAt)
+        }, secrets);
         snapshots.push(await put(`snapshot-${position}-${observation}.json`, snapshot));
         publications.push(await put(`publication-${position}-${observation}.json`, publication));
       }
@@ -107,16 +97,20 @@ export async function runOssTrustedCollection(args: readonly string[]) {
         const name = `${request.recordingId}.ogg.${kind}`;
         await put(`${originalDirectory}/${name}`, await readSource(craigRoot, name, 512 * 1024 * 1024, true));
       }
-      const original = await collectCraigOriginals({ originalDirectory: resolve(sourceRoot, originalDirectory),
+      const original = await collectCraigOriginals({
+        originalDirectory: resolve(sourceRoot, originalDirectory),
         manifestBytes: Buffer.from(snapshot.objects[0]!.base64, "base64"), craigRevision: plan.target.craigRevision,
-        jobBytes: await readSource(craigRoot, request.preparedJobPath, 16 * 1024 * 1024) });
+        jobBytes: await readSource(craigRoot, request.preparedJobPath, 16 * 1024 * 1024)
+      });
       check(original.files.every((file) => sha256(retained.get(`${originalDirectory}/${file.path}`)!) === file.sha256),
         "Original retention changed during collection");
-      runs.push({ runId: run.runId, snapshots, publications, originalDirectory,
+      runs.push({
+        runId: run.runId, snapshots, publications, originalDirectory,
         originalsPath: await put(`originals-${position}.json`, original),
         // Actor output is supplied by the trusted root orchestrator, and is only
         // supplemental fixture/timing evidence. It cannot substitute for any read.
-        actorPath: await put(`actor-${position}.json`, await readRegular(request.actorPath)) });
+        actorPath: await put(`actor-${position}.json`, await readRegular(request.actorPath))
+      });
       process.stdout.write(`${JSON.stringify({ status: "settled", runId: run.runId })}\n`);
     }
     const after = await collectOssDeployment({ plan, phase: "after" });
@@ -125,7 +119,7 @@ export async function runOssTrustedCollection(args: readonly string[]) {
     await put("deployment-after.json", after);
     process.stdout.write(`${JSON.stringify({ status: "awaiting-seal", campaignId: plan.campaignId })}\n`);
     const seal = await control.next();
-    check(!seal.done && seal.value === "sealed", "Root must finish graceful journal sealing");
+    check(seal.done !== true && seal.value === "sealed", "Root must finish graceful journal sealing");
     // Root may gracefully stop Platform after the final healthy observation. Read
     // from the mount discovered from that exact running container, never a sidecar
     // filename supplied as authority. No restart, shutdown or replay is performed.
@@ -134,24 +128,30 @@ export async function runOssTrustedCollection(args: readonly string[]) {
       check(bytes.subarray(0, initial[position]!.length).equals(initial[position]!), "Runtime journal replaced");
       await put(name, bytes);
     }
-    const assembly = { kind: "oss-native-assembly-v1", deploymentPaths: ["deployment-before.json", "deployment-after.json"],
-      livePath: journalNames[0], postCallPath: journalNames[1], runs };
+    const assembly = {
+      kind: "oss-native-assembly-v1", deploymentPaths: ["deployment-before.json", "deployment-after.json"],
+      livePath: journalNames[0], postCallPath: journalNames[1], runs
+    };
     const assemblyPath = await put("assembly.json", assembly);
-    const assembled = await assembleOssNativeArchive({ planPath: resolve(sourceRoot, "plan.json"), sourceRoot,
+    const assembled = await assembleOssNativeArchive({
+      planPath: resolve(sourceRoot, "plan.json"), sourceRoot,
       assemblyPath: resolve(sourceRoot, assemblyPath), outputRoot,
-      retained: { planBytes, assemblyBytes: retained.get(assemblyPath)!, sources: retained } });
+      retained: { planBytes, assemblyBytes: retained.get(assemblyPath)!, sources: retained }
+    });
     const archive = await loadArchive(resolve(sourceRoot, "plan.json"), outputRoot);
     check(archive.planSha256 === sha256(planBytes) && archive.indexSha256 === assembled.collectionSha256,
       "Collector-owned complete inventory changed before admission");
     const evidence = await verifyOssCampaign(archive, fixtureBytes);
     check(evidence.consistency === "complete", `Campaign PASS unavailable: ${evidence.missingSourceCapabilities.join("; ")}`);
-    const receipt = { kind: "oss-discord-stt-trusted-pass-v1", status: "passed", origin: "root-runtime-collection",
-      evidence, inventorySha256: sha256(canonical(evidence.artifacts)) };
+    const receipt = {
+      kind: "oss-discord-stt-trusted-pass-v1", status: "passed", origin: "root-runtime-collection",
+      evidence, inventorySha256: sha256(canonical(evidence.artifacts))
+    };
     await createReceipt(receiptPath, receipt);
     return { kind: receipt.kind, status: receipt.status, campaignId: plan.campaignId, collectionSha256: archive.indexSha256 };
   } finally {
     clearTimeout(timeout);
-    await control.return(undefined);
+    await control.return();
   }
 }
 
@@ -168,4 +168,25 @@ async function* controlLines() {
     }
   }
   check(pending.length === 0, "Truncated root control");
+}
+
+const mounts = async (container: string) => z.array(z.object({
+  Type: z.enum(["bind", "volume", "tmpfs"]), Source: z.string(), Destination: z.string(),
+})).parse(JSON.parse(await runOssReadCommand(["inspect", "--format", "{{json .Mounts}}", container])));
+const mountRoot = async (entries: Awaited<ReturnType<typeof mounts>>, destination: string) => {
+  const matches = entries.filter((entry) => entry.Destination === destination && entry.Type === "bind");
+  check(matches.length === 1, "Exact runtime source bind mount required");
+  const path = resolve(matches[0]!.Source);
+  check(await realpath(path) === path, "Runtime source mount symlink");
+  return path;
+};
+const readSource = async (root: string, path: string, max = 512 * 1024 * 1024, empty = false) => {
+  artifactSchema.shape.path.parse(path);
+  const full = resolve(root, path);
+  check(full.startsWith(root + sep) && await realpath(full) === full, "Runtime source path escape/symlink");
+  return readRegular(full, max, empty);
+};
+
+function nonempty(value: string | undefined): value is string {
+  return value !== undefined && value !== "";
 }

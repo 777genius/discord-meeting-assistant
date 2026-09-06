@@ -18,24 +18,26 @@ it("collects deployment revisions and initial inventory through readonly command
     let inventory: string[] = [];
     const command = async (args: readonly string[]) => {
       calls.push([...args]);
-      if (args[0] === "ps") return ids[services.findIndex((service) => args.includes(`label=com.docker.compose.service=${service}`))]!;
-      if (args[0] === "image") return JSON.stringify({ sourceRevision: revisions[imageIds.indexOf(args.at(-1)!)] });
+      if (args[0] === "ps") { return ids[services.findIndex((service) => args.includes(`label=com.docker.compose.service=${service}`))]!; }
+      if (args[0] === "image") { return JSON.stringify({ sourceRevision: revisions[imageIds.indexOf(args.at(-1)!)] }); }
       if (args[0] === "inspect") {
         const index = ids.indexOf(args.at(-1)!);
-        if (args[2] === "{{.Image}}") return imageIds[index]!;
-        if (args[2] === "{{.State.Health.Status}}") return "healthy";
+        if (args[2] === "{{.Image}}") { return imageIds[index]!; }
+        if (args[2] === "{{.State.Health.Status}}") { return "healthy"; }
         return JSON.stringify({ composeProject: plan.target.project, composeService: services[index], testOnly: index === 0 ? "true" : null });
       }
-      if (args.includes("oss-readonly")) return JSON.stringify(inventory);
-      return JSON.stringify({ gatewayEndpointSha256: sha256(plan.target.gatewayEndpoint), operatorCaSha256: plan.target.operatorCaSha256,
+      if (args.includes("oss-readonly")) { return JSON.stringify(inventory); }
+      return JSON.stringify({
+        gatewayEndpointSha256: sha256(plan.target.gatewayEndpoint), operatorCaSha256: plan.target.operatorCaSha256,
         operatorCaBase64: Buffer.from("offline-public-ca").toString("base64"), guildId: plan.target.guildId,
         voiceChannelId: plan.target.voiceChannelId, resultsChannelId: plan.target.resultsChannelId, applicationId: plan.target.publicationApplicationId,
-        summaryProvider: "transcript-outline", conversationEnabled: "false", liveEnabled: "true" });
+        summaryProvider: "transcript-outline", conversationEnabled: "false", liveEnabled: "true"
+      });
     };
     const result = await collectOssDeployment({ plan, phase: "before", command });
     expect(result.recordingIds).toEqual([]);
     expect(result.services.map((service) => service.sourceRevision)).toEqual(revisions);
-    expect(calls.some((args) => args.at(-1)?.startsWith("BEGIN READ ONLY;"))).toBe(true);
+    expect(calls.some((args) => args.at(-1)?.startsWith("BEGIN READ ONLY;") === true)).toBe(true);
     expect(calls.flat().join(" ")).not.toMatch(/collect:e2e|replayJob|INSERT|UPDATE|DELETE/u);
     inventory = ["unexpected"];
     await expect(collectOssDeployment({ plan, phase: "before", command })).rejects.toThrow("inventory");

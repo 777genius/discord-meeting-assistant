@@ -8,13 +8,22 @@ import { sha256 } from "../src/oss-campaign-artifacts.js";
 function fixture() {
   const files = ["data", "header1", "header2", "users", "info", "log"].map(kind =>
     ({ path: `recording.ogg.${kind}`, bytes: Buffer.from(`synthetic-${kind}`) }));
-  const sourceFiles = files.map(file => ({ kind: file.path.split(".").at(-1)!, relativePath: file.path,
-    checksumSha256: sha256(file.bytes), sizeBytes: file.bytes.length }));
+  const sourceFiles = files.map(file => ({
+    kind: file.path.split(".").at(-1)!, relativePath: file.path,
+    checksumSha256: sha256(file.bytes), sizeBytes: file.bytes.length
+  }));
   const checksumSha256 = sha256(JSON.stringify(sourceFiles));
-  return { files, craigRevision: "37b86a958b567cb7fcff75946e94fe5e7ee38f42",
+  return {
+    files, craigRevision: "37b86a958b567cb7fcff75946e94fe5e7ee38f42",
     manifestBytes: Buffer.from(JSON.stringify({ recordingId: "recording", source: { kind: "craig-original-multitrack", checksumSha256 } })),
-    job: { recordingId: "recording", sourceFiles, lifecycleV3Snapshot: { sealedReady: {
-      type: "recording.authoritative_ready", recordingId: "recording", sourceFilesChecksumSha256: checksumSha256 } } } };
+    job: {
+      recordingId: "recording", sourceFiles, lifecycleV3Snapshot: {
+        sealedReady: {
+          type: "recording.authoritative_ready", recordingId: "recording", sourceFilesChecksumSha256: checksumSha256
+        }
+      }
+    }
+  };
 }
 it("recomputes producer insertion-key order and normalizes job ordering (synthetic only)", () => {
   const f = fixture();
@@ -45,7 +54,7 @@ it("collects originals and refuses mutated bytes or filesystem aliases", async (
   const root = await mkdtemp(join(tmpdir(), "oss-craig-originals-test-"));
   try {
     const f = fixture();
-    for (const file of f.files) await writeFile(join(root, file.path), file.bytes);
+    for (const file of f.files) { await writeFile(join(root, file.path), file.bytes); }
     const input = { ...f, originalDirectory: root, jobBytes: Buffer.from(JSON.stringify(f.job)) };
     expect((await collectCraigOriginals(input)).aggregateRecomputation.status).toBe("recomputed");
     await writeFile(join(root, f.files[0]!.path), "changed");

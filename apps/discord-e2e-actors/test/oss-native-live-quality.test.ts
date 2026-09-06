@@ -16,14 +16,18 @@ function session(offset = 1000, speakerId = "speaker-a") {
   ];
   for (const [i, relativeTimeMs] of [offset, offset + 20, offset + 2000].entries()) {
     const seq = i + 1;
-    events.push({ type: "audio_send", seq, packetId: `packet-${seq}`, sha256: "a".repeat(64),
-      size: 20, toc: 8, relativeTimeMs, durationSamples48Khz: 960 },
-    { type: "received", message: { type: "ack", seq } }, { type: "audio_sent", seq }, { type: "audio_accepted", seq });
+    events.push({
+      type: "audio_send", seq, packetId: `packet-${seq}`, sha256: "a".repeat(64),
+      size: 20, toc: 8, relativeTimeMs, durationSamples48Khz: 960
+    },
+      { type: "received", message: { type: "ack", seq } }, { type: "audio_sent", seq }, { type: "audio_accepted", seq });
   }
   const result = (startMs: number, durationMs: number, mappedStart: number, mappedEnd: number, text: string, isFinal: boolean) => {
-    events.push({ type: "received", message: isFinal ? { type: "segment_final", startMs, durationMs, text } :
-      { type: "partial", segment: { startMs, durationMs, text } } },
-    { type: "transcript_emitted", startMs: mappedStart, endMs: mappedEnd, text: text.trim(), isFinal });
+    events.push({
+      type: "received", message: isFinal ? { type: "segment_final", startMs, durationMs, text } :
+        { type: "partial", segment: { startMs, durationMs, text } }
+    },
+      { type: "transcript_emitted", startMs: mappedStart, endMs: mappedEnd, text: text.trim(), isFinal });
   };
   result(0, 40, offset, offset + 40, " first ", false);
   result(0, 40, offset, offset + 40, " first ", true);
@@ -33,8 +37,10 @@ function session(offset = 1000, speakerId = "speaker-a") {
   events.push({ type: "finalize_send" }, { type: "finalize_sent" },
     { type: "received", message: { type: "finalize_complete", status: "flushed", sawResult: true } },
     { type: "close", code: 1000 }, { type: "success" });
-  return events.map((event, index): NativeLiveRow => ({ event, index: index + 1, atMs: 900000 + index,
-    session: "00000000-0000-4000-8000-000000000003" }));
+  return events.map((event, index): NativeLiveRow => ({
+    event, index: index + 1, atMs: 900000 + index,
+    session: "00000000-0000-4000-8000-000000000003"
+  }));
 }
 
 describe("native accepted packet timeline", () => {
@@ -53,12 +59,12 @@ describe("native accepted packet timeline", () => {
       // A matching forged downstream ledger cannot repair this source mismatch.
       rows.forEach(({ event }) => { if (event.type === "transcript_emitted") { event.startMs += 500; event.endMs += 500; } });
     }
-    if (kind === "gap") rows.forEach(({ event }) => { if (event.type === "audio_send" && event.seq === 3) event.relativeTimeMs = 1040; });
-    if (kind === "dropped") rows = rows.filter(({ event }) => !(event.type === "audio_send" && event.seq === 2));
-    if (kind === "ack") rows = rows.filter(({ event }) => !(event.type === "received" && event.message.type === "ack" && event.message.seq === 2));
-    if (kind === "missing") rows = rows.filter(({ event }) => event.type !== "transcript_emitted");
-    if (kind === "extra") rows.splice(-4, 0, rows.find(({ event }) => event.type === "transcript_emitted")!);
-    if (kind === "text") rows.forEach(({ event }) => { if (event.type === "transcript_emitted") event.text = "forged"; });
+    if (kind === "gap") { rows.forEach(({ event }) => { if (event.type === "audio_send" && event.seq === 3) { event.relativeTimeMs = 1040; } }); }
+    if (kind === "dropped") { rows = rows.filter(({ event }) => !(event.type === "audio_send" && event.seq === 2)); }
+    if (kind === "ack") { rows = rows.filter(({ event }) => !(event.type === "received" && event.message.type === "ack" && event.message.seq === 2)); }
+    if (kind === "missing") { rows = rows.filter(({ event }) => event.type !== "transcript_emitted"); }
+    if (kind === "extra") { rows.splice(-4, 0, rows.find(({ event }) => event.type === "transcript_emitted")!); }
+    if (kind === "text") { rows.forEach(({ event }) => { if (event.type === "transcript_emitted") { event.text = "forged"; } }); }
     expect(() => qualifyNativeSession(rows)).toThrow();
   });
   it("accepts a synchronous result before the send and accepted effects settle", () => {
@@ -72,9 +78,8 @@ describe("native accepted packet timeline", () => {
   it("rejects provider duration beyond accepted packets even when emission agrees", () => {
     const rows = session();
     for (const { event } of rows) {
-      if (event.type === "received" && event.message.type === "segment_final" && event.message.startMs === 40)
-        event.message.durationMs = 40;
-      if (event.type === "transcript_emitted" && event.text === "second") event.endMs += 20;
+      if (event.type === "received" && event.message.type === "segment_final" && event.message.startMs === 40) { event.message.durationMs = 40; }
+      if (event.type === "transcript_emitted" && event.text === "second") { event.endMs += 20; }
     }
     expect(() => qualifyNativeSession(rows)).toThrow(/exceeds accepted audio/u);
   });
@@ -84,7 +89,7 @@ describe("native accepted packet timeline", () => {
       if (event.type === "received" && event.message.type === "segment_final" && event.message.startMs === 40) {
         event.message.startMs = 20; event.message.durationMs = 40;
       }
-      if (event.type === "transcript_emitted" && event.text === "second") event.startMs = 1020;
+      if (event.type === "transcript_emitted" && event.text === "second") { event.startMs = 1020; }
     }
     expect(() => qualifyNativeSession(rows)).not.toThrow();
   });
@@ -96,24 +101,24 @@ it("independently scores finalized live text, terms, timing, speaker and overlap
     const f = await campaignFixture(root);
     const manifest = fixtureManifestV1Schema.parse(JSON.parse(f.manifestBytes.toString()));
     for (const [i, original] of f.runs.entries()) {
-      expect(() => verifyOssQuality(original, manifest, f.actors[i])).not.toThrow();
+      expect(() => { verifyOssQuality(original, manifest, f.actors[i]); }).not.toThrow();
       for (const kind of ["unrelated", "terms", "timeline", "missing", "duplicate", "speaker", "overlap"]) {
         const run = structuredClone(original);
         // Fixture batch/live share objects; break that alias before mutating live.
         run.liveTurns = structuredClone(original.liveTurns);
         const turn = run.liveTurns[0]!;
         if (kind === "unrelated") { turn.text = "unrelated"; turn.endMs = turn.startMs + 20; }
-        if (kind === "terms") turn.text = turn.text.replaceAll("PostgreSQL", "database");
-        if (kind === "timeline") turn.startMs += 4000;
-        if (kind === "missing") run.liveTurns.pop();
-        if (kind === "duplicate") run.liveTurns.push({ ...turn });
-        if (kind === "speaker") turn.speakerId = "unknown";
+        if (kind === "terms") { turn.text = turn.text.replaceAll("PostgreSQL", "database"); }
+        if (kind === "timeline") { turn.startMs += 4000; }
+        if (kind === "missing") { run.liveTurns.pop(); }
+        if (kind === "duplicate") { run.liveTurns.push({ ...turn }); }
+        if (kind === "speaker") { turn.speakerId = "unknown"; }
         if (kind === "overlap") {
-          if (i === 0) run.liveTurns[1]!.startMs = turn.startMs;
-          else turn.endMs = run.liveTurns[1]!.startMs;
+          if (i === 0) { run.liveTurns[1]!.startMs = turn.startMs; }
+          else { turn.endMs = run.liveTurns[1]!.startMs; }
         }
         expect(run.transcript).toEqual(original.transcript);
-        expect(() => verifyOssQuality(run, manifest, f.actors[i]), `${i}: ${kind}`).toThrow();
+        expect(() => { verifyOssQuality(run, manifest, f.actors[i]); }, `${i}: ${kind}`).toThrow();
       }
     }
     // Reconnect may create multiple finalized speaker sessions. Score their ordered
@@ -125,43 +130,64 @@ it("independently scores finalized live text, terms, timing, speaker and overlap
     const boundary = Math.floor((first.startMs + first.endMs) / 2);
     reconnect.liveTurns.push({ ...first, endMs: boundary, text: words.slice(0, middle).join(" ") },
       { ...first, turnId: "reconnected-final", startMs: boundary, text: words.slice(middle).join(" ") });
-    expect(() => verifyOssQuality(reconnect, manifest, f.actors[2])).not.toThrow();
+    expect(() => { verifyOssQuality(reconnect, manifest, f.actors[2]); }).not.toThrow();
     const run = f.runs[0]!;
     await f.save();
     const archive = await loadArchive(f.planPath, root);
     const rows = session();
     rows.forEach((row, i) => {
       row.index = i + 2; row.atMs = run.startedAtMs + i;
-      if (row.event.type === "opening") row.event.meetingId = run.meetingId;
+      if (row.event.type === "opening") { row.event.meetingId = run.meetingId; }
       if (row.event.type === "transcript_emitted") { row.event.startMs += 500; row.event.endMs += 500; }
     });
-    const forgedRun = { ...run, liveTurns: rows.flatMap(({ event }) => event.type === "transcript_emitted" && event.isFinal ? [{
-      turnId: `live-turn:v1:${sha256([run.meetingId, "speaker-a", event.startMs, event.endMs, event.text].join("\0")).slice(0, 24)}`,
-      speakerId: "speaker-a", startMs: event.startMs, endMs: event.endMs, text: event.text,
-    }] : []) };
+    const forgedRun = {
+      ...run, liveTurns: rows.flatMap(({ event }) => event.type === "transcript_emitted" && event.isFinal ? [{
+        turnId: `live-turn:v1:${sha256([run.meetingId, "speaker-a", event.startMs, event.endMs, event.text].join("\0")).slice(0, 24)}`,
+        speakerId: "speaker-a", startMs: event.startMs, endMs: event.endMs, text: event.text,
+      }] : [])
+    };
     const journal = (kind: string, content: unknown[]) => {
-      const prefix = [JSON.stringify({ index: 1, atMs: 0, type: "capture_start", kind,
+      const prefix = [JSON.stringify({
+        index: 1, atMs: 0, type: "capture_start", kind,
         ...(kind === "oss-native-live-v1" ? { project: f.plan.target.project } : {}),
-        revision: f.plan.target.platformRevision }), ...content.map(row => JSON.stringify(row))].join("\n") + "\n";
-      return Buffer.from(prefix + JSON.stringify({ index: content.length + 2, atMs: run.terminalAtMs,
-        type: "capture_seal", priorSha256: sha256(prefix) }) + "\n");
+        revision: f.plan.target.platformRevision
+      }), ...content.map(row => JSON.stringify(row))].join("\n") + "\n";
+      return Buffer.from(prefix + JSON.stringify({
+        index: content.length + 2, atMs: run.terminalAtMs,
+        type: "capture_seal", priorSha256: sha256(prefix)
+      }) + "\n");
     };
     const journals = new Map([["live", journal("oss-native-live-v1", rows)], ["postcall", journal("oss-native-post-call-v1", [])]]);
-    expect(() => verifyNativeCampaignSources({ ...archive,
-      index: { ...archive.index, nativeSources: { livePath: "live", postCallPath: "postcall", deploymentPaths: [],
-        runs: [{ runId: run.runId, snapshots: [], publications: [], originalsPath: "unused" }] } },
+    expect(() => verifyNativeCampaignSources({
+      ...archive,
+      index: {
+        ...archive.index, nativeSources: {
+          livePath: "live", postCallPath: "postcall", deploymentPaths: [],
+          runs: [{ runId: run.runId, snapshots: [], publications: [], originalsPath: "unused" }]
+        }
+      },
       bytes: path => journals.get(path) ?? archive.bytes(path),
     }, [forgedRun])).toThrow(/Native provider\/emitted timeline mismatch/u);
-    const source = { snapshot: { revision: 19, recording: { recordingId: run.recordingId },
-      transcript: { transcriptId: run.transcript.transcriptId, recordingId: run.recordingId, version: 1 } } };
-    expect(() => verifyNativeTranscriptIdentity(source, run)).not.toThrow();
-    expect(() => verifyNativeTranscriptIdentity({ snapshot: { ...source.snapshot,
-      transcript: { ...source.snapshot.transcript, version: 2 } } },
-    { ...run, transcript: { ...run.transcript, version: "2" } })).not.toThrow();
+    const source = {
+      snapshot: {
+        revision: 19, recording: { recordingId: run.recordingId },
+        transcript: { transcriptId: run.transcript.transcriptId, recordingId: run.recordingId, version: 1 }
+      }
+    };
+    expect(() => { verifyNativeTranscriptIdentity(source, run); }).not.toThrow();
+    expect(() => {
+      verifyNativeTranscriptIdentity({
+        snapshot: {
+          ...source.snapshot,
+          transcript: { ...source.snapshot.transcript, version: 2 }
+        }
+      },
+        { ...run, transcript: { ...run.transcript, version: "2" } });
+    }).not.toThrow();
     for (const transcript of [{ ...source.snapshot.transcript, version: 19 },
-      { ...source.snapshot.transcript, recordingId: "wrong" }, { transcriptId: run.transcript.transcriptId }]) {
-      expect(() => verifyNativeTranscriptIdentity({ snapshot: { ...source.snapshot, transcript } }, run)).toThrow();
+    { ...source.snapshot.transcript, recordingId: "wrong" }, { transcriptId: run.transcript.transcriptId }]) {
+      expect(() => { verifyNativeTranscriptIdentity({ snapshot: { ...source.snapshot, transcript } }, run); }).toThrow();
     }
-    expect(() => verifyNativeTranscriptIdentity(source, { ...run, transcript: { ...run.transcript, version: "19" } })).toThrow();
+    expect(() => { verifyNativeTranscriptIdentity(source, { ...run, transcript: { ...run.transcript, version: "19" } }); }).toThrow();
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 60000);

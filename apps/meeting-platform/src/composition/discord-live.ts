@@ -1,4 +1,4 @@
-import { createOssNativeEvidence, type OssPlatformEvidence } from "./oss-native-evidence.js";
+import { hasLiveTranscriptionConfiguration, createOssNativeEvidence, type OssPlatformEvidence } from "./oss-native-evidence.js";
 import type { OssNativeEvidenceSink } from "@discord-meeting/voicetext-adapter";
 import { randomUUID } from "node:crypto";
 
@@ -111,16 +111,7 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly recordingPlaybackUrl?: (meetingId: string) => string;
   readonly runtimeTransport?: SubscriptionRuntimeTransportPort;
 }): Promise<PlatformDiscordLiveComposition> {
-  const knowledgeIntents = input.config.meetingKnowledge?.localFinalReply === true
-    ? [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
-    : [];
-  const knowledgePartials = input.config.meetingKnowledge?.localFinalReply === true
-    ? [Partials.Message]
-    : [];
-  const discord = new Client({
-    intents: [GatewayIntentBits.Guilds, ...knowledgeIntents],
-    partials: knowledgePartials,
-  });
+  const discord = createDiscordClient(input.config);
   input.cleanup.defer("Discord client", async () => {
     await discord.destroy();
   });
@@ -400,18 +391,16 @@ function createLiveRuntime(input: {
   });
 }
 
-function hasLiveTranscriptionConfiguration(
-  config: PlatformConfig,
-): config is PlatformConfig & {
-  readonly voicetext: NonNullable<PlatformConfig["voicetext"]>;
-  readonly secrets: PlatformConfig["secrets"] & {
-    readonly voicetextServiceToken: string;
-  };
-} {
-  return (
-    config.transcriptionProvider === "voicetext" &&
-    config.voicetext !== undefined &&
-    config.voicetext.liveEnabled === true &&
-    config.secrets.voicetextServiceToken !== undefined
-  );
+
+function createDiscordClient(config: PlatformConfig): Client {
+  const knowledgeIntents = config.meetingKnowledge?.localFinalReply === true
+    ? [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+    : [];
+  const knowledgePartials = config.meetingKnowledge?.localFinalReply === true
+    ? [Partials.Message]
+    : [];
+  return new Client({
+    intents: [GatewayIntentBits.Guilds, ...knowledgeIntents],
+    partials: knowledgePartials,
+  });
 }
