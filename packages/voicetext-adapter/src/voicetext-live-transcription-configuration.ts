@@ -172,7 +172,7 @@ function validateLiveKeyterms(terms: readonly string[], identity: VoicetextLiveC
   const keyterms = [...new Set(terms.map((value) => value.replace(/\p{White_Space}+/gu, " ").trim()).filter(Boolean))];
   if (keyterms.length > 100 || keyterms.some((term) => term.length > 256 || /[\p{Cc}]/u.test(term) || !term.isWellFormed() || (identity.provider === "deepgram" && new TextEncoder().encode(term).length > 256)) ||
       keyterms.reduce((sum, term) => sum + term.length, 0) > 8_192 ||
-      (identity.provider === "elevenlabs" && (keyterms.length > 50 || keyterms.some((term) => [...term].length > 20)))) {
+      (identity.provider === "elevenlabs" && (keyterms.length > 50 || keyterms.some((term) => Array.from(term).length > 20)))) {
     throw new VoicetextAdapterError("invalid_input", "Live keyterms exceed profile capabilities", false);
   }
   return keyterms;

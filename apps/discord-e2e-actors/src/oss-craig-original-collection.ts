@@ -102,9 +102,8 @@ export function verifyCraigManifestOriginalBytes(input: {
 }) {
   check(input.craigRevision === pinnedCraigRevision, "Unpinned Craig original source");
   const manifest = manifestSource.parse(JSON.parse(input.manifestBytes.toString("utf8")));
+  // The schema pins producerRevision to the same revision checked above.
   const identity = sealedIdentity.parse(JSON.parse(input.manifestBytes.toString("utf8")));
-  check(identity.identityProvenance.producerRevision === input.craigRevision,
-    "Native producer revision mismatch");
   check(new Set(identity.actors.map(actor => actor.actorId)).size === identity.actors.length,
     "Duplicate sealed actor identity");
   check(input.files.length === 6 && new Set(input.files.map(file => file.path)).size === 6,

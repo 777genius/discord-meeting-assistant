@@ -7,7 +7,7 @@ const request = { meetingId: "m", speakerId: "s", idempotencyKey: "k", onTranscr
 it("retains exact batch vocabulary and changes only the live phrase", () => {
   expect(meetingVocabulary).toEqual(["BullMQ", "Craig", "Craig recording", "Dima", "Discord", "Discord thread", "idempotency key", "Iliya", "landing page", "landing slug", "live Pipecat assistant", "Marina", "Mark", "Meeting Platform", "Nazar", "Pipecat", "PostgreSQL", "PostgreSQL pipeline", "QID", "Quanta", "Quanta ID", "Quanta Pages", "Redis", "Redis queue", "referral code", "referral link", "timestamp", "Vlad"]);
   expect(liveMeetingVocabulary).toEqual(meetingVocabulary.map(term => term === "live Pipecat assistant" ? "Pipecat assistant" : term));
-  expect([..."Pipecat assistant"]).toHaveLength(17);
+  expect(Array.from("Pipecat assistant")).toHaveLength(17);
 });
 for (const keyterms of [liveMeetingVocabulary, ["a".repeat(20)], ["😀".repeat(20)], ["  Pipecat   assistant  "], ["a\u0085b"]]) {
   it(`admits normalized scalar vocabulary before connecting: ${keyterms[0]}`, async () => {

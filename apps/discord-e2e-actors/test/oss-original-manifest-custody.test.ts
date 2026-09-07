@@ -60,7 +60,7 @@ it("collects v2 after immediate acknowledged job/journal deletion, without openi
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-it.each(["missing", "extra", "duplicate", "alias", "bytes", "revision", "legacy", "unsealed", "capability", "inconsistent", "roster"])(
+it.each(["missing", "extra", "duplicate", "alias", "bytes", "revision", "producer-revision", "legacy", "unsealed", "capability", "inconsistent", "roster"])(
   "rejects original/provenance mutation %s", mutation => {
     const f = fixture();
     if (mutation === "missing") { f.files.pop(); }
@@ -69,6 +69,7 @@ it.each(["missing", "extra", "duplicate", "alias", "bytes", "revision", "legacy"
     if (mutation === "alias") { f.files[0]!.path = "./" + f.files[0]!.path; }
     if (mutation === "bytes") { f.files[0]!.bytes = Buffer.from("changed"); }
     if (mutation === "revision") { f.craigRevision = "a".repeat(40); }
+    if (mutation === "producer-revision") { f.manifest.identityProvenance.producerRevision = "a".repeat(40); }
     if (mutation === "legacy") { f.manifest.schemaVersion = 1; }
     if (mutation === "unsealed") { f.manifest.identityProvenance.rosterState = "open"; }
     if (mutation === "capability") { f.manifest.identityProvenance.producerCapabilityId = "future"; }
@@ -91,7 +92,7 @@ it.each(["manifest-bytes", "object-version", "object-size", "object-hash", "comp
     if (mutation === "db-hash") { f.database.snapshot.recording.manifestChecksumSha256 = "f".repeat(64); }
     if (mutation === "db-recording") { f.database.snapshot.recording.recordingId = "other"; }
     if (mutation === "roster") { f.completion.actors = [{ actorId: "other", kind: "human" }]; }
-    expect(() => verifyCraigManifestAuthority(f.manifestBytes, f.completion, f.database, f.object)).toThrow();
+    expect(() => { verifyCraigManifestAuthority(f.manifestBytes, f.completion, f.database, f.object); }).toThrow();
   });
 
 it.each(["hardlink", "symlink", "escape", "bound"])("checks runtime source %s before copying", async mutation => {
