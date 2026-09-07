@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fsyncSync, openSync, writeSync } from "node:fs";
+import { close, closeSync, constants, fstatSync, fsync, ftruncate, openSync, write } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { VoicetextServerMessage } from "./protocol.js";
 
@@ -25,7 +25,8 @@ export interface OssNativeEvidenceSink {
 
 /** One exclusive append-only journal per admitted process. A crash or failed write
  * leaves no seal. All attempted sessions (including failed opens) share the journal.
- * Synchronous bounded writes avoid an unbounded queue and preserve receive order.
+ * Enqueue snapshots are bounded; one asynchronous writer preserves receive order.
+ * Integrators must await close() before qualifying or archiving the journal.
  */
 export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
   private readonly fd: number;
@@ -34,10 +35,17 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
   private bytes = 0;
   private failed = false;
   private closed = false;
+  private closing = false;
+  private closeResult?: Promise<void>;
+  private queue: Buffer[] = [];
+  private queuedBytes = 0;
+  private writer: Promise<void> = Promise.resolve();
+  private writing = false;
+  private readonly maximumQueuedBytes: number;
   private readonly pending = new Set<string>();
   public constructor(input: {
     directory: string; project: string; testOnly: boolean; revision: string;
-    maximumBytes?: number;
+    maximumBytes?: number; maximumQueuedBytes?: number;
   }) {
     if (!input.testOnly || input.project !== "vtoss-test-oss-8f49a06-r1" ||
       !/^[a-f0-9]{40}$/u.test(input.revision) || !isAbsolute(input.directory)) {
@@ -46,8 +54,15 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
     this.maximumBytes = input.maximumBytes ?? 256 * 1024 * 1024;
     if (!Number.isSafeInteger(this.maximumBytes) || this.maximumBytes < 1024 ||
       this.maximumBytes > 256 * 1024 * 1024) { throw new Error("Invalid OSS capture bound"); }
+    this.maximumQueuedBytes = input.maximumQueuedBytes ?? 1024 * 1024;
+    if (!Number.isSafeInteger(this.maximumQueuedBytes) || this.maximumQueuedBytes < 1024 ||
+      this.maximumQueuedBytes > 4 * 1024 * 1024) { throw new Error("Invalid OSS queue bound"); }
     this.fd = openSync(join(input.directory, "live-native.jsonl"),
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    if (!fstatSync(this.fd).isFile()) {
+      closeSync(this.fd);
+      throw new Error("OSS capture must be a regular file");
+    }
     this.append({
       type: "capture_start", kind: "oss-native-live-v1",
       project: input.project, revision: input.revision
@@ -55,6 +70,8 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
   }
   private readonly maximumBytes: number;
   public open(): OssSessionEvidence {
+    if (this.closing || this.closed || this.failed) { throw this.captureError(); }
+    if (this.pending.size >= 4096) { this.failed = true; throw this.captureError(); }
     const session = randomUUID();
     this.pending.add(session);
     return {
@@ -64,31 +81,106 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
       }
     };
   }
+  /** Legacy synchronous composition must fail visibly until migrated to await close(). */
   public seal(): void {
-    if (this.closed) { return; }
+    if (!this.closed || this.failed) {
+      throw new Error("OSS native capture requires await close(); archive cannot qualify");
+    }
+  }
+  /** Durable barrier for all rows admitted before this call; does not seal. */
+  public async settle(): Promise<void> {
+    await this.writer;
+    if (this.failed) { throw this.captureError(); }
+  }
+  /** Freeze admission, durably drain, then append and sync the seal and close. */
+  public close(): Promise<void> {
+    if (this.closeResult) { return this.closeResult; }
+    this.closing = true;
     if (this.pending.size > 0) { this.failed = true; }
-    if (!this.failed) { this.append({ type: "capture_seal", priorSha256: this.digest.copy().digest("hex") }); }
-    this.closed = true;
-    closeSync(this.fd);
-    if (this.failed) { throw new Error("OSS native capture failed; archive cannot qualify"); }
+    this.closeResult = this.finishClose();
+    return this.closeResult;
+  }
+  private async finishClose(): Promise<void> {
+    let sealOffset: number | undefined;
+    try {
+      await this.settle();
+      const row = this.snapshot({ type: "capture_seal", priorSha256: this.digest.copy().digest("hex") });
+      sealOffset = this.bytes;
+      await this.writeRow(row);
+      await this.sync();
+      if (this.failed) { throw this.captureError(); }
+    } catch {
+      this.failed = true;
+      if (sealOffset !== undefined) {
+        // Best-effort removal of an uncommitted seal; close() rejection is authoritative.
+        await new Promise<void>((resolve) => { ftruncate(this.fd, sealOffset, () => { resolve(); }); });
+        await this.sync().catch(() => { /* Failure remains sticky. */ });
+      }
+    } finally {
+      await new Promise<void>((resolve) => {
+        close(this.fd, (error) => { if (error) { this.failed = true; } resolve(); });
+      });
+      this.closed = true;
+    }
+    if (this.failed) { throw this.captureError(); }
+  }
+  private captureError(): Error {
+    return new Error("OSS native capture failed; archive cannot qualify");
+  }
+  private snapshot(payload: object): Buffer {
+    const row = Buffer.from(JSON.stringify({ index: ++this.sequence, atMs: Date.now(), ...payload }) + "\n");
+    if (row.length > 128 * 1024 || this.bytes + row.length > this.maximumBytes) {
+      throw this.captureError();
+    }
+    return row;
   }
   private append(payload: object): void {
-    if (this.failed || this.closed) { this.failed = true; return; }
+    if (this.failed || this.closed || this.closing) { this.failed = true; return; }
     try {
-      const row = Buffer.from(JSON.stringify({ index: ++this.sequence, atMs: Date.now(), ...payload }) + "\n");
-      if (row.length > 128 * 1024 || this.bytes + row.length > this.maximumBytes) {
-        throw new Error("OSS capture bound exhausted");
-      }
-      let written = 0;
-      while (written < row.length) {
-        const count = writeSync(this.fd, row, written, row.length - written);
-        if (count === 0) { throw new Error("OSS capture short write"); }
-        written += count;
-      }
-      fsyncSync(this.fd);
+      const row = this.snapshot(payload);
+      if (this.queuedBytes + row.length > this.maximumQueuedBytes) { throw this.captureError(); }
       this.bytes += row.length;
+      this.queuedBytes += row.length;
       this.digest.update(row);
+      this.queue.push(row);
+      if (!this.writing) {
+        this.writing = true;
+        this.writer = this.drain();
+      }
     } catch { this.failed = true; }
+  }
+  private async drain(): Promise<void> {
+    try {
+      while (this.queue.length > 0 && !this.failed) {
+        const batch = this.queue;
+        this.queue = [];
+        for (const row of batch) { await this.writeRow(row); }
+        await this.sync();
+        for (const row of batch) { this.queuedBytes -= row.length; }
+      }
+    } catch { this.failed = true; }
+    finally {
+      this.queue = [];
+      this.queuedBytes = 0;
+      this.writing = false;
+    }
+  }
+  private async writeRow(row: Buffer): Promise<void> {
+    let offset = 0;
+    while (offset < row.length) {
+      const count = await new Promise<number>((resolve, reject) => {
+        write(this.fd, row, offset, row.length - offset, null, (error, written) => {
+          if (error) { reject(error); } else { resolve(written); }
+        });
+      });
+      if (count <= 0 || count > row.length - offset) { throw this.captureError(); }
+      offset += count;
+    }
+  }
+  private sync(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      fsync(this.fd, (error) => { if (error) { reject(error); } else { resolve(); } });
+    });
   }
 }
 

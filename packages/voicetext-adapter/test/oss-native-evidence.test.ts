@@ -19,7 +19,7 @@ function journal(maximumBytes?: number) {
   };
 }
 afterEach(() => { for (const dir of directories.splice(0)) { rmSync(dir, { recursive: true }); } });
-describe("native OSS session journal", () => {
+describe("native OSS session journal", async () => {
   it("retains a failed actual connector attempt without retaining its secrets", async () => {
     const { directory, sink } = journal();
     const adapter = new VoicetextLiveTranscriptionAdapter({
@@ -29,7 +29,7 @@ describe("native OSS session journal", () => {
       meetingId: "meeting-1", speakerId: "speaker-1",
       idempotencyKey: "session-1", onTranscript: () => { }
     })).rejects.toThrow();
-    sink.seal();
+    await sink.close();
     const text = readFileSync(join(directory, "live-native.jsonl"), "utf8");
     expect(text).not.toMatch(/private-token|secret.example|credential/u);
     const rows = text.trimEnd().split("\n").map((line) => JSON.parse(line) as { event?: { type: string }; type?: string; session?: string; priorSha256?: string });
@@ -40,24 +40,24 @@ describe("native OSS session journal", () => {
     expect(rows[3]!.priorSha256).toBe(createHash("sha256").update(
       text.slice(0, text.lastIndexOf('{"index":4'))).digest("hex"));
   });
-  it("never seals a truncated capture and never overwrites the journal", () => {
+  it("never seals a truncated capture and never overwrites the journal", async () => {
     const { directory, sink } = journal(1024);
     const session = sink.open();
     for (let index = 0; index < 100; index++) { session.record({ type: "failure" }); }
-    expect(() => { sink.seal(); }).toThrow("capture failed");
+    await expect(sink.close()).rejects.toThrow("capture failed");
     expect(readFileSync(join(directory, "live-native.jsonl"), "utf8")).not.toContain("capture_seal");
     expect(() => new OssNativeEvidenceJournal({
       directory, project: "vtoss-test-oss-8f49a06-r1",
       revision: "a".repeat(40), testOnly: true
     })).toThrow();
   });
-  it("does not seal an open session", () => {
+  it("does not seal an open session", async () => {
     const { directory, sink } = journal();
     sink.open().record({
       type: "opening", meetingId: "meeting", speakerId: "speaker",
       clientSessionId: "00000000-0000-4000-8000-000000000001"
     });
-    expect(() => { sink.seal(); }).toThrow("capture failed");
+    await expect(sink.close()).rejects.toThrow("capture failed");
     expect(readFileSync(join(directory, "live-native.jsonl"), "utf8")).not.toContain("capture_seal");
   });
   it("drops provider error bodies and codes", () => {
