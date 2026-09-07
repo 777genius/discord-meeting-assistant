@@ -98,20 +98,42 @@ describe("VoiceText gateway deployment overlay", () => {
   });
 
   it("documents bounded language qualification without claiming live acceptance", async () => {
-    const guide = await readDeploymentFile("voicetext-gateway.md");
+    const guide = (await readDeploymentFile("voicetext-gateway.md")).replace(/\s+/gu, " ");
 
-    expect(guide).toMatch(/languages depend on the selected provider and model/iu);
-    expect(guide).toMatch(/No English or Russian provider flow is qualified/iu);
-    expect(guide).toMatch(/no retained EN\/RU acoustic-quality campaign/iu);
+    expect(guide).toContain("Native campaign `8de7b998-a09f-4d9a-9c39-01dc33828eef` on that gateway retained:");
+    for (const profile of [
+      "`deepgram-nova-3` batch | Deepgram `nova-3`",
+      "`deepgram-nova-3` live | Deepgram `nova-3`",
+      "`elevenlabs-scribe-v2` batch | ElevenLabs `scribe_v2`",
+      "`elevenlabs-scribe-v2-realtime` live | ElevenLabs `scribe_v2_realtime`",
+    ]) {
+      expect(guide).toContain(`| ${profile} | \`multi\` |`);
+    }
+    expect(guide).toContain("artifacts/provider-8de7b998-summary-r1/summary.json");
+    expect(guide).toContain("artifacts/provider-8de7b998-retained-r1/manifest.json");
+    expect(guide).toMatch(/narrow provider-fixture qualification on one 26-second synthetic RU\/EN fixture/iu);
+    expect(guide).toMatch(/do not qualify broad language\/acoustic coverage, all mixed combinations, or other revisions/iu);
+    expect(guide).toMatch(/Recognition remains provider\/model-dependent/iu);
+    expect(guide).toMatch(/`multi` is not a language-coverage guarantee/iu);
+    expect(guide).toMatch(/Ukrainian may be selected for presentation of already accepted text, but is not a qualified STT language/iu);
+    expect(guide).toContain("Native thresholds remain WER <= 0.35 and CER <= 0.25; Discord thresholds remain WER <= 0.35 and CER <= 0.20.");
+    expect(guide).toMatch(/Native results do not establish the stricter Discord gate/iu);
+    expect(guide).toMatch(/Real Discord acceptance remains PENDING/u);
     expect(guide).toMatch(/acceptance; that remains pending/iu);
   });
 
   it("separates output presentation from provider-dependent recognition", async () => {
-    const readme = await readFile(new URL("README.md", repositoryRoot), "utf8");
+    const readme = (await readFile(new URL("README.md", repositoryRoot), "utf8")).replace(/\s+/gu, " ");
 
     expect(readme).toMatch(/Output presentation[\s\S]*English, Russian, or Ukrainian/iu);
     expect(readme).toMatch(/Speech recognition[\s\S]*provider and model/iu);
-    expect(readme).toMatch(/real acoustic qualification[\s\S]*requires retained exact-revision receipts that bind the provider and model/iu);
+    expect(readme).toMatch(/Contract tests establish contract behavior only/iu);
+    expect(readme).toMatch(/retained native campaign below binds narrow provider-fixture results to the gateway revision/iu);
+    expect(readme).toContain("infra/deployment/voicetext-gateway.md#implemented-profile-mapping-and-qualification-status");
+    expect(readme).toMatch(/qualifies four provider\/mode profiles on one 26-second synthetic RU\/EN fixture/iu);
+    expect(readme).toMatch(/does not qualify broad language\/acoustic coverage or all mixed combinations/iu);
+    expect(readme).toMatch(/Ukrainian is not voice-qualified/u);
+    expect(readme).toMatch(/Real Discord campaign acceptance remains PENDING/u);
     expect(readme).toMatch(/domain\/application ports are provider-agnostic/iu);
     expect(readme).toMatch(/new public\s+V1 profile[\s\S]*Discord consumer/iu);
   });
