@@ -139,7 +139,7 @@ function synchronization() {
     wait(operation: Promise<void>): Promise<void> {
       return new Promise<void>((resolve, reject) => {
         const rejected = (error: unknown) => { pending.delete(rejected); reject(error); };
-        void operation.then(() => { pending.delete(rejected); return resolve(); }, fail);
+        void operation.then(() => { pending.delete(rejected); resolve(); return; }, fail);
         if (primary) { rejected(primary.error); } else { pending.add(rejected); }
       });
     },
@@ -447,7 +447,8 @@ it("unblocks every barrier on receipt or finish failure and tears down with the 
     const closed: string[] = [];
     const operation = receipt.promise.then(() => {
       if (source === "marked assertion") { throw primary; }
-      return completions.arrive();
+      completions.arrive();
+      return;
     });
     waits.observe(operation);
     waits.observe(terminal.promise);
@@ -507,9 +508,9 @@ it("latches pre-receipt Gateway assertions for pending and future barriers befor
     // rejection before any receipt exists. The Gateway itself must latch it.
     const [send] = await Promise.allSettled([socket.sendBinary(
       source === "payload" ? Uint8Array.of(0) : Uint8Array.of(0xf8, 0xff, 0xfe))]);
-    expect(send!.status).toBe("rejected");
-    if (send!.status !== "rejected") { throw new Error("expected injected Gateway assertion"); }
-    const primary: unknown = send!.reason;
+    expect(send.status).toBe("rejected");
+    if (send.status !== "rejected") { throw new Error("expected injected Gateway assertion"); }
+    const primary: unknown = send.reason;
     expect(primary).toBeInstanceOf(Error);
     for (const outcome of [...await outcomes, ...await bodyOutcome]) {
       expect(outcome).toEqual({ status: "rejected", reason: primary });
