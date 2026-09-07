@@ -172,7 +172,7 @@ it.each([false, true])("never publishes after held close callback: EIO=%s", asyn
   control.closeReleases.splice(0).forEach((release) => { release(); });
   await expect(closing).rejects.toThrow("cannot qualify");
   expect(published()).toBe(false);
-  expect(() => sink.seal()).toThrow();
+  expect(() => { sink.seal(); }).toThrow();
 });
 it("keeps crash-visible pending seal unpublished when fsync and rollback fail", async () => {
   const { sink, published, staging } = fixture();
@@ -232,7 +232,7 @@ it("abort before close is sticky and repeated close cannot publish", async () =>
   expect(sink.close()).toBe(closing);
   await expect(closing).rejects.toThrow("cannot qualify");
   expect(published()).toBe(false);
-  expect(() => sink.seal()).toThrow();
+  expect(() => { sink.seal(); }).toThrow();
 });
 
 it("abort returns immediately while the row writer is stalled and stays failed after release", async () => {
@@ -241,7 +241,9 @@ it("abort returns immediately while the row writer is stalled and stays failed a
   sink.open().record({ type: "success" });
   await vi.waitFor(() => { expect(control.releases).toHaveLength(1); });
   const closing = sink.close();
-  expect(sink.abort()).toBeUndefined();
+  const abort = vi.spyOn(sink, "abort");
+  sink.abort();
+  expect(abort.mock.results[0]?.value).toBeUndefined();
   expect(published()).toBe(false);
   control.hold = false;
   control.releases.splice(0).forEach((release) => { release(); });

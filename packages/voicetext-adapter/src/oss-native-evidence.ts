@@ -129,7 +129,7 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
       });
       this.closed = true;
     }
-    if (this.failed) { throw this.captureError(); }
+    this.assertNotFailed();
     // No asynchronous gap after the final sticky-failure check. The staging
     // inode has completed data/seal fsync AND descriptor close before it can
     // acquire the sole name trusted by final collection. No rollback is needed.
@@ -140,10 +140,13 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
     // cleanup failure can turn successful publication into a rejected close.
     try {
       beforePublish?.();
-      if (this.failed) { throw this.captureError(); }
+      this.assertNotFailed();
       linkSync(this.stagingPath, this.publishedPath);
     }
     catch { this.failed = true; throw this.captureError(); }
+  }
+  private assertNotFailed(): void {
+    if (this.failed) { throw this.captureError(); }
   }
   private captureError(): Error {
     return new Error("OSS native capture failed; archive cannot qualify");
