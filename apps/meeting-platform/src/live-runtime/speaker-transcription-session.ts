@@ -101,9 +101,7 @@ export class SpeakerTranscriptionSession {
     const admission = async (): Promise<void> => {
       try {
         if (recovery !== null) { await this.untilCancelled(recovery); }
-        for (const packet of packets) {
-          await this.admit(packet, deadlineMs);
-        }
+        for (const packet of packets) { await this.admit(packet, deadlineMs); }
       } finally {
         this.packetFlow.releaseAdmission(packets.length);
       }
@@ -220,9 +218,7 @@ export class SpeakerTranscriptionSession {
     } catch (error) {
       this.logAdmissionFailure(error);
     } finally {
-      if (!deliveryOwnsReservation) {
-        this.dependencies.packetAdmission.release(1);
-      }
+      if (!deliveryOwnsReservation) { this.dependencies.packetAdmission.release(1); }
     }
   }
 
@@ -443,7 +439,5 @@ export class SpeakerTranscriptionSession {
     });
   }
 
-  private logFields(): Readonly<Record<string, unknown>> {
-    return { meetingId: this.dependencies.meetingId, speakerId: this.dependencies.speakerId };
-  }
+  private logFields(): Readonly<Record<string, unknown>> { return { meetingId: this.dependencies.meetingId, speakerId: this.dependencies.speakerId }; }
 }
