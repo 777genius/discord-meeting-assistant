@@ -76,10 +76,11 @@ export class LiveSession implements VoicetextLiveSession {
         this.options.identity,
       );
       this.evidence?.record(ossReceivedEvidence(message));
-      if (message.type === "ready") {
-        break;
-      }
+      if (message.type === "ready") { break; }
       if (message.type === "error") {
+        if (message.code === "INVALID_CONFIG") {
+          throw new VoicetextAdapterError("live_admission_rejected", "Live configuration rejected before provider opening", false);
+        }
         throw new VoicetextAdapterError("provider_error", message.message, true);
       }
       if (message.type !== "usage_update" && message.type !== "partial") {

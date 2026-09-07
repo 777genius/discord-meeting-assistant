@@ -156,6 +156,14 @@ interface OpenLiveTranscriptionSession {
   readonly speakerId: string;
 }
 
+/** Proven rejection before any audio delivery; scoped to the runtime configuration. */
+export class LiveTranscriptionAdmissionRejected extends Error {
+  public constructor() {
+    super("Live transcription configuration admission rejected");
+    this.name = "LiveTranscriptionAdmissionRejected";
+  }
+}
+
 export interface LiveTranscriptionPort {
   openSession(
     request: OpenLiveTranscriptionSession,

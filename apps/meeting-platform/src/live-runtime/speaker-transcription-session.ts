@@ -1,3 +1,4 @@
+import { LiveTranscriptionAdmissionRejected } from "./contracts.js";
 import { LiveSessionAdmission, GlobalPacketFlowControl, SourceTimelinePacer,
   SpeakerPacketFlowControl } from "./live-packet-flow-control.js";
 import type { LivePacketInspector, LiveRuntimeClock, LiveRuntimeLogger,
@@ -9,6 +10,7 @@ import { SpeakerTranscriptionProviderSession } from "./speaker-transcription-pro
 const maximumLivePacketDeliveryAttempts = 2;
 
 export interface SpeakerTranscriptionSessionDependencies {
+  readonly admissionRejection?: { rejected: boolean };
   readonly clock: LiveRuntimeClock;
   readonly isMeetingFinishing: () => boolean;
   readonly ledger: LivePacketDeliveryLedger;
@@ -32,6 +34,7 @@ export interface SpeakerTranscriptionSessionDependencies {
 export class SpeakerTranscriptionSession {
   private admissionChain: Promise<void> = Promise.resolve();
   private admissionClosed = false;
+  private readonly admissionRejection: { rejected: boolean };
   private deliveryFailed = false;
   private recoveryBlocked = false;
   private recovery: Promise<void> | null = null;
@@ -46,6 +49,7 @@ export class SpeakerTranscriptionSession {
   public constructor(
     private readonly dependencies: SpeakerTranscriptionSessionDependencies,
   ) {
+    this.admissionRejection = dependencies.admissionRejection ?? { rejected: false };
     this.packetFlow = new SpeakerPacketFlowControl(
       dependencies.maximumQueuedPackets,
       dependencies.clock,
@@ -66,7 +70,7 @@ export class SpeakerTranscriptionSession {
     packets: readonly LiveVoicePacket[],
     deadlineMs: number,
   ): Promise<void> {
-    if (this.admissionClosed || this.recoveryBlocked) {return;}
+    if (this.admissionClosed || this.recoveryBlocked || this.admissionRejection.rejected) {return;}
     // Keep one global slot available for the recovery that deferred live work awaits.
     const recoveryHeadroom = this.recovery === null ? 0 : 1;
     const globallyReserved = await this.dependencies.packetAdmission.reserve(
@@ -139,13 +143,13 @@ export class SpeakerTranscriptionSession {
   }
 
   // Read current mutable state across awaits; earlier checks cannot fence later work.
-  private isAdmissionClosed(): boolean { return this.admissionClosed; }
+  private isAdmissionClosed(): boolean { return this.admissionClosed || this.admissionRejection.rejected; }
 
   private hasDeliveryFailed(): boolean { return this.deliveryFailed; }
 
   private isDeliveryCancelled(): boolean { return this.packetFlow.signal.aborted; }
 
-  private isPacketDeliveryBlocked(): boolean { return this.isDeliveryCancelled() || this.recoveryBlocked; }
+  private isPacketDeliveryBlocked(): boolean { return this.isDeliveryCancelled() || this.recoveryBlocked || this.admissionRejection.rejected; }
 
   private async drainRecovery(packets: readonly LiveVoicePacket[]): Promise<void> {
     this.recoveryBlocked = false;
@@ -237,7 +241,7 @@ export class SpeakerTranscriptionSession {
 
   private async send(packet: LiveVoicePacket): Promise<void> {
     const packetId = livePacketIdentity(packet);
-    if (this.isSuppressed(packet, packetId)) { return; }
+    if (this.admissionRejection.rejected || this.isSuppressed(packet, packetId)) { return; }
     const opus = Buffer.from(packet.payloadBase64, "base64");
     const durationSamples48Khz = this.dependencies.packetInspector
       .durationSamples48Khz(opus);
@@ -264,6 +268,7 @@ export class SpeakerTranscriptionSession {
     readonly packetId: string;
   }): Promise<void> {
     for (let attempt = 1; attempt <= maximumLivePacketDeliveryAttempts; attempt += 1) {
+      if (this.admissionRejection.rejected) { return; }
       let sendStartedAtMs: number;
       try {
         const session = await this.providerSession.open(this.packetFlow.signal);
@@ -277,6 +282,15 @@ export class SpeakerTranscriptionSession {
         });
       } catch (error) {
         this.providerSession.terminate();
+        if (error instanceof LiveTranscriptionAdmissionRejected) {
+          if (!this.admissionRejection.rejected) {
+            this.admissionRejection.rejected = true;
+            this.dependencies.logger.warn("Derived live transcription degraded: configuration admission rejected", {
+              ...this.logFields(), errorCode: "LIVE_TRANSCRIPTION_ADMISSION_REJECTED",
+            });
+          }
+          return;
+        }
         if (this.isDeliveryCancelled()) { return; }
         if (attempt === maximumLivePacketDeliveryAttempts) {
           this.rememberRetryablePacket(input.packet, input.packetId);
@@ -306,22 +320,13 @@ export class SpeakerTranscriptionSession {
       sendStartedAtMs,
     );
     const recovered = this.dependencies.ledger.markDelivered(input.packetId);
-    this.lastRelativeTimeMs = Math.max(
-      this.lastRelativeTimeMs ?? input.packet.relativeTimeMs,
-      input.packet.relativeTimeMs,
-    );
+    this.lastRelativeTimeMs = Math.max(this.lastRelativeTimeMs ?? input.packet.relativeTimeMs, input.packet.relativeTimeMs);
     if (recovered) {
-      this.dependencies.logger.info(
-        "Derived live transcription packet recovered after delivery failure",
-        this.logFields(),
-      );
+      this.dependencies.logger.info("Derived live transcription packet recovered after delivery failure", this.logFields());
     }
     if (this.backpressureDegraded) {
       this.backpressureDegraded = false;
-      this.dependencies.logger.info(
-        "Derived live transcription recovered from backpressure",
-        this.logFields(),
-      );
+      this.dependencies.logger.info("Derived live transcription recovered from backpressure", this.logFields());
     }
     await this.dependencies.markLivePacketDelivered?.(input.packetId);
   }
@@ -330,12 +335,7 @@ export class SpeakerTranscriptionSession {
     const identity = packetId ?? livePacketIdentity(packet);
     if (this.dependencies.ledger.isDelivered(identity)) { return true; }
     if (this.dependencies.ledger.isRetryable(identity)) { return false; }
-    if (
-      this.lastRelativeTimeMs === null ||
-      packet.relativeTimeMs >= this.lastRelativeTimeMs
-    ) {
-      return false;
-    }
+    if (this.lastRelativeTimeMs === null || packet.relativeTimeMs >= this.lastRelativeTimeMs) { return false; }
     this.dependencies.logger.warn("Out-of-order live packet skipped", this.logFields());
     return true;
   }

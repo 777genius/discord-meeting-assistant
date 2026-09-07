@@ -1,3 +1,4 @@
+import { LiveTranscriptionAdmissionRejected, type LiveTranscriptionPort } from "../live-runtime/contracts.js";
 import { hasLiveTranscriptionConfiguration, createOssNativeEvidence, type OssPlatformEvidence } from "./oss-native-evidence.js";
 import type { OssNativeEvidenceSink } from "@discord-meeting/voicetext-adapter";
 import { randomUUID } from "node:crypto";
@@ -31,10 +32,8 @@ import {
 } from "@discord-meeting/postgres-adapter";
 import type { Pool } from "pg";
 import { GrpcPipecatConversationRuntime } from "@discord-meeting/pipecat-runtime-adapter";
-import {
-  type SubscriptionRuntimeTransportPort,
-} from "@discord-meeting/subscription-runtime-adapter";
-import { VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-adapter";
+import type { SubscriptionRuntimeTransportPort } from "@discord-meeting/subscription-runtime-adapter";
+import { VoicetextAdapterError, VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-adapter";
 import { Client, GatewayIntentBits, Partials } from "discord.js";
 
 import { FileConversationFarewellCueRegistry } from "../adapters/outbound/file-conversation-farewell-cue-registry.js";
@@ -48,7 +47,7 @@ import type { PlatformLiveFinalizedMemoryRuntime } from "./live-finalized-memory
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
-import { meetingVocabulary } from "./meeting-vocabulary.js";
+import { liveMeetingVocabulary } from "./meeting-vocabulary.js";
 import {
   createFarewellClassifier,
   createLiveIncrementalSummaryPort,
@@ -380,14 +379,14 @@ function createLiveRuntime(input: {
     },
     projector,
     summarizer,
-    transcriber: new VoicetextLiveTranscriptionAdapter({
+    transcriber: mapLiveAdmission(new VoicetextLiveTranscriptionAdapter({
       ...(input.evidenceSink === undefined ? {} : { evidenceSink: input.evidenceSink }),
       endpoint: input.config.voicetext.webSocketUrl,
-      keyterms: meetingVocabulary,
+      keyterms: liveMeetingVocabulary,
       language: "multi",
       profile: input.config.voicetext.liveProfile,
       token: input.config.secrets.voicetextServiceToken,
-    }),
+    })),
   });
 }
 
@@ -403,4 +402,13 @@ function createDiscordClient(config: PlatformConfig): Client {
     intents: [GatewayIntentBits.Guilds, ...knowledgeIntents],
     partials: knowledgePartials,
   });
+}
+
+function mapLiveAdmission(adapter: VoicetextLiveTranscriptionAdapter): LiveTranscriptionPort {
+  return { openSession: async (request) => {
+    try { return await adapter.openSession(request); } catch (error) {
+      if (error instanceof VoicetextAdapterError && error.code === "live_admission_rejected") { throw new LiveTranscriptionAdmissionRejected(); }
+      throw error;
+    }
+  } };
 }

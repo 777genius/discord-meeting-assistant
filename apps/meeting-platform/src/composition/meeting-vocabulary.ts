@@ -28,3 +28,8 @@ export const meetingVocabulary = [
   "timestamp",
   "Vlad",
 ] as const;
+
+// Batch and summary retain their original request content and identity.
+export const liveMeetingVocabulary = meetingVocabulary.map((term) =>
+  term === "live Pipecat assistant" ? "Pipecat assistant" : term,
+);

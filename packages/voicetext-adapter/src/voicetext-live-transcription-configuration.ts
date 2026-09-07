@@ -74,6 +74,15 @@ export interface ValidatedVoicetextLiveTranscriptionOptions {
 export function validateVoicetextLiveTranscriptionOptions(
   options: VoicetextLiveTranscriptionOptions,
 ): ValidatedVoicetextLiveTranscriptionOptions {
+  try {
+    return validateOptions(options);
+  } catch (error) {
+    if (!(error instanceof VoicetextAdapterError) && !(error instanceof TypeError)) { throw error; }
+    throw new VoicetextAdapterError("live_admission_rejected", "Live configuration rejected before connection", false);
+  }
+}
+
+function validateOptions(options: VoicetextLiveTranscriptionOptions): ValidatedVoicetextLiveTranscriptionOptions {
   const endpoint = new URL(options.endpoint);
   if (endpoint.protocol !== "wss:" && endpoint.protocol !== "ws:") {
     throw new VoicetextAdapterError("invalid_input", "Voicetext endpoint must use WebSocket", false);
@@ -84,6 +93,12 @@ export function validateVoicetextLiveTranscriptionOptions(
   }
   const language = options.language?.trim();
   const identity = voicetextLiveContractIdentity(options.profile ?? "deepgram-nova-3");
+  const resolvedLanguage = language === undefined || language.length === 0 ? "ru" : language;
+  if (!/^[a-zA-Z0-9-]{1,10}$/u.test(resolvedLanguage) ||
+      (identity.provider === "deepgram" && (resolvedLanguage.startsWith("-") || resolvedLanguage.endsWith("-")))) {
+    throw new VoicetextAdapterError("invalid_input", "Live language exceeds profile capabilities", false);
+  }
+  const keyterms = validateLiveKeyterms(options.keyterms ?? [], identity);
   return {
     ...(options.evidenceSink === undefined ? {} : { evidenceSink: options.evidenceSink }),
     audioAckTimeoutMs: boundedLiveInteger(options.audioAckTimeoutMs, 10_000, 100, 120_000),
@@ -91,8 +106,8 @@ export function validateVoicetextLiveTranscriptionOptions(
     endpoint,
     finalizeTimeoutMs: boundedLiveInteger(options.finalizeTimeoutMs, 30_000, 100, 300_000),
     handshakeTimeoutMs: boundedLiveInteger(options.handshakeTimeoutMs, 10_000, 100, 120_000),
-    keyterms: [...new Set((options.keyterms ?? []).map((value) => value.trim()).filter(Boolean))],
-    language: language === undefined || language.length === 0 ? "ru" : language,
+    keyterms,
+    language: resolvedLanguage,
     maxInboundFrameBytes: boundedLiveInteger(
       options.maxInboundFrameBytes,
       256 * 1_024,
@@ -151,4 +166,14 @@ function boundedLiveInteger(
     throw new VoicetextAdapterError("invalid_input", "Live option is outside its bound", false);
   }
   return candidate;
+}
+
+function validateLiveKeyterms(terms: readonly string[], identity: VoicetextLiveContractIdentity): readonly string[] {
+  const keyterms = [...new Set(terms.map((value) => value.replace(/\p{White_Space}+/gu, " ").trim()).filter(Boolean))];
+  if (keyterms.length > 100 || keyterms.some((term) => term.length > 256 || /[\p{Cc}]/u.test(term) || !term.isWellFormed() || (identity.provider === "deepgram" && new TextEncoder().encode(term).length > 256)) ||
+      keyterms.reduce((sum, term) => sum + term.length, 0) > 8_192 ||
+      (identity.provider === "elevenlabs" && (keyterms.length > 50 || keyterms.some((term) => [...term].length > 20)))) {
+    throw new VoicetextAdapterError("invalid_input", "Live keyterms exceed profile capabilities", false);
+  }
+  return keyterms;
 }

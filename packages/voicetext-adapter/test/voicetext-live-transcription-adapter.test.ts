@@ -229,7 +229,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
       endpoint: "wss://api.voicetext.test/api/v1/transcribe/stream",
       profile: "elevenlabs-scribe-v2-realtime-typo" as VoicetextLiveProfile,
       token: "x".repeat(16),
-    })).toThrow("Voicetext live profile is unsupported");
+    })).toThrow("Live configuration rejected before connection");
   });
 
   it.each([
@@ -824,4 +824,29 @@ it("captures actual packet hashes, accepted order and every normalized server re
   expect(events.filter((event) => event.type === "audio_accepted")).toEqual([{ type: "audio_accepted", seq: 1 }]);
   expect(events.at(-1)).toEqual({ type: "success" });
   expect(JSON.stringify(events)).not.toContain("offline-machine-token");
+});
+
+for (const code of ["INVALID_CONFIG", "PROVIDER_UNAVAILABLE", "OTHER"]) {
+  it(`classifies only proven opening rejection: ${code}`, async () => {
+    const socket = new QueueSocket();
+    socket.sendText = async () => { socket.enqueue({ type: "error", code, message: "synthetic" }); };
+    const connect = vi.fn(async () => socket);
+    const admissionAdapter = new VoicetextLiveTranscriptionAdapter({ endpoint: "ws://localhost", token: "synthetic-token-123456" }, { connect });
+    await expect(admissionAdapter.openSession({ meetingId: "m", speakerId: "s", idempotencyKey: "k", onTranscript: () => {} }))
+      .rejects.toMatchObject({ code: code === "INVALID_CONFIG" ? "live_admission_rejected" : "provider_error",
+        retryable: code !== "INVALID_CONFIG" });
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(socket.binary).toEqual([]);
+    expect(socket.terminated).toBe(true);
+  });
+}
+
+it("does not classify INVALID_CONFIG after ready as permanent admission", async () => {
+  const socket = new QueueSocket();
+  socket.sendBinary = async () => { socket.enqueue({ type: "error", code: "INVALID_CONFIG", message: "synthetic uncertain failure" }); };
+  const admissionAdapter = new VoicetextLiveTranscriptionAdapter({ endpoint: "ws://localhost", token: "synthetic-token-123456" }, { connect: async () => socket });
+  const session = await admissionAdapter.openSession({ meetingId: "m", speakerId: "s", idempotencyKey: "k", onTranscript: () => {} });
+  await expect(session.sendPacket({ opus: new Uint8Array([0xf8, 0xff, 0xfe]), durationSamples48Khz: 960, packetId: "p", relativeTimeMs: 0 }))
+    .rejects.toMatchObject({ code: "provider_error", retryable: true });
+  session.terminate();
 });

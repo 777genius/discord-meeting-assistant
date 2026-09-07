@@ -6,6 +6,7 @@ export type VoicetextAdapterErrorCode =
   | "artifact_read_failed"
   | "cancelled"
   | "idempotency_conflict"
+  | "live_admission_rejected"
   | "invalid_input"
   | "invalid_provider_response"
   | "limit_exceeded"
