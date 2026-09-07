@@ -187,7 +187,14 @@ export class SpeakerTranscriptionSession {
 
   public finish(): Promise<void> {
     this.beginFinish();
-    this.finishing ??= this.finishAdmittedPackets();
+    if (this.finishing === null) {
+      const finishing = this.finishAdmittedPackets().catch((error: unknown) => {
+        // Retry settlement after a pending receipt completes; admission stays closed.
+        if (this.finishing === finishing) { this.finishing = null; }
+        throw error;
+      });
+      this.finishing = finishing;
+    }
     return this.finishing;
   }
 

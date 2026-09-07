@@ -309,3 +309,59 @@ it.each(["healthy", "stalled"] as const)("joins idle finalize with its original 
   expect(p.terminate).toHaveBeenCalledTimes(mode === "healthy" ? 0 : 1);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+
+it("retries failed settlement after a stalled receipt without repeating provider effects", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const receipt = Promise.withResolvers<void>();
+  const receiptStarted = Promise.withResolvers<void>();
+  const sendPacket = vi.fn(async () => "accepted" as const);
+  const finalize = vi.fn(async () => {});
+  const terminate = vi.fn();
+  const openSession = vi.fn(async () => ({ sendPacket, finalize, terminate }));
+  const markLivePacketDelivered = vi.fn(async () => {
+    receiptStarted.resolve();
+    await receipt.promise;
+  });
+  const speaker = new SpeakerTranscriptionSession({
+    clock: systemLiveRuntimeClock, timer: systemLiveRuntimeTimer,
+    isMeetingFinishing: () => false, ledger: new LivePacketDeliveryLedger(), logger,
+    maximumQueuedPackets: 2, meetingId: "meeting", onTranscript: () => {},
+    packetAdmission: new GlobalPacketFlowControl(2), packetBackpressureTimeoutMs: 2_000,
+    packetInspector: { durationSamples48Khz: () => 960 }, sessionAdmission: new LiveSessionAdmission(1),
+    speakerId: "speaker", speakerIdleFinalizeMs: 750, startedAtMs: 0,
+    markLivePacketDelivered, transcriber: { openSession },
+  });
+  const packet = { ...packets().packets[0]!, relativeTimeMs: 0 };
+  await speaker.accept([packet], 2_000);
+  await receiptStarted.promise;
+  const first = speaker.finish();
+  expect(speaker.finish()).toBe(first);
+  let settled = false;
+  const failure = first.catch((error: unknown) => { settled = true; return error; });
+  await vi.advanceTimersByTimeAsync(1_999);
+  expect(settled).toBe(false);
+  expect(terminate).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await failure).toEqual(new Error("Live packet durable receipt is still pending"));
+  expect(terminate).toHaveBeenCalledTimes(1);
+  const stillPending = speaker.finish();
+  expect(stillPending).not.toBe(first);
+  expect(speaker.finish()).toBe(stillPending);
+  await expect(stillPending).rejects.toThrow("Live packet durable receipt is still pending");
+  receipt.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  const retry = speaker.finish();
+  expect(speaker.finish()).toBe(retry);
+  await expect(retry).resolves.toBeUndefined();
+  expect(speaker.finish()).toBe(retry);
+  await speaker.accept([{ ...packet, sequenceNumber: 2, relativeTimeMs: 20 }], 4_000);
+  await speaker.recover([packet]);
+  expect(openSession).toHaveBeenCalledTimes(1);
+  expect(sendPacket).toHaveBeenCalledTimes(1);
+  expect(markLivePacketDelivered).toHaveBeenCalledTimes(1);
+  expect(finalize).not.toHaveBeenCalled();
+  expect(terminate).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
