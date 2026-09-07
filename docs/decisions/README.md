@@ -64,6 +64,8 @@
 - [ADR-0065: Private quality budget-ledger lock adapter](0065-private-quality-budget-ledger-lock-adapter.md)
 - [ADR-0066: Bind qualification corpus cardinality to an authoritative generation](0066-authoritative-qualification-corpus-generation.md)
 
+- [ADR-0069: Isolated real40 memory diagnostic](0069-isolated-real40-memory-diagnostic.md)
+
 ## Superseded
 
 - [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)

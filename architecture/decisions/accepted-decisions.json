@@ -316,6 +316,11 @@
       "id": "ADR-0066",
       "path": "docs/decisions/0066-authoritative-qualification-corpus-generation.md",
       "immutableDigest": "sha256:cb0c976cde17a75ba7420c05be260df23af7ae6b4646511c9049f8e631c1957d"
+    },
+    {
+      "id": "ADR-0069",
+      "path": "docs/decisions/0069-isolated-real40-memory-diagnostic.md",
+      "immutableDigest": "sha256:5a1f25d9b8adcec75a208956a9977c63512d91b3ebe1258aaef6c442138c2f66"
     }
   ]
 }

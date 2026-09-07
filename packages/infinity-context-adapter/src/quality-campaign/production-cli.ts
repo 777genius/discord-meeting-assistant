@@ -1,3 +1,5 @@
+import { runDiagnosticScoreCli } from "./diagnostic-score-cli.js";
+import { runDiagnosticCli } from "./diagnostic-run.js";
 import { exactRecord } from "./canonical.js";
 import { createOperatorSafeReceipt, runQualityCampaignOperatorCli, type OperatorExit } from
   "./operator-cli.js";
@@ -12,6 +14,8 @@ export async function runQualityCampaignProductionCli(input: { readonly argv: re
   readonly corpusAdmissionClock?: CorpusAdmissionClock;
   readonly ports?: QualityCampaignProductionPorts;
   readonly writeSafeLine?: (line: string) => void }): Promise<OperatorExit> {
+  if(input.argv[0] === "diagnostic-score") {return await runDiagnosticScoreCli(input.argv,input.writeSafeLine);}
+  if(input.argv[0] === "diagnostic-run") {return await runDiagnosticCli(input.argv,input.writeSafeLine);}
   const phasePath = input.argv[1]; const statusPath = input.argv[2];
   if (phasePath === undefined || statusPath === undefined) {return 1;}
   let ports = input.ports;

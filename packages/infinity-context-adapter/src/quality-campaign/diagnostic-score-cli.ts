@@ -1,0 +1,49 @@
+import { readFile, writeFile } from "node:fs/promises";
+import type { HistoricalIndexPlanV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { canonicalJson, sha256 } from "./canonical.js";
+import { DiagnosticCustody } from "./diagnostic-custody.js";
+import { decodeDiagnosticManifest } from "./diagnostic-manifest.js";
+import type { DiagnosticOutcome } from "./diagnostic-run.js";
+import { scoreDiagnostic } from "./diagnostic-scoring.js";
+/** Separate post-execution entrypoint: execution has no gold-reading capability. */
+export async function runDiagnosticScoreCli(argv: readonly string[], writeSafeLine?: (line: string) => void): Promise<0 | 1> {
+  if (argv.length !== 5 || argv.slice(1).some(path => !path.startsWith("/"))) {
+    return 1;
+  }
+  try {
+    const manifest = decodeDiagnosticManifest(JSON.parse(await readFile(argv[1]!, "utf8")));
+    const report = JSON.parse(await readFile(argv[2]!, "utf8")) as unknown;
+    const loadedModuleSha256 = sha256(await readFile(new URL("./diagnostic-run.js", import.meta.url)));
+    const loadedSdkSha256 = sha256(await readFile(new URL(import.meta.resolve("@infinity-context/sdk"))));
+    const root = sha256({ manifest, loadedModuleSha256, loadedSdkSha256 });
+    const key = Buffer.from((await readFile(manifest.connections.artifactKeyPath, "utf8")).trim(), "base64");
+    const custody = new DiagnosticCustody(manifest.connections.artifactRoot, key, root);
+    const sealed = await custody.recover("execution-complete");
+    if (sealed === null || canonicalJson(sealed) !== canonicalJson(report)) {
+      throw new Error("diagnostic execution is not complete or report differs");
+    }
+    const plan = await custody.recover<HistoricalIndexPlanV1>("frozen-plan");
+    if (plan === null) {
+      throw new Error("diagnostic frozen plan is absent");
+    }
+    const outcomes: DiagnosticOutcome[] = [];
+    for (const question of manifest.questions) {
+      const outcome = await custody.recover<DiagnosticOutcome>(`question-${sha256(question.questionId)}`);
+      if (outcome === null) {
+        throw new Error("diagnostic outcome is absent");
+      }
+      outcomes.push(outcome);
+    }
+    // Gold enters only after authenticated complete execution and all forty outcomes.
+    const gold = JSON.parse(await readFile(argv[3]!, "utf8")) as unknown;
+    const result = scoreDiagnostic({ questions: manifest.questions, outcomes, plan, gold });
+    await writeFile(argv[4]!, canonicalJson({ rootBindingSha256: root,
+      executionReportSha256: sha256(report), goldSha256: sha256(gold), ...result }), { flag: "wx", mode: 0o600 });
+    writeSafeLine?.('{"status":"scored","qualifying":false,"factualAccuracy":"UNMEASURED"}');
+    return 0;
+  }
+  catch {
+    writeSafeLine?.('{"status":"blocked","qualifying":false,"reason":"diagnostic_scoring_blocked"}');
+    return 1;
+  }
+}
