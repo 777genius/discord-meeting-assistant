@@ -90,6 +90,31 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     expect(endpoint.documentCount()).toBe(0);
   }, 30_000);
 
+  it("allows delayed topology preparation within the diagnostic index budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const endpoint = new DisposableInfinityEndpoint();
+      endpoint.delayEveryRequest(3_000);
+      const adapter = new InfinityContextHistoricalMemoryAdapter({
+        actorKeys: testHistoricalActorKeys,
+        baseUrl: "http://disposable.infinity.invalid",
+        embeddingTokenProfile: () => expectedTokenProfile,
+        operationTimeoutMs: 600_000,
+        requestTimeoutMs: 30_000,
+        schemaVersion: 1,
+        transport: endpoint,
+      });
+      const indexed = adapter.indexFinalMeeting(plan(0x77));
+      // Advance virtual time only; the previous two-second budget fails on topology.
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(indexed).resolves.toMatchObject({ status: "applied" });
+      expect(endpoint.requests.some(({ path }) => path.endsWith("/process"))).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("composes caller cancellation and removes its listener", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     endpoint.hangNextRequestUntilDeadline("/v1/spaces");
