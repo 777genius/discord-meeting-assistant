@@ -37,6 +37,7 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
     const endpoint = new DisposableInfinityEndpoint();
     endpoint.delayEveryRequest(10);
     const seed = plan(0x73);
+    const titleIds = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(0x73));
     const source = seed.documents[0];
     if (source === undefined) {
       throw new Error("large deadline fixture produced no source document");
@@ -52,8 +53,7 @@ describe("Infinity Context SDK request and resumable operation deadlines", () =>
           ordinal,
         },
         mutationId: `${source.mutationId}-${ordinal}`,
-        remoteText: `${source.remoteText}\nfixture=${ordinal}`,
-        title: `${source.title}-${ordinal}`,
+        title: `mkevidence1.${titleIds.keyedId("deadline-fixture", [String(ordinal)])}`,
       }))),
     };
     const adapter = new InfinityContextHistoricalMemoryAdapter({
