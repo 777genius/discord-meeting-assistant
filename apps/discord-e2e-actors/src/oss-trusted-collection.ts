@@ -1,4 +1,4 @@
-import { constants, type Stats } from "node:fs";
+import { constants } from "node:fs";
 import { lstat, open, mkdir, realpath, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { z } from "zod";
@@ -42,19 +42,15 @@ export async function runOssTrustedCollection(args: readonly string[]) {
   // Keep the admitted inode open until collection ends, preventing inode reuse.
   await using liveHandle = await open(resolve(journalRoot, "live-native.staging.jsonl"),
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  const liveIdentity = await liveHandle.stat();
   const initial = [];
   // Live capture is readable during staging; only its published name is final evidence.
   for (const name of ["live-native.staging.jsonl", journalNames[1]!]) {
-    const bytes = await readSource(journalRoot, name, 1024 * 1024);
+    const bytes = name === "live-native.staging.jsonl"
+      ? await readInitialLiveJournal(journalRoot, liveHandle)
+      : await readSource(journalRoot, name, 1024 * 1024);
     const rows = bytes.toString("utf8").trimEnd().split("\n");
     check(rows.length === 1 && (JSON.parse(rows[0]!) as { type: string }).type === "capture_start",
       "Trusted collection must start before any native campaign events");
-    if (name === "live-native.staging.jsonl") {
-      const named = await lstat(resolve(journalRoot, name));
-      check(sameAdmittedInode(liveIdentity, named),
-        "Runtime journal replaced at admission");
-    }
     initial.push(bytes);
   }
   const sourceRoot = resolve(sourceRootInput);
@@ -234,6 +230,28 @@ async function readPublishedLiveJournal(root: string, handle: Awaited<ReturnType
   return bytes;
 }
 
-function sameAdmittedInode(opened: Stats, named: Stats) {
-  return opened.isFile() && opened.nlink === 1 && named.dev === opened.dev && named.ino === opened.ino;
+/** Admission bytes must come from the descriptor retained through publication. */
+async function readInitialLiveJournal(root: string, handle: Awaited<ReturnType<typeof open>>) {
+  const path = resolve(root, "live-native.staging.jsonl"), before = await handle.stat();
+  check(before.isFile() && before.nlink === 1 && before.size > 0 && before.size <= 1024 * 1024,
+    "Unsafe live journal admission type/hardlink/size");
+  const validate = async () => {
+    const named = await lstat(path), current = await handle.stat();
+    check(named.isFile() && !named.isSymbolicLink() && named.nlink === 1 &&
+      named.dev === before.dev && named.ino === before.ino && await realpath(path) === path &&
+      current.nlink === 1 && current.size === before.size && named.size === before.size &&
+      current.mtimeMs === before.mtimeMs && current.ctimeMs === before.ctimeMs &&
+      named.mtimeMs === before.mtimeMs && named.ctimeMs === before.ctimeMs,
+      "Runtime journal changed at admission");
+  };
+  await validate();
+  const bytes = Buffer.alloc(before.size);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const read = await handle.read(bytes, offset, bytes.length - offset, offset);
+    check(read.bytesRead > 0, "Live journal truncated at admission");
+    offset += read.bytesRead;
+  }
+  await validate();
+  return bytes;
 }

@@ -1,4 +1,4 @@
-import { link, lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, truncate, link, lstat, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -8,8 +8,15 @@ import { sha256 } from "../src/oss-campaign-artifacts.js";
 
 const mocks = vi.hoisted(() => ({
   deployment: vi.fn(), snapshot: vi.fn(), docker: vi.fn(), publication: vi.fn(),
-  originals: vi.fn(), assemble: vi.fn(), load: vi.fn(), verify: vi.fn()
+  open: vi.fn(), originals: vi.fn(), assemble: vi.fn(), load: vi.fn(), verify: vi.fn()
 }));
+vi.mock("node:fs/promises", async original => {
+  const fs = await original<typeof import("node:fs/promises")>();
+  return { ...fs, open: async (...args: Parameters<typeof fs.open>) => {
+    const implementation = mocks.open.getMockImplementation();
+    return implementation ? implementation(fs.open, ...args) as ReturnType<typeof fs.open> : fs.open(...args);
+  } };
+});
 vi.mock("../src/oss-deployment-collection.js", () => ({ collectOssDeployment: mocks.deployment }));
 vi.mock("../src/oss-readonly-collection.js", () => ({ collectOssReadonlySnapshot: mocks.snapshot, runOssReadCommand: mocks.docker }));
 vi.mock("../src/oss-publication-collection.js", () => ({ collectOssPublicationFromDiscord: mocks.publication }));
@@ -180,6 +187,96 @@ it.each(["substitution", "extra-hardlink", "final-symlink", "staging-symlink", "
       return result;
     });
     await expect(runOssTrustedCollection(args)).rejects.toThrow(/journal/u);
+    expect(mocks.assemble).not.toHaveBeenCalled();
+    await expect(readFile(receipt)).rejects.toThrow();
+  });
+
+it("rejects header substitution restored during admission and closes every reader", async () => {
+  const { args, receipt, journals, writer } = await setup();
+  const staging = join(journals, "live-native.staging.jsonl"), saved = join(root, "pinned-live");
+  const header = await readFile(staging);
+  writer.open().record({ type: "success" });
+  await writer.settle();
+  const original = await readFile(staging);
+  expect(original.length).toBeGreaterThan(header.length);
+  const handles: Awaited<ReturnType<typeof import("node:fs/promises").open>>[] = [];
+  let swapped = false, restored = false;
+  const substitute = async () => {
+    await rename(staging, saved); await writeFile(staging, header); swapped = true;
+  };
+  mocks.open.mockImplementation(async (open: typeof import("node:fs/promises").open,
+    ...input: Parameters<typeof open>) => {
+    if (input[0] !== staging) { return open(...input); }
+    // Old code reopens staging here and reads the attacker's header-only inode.
+    if (handles.length === 1) { await substitute(); }
+    const handle = await open(...input); handles.push(handle);
+    const restore = async () => {
+      await rm(staging); await rename(saved, staging); restored = true;
+    };
+    if (handles.length === 2) {
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementationOnce(async () => { await close(); await restore(); });
+    }
+    const read = handle.read.bind(handle);
+    vi.spyOn(handle, "read").mockImplementation(async (...readArgs: Parameters<typeof handle.read>) => {
+      // Fixed code reads its pinned descriptor while the pathname is substituted.
+      if (!swapped) { await substitute(); }
+      const result = await read(...readArgs);
+      if (handles.length === 1) { await restore(); }
+      return result;
+    });
+    return handle;
+  });
+  await expect(runOssTrustedCollection(args)).rejects.toThrow(/admission|before any native/u);
+  expect(swapped).toBe(true); expect(restored).toBe(true);
+  expect(await readFile(staging)).toEqual(original);
+  expect(handles.every(handle => handle.fd === -1)).toBe(true);
+  expect(mocks.snapshot).not.toHaveBeenCalled();
+  expect(mocks.assemble).not.toHaveBeenCalled();
+  await expect(readFile(receipt)).rejects.toThrow();
+});
+
+it.each(["success", "failure"])("closes the pinned descriptor on %s", async outcome => {
+  const { args, journals } = await setup();
+  let pinned: Awaited<ReturnType<typeof import("node:fs/promises").open>> | undefined;
+  mocks.open.mockImplementation(async (open: typeof import("node:fs/promises").open,
+    ...input: Parameters<typeof open>) => {
+    const handle = await open(...input);
+    if (input[0] === join(journals, "live-native.staging.jsonl")) { pinned ??= handle; }
+    return handle;
+  });
+  if (outcome === "failure") { mocks.snapshot.mockRejectedValue(new Error("source unavailable")); }
+  if (outcome === "success") { await runOssTrustedCollection(args); }
+  else { await expect(runOssTrustedCollection(args)).rejects.toThrow("source unavailable"); }
+  expect(pinned).toBeDefined();
+  expect(pinned!.fd).toBe(-1);
+});
+
+it.each(["growth", "truncation", "oversize", "hardlink", "symlink"])(
+  "rejects live admission %s before granting custody", async attack => {
+    const { args, journals, receipt } = await setup();
+    const staging = join(journals, "live-native.staging.jsonl");
+    if (attack === "oversize") { await truncate(staging, 1024 * 1024 + 1); }
+    if (attack === "hardlink") { await link(staging, join(root, "extra-alias")); }
+    if (attack === "symlink") {
+      const saved = join(root, "saved-live"); await rename(staging, saved); await symlink(saved, staging);
+    }
+    mocks.open.mockImplementation(async (open: typeof import("node:fs/promises").open,
+      ...input: Parameters<typeof open>) => {
+      const handle = await open(...input);
+      if (input[0] === staging && (attack === "growth" || attack === "truncation")) {
+        const read = handle.read.bind(handle);
+        vi.spyOn(handle, "read").mockImplementationOnce(async (...readArgs: Parameters<typeof handle.read>) => {
+          if (attack === "truncation") { await truncate(staging, 0); }
+          const result = await read(...readArgs);
+          if (attack === "growth") { await appendFile(staging, '{"type":"opening"}\n'); }
+          return result;
+        });
+      }
+      return handle;
+    });
+    await expect(runOssTrustedCollection(args)).rejects.toThrow();
+    expect(mocks.snapshot).not.toHaveBeenCalled();
     expect(mocks.assemble).not.toHaveBeenCalled();
     await expect(readFile(receipt)).rejects.toThrow();
   });
