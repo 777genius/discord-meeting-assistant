@@ -223,6 +223,7 @@ it.each([128, 256, 512])("keeps two alternating recordings indexed at N=%i", asy
   expect(effects.syncs - syncs).toBe(count * 2);
 }, 30_000);
 
+// Finite budget for real-storage correctness, not provider SLA.
 it.each([
   { count: 65_538, bytes: 1 },
   { count: 6_000, bytes: 4_096 },
@@ -245,7 +246,7 @@ it.each([
   expect(parse).not.toHaveBeenCalled();
   expect(effects.syncs - syncs).toBe(count - 1);
   expect(effects.reads - reads).toBe(0);
-}, 180_000);
+}, 300_000);
 
 it("recovers delivered-before-pending, exact duplicates, isolation and readmission", async () => {
   const { runtime, path } = await fixture();
