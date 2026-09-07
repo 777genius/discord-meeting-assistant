@@ -30,27 +30,37 @@ vi.mock("node:fs", async (original) => {
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof fs>();
   return { ...actual,
-    appendFile: async (...args: Parameters<typeof fs.appendFile>) => {
-      await actual.appendFile(...args);
-      if (typeof args[0] === "string" && args[0].includes("live-delivery-v1")) {
-        if (typeof args[1] !== "string") { throw new Error("expected textual delivery receipt"); }
-        for (const line of args[1].trim().split("\n")) {
-          const row = JSON.parse(line) as { type: string; packetId: string };
-          if (row.type === "delivered") { io.durableRows.push(row.packetId); }
-        }
-      }
-    },
     readFile: (...args: Parameters<typeof fs.readFile>) => {
-      if (typeof args[0] === "string" && args[0].includes("live-delivery-v1")) { io.reads++; }
+      if (typeof args[0] === "string" && args[0].includes("live-delivery-v1/") && args[0].endsWith(".jsonl")) { io.reads++; }
       return actual.readFile(...args);
     },
     open: async (...args: Parameters<typeof fs.open>) => {
       const handle = await actual.open(...args);
-      if (typeof args[0] === "string" && args[0].includes("live-delivery-v1")) {
+      if (typeof args[0] === "string" && args[0].includes("live-delivery-v1/") && args[0].endsWith(".jsonl")) {
+        // Keep receipt bytes local to the descriptor that actually wrote them.
+        // Directory fsync and metadata probes are not JSONL evidence reads.
+        const pendingRows: string[] = [];
+        const writeFile = handle.writeFile.bind(handle);
+        handle.writeFile = async (...writeArgs: Parameters<typeof handle.writeFile>) => {
+          await writeFile(...writeArgs);
+          if (typeof writeArgs[0] !== "string") { throw new Error("expected textual delivery receipt"); }
+          for (const line of writeArgs[0].trimEnd().split("\n")) {
+            const row = JSON.parse(line) as { type: string; packetId: string };
+            if (row.type === "delivered") { pendingRows.push(row.packetId); }
+          }
+        };
+        handle.read = new Proxy(handle.read.bind(handle), {
+          apply(target, receiver, readArgs) {
+            io.reads++;
+            return Reflect.apply(target, receiver, readArgs) as ReturnType<typeof handle.read>;
+          },
+        });
         const sync = handle.sync.bind(handle);
         handle.sync = async () => {
+          const rows = pendingRows.splice(0);
           await sync(); io.syncs++;
           if (io.holdReceipt) { await new Promise<void>((resolve) => { io.receipts.push(resolve); }); }
+          io.durableRows.push(...rows);
         };
       }
       return handle;
@@ -174,6 +184,11 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
       },
     });
     await runtime.acceptLifecycle({ ...started(), occurredAt: new Date(0).toISOString() });
+    // Exercise real historical offset reads before measuring the indexed drain.
+    const beforePendingReads = io.reads;
+    expect((await ingress.pendingLivePackets(recordingId)).map(livePacketIdentity))
+      .toEqual(all.map(livePacketIdentity));
+    expect(io.reads - beforePendingReads).toBeGreaterThanOrEqual(3731);
     const reads = io.reads;
     const syncs = io.syncs;
     // Last 200 packets per speaker remain queued at meeting end. Their first
@@ -210,6 +225,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     sockets.forEach((socket) => { socket.hold = false; socket.release!(); });
     for (let index = 0; index < 400; index++) {
       await until(() => io.receipts.length === 1);
+      expect(io.durableRows).toHaveLength(3331 + index);
       await vi.advanceTimersByTimeAsync(10);
       expect(sockets.map((socket) => socket.terminated)).toEqual([0, 0]);
       io.receipts.shift()!();
