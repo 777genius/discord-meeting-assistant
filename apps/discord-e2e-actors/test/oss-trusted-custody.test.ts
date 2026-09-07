@@ -1,4 +1,4 @@
-import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -24,10 +24,20 @@ vi.mock("../src/oss-campaign-artifacts.js", async (original) => ({
 import { runOssTrustedCollection } from "../src/oss-trusted-collection.js";
 import { runOssCollectCommand } from "../src/oss-collect-main.js";
 
+// Load the actual writer source at runtime without extending this package's TS root.
+interface TestWriter {
+  settle(): Promise<void>; close(): Promise<void>; abort(): void;
+  open(): { record(event: { type: "success" }): void };
+}
+const writerModule = await import(new URL("../../../packages/voicetext-adapter/src/oss-native-evidence.ts", import.meta.url).href) as {
+  OssNativeEvidenceJournal: new (input: { directory: string; project: string; testOnly: boolean; revision: string }) => TestWriter;
+};
 const stdinDescriptor = Object.getOwnPropertyDescriptor(process, "stdin")!;
 let root: string;
+let activeWriter: TestWriter | undefined;
 beforeEach(async () => { vi.resetAllMocks(); root = await mkdtemp(join(tmpdir(), "oss-custody-")); });
 afterEach(async () => {
+  if (activeWriter) { activeWriter.abort(); await activeWriter.close().catch(() => {}); activeWriter = undefined; }
   Object.defineProperty(process, "stdin", stdinDescriptor);
   vi.unstubAllEnvs(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true });
 });
@@ -36,7 +46,11 @@ async function setup() {
   const journals = join(root, "runtime-journals"), craig = join(root, "runtime-craig");
   await mkdir(journals); await mkdir(craig);
   const header = Buffer.from('{"type":"capture_start"}\n');
-  for (const name of ["live-native.jsonl", "post-call-native.jsonl"]) { await writeFile(join(journals, name), header); }
+  const writer = new writerModule.OssNativeEvidenceJournal({ directory: journals,
+    project: "vtoss-test-oss-8f49a06-r1", testOnly: true, revision: f.plan.target.platformRevision });
+  activeWriter = writer;
+  await writer.settle();
+  await writeFile(join(journals, "post-call-native.jsonl"), header);
   const services = [{ containerId: "a".repeat(12) }, { containerId: "b".repeat(12) }];
 
   mocks.docker.mockImplementation(async (args: string[]) => {
@@ -48,7 +62,11 @@ return JSON.stringify(args.at(-1) === services[0]!.containerId
   });
   mocks.deployment.mockImplementation(async ({ phase }: { phase: string }) => {
     if (phase === "after") {
-for (const name of ["live-native.jsonl", "post-call-native.jsonl"]) { await writeFile(join(journals, name), Buffer.concat([header, Buffer.from('{"type":"capture_seal"}\n')])); }
+const session = writer.open();
+      session.record({ type: "success" });
+      await writer.close();
+      expect((await lstat(join(journals, "live-native.jsonl"))).nlink).toBe(2);
+      await writeFile(join(journals, "post-call-native.jsonl"), Buffer.concat([header, Buffer.from('{"type":"capture_seal"}\n')]));
 }
     return { services, config: {}, phase };
   });
@@ -89,7 +107,7 @@ for (const name of ["live-native.jsonl", "post-call-native.jsonl"]) { await writ
   const receipt = join(root, "pass.json");
   const args = [f.planPath, new URL("./fixtures/manifest.v1.json", import.meta.url).pathname,
   join(root, "retained"), join(root, "archive"), receipt];
-  return { args, receipt, journals, craig };
+  return { args, receipt, journals, craig, writer };
 }
 it("independently collects all runtime sources before binding retained bytes and creating a distinct PASS", async () => {
   const { args, receipt } = await setup();
@@ -115,7 +133,7 @@ it.each(["inventory", "incomplete", "mount", "preexisting-journal"])("denies %s 
   if (kind === "inventory") { mocks.load.mockResolvedValue({ planSha256: "forged", indexSha256: "collected-inventory" }); }
   if (kind === "incomplete") { mocks.verify.mockResolvedValue({ consistency: "incomplete", missingSourceCapabilities: ["native source"] }); }
   if (kind === "mount") { mocks.docker.mockResolvedValue("[]"); }
-  if (kind === "preexisting-journal") { await writeFile(join(journals, "live-native.jsonl"), '{"type":"capture_start"}\n{"type":"opening"}\n'); }
+  if (kind === "preexisting-journal") { await writeFile(join(journals, "live-native.staging.jsonl"), '{"type":"capture_start"}\n{"type":"opening"}\n'); }
   await expect(runOssTrustedCollection(args)).rejects.toThrow();
   await expect(readFile(receipt)).rejects.toThrow();
 });
@@ -139,3 +157,29 @@ it.each(["hardlink", "symlink"])("rejects runtime source %s before retention or 
   expect(mocks.assemble).not.toHaveBeenCalled();
   await expect(readFile(receipt)).rejects.toThrow();
 });
+
+it.each(["substitution", "extra-hardlink", "final-symlink", "staging-symlink", "inode-change"])(
+  "rejects live publication %s before assembly", async attack => {
+    const { args, receipt, journals } = await setup();
+    const publish = mocks.deployment.getMockImplementation()!;
+    mocks.deployment.mockImplementation(async (input: { phase: string }) => {
+      const result: unknown = await publish(input);
+      if (input.phase === "after") {
+        const final = join(journals, "live-native.jsonl");
+        const staging = join(journals, "live-native.staging.jsonl");
+        const bytes = await readFile(final);
+        if (attack === "extra-hardlink") { await link(final, join(root, "extra-alias")); }
+        if (attack === "substitution") { await rm(final); await writeFile(final, bytes); }
+        if (attack === "final-symlink") { await rm(final); await symlink(staging, final); }
+        if (attack === "staging-symlink") { await rm(staging); await symlink(final, staging); }
+        if (attack === "inode-change") {
+          await rm(final); await rm(staging);
+          await writeFile(staging, bytes); await link(staging, final);
+        }
+      }
+      return result;
+    });
+    await expect(runOssTrustedCollection(args)).rejects.toThrow(/journal/u);
+    expect(mocks.assemble).not.toHaveBeenCalled();
+    await expect(readFile(receipt)).rejects.toThrow();
+  });

@@ -1,4 +1,5 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { lstat, open, mkdir, realpath, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { z } from "zod";
 import { collectOssDeployment } from "./oss-deployment-collection.js";
@@ -38,6 +39,10 @@ export async function runOssTrustedCollection(args: readonly string[]) {
     "Current runtime journal configuration mismatch");
 
   const journalNames = ["live-native.jsonl", "post-call-native.jsonl"];
+  // Keep the admitted inode open until collection ends, preventing inode reuse.
+  await using liveHandle = await open(resolve(journalRoot, "live-native.staging.jsonl"),
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const liveIdentity = await liveHandle.stat();
   const initial = [];
   // Live capture is readable during staging; only its published name is final evidence.
   for (const name of ["live-native.staging.jsonl", journalNames[1]!]) {
@@ -45,6 +50,11 @@ export async function runOssTrustedCollection(args: readonly string[]) {
     const rows = bytes.toString("utf8").trimEnd().split("\n");
     check(rows.length === 1 && (JSON.parse(rows[0]!) as { type: string }).type === "capture_start",
       "Trusted collection must start before any native campaign events");
+    if (name === "live-native.staging.jsonl") {
+      const named = await lstat(resolve(journalRoot, name));
+      check(sameAdmittedInode(liveIdentity, named),
+        "Runtime journal replaced at admission");
+    }
     initial.push(bytes);
   }
   const sourceRoot = resolve(sourceRootInput);
@@ -126,7 +136,9 @@ export async function runOssTrustedCollection(args: readonly string[]) {
     // from the mount discovered from that exact running container, never a sidecar
     // filename supplied as authority. No restart, shutdown or replay is performed.
     for (const [position, name] of journalNames.entries()) {
-      const bytes = await readSource(journalRoot, name, name.startsWith("live") ? 256 * 1024 * 1024 : 1024 * 1024);
+      const bytes = name === "live-native.jsonl"
+        ? await readPublishedLiveJournal(journalRoot, liveHandle)
+        : await readSource(journalRoot, name, 1024 * 1024);
       check(bytes.subarray(0, initial[position]!.length).equals(initial[position]!), "Runtime journal replaced");
       await put(name, bytes);
     }
@@ -191,4 +203,37 @@ const readSource = async (root: string, path: string, max = 512 * 1024 * 1024, e
 
 function nonempty(value: string | undefined): value is string {
   return value !== undefined && value !== "";
+}
+
+/** Only the exact writer publication pair may alias the admitted live inode. */
+async function readPublishedLiveJournal(root: string, handle: Awaited<ReturnType<typeof open>>) {
+  const before = await handle.stat();
+  const validatePair = async () => {
+    check(before.isFile() && before.nlink === 2 && before.size > 0 &&
+      before.size <= 256 * 1024 * 1024, "Unsafe live journal type/hardlink/size");
+    for (const name of ["live-native.staging.jsonl", "live-native.jsonl"]) {
+      const path = resolve(root, name), named = await lstat(path);
+      check(named.isFile() && !named.isSymbolicLink() && await realpath(path) === path &&
+        named.nlink === 2 && named.dev === before.dev && named.ino === before.ino,
+        "Live journal publication pair replaced/hardlink/symlink");
+    }
+  };
+  await validatePair();
+  const bytes = Buffer.alloc(before.size);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const read = await handle.read(bytes, offset, bytes.length - offset, offset);
+    check(read.bytesRead > 0, "Live journal truncated");
+    offset += read.bytesRead;
+  }
+  await validatePair();
+  const after = await handle.stat();
+  check(after.nlink === 2 && after.size === before.size &&
+    after.mtimeMs === before.mtimeMs && after.ctimeMs === before.ctimeMs,
+    "Live journal changed while reading");
+  return bytes;
+}
+
+function sameAdmittedInode(opened: Stats, named: Stats) {
+  return opened.isFile() && opened.nlink === 1 && named.dev === opened.dev && named.ino === opened.ino;
 }

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -31,7 +31,7 @@ it("composes real original proof, assembly and final verification after producer
     const f = await originalCustodyFixture(sourceRoot);
     const journals = join(root, "runtime-journals"), craig = join(root, "runtime-craig");
     await mkdir(journals); await mkdir(craig);
-    const journalFiles = [["live-native.jsonl", "live.jsonl"], ["post-call-native.jsonl", "post-call.jsonl"]] as const;
+    const journalFiles = [["live-native.staging.jsonl", "live.jsonl"], ["post-call-native.jsonl", "post-call.jsonl"]] as const;
     for (const [name, retained] of journalFiles) {
       const bytes = await readFile(join(sourceRoot, retained));
       await writeFile(join(journals, name), bytes.subarray(0, bytes.indexOf(10) + 1));
@@ -47,6 +47,7 @@ it("composes real original proof, assembly and final verification after producer
     boundary.deployment.mockImplementation(async ({ phase }: { phase: string }) => {
       if (phase === "after") {
         for (const [name, retained] of journalFiles) { await writeFile(join(journals, name), await readFile(join(sourceRoot, retained))); }
+        await link(join(journals, "live-native.staging.jsonl"), join(journals, "live-native.jsonl"));
       }
       return f.read(`deployment-${phase}.json`);
     });
