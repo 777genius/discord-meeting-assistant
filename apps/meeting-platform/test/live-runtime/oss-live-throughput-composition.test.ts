@@ -72,6 +72,7 @@ vi.mock("node:fs/promises", async (original) => {
 });
 
 class Gateway implements VoicetextWebSocketConnection {
+  public constructor(private readonly onSend: () => void) {}
   public sent = 0;
   public acked = 0;
   public finalizeCount = 0;
@@ -104,6 +105,7 @@ class Gateway implements VoicetextWebSocketConnection {
     expect(this.sent - this.acked).toBe(1);
     const ack = () => { this.release = undefined; this.acked++; this.message({ type: "ack", seq: this.acked }); };
     if (this.hold) { this.release = ack; } else { ack(); }
+    this.onSend();
   }
   public async receive(signal: AbortSignal): Promise<VoicetextInboundFrame> {
     signal.throwIfAborted();
@@ -119,8 +121,30 @@ class Gateway implements VoicetextWebSocketConnection {
   public terminate(): void { this.terminated++; }
 }
 
+// Runtime delivery catches port failures, so every test barrier must also observe
+// the first failure. Keep its identity even when finish or cleanup fails later.
+function synchronization() {
+  let primary: { error: unknown } | undefined;
+  const pending = new Set<(error: unknown) => void>();
+  const fail = (error: unknown) => {
+    primary ??= { error };
+    for (const reject of pending) { reject(primary.error); }
+    pending.clear();
+  };
+  return {
+    observe(operation: Promise<unknown>): void { void operation.catch(fail); },
+    wait(operation: Promise<void>): Promise<void> {
+      return new Promise<void>((resolve, reject) => {
+        const rejected = (error: unknown) => { pending.delete(rejected); reject(error); };
+        void operation.then(() => { pending.delete(rejected); resolve(); }, fail);
+        if (primary) { rejected(primary.error); } else { pending.add(rejected); }
+      });
+    },
+  };
+}
+
 // Count arrivals, including those that precede the waiter; host turns are not a clock.
-function arrivals() {
+function arrivals(waits: ReturnType<typeof synchronization>) {
   let count = 0;
   const waiters = new Map<number, (() => void)[]>();
   return {
@@ -130,10 +154,10 @@ function arrivals() {
       waiters.delete(count);
     },
     wait(target: number): Promise<void> {
-      if (count >= target) { return Promise.resolve(); }
-      return new Promise((resolve) => {
+      if (count >= target) { return waits.wait(Promise.resolve()); }
+      return waits.wait(new Promise((resolve) => {
         waiters.set(target, [...(waiters.get(target) ?? []), resolve]);
-      });
+      }));
     },
   };
 }
@@ -154,9 +178,11 @@ async function withCleanup(body: () => Promise<void>, steps: (() => Promise<unkn
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 it("composes full two-speaker Opus load, nonblocking native capture and indexed durable healthy drain past 2s", async () => {
-  const journalArrivals = arrivals();
-  const receiptArrivals = arrivals();
-  const completions = arrivals();
+  const waits = synchronization();
+  const journalArrivals = arrivals(waits);
+  const receiptArrivals = arrivals(waits);
+  const completions = arrivals(waits);
+  const packetSends = arrivals(waits);
   Object.assign(io, { holdJournal: true, holdReceipt: false, journal: [], receipts: [],
     syncs: 0, reads: 0, durableRows: [],
     journalArrived: () => { journalArrivals.arrive(); },
@@ -202,7 +228,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     vi.setSystemTime(0);
     const transcriber = new VoicetextLiveTranscriptionAdapter({ endpoint: "ws://offline.invalid",
       token: "synthetic-offline-token", evidenceSink: journal }, { connect: async () => {
-        const socket = new Gateway(); sockets.push(socket); return socket;
+        const socket = new Gateway(() => { packetSends.arrive(); }); sockets.push(socket); return socket;
       } });
     const delivered: string[] = [];
     const meetings = new MemoryLiveMeetingRepository();
@@ -222,8 +248,9 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
           completions.arrive();
         })();
         outstanding.add(operation);
+        waits.observe(operation);
         void operation.then(() => { outstanding.delete(operation); },
-          (error: unknown) => { outstanding.delete(operation); cleanupFailures.push(error); });
+          () => { outstanding.delete(operation); });
         return operation;
       },
     });
@@ -265,7 +292,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     const finishAt = Date.now();
     finish = runtime.acceptLifecycle({ type: "meeting.ended", recordingId,
       occurredAt: new Date(Date.now()).toISOString() });
-    void finish.catch(() => {}); // Observe rejection immediately, still await it below.
+    waits.observe(finish);
     io.holdReceipt = true;
     sockets.forEach((socket) => { socket.hold = false; socket.release!(); });
     for (let index = 0; index < 400; index++) {
@@ -282,7 +309,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
       io.receipts.shift()!();
       if (index === 0) {
         try {
-          await postSyncArrived.promise;
+          await waits.wait(postSyncArrived.promise);
           const frozenAt = Date.now();
           // A released real fsync is not markLivePacketDelivered completion.
           // Arbitrary host turns must neither acknowledge it nor consume budget.
@@ -293,9 +320,15 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
         } finally { io.afterReceiptSync = async () => {}; postSync.resolve(); }
       }
       await completions.wait(3332 + index);
+      // Receipt completion wakes the test before the speaker chain starts its
+      // next send. Wait for that send before advancing another 10ms: otherwise
+      // both speakers can start at the later clock tick and then require a
+      // pacing timer while the test is waiting for a receipt. The last two
+      // receipts have no following packet. Keep exactly 400 held 10ms receipts.
+      await packetSends.wait(Math.min(3334 + index, 3731));
       io.journal.splice(0).forEach((release) => { release(); });
     }
-    await finish;
+    await waits.wait(finish.then(() => {}));
     await runtime.settleBeforeFinalPublication(recordingId);
     expect(Date.now() - finishAt).toBe(4000);
     expect(io.syncs - syncs).toBe(3731);
@@ -390,3 +423,57 @@ it("retains the primary failure while draining receipt work and collecting clean
   await expect(withCleanup(async () => {}, [async () => { throw secondary; }]))
     .rejects.toMatchObject({ errors: [secondary] });
 });
+
+it("unblocks every barrier on receipt or finish failure and tears down with the first error", async () => {
+  for (const source of ["receipt", "marked assertion", "finish"] as const) {
+    const waits = synchronization();
+    const journal = arrivals(waits);
+    const receipts = arrivals(waits);
+    const completions = arrivals(waits);
+    const receipt = Promise.withResolvers<void>();
+    const terminal = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const primary = new Error(source);
+    const secondary = new Error("later terminal failure");
+    const cleanupFailures: unknown[] = [];
+    const closed: string[] = [];
+    const operation = receipt.promise.then(() => {
+      if (source === "marked assertion") { throw primary; }
+      completions.arrive();
+    });
+    waits.observe(operation);
+    waits.observe(terminal.promise);
+    const pending = [journal.wait(1), receipts.wait(1), receipts.wait(2), completions.wait(2),
+      waits.wait(new Promise<void>(() => {}))];
+    const outcomes = Promise.allSettled(pending);
+    const result = withCleanup(async () => {
+      entered.resolve();
+      await completions.wait(1);
+      await receipts.wait(1);
+    }, [
+      async () => { await Promise.allSettled([operation, terminal.promise]); },
+      async () => { closed.push("runtime"); throw secondary; },
+      async () => { closed.push("journal"); },
+      async () => { closed.push("ingress"); },
+    ], cleanupFailures);
+    const observed = expect(result).rejects.toBe(primary);
+    await entered.promise;
+    if (source === "finish") { terminal.reject(primary); receipt.resolve(); }
+    else {
+      if (source === "receipt") { receipt.reject(primary); } else { receipt.resolve(); }
+      await operation.catch(() => {});
+      terminal.reject(secondary);
+    }
+    await observed;
+    for (const outcome of await outcomes) {
+      expect(outcome.status).toBe("rejected");
+      if (outcome.status === "rejected") { expect(outcome.reason).toBe(primary); }
+    }
+    await expect(receipts.wait(3)).rejects.toBe(primary);
+    // Even an already counted arrival must not hide a latched failure.
+    receipts.arrive();
+    await expect(receipts.wait(1)).rejects.toBe(primary);
+    expect(closed).toEqual(["runtime", "journal", "ingress"]);
+    expect(cleanupFailures).toEqual([secondary]);
+  }
+}, 1000);
