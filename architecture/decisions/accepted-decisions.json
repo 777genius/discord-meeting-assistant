@@ -321,6 +321,11 @@
       "id": "ADR-0069",
       "path": "docs/decisions/0069-isolated-real40-memory-diagnostic.md",
       "immutableDigest": "sha256:5a1f25d9b8adcec75a208956a9977c63512d91b3ebe1258aaef6c442138c2f66"
+    },
+    {
+      "id": "ADR-0070",
+      "path": "docs/decisions/0070-normalized-historical-embedding-budget.md",
+      "immutableDigest": "sha256:33c6de69fde9ec475468beeb1d52fb22b82710479b4dcb1adb9c734e874c89e7"
     }
   ]
 }
