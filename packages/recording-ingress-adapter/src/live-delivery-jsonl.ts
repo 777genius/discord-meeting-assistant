@@ -43,7 +43,7 @@ export function durableLivePacketIdentity(packet: {
   ].join(":");
 }
 
-export function parseRecord(line: string): OutboxRecord {
+function parseRecord(line: string): OutboxRecord {
   let value: unknown;
   try {
     value = JSON.parse(line);
@@ -109,7 +109,7 @@ export async function fileStamp(path: string): Promise<string> {
   }
 }
 
-export async function descriptorStamp(handle: FileHandle): Promise<string> {
+async function descriptorStamp(handle: FileHandle): Promise<string> {
   const stats = await handle.stat({ bigint: true });
   if (!stats.isFile()) {
     throw new RecordingIngressError("path-policy", "live outbox descriptor is unsafe");
