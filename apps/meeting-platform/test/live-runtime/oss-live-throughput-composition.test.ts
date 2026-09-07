@@ -72,7 +72,7 @@ vi.mock("node:fs/promises", async (original) => {
 });
 
 class Gateway implements VoicetextWebSocketConnection {
-  public constructor(private readonly onSend: () => void) {}
+  public constructor(private readonly onSend: () => void, private readonly onFailure: (error: unknown) => void) {}
   public sent = 0;
   public acked = 0;
   public finalizeCount = 0;
@@ -100,12 +100,14 @@ class Gateway implements VoicetextWebSocketConnection {
     }
   }
   public async sendBinary(data: Uint8Array): Promise<void> {
-    expect([...data]).toEqual([0xf8, 0xff, 0xfe]);
-    this.sent++;
-    expect(this.sent - this.acked).toBe(1);
-    const ack = () => { this.release = undefined; this.acked++; this.message({ type: "ack", seq: this.acked }); };
-    if (this.hold) { this.release = ack; } else { ack(); }
-    this.onSend();
+    try {
+      expect([...data]).toEqual([0xf8, 0xff, 0xfe]);
+      this.sent++;
+      expect(this.sent - this.acked).toBe(1);
+      const ack = () => { this.release = undefined; this.acked++; this.message({ type: "ack", seq: this.acked }); };
+      if (this.hold) { this.release = ack; } else { ack(); }
+      this.onSend();
+    } catch (error) { this.onFailure(error); throw error; }
   }
   public async receive(signal: AbortSignal): Promise<VoicetextInboundFrame> {
     signal.throwIfAborted();
@@ -132,6 +134,7 @@ function synchronization() {
     pending.clear();
   };
   return {
+    fail,
     observe(operation: Promise<unknown>): void { void operation.catch(fail); },
     wait(operation: Promise<void>): Promise<void> {
       return new Promise<void>((resolve, reject) => {
@@ -228,9 +231,11 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     vi.setSystemTime(0);
     const transcriber = new VoicetextLiveTranscriptionAdapter({ endpoint: "ws://offline.invalid",
       token: "synthetic-offline-token", evidenceSink: journal }, { connect: async () => {
-        const socket = new Gateway(() => { packetSends.arrive(); }); sockets.push(socket); return socket;
+        const socket = new Gateway(() => { packetSends.arrive(); }, waits.fail); sockets.push(socket); return socket;
       } });
     const delivered: string[] = [];
+    const progress = streams.map((stream) => ({ stream, cursor: 0, delivered: 0 }));
+    const bySpeaker = new Map(progress.map((state) => [state.stream[0]!.speakerId, state]));
     const meetings = new MemoryLiveMeetingRepository();
     const projector = new ProjectionStub();
     runtime = new PlatformLiveMeetingRuntime({
@@ -245,6 +250,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
         const operation = (async () => {
           expect(await ingress.markLivePacketDelivered(id)).toBe("marked");
           delivered.push(id);
+          bySpeaker.get(id.split(":")[1]!)!.delivered++;
           completions.arrive();
         })();
         outstanding.add(operation);
@@ -269,14 +275,16 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     for (let time = 0; time < counts[1]! * 20; time += 20) {
       await vi.advanceTimersByTimeAsync(time - Date.now());
       if (time === tailStart) { sockets.forEach((socket) => { socket.hold = true; }); }
-      for (const stream of streams) {
-        const packet = stream.find((candidate) => candidate.relativeTimeMs === time);
-        if (packet) { await runtime.acceptVoiceBatch({ format: packets().format, packets: [packet] }); admitted++; }
+      for (const state of progress) {
+        const packet = state.stream[state.cursor];
+        if (packet?.relativeTimeMs === time) {
+          await runtime.acceptVoiceBatch({ format: packets().format, packets: [packet] });
+          state.cursor++; admitted++;
+        }
       }
       if (time < tailStart) { await completions.wait(admitted); }
-      for (const stream of streams) {
-        const queued = stream.filter((p) => p.relativeTimeMs <= time).length -
-          delivered.filter((id) => id.split(":")[1] === stream[0]!.speakerId).length;
+      for (const state of progress) {
+        const queued = state.cursor - state.delivered;
         expect(queued).toBeLessThanOrEqual(512);
       }
       // Release a bounded journal stall every source second. Capture continues
@@ -474,6 +482,50 @@ it("unblocks every barrier on receipt or finish failure and tears down with the 
     receipts.arrive();
     await expect(receipts.wait(1)).rejects.toBe(primary);
     expect(closed).toEqual(["runtime", "journal", "ingress"]);
+    expect(cleanupFailures).toEqual([secondary]);
+  }
+}, 1000);
+
+it("latches pre-receipt Gateway assertions for pending and future barriers before cleanup", async () => {
+  for (const source of ["payload", "in-flight"] as const) {
+    const waits = synchronization();
+    const barriers = Array.from({ length: 4 }, () => arrivals(waits)); // journal, receipt, completion, send
+    const socket = new Gateway(() => { barriers[3]!.arrive(); }, waits.fail);
+    socket.hold = true;
+    if (source === "in-flight") { await socket.sendBinary(Uint8Array.of(0xf8, 0xff, 0xfe)); }
+    const outcomes = Promise.allSettled(barriers.map((barrier) => barrier.wait(2)));
+    const cleanupFailures: unknown[] = [];
+    const secondary = new Error("later cleanup failure");
+    const closed: string[] = [];
+    const result = withCleanup(async () => { await barriers[2]!.wait(1); }, [
+      async () => { socket.hold = false; socket.release?.(); await socket.close(); closed.push("gateway"); },
+      async () => { throw secondary; },
+      async () => { closed.push("ingress"); },
+    ], cleanupFailures);
+    const bodyOutcome = Promise.allSettled([result]);
+    // Deliberately do not observe this promise: production may swallow the send
+    // rejection before any receipt exists. The Gateway itself must latch it.
+    const [send] = await Promise.allSettled([socket.sendBinary(
+      source === "payload" ? Uint8Array.of(0) : Uint8Array.of(0xf8, 0xff, 0xfe))]);
+    expect(send!.status).toBe("rejected");
+    if (send!.status !== "rejected") { throw new Error("expected injected Gateway assertion"); }
+    const primary: unknown = send!.reason;
+    expect(primary).toBeInstanceOf(Error);
+    for (const outcome of [...await outcomes, ...await bodyOutcome]) {
+      expect(outcome).toEqual({ status: "rejected", reason: primary });
+      if (outcome.status === "rejected") { expect(outcome.reason).toBe(primary); }
+    }
+    waits.fail(secondary);
+    for (const barrier of barriers) {
+      await expect(barrier.wait(3)).rejects.toBe(primary);
+      barrier.arrive();
+      await expect(barrier.wait(1)).rejects.toBe(primary);
+    }
+    expect(socket.sent).toBe(source === "payload" ? 0 : 2);
+    expect(socket.acked).toBe(source === "payload" ? 0 : 1);
+    expect(socket.release).toBeUndefined();
+    expect(socket.closeCount).toBe(1);
+    expect(closed).toEqual(["gateway", "ingress"]);
     expect(cleanupFailures).toEqual([secondary]);
   }
 }, 1000);
