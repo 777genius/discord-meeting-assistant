@@ -17,13 +17,15 @@ import { logger, packets, started, MemoryLiveMeetingRepository, ProjectionStub, 
 
 // Delay only external durability completions; retain real bytes, fsync and adapters.
 const io = vi.hoisted(() => ({ holdJournal: true, journal: [] as (() => void)[],
+  journalArrived: () => {}, receiptArrived: () => {},
+  afterReceiptSync: async () => {},
   holdReceipt: false, receipts: [] as (() => void)[], syncs: 0, reads: 0, durableRows: [] as string[] }));
 vi.mock("node:fs", async (original) => {
   const actual = await original<typeof import("node:fs")>();
   return { ...actual, fsync: (fd: number, callback: (error: NodeJS.ErrnoException | null) => void) => {
     actual.fsync(fd, (error) => {
       const done = () => { callback(error); };
-      if (io.holdJournal) { io.journal.push(done); } else { done(); }
+      if (io.holdJournal) { io.journal.push(done); io.journalArrived(); } else { done(); }
     });
   } };
 });
@@ -59,8 +61,9 @@ vi.mock("node:fs/promises", async (original) => {
         handle.sync = async () => {
           const rows = pendingRows.splice(0);
           await sync(); io.syncs++;
-          if (io.holdReceipt) { await new Promise<void>((resolve) => { io.receipts.push(resolve); }); }
+          if (io.holdReceipt) { await new Promise<void>((resolve) => { io.receipts.push(resolve); io.receiptArrived(); }); }
           io.durableRows.push(...rows);
+          await io.afterReceiptSync();
         };
       }
       return handle;
@@ -99,7 +102,7 @@ class Gateway implements VoicetextWebSocketConnection {
     expect([...data]).toEqual([0xf8, 0xff, 0xfe]);
     this.sent++;
     expect(this.sent - this.acked).toBe(1);
-    const ack = () => { this.acked++; this.message({ type: "ack", seq: this.acked }); };
+    const ack = () => { this.release = undefined; this.acked++; this.message({ type: "ack", seq: this.acked }); };
     if (this.hold) { this.release = ack; } else { ack(); }
   }
   public async receive(signal: AbortSignal): Promise<VoicetextInboundFrame> {
@@ -116,18 +119,52 @@ class Gateway implements VoicetextWebSocketConnection {
   public terminate(): void { this.terminated++; }
 }
 
-async function until(predicate: () => boolean): Promise<void> {
-  // Real IO may finish at any host speed; it never advances the source clock.
-  for (let attempts = 0; attempts < 100_000; attempts++) {
-    if (predicate()) { return; }
-    await nextTask();
+// Count arrivals, including those that precede the waiter; host turns are not a clock.
+function arrivals() {
+  let count = 0;
+  const waiters = new Map<number, (() => void)[]>();
+  return {
+    arrive() {
+      count++;
+      waiters.get(count)?.forEach((resolve) => { resolve(); });
+      waiters.delete(count);
+    },
+    wait(target: number): Promise<void> {
+      if (count >= target) { return Promise.resolve(); }
+      return new Promise((resolve) => {
+        waiters.set(target, [...(waiters.get(target) ?? []), resolve]);
+      });
+    },
+  };
+}
+
+// Always attempt every cleanup step. A body failure retains its original identity;
+// cleanup failures remain available as evidence rather than replacing that cause.
+async function withCleanup(body: () => Promise<void>, steps: (() => Promise<unknown>)[],
+  cleanupFailures: unknown[] = []): Promise<void> {
+  let primary: { error: unknown } | undefined;
+  try { await body(); } catch (error) { primary = { error }; }
+  for (const step of steps) {
+    try { await step(); } catch (error) { cleanupFailures.push(error); }
   }
-  throw new Error("bounded offline IO completion did not arrive");
+  if (primary) { throw primary.error; }
+  if (cleanupFailures.length) { throw new AggregateError(cleanupFailures, "Throughput cleanup failed"); }
 }
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 it("composes full two-speaker Opus load, nonblocking native capture and indexed durable healthy drain past 2s", async () => {
+  const journalArrivals = arrivals();
+  const receiptArrivals = arrivals();
+  const completions = arrivals();
+  Object.assign(io, { holdJournal: true, holdReceipt: false, journal: [], receipts: [],
+    syncs: 0, reads: 0, durableRows: [],
+    journalArrived: () => { journalArrivals.arrive(); },
+    receiptArrived: () => { receiptArrivals.arrive(); } });
+  const outstanding = new Set<Promise<void>>();
+  const sockets: Gateway[] = [];
+  let finish: ReturnType<PlatformLiveMeetingRuntime["acceptLifecycle"]> | undefined;
+  const cleanupFailures: unknown[] = [];
   const root = await fs.mkdtemp(join(tmpdir(), "oss-live-throughput-"));
   const recordingId = "recording-live-1";
   // Synthetic journal fixture configuration, not source-head provenance.
@@ -146,7 +183,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
   const journal = new OssNativeEvidenceJournal({ directory: root, project: "vtoss-test-oss-8f49a06-r1",
     testOnly: true, revision: fixtureRevision });
   let runtime: PlatformLiveMeetingRuntime | undefined;
-  try {
+  await withCleanup(async () => {
     await ingress.ingestLifecycleEvent(parseCraigLifecycleEvent({ schemaVersion: 1,
       type: "meeting.started", eventId: "offline-start", recordingId,
       guildId: "11111111111111111", channelId: "22222222222222222",
@@ -160,10 +197,9 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
           rtpTimestamp: packet.mediaTimestamp, opusBase64: packet.payloadBase64,
         })) }));
     }
-    await until(() => io.journal.length === 1);
+    await journalArrivals.wait(1);
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
     vi.setSystemTime(0);
-    const sockets: Gateway[] = [];
     const transcriber = new VoicetextLiveTranscriptionAdapter({ endpoint: "ws://offline.invalid",
       token: "synthetic-offline-token", evidenceSink: journal }, { connect: async () => {
         const socket = new Gateway(); sockets.push(socket); return socket;
@@ -179,8 +215,16 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
       packetFlowControl: { maximumQueuedPacketsPerSpeaker: 512, maximumQueuedPacketsGlobally: 1024,
         maximumConcurrentSessions: 2, packetBackpressureTimeoutMs: 2000 },
       packetInspector: { durationSamples48Khz: opusPacketDurationSamples }, transcriber,
-      markLivePacketDelivered: async (id) => {
-        expect(await ingress.markLivePacketDelivered(id)).toBe("marked"); delivered.push(id);
+      markLivePacketDelivered: (id) => {
+        const operation = (async () => {
+          expect(await ingress.markLivePacketDelivered(id)).toBe("marked");
+          delivered.push(id);
+          completions.arrive();
+        })();
+        outstanding.add(operation);
+        void operation.then(() => { outstanding.delete(operation); },
+          (error: unknown) => { outstanding.delete(operation); cleanupFailures.push(error); });
+        return operation;
       },
     });
     await runtime.acceptLifecycle({ ...started(), occurredAt: new Date(0).toISOString() });
@@ -202,7 +246,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
         const packet = stream.find((candidate) => candidate.relativeTimeMs === time);
         if (packet) { await runtime.acceptVoiceBatch({ format: packets().format, packets: [packet] }); admitted++; }
       }
-      if (time < tailStart) { await until(() => delivered.length === admitted); }
+      if (time < tailStart) { await completions.wait(admitted); }
       for (const stream of streams) {
         const queued = stream.filter((p) => p.relativeTimeMs <= time).length -
           delivered.filter((id) => id.split(":")[1] === stream[0]!.speakerId).length;
@@ -219,17 +263,36 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     expect(sockets.every((socket) => socket.release !== undefined)).toBe(true);
     expect(existsSync(join(root, "live-native.jsonl"))).toBe(false);
     const finishAt = Date.now();
-    const finish = runtime.acceptLifecycle({ type: "meeting.ended", recordingId,
+    finish = runtime.acceptLifecycle({ type: "meeting.ended", recordingId,
       occurredAt: new Date(Date.now()).toISOString() });
+    void finish.catch(() => {}); // Observe rejection immediately, still await it below.
     io.holdReceipt = true;
     sockets.forEach((socket) => { socket.hold = false; socket.release!(); });
     for (let index = 0; index < 400; index++) {
-      await until(() => io.receipts.length === 1);
+      await receiptArrivals.wait(index + 1);
+      expect(io.receipts).toHaveLength(1);
       expect(io.durableRows).toHaveLength(3331 + index);
       await vi.advanceTimersByTimeAsync(10);
       expect(sockets.map((socket) => socket.terminated)).toEqual([0, 0]);
+      const postSync = Promise.withResolvers<void>();
+      const postSyncArrived = Promise.withResolvers<void>();
+      if (index === 0) {
+        io.afterReceiptSync = async () => { postSyncArrived.resolve(); await postSync.promise; };
+      }
       io.receipts.shift()!();
-      await until(() => delivered.length === 3332 + index);
+      if (index === 0) {
+        try {
+          await postSyncArrived.promise;
+          const frozenAt = Date.now();
+          // A released real fsync is not markLivePacketDelivered completion.
+          // Arbitrary host turns must neither acknowledge it nor consume budget.
+          for (let turn = 0; turn < 37; turn++) { await nextTask(); }
+          expect(Date.now()).toBe(frozenAt);
+          expect(io.durableRows).toHaveLength(3332);
+          expect(delivered).toHaveLength(3331);
+        } finally { io.afterReceiptSync = async () => {}; postSync.resolve(); }
+      }
+      await completions.wait(3332 + index);
       io.journal.splice(0).forEach((release) => { release(); });
     }
     await finish;
@@ -283,17 +346,47 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     expect(projector.requests).toHaveLength(projectionCount);
     await runtime.close();
     expect(vi.getTimerCount()).toBe(0);
-  } finally {
-    io.holdJournal = false; io.holdReceipt = false;
-    io.journal.splice(0).forEach((release) => { release(); });
-    io.receipts.splice(0).forEach((release) => { release(); });
-    try {
-      // Abort delivery before close so held ACKs cannot wait on the fake clock.
-      await runtime?.close(AbortSignal.abort());
-    } finally {
-      try { await journal.close(); } finally {
-        try { await ingress.close(); } finally { await fs.rm(root, { recursive: true, force: true }); }
-      }
-    }
-  }
+  }, [
+    async () => {
+      io.holdJournal = false; io.holdReceipt = false;
+      io.journal.splice(0).forEach((release) => { release(); });
+      io.receipts.splice(0).forEach((release) => { release(); });
+      sockets.forEach((socket) => { socket.hold = false; socket.release?.(); socket.release = undefined; });
+      // sync release is not receipt completion: descriptor verification and close
+      // still belong to the live consumer before cancellation or ingress closure.
+      while (outstanding.size) { await Promise.allSettled([...outstanding]); }
+    },
+    async () => { await runtime?.close(AbortSignal.abort()); },
+    async () => { await finish; },
+    async () => { while (outstanding.size) { await Promise.allSettled([...outstanding]); } },
+    async () => { await journal.close(); },
+    async () => { await ingress.close(); },
+    async () => { await fs.rm(root, { recursive: true, force: true }); },
+  ], cleanupFailures);
 }, 60_000);
+
+it("retains the primary failure while draining receipt work and collecting cleanup failures", async () => {
+  const primary = new Error("primary assertion");
+  const secondary = new Error("cleanup failure");
+  const receipt = Promise.withResolvers<void>();
+  const entered = Promise.withResolvers<void>();
+  const failures: unknown[] = [];
+  let receiptComplete = false;
+  let ingressClosed = false;
+  const operation = receipt.promise.then(() => { receiptComplete = true; });
+  const result = withCleanup(async () => { throw primary; }, [
+    async () => { entered.resolve(); await operation; },
+    async () => { throw secondary; },
+    async () => { expect(receiptComplete).toBe(true); ingressClosed = true; },
+  ], failures);
+  const observed = expect(result).rejects.toBe(primary);
+  await entered.promise;
+  for (let turn = 0; turn < 37; turn++) { await nextTask(); }
+  expect(ingressClosed).toBe(false);
+  receipt.resolve();
+  await observed;
+  expect(ingressClosed).toBe(true);
+  expect(failures).toEqual([secondary]);
+  await expect(withCleanup(async () => {}, [async () => { throw secondary; }]))
+    .rejects.toMatchObject({ errors: [secondary] });
+});
