@@ -32,20 +32,21 @@ vi.mock("node:fs/promises", async (original) => {
   return { ...actual,
     appendFile: async (...args: Parameters<typeof fs.appendFile>) => {
       await actual.appendFile(...args);
-      if (String(args[0]).includes("live-delivery-v1")) {
-        for (const line of String(args[1]).trim().split("\n")) {
+      if (typeof args[0] === "string" && args[0].includes("live-delivery-v1")) {
+        if (typeof args[1] !== "string") { throw new Error("expected textual delivery receipt"); }
+        for (const line of args[1].trim().split("\n")) {
           const row = JSON.parse(line) as { type: string; packetId: string };
           if (row.type === "delivered") { io.durableRows.push(row.packetId); }
         }
       }
     },
     readFile: (...args: Parameters<typeof fs.readFile>) => {
-      if (String(args[0]).includes("live-delivery-v1")) { io.reads++; }
+      if (typeof args[0] === "string" && args[0].includes("live-delivery-v1")) { io.reads++; }
       return actual.readFile(...args);
     },
     open: async (...args: Parameters<typeof fs.open>) => {
       const handle = await actual.open(...args);
-      if (String(args[0]).includes("live-delivery-v1")) {
+      if (typeof args[0] === "string" && args[0].includes("live-delivery-v1")) {
         const sync = handle.sync.bind(handle);
         handle.sync = async () => {
           await sync(); io.syncs++;
@@ -65,7 +66,7 @@ class Gateway implements VoicetextWebSocketConnection {
   public terminated = 0;
   public hold = false;
   public release: (() => void) | undefined;
-  private frames: VoicetextInboundFrame[] = [];
+  private readonly frames: VoicetextInboundFrame[] = [];
   private waiter: ((frame: VoicetextInboundFrame) => void) | undefined;
   private push(frame: VoicetextInboundFrame): void {
     const waiter = this.waiter;
@@ -119,7 +120,8 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 it("composes full two-speaker Opus load, nonblocking native capture and indexed durable healthy drain past 2s", async () => {
   const root = await fs.mkdtemp(join(tmpdir(), "oss-live-throughput-"));
   const recordingId = "recording-live-1";
-  const base = "0940859cd6b3100ec66364207f3e5474b2720c38";
+  // Synthetic journal fixture configuration, not source-head provenance.
+  const fixtureRevision = "0940859cd6b3100ec66364207f3e5474b2720c38";
   const counts = [Math.ceil(26_235 / 20), Math.ceil(48_361 / 20)];
   expect(counts).toEqual([1312, 2419]);
   const streams = counts.map((count, speaker) => Array.from({ length: count }, (_, index) => ({
@@ -128,11 +130,12 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     relativeTimeMs: (counts[1]! - count + index) * 20,
     receivedAtMs: (counts[1]! - count + index) * 20,
   })));
-  const all = streams.flat().sort((a, b) => a.relativeTimeMs - b.relativeTimeMs || a.speakerId.localeCompare(b.speakerId));
+  const all = streams.flat().toSorted((a, b) => a.relativeTimeMs - b.relativeTimeMs || a.speakerId.localeCompare(b.speakerId));
   const ingress = new DurableCraigRecordingIngress({ spoolRoot: join(root, "spool"),
     artifactLocatorPrefix: "offline", writer: { write: async () => { throw new Error("unexpected original publication"); } } });
   const journal = new OssNativeEvidenceJournal({ directory: root, project: "vtoss-test-oss-8f49a06-r1",
-    testOnly: true, revision: base });
+    testOnly: true, revision: fixtureRevision });
+  let runtime: PlatformLiveMeetingRuntime | undefined;
   try {
     await ingress.ingestLifecycleEvent(parseCraigLifecycleEvent({ schemaVersion: 1,
       type: "meeting.started", eventId: "offline-start", recordingId,
@@ -158,7 +161,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     const delivered: string[] = [];
     const meetings = new MemoryLiveMeetingRepository();
     const projector = new ProjectionStub();
-    const runtime = new PlatformLiveMeetingRuntime({
+    runtime = new PlatformLiveMeetingRuntime({
       logger, appendTurn: new AppendLiveTranscriptTurn(meetings),
       finishMeeting: new FinishLiveMeeting(meetings),
       refreshMeeting: new RefreshLiveMeeting({ meetings, projector, summarizer: new SummaryStub() }),
@@ -223,19 +226,14 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     for (const stream of streams) {
       expect(delivered.filter((id) => id.split(":")[1] === stream[0]!.speakerId)).toEqual(stream.map(livePacketIdentity));
     }
-    expect(meetings.finalizedTurns.map((turn) => turn.speakerId).sort()).toEqual(streams.map((stream) => stream[0]!.speakerId).sort());
-    expect(sockets.map((s) => [s.sent, s.acked, s.finalizeCount, s.closeCount, s.terminated]).sort((a, b) => a[0]! - b[0]!))
+    expect(meetings.finalizedTurns.map((turn) => turn.speakerId).toSorted()).toEqual(streams.map((stream) => stream[0]!.speakerId).toSorted());
+    expect(sockets.map((s) => [s.sent, s.acked, s.finalizeCount, s.closeCount, s.terminated]).toSorted((a, b) => a[0]! - b[0]!))
       .toEqual([[1312, 1312, 1, 1, 0], [2419, 2419, 1, 1, 0]]);
     expect(await ingress.pendingLivePackets(recordingId)).toEqual([]);
     io.holdJournal = false;
     io.journal.splice(0).forEach((release) => { release(); });
     await journal.close();
     const text = readFileSync(join(root, "live-native.jsonl"), "utf8");
-    const evidenceDirectory = process.env.OSS_LIVE_THROUGHPUT_EVIDENCE_DIRECTORY;
-    if (evidenceDirectory) {
-      await fs.copyFile(join(root, "live-native.jsonl"), join(evidenceDirectory, "live-native.jsonl"));
-      await fs.writeFile(join(evidenceDirectory, "durable-receipts.json"), JSON.stringify(delivered));
-    }
     const lines = text.trimEnd().split("\n");
     const rows = lines.map((line) => JSON.parse(line) as { index: number; session?: string;
       event?: OssSessionEvidenceEvent; type?: string; priorSha256?: string });
@@ -247,7 +245,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     }
     const sends = rows.flatMap((row) => row.event?.type === "audio_send" ? [row.event.packetId] : []);
     expect(new Set(sends)).toEqual(new Set(delivered));
-    for (const session of new Set(rows.flatMap((row) => row.session ? [row.session] : []))) {
+    for (const session of new Set(rows.flatMap((row) => row.session !== undefined ? [row.session] : []))) {
       const events = rows.filter((row) => row.session === session).map((row) => row.event!);
       const seqs = events.flatMap((event) => event.type === "audio_accepted" ? [event.seq] : []);
       expect(seqs).toEqual(seqs.map((_, i) => i + 1));
@@ -258,7 +256,10 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     expect(meetings.snapshot?.status).toBe("ended");
     const persisted = structuredClone(meetings.finalizedTurns);
     const projectionCount = projector.requests.length;
-    await runtime.acceptVoiceBatch({ format: packets().format, packets: [streams[0]![0]!] });
+    const latePacket = { ...streams[0]!.at(-1)!, sequenceNumber: counts[0]!,
+      mediaTimestamp: counts[0]! * 960, relativeTimeMs: counts[1]! * 20, receivedAtMs: counts[1]! * 20 };
+    expect(delivered).not.toContain(livePacketIdentity(latePacket));
+    await runtime.acceptVoiceBatch({ format: packets().format, packets: [latePacket] });
     await vi.advanceTimersByTimeAsync(1000);
     expect(delivered).toHaveLength(3731);
     expect(readFileSync(join(root, "live-native.jsonl"), "utf8")).toBe(text);
@@ -270,8 +271,13 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     io.holdJournal = false; io.holdReceipt = false;
     io.journal.splice(0).forEach((release) => { release(); });
     io.receipts.splice(0).forEach((release) => { release(); });
-    await journal.close().catch(() => {});
-    await ingress.close();
-    await fs.rm(root, { recursive: true, force: true });
+    try {
+      // Abort delivery before close so held ACKs cannot wait on the fake clock.
+      await runtime?.close(AbortSignal.abort());
+    } finally {
+      try { await journal.close(); } finally {
+        try { await ingress.close(); } finally { await fs.rm(root, { recursive: true, force: true }); }
+      }
+    }
   }
 }, 60_000);
