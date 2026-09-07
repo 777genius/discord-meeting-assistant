@@ -1,3 +1,4 @@
+import { decodeDiscordExternalPublicationId } from "@discord-meeting/discord-adapter";
 import { normalizeOssDatabase } from "./oss-database.js";
 import { verifyNativeCampaignSources } from "./oss-native-campaign-sources.js";
 import { verifyOssRecording } from "./oss-recording-evidence.js";
@@ -145,11 +146,15 @@ async function verifyRun(archive: Archive, run: OssRun): Promise<void> {
     [...run.liveTurns].toSorted((a, b) => a.turnId.localeCompare(b.turnId))), "Live ledger/wire mismatch");
 
   function verifyDatabaseAndManifest(): void {
+    const reference = decodeDiscordExternalPublicationId(snapshot.publication.externalPublicationId);
+    check(reference?.kind === "channel-message" &&
+      reference.parentChannelId === archive.plan.target.resultsChannelId,
+      "Invalid publication reference for OSS results channel");
     check(snapshot.meetingId === run.meetingId && snapshot.recording.recordingId === run.recordingId &&
       run.transcript.version === String(snapshot.transcript.version) &&
       snapshot.transcript.transcriptId === run.transcript.transcriptId &&
       same(snapshot.transcript.turns, run.transcript.turns) && same(snapshot.summary, run.summary) &&
-      snapshot.publication.externalPublicationId === run.publication.messageId &&
+      reference.messageId === run.publication.messageId &&
       snapshot.publicationTargetId === archive.plan.target.resultsChannelId &&
       snapshot.recording.speakerAudio.length === run.tracks.length,
       "Retained database snapshot disagrees with OSS evidence");

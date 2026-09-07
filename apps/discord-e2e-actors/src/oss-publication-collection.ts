@@ -1,3 +1,4 @@
+import { decodeDiscordExternalPublicationId } from "@discord-meeting/discord-adapter";
 import { REST, Routes } from "discord.js";
 import { z } from "zod";
 import { DiscordJsLiveDiscordProjectionReader } from "./discordjs-live-discord-projection-reader.js";
@@ -26,12 +27,17 @@ const messageSchema = z.object({
 /** Existing readonly projection observer supplies the whole matching-message set;
  * exact REST reads supply immutable message and attachment identities. */
 export async function collectOssPublication(input: {
+  // messageId carries the persisted external publication reference at this boundary.
   plan: OssPlan; meetingId: string; messageId: string; startedAtMs: number;
 }, reads: OssPublicationReads) {
   const plan = planSchema.parse(input.plan);
-  check(/^[A-Za-z0-9_-]{1,128}$/u.test(input.meetingId) && /^\d+$/u.test(input.messageId) &&
+  check(/^[A-Za-z0-9_-]{1,128}$/u.test(input.meetingId) &&
     Number.isSafeInteger(input.startedAtMs) && input.startedAtMs >= 0, "Invalid publication capture identity");
   const channelId = plan.target.resultsChannelId;
+  const reference = decodeDiscordExternalPublicationId(input.messageId);
+  check(reference?.kind === "channel-message" && reference.parentChannelId === channelId,
+    "Invalid publication reference for OSS results channel");
+  const messageId = reference.messageId;
   const channel = z.object({ id: z.string(), guild_id: z.string(), type: z.literal(0) }).parse(await reads.readChannel(channelId));
   check(channel.id === channelId && channel.guild_id === plan.target.guildId, "Publication private target mismatch");
   const marker = createObservedMeetingProjectionMarkers(input.meetingId, channelId)[1];
@@ -40,10 +46,10 @@ export async function collectOssPublication(input: {
     message.authorId === plan.target.publicationApplicationId && message.embeds.some((embed) =>
       embed.footerText?.includes(marker) === true || embed.url === `https://meeting-platform.invalid/projection/${encodeURIComponent(marker)}`
     )).map((message) => ({ projection, message })));
-  check(matches.length === 1 && matches[0]!.message.id === input.messageId &&
+  check(matches.length === 1 && matches[0]!.message.id === messageId &&
     matches[0]!.projection.container.kind === "channel-message", "Missing/duplicate final Discord publication");
-  const message = messageSchema.parse(await reads.readMessage(channelId, input.messageId));
-  check(message.id === input.messageId && message.channel_id === channelId &&
+  const message = messageSchema.parse(await reads.readMessage(channelId, messageId));
+  check(message.id === messageId && message.channel_id === channelId &&
     message.author.id === plan.target.publicationApplicationId && Date.parse(message.timestamp) >= input.startedAtMs &&
     Date.parse(message.timestamp) === matches[0]!.message.createdAtMilliseconds,
     "Discord observer/message identity mismatch");

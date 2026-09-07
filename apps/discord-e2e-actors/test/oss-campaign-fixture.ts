@@ -115,7 +115,7 @@ export async function campaignFixture(root: string) {
         startedAtMs: ended + 10 + j * 10, completedAtMs: ended + 20 + j * 10
       })),
       publication: {
-        messageId: `message-${i}`, channelId: plan.target.resultsChannelId,
+        messageId: `154640799877851138${i}`, channelId: plan.target.resultsChannelId,
         authorId: plan.target.publicationApplicationId, createdAtMs: ended + 35,
         transcriptAttachmentPath: put(`attachment-${i}.md`, "discord", Buffer.from(turns.map((t) => t.text).join("\n"))),
         summaryAttachmentPath: put(`outline-${i}.md`, "discord", Buffer.from(`${summary.title}\n${summary.overview}`))
@@ -123,7 +123,7 @@ export async function campaignFixture(root: string) {
       settled: [200, 300].map((delay) => ({
         observedAtMs: ended + delay, terminalAtMs: ended + 100,
         meetingIds: [`meeting-${i}`], recordingIds: [`recording-${i}`], transcriptIds: [transcript.transcriptId],
-        summaryIds: [summary.summaryId], finalMessageIds: [`message-${i}`], transcriptSha256: sha256(canonical(transcript))
+        summaryIds: [summary.summaryId], finalMessageIds: [`154640799877851138${i}`], transcriptSha256: sha256(canonical(transcript))
       })),
     });
     const manifestValue = {
@@ -165,7 +165,7 @@ export async function campaignFixture(root: string) {
       matchingMeetingCount: 1, matchingRecordingCount: 1,
       matchingSummaryCount: 1, matchingTranscriptCount: 1, snapshot: {
         meetingId: run.meetingId, revision: 1, publicationTargetId: plan.target.resultsChannelId,
-        publication: { externalPublicationId: run.publication.messageId, idempotencyKey: "test-publish" },
+        publication: { externalPublicationId: `discord:v2:channel:${plan.target.resultsChannelId}:message:${run.publication.messageId}`, idempotencyKey: "test-publish" },
         publicationStage: { status: "succeeded", attempts: 1 },
         summaryStage: { status: "succeeded", attempts: 1 },
         transcriptionStage: { status: "succeeded", attempts: 1 },
