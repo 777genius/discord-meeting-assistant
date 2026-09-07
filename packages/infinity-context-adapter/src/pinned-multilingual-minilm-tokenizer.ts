@@ -297,8 +297,7 @@ implements HistoricalEmbeddingTokenizerPort {
 
   public assertDocumentInput(title: string, body: string): void {
     const count = this.countTokens(infinityDocumentEmbeddingInput(title, body));
-    if (count > this.profile.maxInputTokens ||
-      this.profile.inputBudget === undefined ||
+    if (count > this.profile.maxInputTokens || this.profile.inputBudget === undefined ||
       this.countBodyTokens(body) > this.profile.inputBudget.maximumBodyTokens) {
       throw new PinnedMultilingualMiniLmTokenizerError(
         "historical document embedding input exceeds the qualified maximum",
