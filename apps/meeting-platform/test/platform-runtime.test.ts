@@ -668,9 +668,7 @@ describe("meeting platform shutdown", () => {
 
     const closingObserved = Promise.allSettled([closing]);
     try {
-      await vi.waitFor(() => {
-        expect(calls).toContain("recordings:close");
-      });
+      await vi.waitFor(() => { expect(calls).toContain("recordings:close"); });
     } finally {
       releaseRecordings();
       await closingObserved;
