@@ -44,6 +44,7 @@ export class SpeakerTranscriptionProviderSession {
     if (lease === null) {
       return null;
     }
+    // Shared permanent rejection cancels the speaker signal, including a granted lease.
     if (signal.aborted) {
       lease();
       return null;

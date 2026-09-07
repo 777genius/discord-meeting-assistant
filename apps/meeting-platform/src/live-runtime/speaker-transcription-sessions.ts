@@ -37,7 +37,7 @@ export interface SpeakerTranscriptionSessionsDependencies {
 /** Meeting-local registry of independent speaker transcription sessions. */
 export class SpeakerTranscriptionSessions {
   // Survives speaker deletion/cancellation; only a new runtime/configuration resets it.
-  private readonly admissionRejections = new Map<string, { rejected: boolean }>();
+  private readonly admissionRejections = new Map<string, AbortController>();
   private readonly ledger = new LivePacketDeliveryLedger();
   private readonly speakers = new Map<string, SpeakerTranscriptionSession>();
 
@@ -91,7 +91,7 @@ export class SpeakerTranscriptionSessions {
     if (existing !== undefined) {
       return existing;
     }
-    const admissionRejection = this.admissionRejections.get(speakerId) ?? { rejected: false };
+    const admissionRejection = this.admissionRejections.get(speakerId) ?? new AbortController();
     this.admissionRejections.set(speakerId, admissionRejection);
     const created = new SpeakerTranscriptionSession({
       admissionRejection,

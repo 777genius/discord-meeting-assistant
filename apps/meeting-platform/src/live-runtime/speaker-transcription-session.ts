@@ -1,16 +1,13 @@
 import { LiveTranscriptionAdmissionRejected } from "./contracts.js";
-import { LiveSessionAdmission, GlobalPacketFlowControl, SourceTimelinePacer,
-  SpeakerPacketFlowControl } from "./live-packet-flow-control.js";
-import type { LivePacketInspector, LiveRuntimeClock, LiveRuntimeLogger,
-  LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent,
-  LiveTranscriptionPort, LiveVoicePacket } from "./contracts.js";
+import { LiveSessionAdmission, GlobalPacketFlowControl, SourceTimelinePacer, SpeakerPacketFlowControl } from "./live-packet-flow-control.js";
+import type { LivePacketInspector, LiveRuntimeClock, LiveRuntimeLogger, LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent, LiveTranscriptionPort, LiveVoicePacket } from "./contracts.js";
 import { LivePacketDeliveryLedger, livePacketIdentity } from "./packet-delivery-ledger.js";
 import { SpeakerTranscriptionProviderSession } from "./speaker-transcription-provider-session.js";
 
 const maximumLivePacketDeliveryAttempts = 2;
 
 export interface SpeakerTranscriptionSessionDependencies {
-  readonly admissionRejection?: { rejected: boolean };
+  readonly admissionRejection?: AbortController;
   readonly clock: LiveRuntimeClock;
   readonly isMeetingFinishing: () => boolean;
   readonly ledger: LivePacketDeliveryLedger;
@@ -34,7 +31,7 @@ export interface SpeakerTranscriptionSessionDependencies {
 export class SpeakerTranscriptionSession {
   private admissionChain: Promise<void> = Promise.resolve();
   private admissionClosed = false;
-  private readonly admissionRejection: { rejected: boolean };
+  private readonly admissionRejection: AbortController;
   private deliveryFailed = false;
   private recoveryBlocked = false;
   private recovery: Promise<void> | null = null;
@@ -49,7 +46,7 @@ export class SpeakerTranscriptionSession {
   public constructor(
     private readonly dependencies: SpeakerTranscriptionSessionDependencies,
   ) {
-    this.admissionRejection = dependencies.admissionRejection ?? { rejected: false };
+    this.admissionRejection = dependencies.admissionRejection ?? new AbortController();
     this.packetFlow = new SpeakerPacketFlowControl(
       dependencies.maximumQueuedPackets,
       dependencies.clock,
@@ -57,20 +54,24 @@ export class SpeakerTranscriptionSession {
     );
     this.pacer = new SourceTimelinePacer(dependencies.clock, dependencies.timer);
     this.providerSession = new SpeakerTranscriptionProviderSession({
-      logger: dependencies.logger,
-      meetingId: dependencies.meetingId,
+      logger: dependencies.logger, meetingId: dependencies.meetingId,
       onTranscript: dependencies.onTranscript,
       sessionAdmission: dependencies.sessionAdmission,
-      speakerId: dependencies.speakerId,
-      transcriber: dependencies.transcriber,
+      speakerId: dependencies.speakerId, transcriber: dependencies.transcriber,
     });
+    // One permanent fence cancels reservations and openings in every generation.
+    this.admissionRejection.signal.addEventListener("abort", this.onAdmissionRejected, { once: true });
+    if (this.isAdmissionRejected()) { this.onAdmissionRejected(); }
   }
+
+  private readonly onAdmissionRejected = (): void => { this.cancelIdleFinalization(); this.cancelDelivery(); };
+  private isAdmissionRejected(): boolean { return this.admissionRejection.signal.aborted; }
 
   public async accept(
     packets: readonly LiveVoicePacket[],
     deadlineMs: number,
   ): Promise<void> {
-    if (this.admissionClosed || this.recoveryBlocked || this.admissionRejection.rejected) {return;}
+    if (this.admissionClosed || this.recoveryBlocked || this.isAdmissionRejected()) {return;}
     // Keep one global slot available for the recovery that deferred live work awaits.
     const recoveryHeadroom = this.recovery === null ? 0 : 1;
     const globallyReserved = await this.dependencies.packetAdmission.reserve(
@@ -125,6 +126,7 @@ export class SpeakerTranscriptionSession {
 
   private cancelDelivery(): void {
     this.admissionClosed = true;
+    this.admissionRejection.signal.removeEventListener("abort", this.onAdmissionRejected);
     this.packetFlow.cancel();
     this.providerSession.abortOpening();
     this.providerSession.terminate();
@@ -143,13 +145,13 @@ export class SpeakerTranscriptionSession {
   }
 
   // Read current mutable state across awaits; earlier checks cannot fence later work.
-  private isAdmissionClosed(): boolean { return this.admissionClosed || this.admissionRejection.rejected; }
+  private isAdmissionClosed(): boolean { return this.admissionClosed || this.isAdmissionRejected(); }
 
   private hasDeliveryFailed(): boolean { return this.deliveryFailed; }
 
   private isDeliveryCancelled(): boolean { return this.packetFlow.signal.aborted; }
 
-  private isPacketDeliveryBlocked(): boolean { return this.isDeliveryCancelled() || this.recoveryBlocked || this.admissionRejection.rejected; }
+  private isPacketDeliveryBlocked(): boolean { return this.isDeliveryCancelled() || this.recoveryBlocked || this.isAdmissionRejected(); }
 
   private async drainRecovery(packets: readonly LiveVoicePacket[]): Promise<void> {
     this.recoveryBlocked = false;
@@ -241,7 +243,7 @@ export class SpeakerTranscriptionSession {
 
   private async send(packet: LiveVoicePacket): Promise<void> {
     const packetId = livePacketIdentity(packet);
-    if (this.admissionRejection.rejected || this.isSuppressed(packet, packetId)) { return; }
+    if (this.isAdmissionRejected() || this.isSuppressed(packet, packetId)) { return; }
     const opus = Buffer.from(packet.payloadBase64, "base64");
     const durationSamples48Khz = this.dependencies.packetInspector
       .durationSamples48Khz(opus);
@@ -268,11 +270,11 @@ export class SpeakerTranscriptionSession {
     readonly packetId: string;
   }): Promise<void> {
     for (let attempt = 1; attempt <= maximumLivePacketDeliveryAttempts; attempt += 1) {
-      if (this.admissionRejection.rejected) { return; }
+      if (this.isAdmissionRejected()) { return; }
       let sendStartedAtMs: number;
       try {
         const session = await this.providerSession.open(this.packetFlow.signal);
-        if (session === null || this.packetFlow.signal.aborted) { return; }
+        if (session === null || this.isDeliveryCancelled() || this.isAdmissionRejected()) { return; }
         sendStartedAtMs = this.dependencies.clock.nowMilliseconds();
         await session.sendPacket({
           durationSamples48Khz: input.durationSamples48Khz,
@@ -283,8 +285,8 @@ export class SpeakerTranscriptionSession {
       } catch (error) {
         this.providerSession.terminate();
         if (error instanceof LiveTranscriptionAdmissionRejected) {
-          if (!this.admissionRejection.rejected) {
-            this.admissionRejection.rejected = true;
+          if (!this.isAdmissionRejected()) {
+            this.admissionRejection.abort();
             this.dependencies.logger.warn("Derived live transcription degraded: configuration admission rejected", {
               ...this.logFields(), errorCode: "LIVE_TRANSCRIPTION_ADMISSION_REJECTED",
             });
