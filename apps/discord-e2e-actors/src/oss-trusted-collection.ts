@@ -39,7 +39,8 @@ export async function runOssTrustedCollection(args: readonly string[]) {
 
   const journalNames = ["live-native.jsonl", "post-call-native.jsonl"];
   const initial = [];
-  for (const name of journalNames) {
+  // Live capture is readable during staging; only its published name is final evidence.
+  for (const name of ["live-native.staging.jsonl", journalNames[1]!]) {
     const bytes = await readSource(journalRoot, name, 1024 * 1024);
     const rows = bytes.toString("utf8").trimEnd().split("\n");
     check(rows.length === 1 && (JSON.parse(rows[0]!) as { type: string }).type === "capture_start",

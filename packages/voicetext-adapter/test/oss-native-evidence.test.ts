@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -45,7 +45,7 @@ describe("native OSS session journal", async () => {
     const session = sink.open();
     for (let index = 0; index < 100; index++) { session.record({ type: "failure" }); }
     await expect(sink.close()).rejects.toThrow("capture failed");
-    expect(readFileSync(join(directory, "live-native.jsonl"), "utf8")).not.toContain("capture_seal");
+    expect(existsSync(join(directory, "live-native.jsonl"))).toBe(false);
     expect(() => new OssNativeEvidenceJournal({
       directory, project: "vtoss-test-oss-8f49a06-r1",
       revision: "a".repeat(40), testOnly: true
@@ -58,7 +58,7 @@ describe("native OSS session journal", async () => {
       clientSessionId: "00000000-0000-4000-8000-000000000001"
     });
     await expect(sink.close()).rejects.toThrow("capture failed");
-    expect(readFileSync(join(directory, "live-native.jsonl"), "utf8")).not.toContain("capture_seal");
+    expect(existsSync(join(directory, "live-native.jsonl"))).toBe(false);
   });
   it("drops provider error bodies and codes", () => {
     expect(ossReceivedEvidence({ type: "error", code: "secret", message: "https://secret" }))

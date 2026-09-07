@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { close, closeSync, constants, fstatSync, fsync, ftruncate, openSync, write } from "node:fs";
+import { close, closeSync, constants, fstatSync, fsync, linkSync, lstatSync, openSync, write } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { VoicetextServerMessage } from "./protocol.js";
 
@@ -23,13 +23,15 @@ export interface OssNativeEvidenceSink {
   open(): OssSessionEvidence;
 }
 
-/** One exclusive append-only journal per admitted process. A crash or failed write
- * leaves no seal. All attempted sessions (including failed opens) share the journal.
+/** One exclusive staging journal per admitted process. A crash or failed close
+ * leaves no published journal. All attempted sessions (including failed opens) share the journal.
  * Enqueue snapshots are bounded; one asynchronous writer preserves receive order.
  * Integrators must await close() before qualifying or archiving the journal.
  */
 export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
   private readonly fd: number;
+  private readonly stagingPath: string;
+  private readonly publishedPath: string;
   private readonly digest = createHash("sha256");
   private sequence = 0;
   private bytes = 0;
@@ -57,7 +59,17 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
     this.maximumQueuedBytes = input.maximumQueuedBytes ?? 1024 * 1024;
     if (!Number.isSafeInteger(this.maximumQueuedBytes) || this.maximumQueuedBytes < 1024 ||
       this.maximumQueuedBytes > 4 * 1024 * 1024) { throw new Error("Invalid OSS queue bound"); }
-    this.fd = openSync(join(input.directory, "live-native.jsonl"),
+    this.stagingPath = join(input.directory, "live-native.staging.jsonl");
+    this.publishedPath = join(input.directory, "live-native.jsonl");
+    // Refuse existing final entries, including dangling symlinks. linkSync below
+    // independently enforces create-only publication against races.
+    try {
+      lstatSync(this.publishedPath);
+      throw this.captureError();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") { throw error; }
+    }
+    this.fd = openSync(this.stagingPath,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     if (!fstatSync(this.fd).isFile()) {
       closeSync(this.fd);
@@ -101,21 +113,13 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
     return this.closeResult;
   }
   private async finishClose(): Promise<void> {
-    let sealOffset: number | undefined;
     try {
       await this.settle();
       const row = this.snapshot({ type: "capture_seal", priorSha256: this.digest.copy().digest("hex") });
-      sealOffset = this.bytes;
       await this.writeRow(row);
       await this.sync();
-      if (this.failed) { throw this.captureError(); }
     } catch {
       this.failed = true;
-      if (sealOffset !== undefined) {
-        // Best-effort removal of an uncommitted seal; close() rejection is authoritative.
-        await new Promise<void>((resolve) => { ftruncate(this.fd, sealOffset, () => { resolve(); }); });
-        await this.sync().catch(() => { /* Failure remains sticky. */ });
-      }
     } finally {
       await new Promise<void>((resolve) => {
         close(this.fd, (error) => { if (error) { this.failed = true; } resolve(); });
@@ -123,6 +127,16 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
       this.closed = true;
     }
     if (this.failed) { throw this.captureError(); }
+    // No asynchronous gap after the final sticky-failure check. The staging
+    // inode has completed data/seal fsync AND descriptor close before it can
+    // acquire the sole name trusted by final collection. No rollback is needed.
+    // Publication is the last fallible operation: never fsync the directory
+    // afterwards and reject with an already visible final entry. A power loss
+    // may lose this unsynced directory entry; if retained, it names synced bytes.
+    // Missing publication always fails collection closed. Retain staging so no
+    // cleanup failure can turn successful publication into a rejected close.
+    try { linkSync(this.stagingPath, this.publishedPath); }
+    catch { this.failed = true; throw this.captureError(); }
   }
   private captureError(): Error {
     return new Error("OSS native capture failed; archive cannot qualify");
