@@ -197,6 +197,10 @@ export class SpeakerPacketFlowControl {
 
   public cancel(): void {
     this.abortController.abort();
+    this.wakeAdmissionWaiters();
+  }
+
+  public wakeAdmissionWaiters(): void {
     const waiters = this.capacityWaiters.splice(0);
     for (const waiter of waiters) {
       waiter.wake();
@@ -212,6 +216,11 @@ export class SourceTimelinePacer {
     private readonly clock: LiveRuntimeClock = systemLiveRuntimeClock,
     private readonly timer: LiveRuntimeTimer = systemLiveRuntimeTimer,
   ) {}
+
+  public packetWaitMs(meetingStartedAtMs: number, relativeTimeMs: number): number {
+    return Math.max(0, meetingStartedAtMs + relativeTimeMs - maximumLivePacketLeadMs
+      - this.clock.nowMilliseconds(), this.nextPermittedPacketAtMs - this.clock.nowMilliseconds());
+  }
 
   public async waitForPacketTime(
     meetingStartedAtMs: number,
@@ -269,4 +278,21 @@ async function waitForLivePacketTime(
   timerPort.cancel(timer);
   signal.removeEventListener("abort", onAbort);
   return readyToSend && !signal.aborted;
+}
+
+/** A fixed phase deadline, or a packet-progress deadline renewed by a finite queue. */
+export async function superviseLiveWork(
+  work: Promise<void>, budgetMs: number, timer: LiveRuntimeTimer,
+  supervision: { readonly clock: LiveRuntimeClock; readonly cancel: () => void; readonly deadline?: (() => number) | undefined },
+): Promise<void> {
+  const { clock, cancel, deadline } = supervision;
+  let timeout: LiveRuntimeTimerHandle;
+  const check = (): void => {
+    const remaining = (deadline?.() ?? 0) - clock.nowMilliseconds();
+    if (remaining > 0) { timeout = timer.schedule(remaining, check); }
+    else { cancel(); }
+  };
+  timeout = timer.schedule(budgetMs, check);
+  try { await work; }
+  finally { timer.cancel(timeout); }
 }

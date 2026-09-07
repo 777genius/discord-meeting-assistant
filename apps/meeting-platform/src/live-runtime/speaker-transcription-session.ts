@@ -1,10 +1,13 @@
 import { LiveTranscriptionAdmissionRejected } from "./contracts.js";
-import { LiveSessionAdmission, GlobalPacketFlowControl, SourceTimelinePacer, SpeakerPacketFlowControl } from "./live-packet-flow-control.js";
+import { superviseLiveWork, LiveSessionAdmission, GlobalPacketFlowControl, SourceTimelinePacer, SpeakerPacketFlowControl } from "./live-packet-flow-control.js";
 import type { LivePacketInspector, LiveRuntimeClock, LiveRuntimeLogger, LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent, LiveTranscriptionPort, LiveVoicePacket } from "./contracts.js";
 import { LivePacketDeliveryLedger, livePacketIdentity } from "./packet-delivery-ledger.js";
 import { SpeakerTranscriptionProviderSession } from "./speaker-transcription-provider-session.js";
 
 const maximumLivePacketDeliveryAttempts = 2;
+// Independent from admission pressure; exceeds the current provider's 30s allowance.
+const providerFinalizeTimeoutMs = 35_000;
+const maximumDrainPacingWaitMs = 30_000;
 
 export interface SpeakerTranscriptionSessionDependencies {
   readonly admissionRejection?: AbortController;
@@ -31,6 +34,8 @@ export interface SpeakerTranscriptionSessionDependencies {
 export class SpeakerTranscriptionSession {
   private admissionChain: Promise<void> = Promise.resolve();
   private admissionClosed = false;
+  private finishing: Promise<void> | null = null;
+  private deliveryDeadlineMs = 0;
   private readonly admissionRejection: AbortController;
   private deliveryFailed = false;
   private recoveryBlocked = false;
@@ -43,9 +48,7 @@ export class SpeakerTranscriptionSession {
   private readonly pacer: SourceTimelinePacer;
   private readonly providerSession: SpeakerTranscriptionProviderSession;
 
-  public constructor(
-    private readonly dependencies: SpeakerTranscriptionSessionDependencies,
-  ) {
+  public constructor(private readonly dependencies: SpeakerTranscriptionSessionDependencies) {
     this.admissionRejection = dependencies.admissionRejection ?? new AbortController();
     this.packetFlow = new SpeakerPacketFlowControl(
       dependencies.maximumQueuedPackets,
@@ -67,10 +70,7 @@ export class SpeakerTranscriptionSession {
   private readonly onAdmissionRejected = (): void => { this.cancelIdleFinalization(); this.cancelDelivery(); };
   private isAdmissionRejected(): boolean { return this.admissionRejection.signal.aborted; }
 
-  public async accept(
-    packets: readonly LiveVoicePacket[],
-    deadlineMs: number,
-  ): Promise<void> {
+  public async accept(packets: readonly LiveVoicePacket[], deadlineMs: number): Promise<void> {
     if (this.admissionClosed || this.recoveryBlocked || this.isAdmissionRejected()) {return;}
     // Keep one global slot available for the recovery that deferred live work awaits.
     const recoveryHeadroom = this.recovery === null ? 0 : 1;
@@ -83,6 +83,10 @@ export class SpeakerTranscriptionSession {
       if (!this.dependencies.isMeetingFinishing()) {
         this.noteDegradation("LIVE_PACKET_GLOBAL_BACKLOG_FULL");
       }
+      return;
+    }
+    if (this.isAdmissionClosed()) {
+      this.dependencies.packetAdmission.release(packets.length + recoveryHeadroom);
       return;
     }
     if (recoveryHeadroom > 0) { this.dependencies.packetAdmission.release(recoveryHeadroom); }
@@ -104,7 +108,6 @@ export class SpeakerTranscriptionSession {
     };
     const completion = this.admissionChain.then(admission, admission);
     this.admissionChain = completion.catch(() => {});
-    // Reservations bound deferred live admission while recovery keeps speaker order.
     if (recovery === null) { await completion; }
   }
 
@@ -144,7 +147,6 @@ export class SpeakerTranscriptionSession {
     finally { signal.removeEventListener("abort", onAbort); }
   }
 
-  // Read current mutable state across awaits; earlier checks cannot fence later work.
   private isAdmissionClosed(): boolean { return this.admissionClosed || this.isAdmissionRejected(); }
 
   private hasDeliveryFailed(): boolean { return this.deliveryFailed; }
@@ -178,25 +180,27 @@ export class SpeakerTranscriptionSession {
   public beginFinish(): void {
     this.cancelIdleFinalization();
     this.admissionClosed = true;
+    this.packetFlow.wakeAdmissionWaiters();
     this.cancelRecovery();
   }
 
-  public async finish(): Promise<void> {
-    this.cancelIdleFinalization();
-    let timeout!: LiveRuntimeTimerHandle;
-    const expired = new Promise<void>((resolve) => {
-      timeout = this.dependencies.timer.schedule(this.dependencies.packetBackpressureTimeoutMs, () => {
-        this.cancelDelivery();
-        resolve();
-      });
-    });
-    const finish = async (): Promise<void> => {
-      await this.admissionChain.catch(() => {});
-      await this.chain.catch(() => {});
-      await this.finalize("Derived live speaker finalize failed");
-    };
-    try { await Promise.race([finish(), expired]); }
-    finally { this.dependencies.timer.cancel(timeout); }
+  public finish(): Promise<void> {
+    this.beginFinish();
+    this.finishing ??= this.finishAdmittedPackets();
+    return this.finishing;
+  }
+
+  private async finishAdmittedPackets(): Promise<void> {
+    await this.supervise(this.admissionChain, this.dependencies.packetBackpressureTimeoutMs);
+    const stallMs = this.dependencies.packetBackpressureTimeoutMs;
+    this.deliveryDeadlineMs = Math.max(this.deliveryDeadlineMs, this.dependencies.clock.nowMilliseconds() + stallMs);
+    await this.supervise(this.chain, stallMs, () => this.deliveryDeadlineMs);
+    if (!this.isDeliveryCancelled()) { await this.finalize("Derived live speaker finalize failed"); }
+  }
+
+  private supervise(work: Promise<void>, budgetMs: number, deadline?: () => number): Promise<void> {
+    return superviseLiveWork(this.untilCancelled(work), budgetMs, this.dependencies.timer,
+      { clock: this.dependencies.clock, cancel: () => { this.cancelDelivery(); }, deadline });
   }
 
   private async admit(packet: LiveVoicePacket, deadlineMs: number): Promise<void> {
@@ -214,7 +218,7 @@ export class SpeakerTranscriptionSession {
 
   private async reservePacketSlot(packet: LiveVoicePacket, deadlineMs: number): Promise<boolean> {
     if (this.isPacketDeliveryBlocked() || this.isSuppressed(packet)) { return false; }
-    const hasCapacity = await this.packetFlow.waitForQueueSlot(deadlineMs, this.dependencies.isMeetingFinishing);
+    const hasCapacity = await this.packetFlow.waitForQueueSlot(deadlineMs, () => this.isAdmissionClosed() || this.dependencies.isMeetingFinishing());
     if (!hasCapacity) {
       if (!this.dependencies.isMeetingFinishing()) {
         this.noteDegradation("LIVE_PACKET_BACKPRESSURE_TIMEOUT");
@@ -226,6 +230,9 @@ export class SpeakerTranscriptionSession {
     this.packetFlow.reserveQueueSlot();
     const delivery = async (): Promise<void> => {
       try {
+        const pacingMs = this.pacer.packetWaitMs(this.dependencies.startedAtMs, packet.relativeTimeMs);
+        this.deliveryDeadlineMs = this.dependencies.clock.nowMilliseconds()
+          + Math.min(pacingMs, maximumDrainPacingWaitMs) + this.dependencies.packetBackpressureTimeoutMs;
         await this.untilCancelled(this.send(packet));
       } catch (error) {
         this.deliveryFailed = true;
@@ -263,11 +270,8 @@ export class SpeakerTranscriptionSession {
   }
 
   private async sendWithBoundedRetry(input: {
-    readonly durationSamples48Khz: number;
-    readonly earliestPacketAtMs: number;
-    readonly opus: Uint8Array;
-    readonly packet: LiveVoicePacket;
-    readonly packetId: string;
+    readonly durationSamples48Khz: number; readonly earliestPacketAtMs: number;
+    readonly opus: Uint8Array; readonly packet: LiveVoicePacket; readonly packetId: string;
   }): Promise<void> {
     for (let attempt = 1; attempt <= maximumLivePacketDeliveryAttempts; attempt += 1) {
       if (this.isAdmissionRejected()) { return; }
@@ -309,10 +313,8 @@ export class SpeakerTranscriptionSession {
 
   private async commitDelivery(
     input: {
-      readonly durationSamples48Khz: number;
-      readonly earliestPacketAtMs: number;
-      readonly packet: LiveVoicePacket;
-      readonly packetId: string;
+      readonly durationSamples48Khz: number; readonly earliestPacketAtMs: number;
+      readonly packet: LiveVoicePacket; readonly packetId: string;
     },
     sendStartedAtMs: number,
   ): Promise<void> {
@@ -343,11 +345,13 @@ export class SpeakerTranscriptionSession {
   }
 
   private async finalize(failureMessage: string): Promise<void> {
-    await this.providerSession.finalize(failureMessage);
+    this.deliveryDeadlineMs = this.dependencies.clock.nowMilliseconds() + providerFinalizeTimeoutMs;
+    await this.supervise(this.providerSession.finalize(failureMessage), providerFinalizeTimeoutMs);
   }
 
   private scheduleIdleFinalizationIfReady(): void {
     if (
+      this.admissionClosed ||
       this.packetFlow.queuedPacketCount !== 0 ||
       !this.providerSession.isOpen ||
       this.dependencies.isMeetingFinishing()
@@ -377,10 +381,8 @@ export class SpeakerTranscriptionSession {
   }
 
   private cancelIdleFinalization(): void {
-    if (this.inactivityTimer !== null) {
-      this.dependencies.timer.cancel(this.inactivityTimer);
-      this.inactivityTimer = null;
-    }
+    if (this.inactivityTimer !== null) { this.dependencies.timer.cancel(this.inactivityTimer); }
+    this.inactivityTimer = null;
   }
 
   private rememberRetryablePacket(packet: LiveVoicePacket, packetId: string): void {
@@ -421,16 +423,14 @@ export class SpeakerTranscriptionSession {
 
   private logAdmissionFailure(error: unknown): void {
     this.dependencies.logger.warn("Derived live packet admission failed", {
-      ...this.logFields(),
-      errorName: error instanceof Error ? error.name : "UnknownError",
+      ...this.logFields(), errorName: error instanceof Error ? error.name : "UnknownError",
     });
   }
 
   private logPacketFailure(error: unknown): void {
     if (this.dependencies.isMeetingFinishing() || this.packetFlow.signal.aborted) { return; }
     this.dependencies.logger.warn("Derived live transcription packet failed", {
-      ...this.logFields(),
-      errorName: error instanceof Error ? error.name : "UnknownError",
+      ...this.logFields(), errorName: error instanceof Error ? error.name : "UnknownError",
     });
   }
 
