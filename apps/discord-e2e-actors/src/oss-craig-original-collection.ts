@@ -1,7 +1,8 @@
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
 import { resolve, sep } from "node:path";
 import { z } from "zod";
-import { readRegular, requireEvidence as check, sha256 } from "./oss-campaign-artifacts.js";
+import { same, requireEvidence as check, sha256 } from "./oss-campaign-artifacts.js";
 import { digest, id, revision } from "./oss-campaign-profile.js";
 
 export const requiredCraigSourceRoot =
@@ -62,7 +63,7 @@ export function verifyCraigOriginalBytes(input: {
 }
 
 export async function collectCraigOriginals(input: {
-  originalDirectory: string; manifestBytes: Buffer; craigRevision: string; jobBytes: Buffer;
+  originalDirectory: string; manifestBytes: Buffer; craigRevision: string; jobBytes?: Buffer;
 }) {
   const root = resolve(input.originalDirectory);
   check(await realpath(root) === root, "Craig original root must not be a symlink");
@@ -75,21 +76,100 @@ export async function collectCraigOriginals(input: {
     const path = resolve(root, entry.name);
     check(path.startsWith(root + sep) && await realpath(path) === path, "Craig original path escaped");
     check((await lstat(path)).nlink === 1, "Unsafe Craig original hardlink alias");
-    const bytes = await readRegular(path, 512 * 1024 * 1024, true);
+    const bytes = await readCraigSource(root, entry.name, 512 * 1024 * 1024, true);
     total += bytes.length;
     check(total <= 1024 * 1024 * 1024, "Craig original byte bound exceeded");
     originals.push({ path: entry.name, bytes });
   }
-  const job: unknown = JSON.parse(input.jobBytes.toString("utf8"));
-  const verified = verifyCraigOriginalBytes({ ...input, job, files: originals });
+  const verified = input.jobBytes === undefined
+    ? verifyCraigManifestOriginalBytes({ ...input, files: originals })
+    : verifyCraigOriginalBytes({ ...input, job: JSON.parse(input.jobBytes.toString("utf8")), files: originals });
   return {
-    kind: "oss-native-craig-originals-v1" as const, recordingId: verified.recordingId,
+    kind: input.jobBytes === undefined ? "oss-native-craig-originals-v2" as const : "oss-native-craig-originals-v1" as const, recordingId: verified.recordingId,
     craigRevision: input.craigRevision, manifestSha256: sha256(input.manifestBytes),
     files: originals.map(({ path, bytes }) => ({ path, size: bytes.length, sha256: sha256(bytes) })),
     declaredSourceFilesChecksumSha256: verified.checksumSha256,
     aggregateRecomputation: {
       status: "recomputed" as const, checksumSha256: verified.checksumSha256,
-      jobBase64: input.jobBytes.toString("base64")
+      ...(input.jobBytes === undefined ? {} : { jobBase64: input.jobBytes.toString("base64") })
     },
   };
+}
+
+/** New proof path: the durable ingress manifest is the source commitment. */
+export function verifyCraigManifestOriginalBytes(input: {
+  manifestBytes: Buffer; files: Array<{ path: string; bytes: Buffer }>; craigRevision: string;
+}) {
+  check(input.craigRevision === pinnedCraigRevision, "Unpinned Craig original source");
+  const manifest = manifestSource.parse(JSON.parse(input.manifestBytes.toString("utf8")));
+  const identity = sealedIdentity.parse(JSON.parse(input.manifestBytes.toString("utf8")));
+  check(identity.identityProvenance.producerRevision === input.craigRevision,
+    "Native producer revision mismatch");
+  check(new Set(identity.actors.map(actor => actor.actorId)).size === identity.actors.length,
+    "Duplicate sealed actor identity");
+  check(input.files.length === 6 && new Set(input.files.map(file => file.path)).size === 6,
+    "Craig source set missing or duplicate");
+  const ordered = kinds.map(kind => {
+    const relativePath = `${manifest.recordingId}.ogg.${kind}`;
+    const file = input.files.find(entry => entry.path === relativePath);
+    check(file, "Craig original source missing or aliased");
+    return { kind, relativePath, checksumSha256: sha256(file.bytes), sizeBytes: file.bytes.length };
+  });
+  const checksumSha256 = sha256(JSON.stringify(ordered));
+  check(checksumSha256 === manifest.source.checksumSha256, "Craig aggregate disagrees with manifest");
+  return { checksumSha256, recordingId: manifest.recordingId };
+}
+
+const sealedIdentity = z.object({
+  schemaVersion: z.literal(3),
+  actors: z.array(z.object({ actorId: id, kind: z.enum(["human", "automation"]) }).strict()).min(1),
+  identityProvenance: z.object({
+    actorObservationState: z.literal("consistent"), actorSemanticsVersion: z.literal(1),
+    producerCapabilityId: z.literal("meeting.lifecycle.sealed-actor-roster.v1"),
+    producerRevision: z.literal(pinnedCraigRevision), rosterState: z.literal("sealed"),
+  }).strict(),
+});
+
+export function verifyCraigManifestAuthority(manifestBytes: Buffer, completion: unknown, database: unknown,
+  object: { locator: string; revision: string; sizeBytes: number; checksumSha256: string }) {
+  const manifest = sealedIdentity.parse(JSON.parse(manifestBytes.toString("utf8")));
+  const identity = z.object({ recordingId: id, manifestLocator: id, manifestRevision: id,
+    manifestSizeBytes: z.number().int().positive(), manifestChecksumSha256: digest });
+  const accepted = z.object({ schemaVersion: z.literal(6), lifecycleSchemaVersion: z.literal(3),
+    actors: sealedIdentity.shape.actors, identityProvenance: sealedIdentity.shape.identityProvenance,
+    recordingId: id, recording: identity }).parse(completion);
+  const stored = z.object({ snapshot: z.object({ recording: identity }) }).parse(database).snapshot.recording;
+  const source = manifestSource.parse(JSON.parse(manifestBytes.toString("utf8")));
+  check(same(manifest.actors, accepted.actors) && same(manifest.identityProvenance, accepted.identityProvenance) &&
+    accepted.recordingId === source.recordingId && accepted.recording.recordingId === source.recordingId &&
+    same(accepted.recording, stored), "Native original authority/provenance mismatch");
+  check(stored.manifestLocator === object.locator && stored.manifestRevision === object.revision &&
+    stored.manifestSizeBytes === object.sizeBytes && object.sizeBytes === manifestBytes.length &&
+    stored.manifestChecksumSha256 === object.checksumSha256 && object.checksumSha256 === sha256(manifestBytes),
+    "Native original immutable manifest mismatch");
+}
+
+/** Inspect the opened runtime inode before copying; retention checks cannot detect source aliases. */
+export async function readCraigSource(root: string, path: string, maxBytes: number, allowEmpty = false) {
+  const full = resolve(root, path);
+  check(full.startsWith(root + sep) && await realpath(full) === full, "Runtime source path escape/symlink");
+  const handle = await open(full, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const before = await handle.stat();
+    check(before.isFile() && before.nlink === 1 && before.size <= maxBytes &&
+      (allowEmpty || before.size > 0), "Unsafe runtime source type/hardlink/size");
+    const bytes = Buffer.alloc(before.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = await handle.read(bytes, offset, bytes.length - offset, offset);
+      check(read.bytesRead > 0, "Runtime source truncated");
+      offset += read.bytesRead;
+    }
+    const after = await handle.stat();
+    const named = await lstat(full);
+    check(after.size === before.size && after.mtimeMs === before.mtimeMs && after.ctimeMs === before.ctimeMs &&
+      after.nlink === 1 && named.ino === after.ino && named.dev === after.dev && await realpath(full) === full,
+      "Runtime source changed while reading");
+    return bytes;
+  } finally { await handle.close(); }
 }

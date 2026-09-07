@@ -4,7 +4,7 @@ import { z } from "zod";
 import { collectOssDeployment } from "./oss-deployment-collection.js";
 import { collectOssReadonlySnapshot, runOssReadCommand } from "./oss-readonly-collection.js";
 import { collectOssPublicationFromDiscord } from "./oss-publication-collection.js";
-import { collectCraigOriginals } from "./oss-craig-original-collection.js";
+import { collectCraigOriginals, readCraigSource, verifyCraigManifestAuthority } from "./oss-craig-original-collection.js";
 import { assembleOssNativeArchive } from "./oss-native-archive-assembly.js";
 import { normalizeOssDatabase } from "./oss-database.js";
 import { verifyOssCampaign } from "./oss-campaign-verification.js";
@@ -74,7 +74,7 @@ export async function runOssTrustedCollection(args: readonly string[]) {
       check(next.done !== true, "Missing root run control");
       const request = z.object({
         runId: z.literal(run.runId), recordingId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
-        actorPath: z.string().min(1), preparedJobPath: artifactSchema.shape.path,
+        actorPath: z.string().min(1),
       }).strict().parse(JSON.parse(next.value));
       const snapshots = [], publications = [];
       for (let observation = 0; observation < 2; observation++) {
@@ -97,10 +97,11 @@ export async function runOssTrustedCollection(args: readonly string[]) {
         const name = `${request.recordingId}.ogg.${kind}`;
         await put(`${originalDirectory}/${name}`, await readSource(craigRoot, name, 512 * 1024 * 1024, true));
       }
+      verifyCraigManifestAuthority(Buffer.from(snapshot.objects[0]!.base64, "base64"),
+        snapshot.completion, snapshot.database, snapshot.objects[0]!);
       const original = await collectCraigOriginals({
         originalDirectory: resolve(sourceRoot, originalDirectory),
-        manifestBytes: Buffer.from(snapshot.objects[0]!.base64, "base64"), craigRevision: plan.target.craigRevision,
-        jobBytes: await readSource(craigRoot, request.preparedJobPath, 16 * 1024 * 1024)
+        manifestBytes: Buffer.from(snapshot.objects[0]!.base64, "base64"), craigRevision: plan.target.craigRevision
       });
       check(original.files.every((file) => sha256(retained.get(`${originalDirectory}/${file.path}`)!) === file.sha256),
         "Original retention changed during collection");
@@ -184,7 +185,7 @@ const readSource = async (root: string, path: string, max = 512 * 1024 * 1024, e
   artifactSchema.shape.path.parse(path);
   const full = resolve(root, path);
   check(full.startsWith(root + sep) && await realpath(full) === full, "Runtime source path escape/symlink");
-  return readRegular(full, max, empty);
+  return readCraigSource(root, path, max, empty);
 };
 
 function nonempty(value: string | undefined): value is string {

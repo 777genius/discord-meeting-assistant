@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -13,7 +13,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../src/oss-deployment-collection.js", () => ({ collectOssDeployment: mocks.deployment }));
 vi.mock("../src/oss-readonly-collection.js", () => ({ collectOssReadonlySnapshot: mocks.snapshot, runOssReadCommand: mocks.docker }));
 vi.mock("../src/oss-publication-collection.js", () => ({ collectOssPublicationFromDiscord: mocks.publication }));
-vi.mock("../src/oss-craig-original-collection.js", () => ({ collectCraigOriginals: mocks.originals }));
+vi.mock("../src/oss-craig-original-collection.js", async (original) => ({
+  ...await original<object>(), collectCraigOriginals: mocks.originals, verifyCraigManifestAuthority: vi.fn()
+}));
 vi.mock("../src/oss-native-archive-assembly.js", () => ({ assembleOssNativeArchive: mocks.assemble }));
 vi.mock("../src/oss-campaign-verification.js", () => ({ verifyOssCampaign: mocks.verify }));
 vi.mock("../src/oss-campaign-artifacts.js", async (original) => ({
@@ -57,7 +59,7 @@ for (const name of ["live-native.jsonl", "post-call-native.jsonl"]) { await writ
     for (const kind of ["data", "header1", "header2", "users", "info", "log"]) { await writeFile(join(craig, `${run.recordingId}.ogg.${kind}`), Buffer.from(kind)); }
     control.push(JSON.stringify({
       runId: run.runId, recordingId: run.recordingId,
-      actorPath: join(root, run.actorPath), preparedJobPath: jobPath
+      actorPath: join(root, run.actorPath)
     }));
   }
   mocks.snapshot.mockImplementation(async ({ recordingId }: { recordingId: string }) => {
@@ -70,8 +72,8 @@ for (const name of ["live-native.jsonl", "post-call-native.jsonl"]) { await writ
     };
   });
   mocks.publication.mockResolvedValue({ runtime: "discord-read" });
-  mocks.originals.mockImplementation(async ({ jobBytes }: { jobBytes: Buffer }) => {
-    const { recordingId } = JSON.parse(jobBytes.toString()) as { recordingId: string };
+  mocks.originals.mockImplementation(async ({ originalDirectory }: { originalDirectory: string }) => {
+    const recordingId = `recording-${originalDirectory.split("-").at(-1)}`;
     return {
       files: ["data", "header1", "header2", "users", "info", "log"].map((kind) => ({
         path: `${recordingId}.ogg.${kind}`, sha256: sha256(Buffer.from(kind)),
@@ -87,7 +89,7 @@ for (const name of ["live-native.jsonl", "post-call-native.jsonl"]) { await writ
   const receipt = join(root, "pass.json");
   const args = [f.planPath, new URL("./fixtures/manifest.v1.json", import.meta.url).pathname,
   join(root, "retained"), join(root, "archive"), receipt];
-  return { args, receipt, journals };
+  return { args, receipt, journals, craig };
 }
 it("independently collects all runtime sources before binding retained bytes and creating a distinct PASS", async () => {
   const { args, receipt } = await setup();
@@ -123,3 +125,17 @@ it("does not expose command injection as a runtime admission bypass", async () =
 });
 
 const mounts = (source: string, destination: string) => [{ Type: "bind", Source: source, Destination: destination }];
+
+it.each(["hardlink", "symlink"])("rejects runtime source %s before retention or original proof", async alias => {
+  const { args, receipt, craig } = await setup();
+  const source = join(craig, "recording-0.ogg.data");
+  if (alias === "hardlink") { await link(source, join(craig, "source-alias")); }
+  else {
+    await rm(source);
+    await symlink(join(craig, "recording-0.ogg.header1"), source);
+  }
+  await expect(runOssTrustedCollection(args)).rejects.toThrow(/hardlink|symlink/u);
+  expect(mocks.originals).not.toHaveBeenCalled();
+  expect(mocks.assemble).not.toHaveBeenCalled();
+  await expect(readFile(receipt)).rejects.toThrow();
+});

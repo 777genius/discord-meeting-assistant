@@ -81,13 +81,13 @@ async function collectDeployment(args: readonly string[], command?: OssReadComma
 }
 
 async function collectOriginals(args: readonly string[]) {
-  const [, planPath, manifestPath, originalDirectory, jobPath, output, ...extra] = args;
-  requireEvidence(nonempty(planPath) && nonempty(manifestPath) && nonempty(originalDirectory) && nonempty(jobPath) && nonempty(output) && extra.length === 0,
-    "Usage: oss-collect-main.js originals PLAN MANIFEST ORIGINAL_DIRECTORY PREPARED_JOB OUTPUT");
+  const [, planPath, manifestPath, originalDirectory, output, ...extra] = args;
+  requireEvidence(nonempty(planPath) && nonempty(manifestPath) && nonempty(originalDirectory) && nonempty(output) && extra.length === 0,
+    "Usage: oss-collect-main.js originals PLAN MANIFEST ORIGINAL_DIRECTORY OUTPUT");
   const plan = planSchema.parse(JSON.parse((await readRegular(planPath)).toString("utf8")));
   const result = await collectCraigOriginals({
     originalDirectory, manifestBytes: await readRegular(manifestPath),
-    craigRevision: plan.target.craigRevision, jobBytes: await readRegular(jobPath)
+    craigRevision: plan.target.craigRevision
   });
   await createReceipt(output, result);
   return { kind: result.kind, recordingId: result.recordingId, status: "recomputed" as const };

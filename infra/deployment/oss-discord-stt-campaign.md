@@ -50,15 +50,26 @@ Present zero-byte sidecars are retained and hashed; empty does not mean missing.
 Names are exactly `recordingId.ogg.kind`. Every byte checksum and size is recomputed,
 then SHA-256 covers UTF-8 `JSON.stringify` of that ordered array, with object insertion
 keys `kind,relativePath,checksumSha256,sizeBytes`. Sorted-key JSON is incorrect.
-The result must equal the prepared job's `lifecycleV3Snapshot.sealedReady`
-`sourceFilesChecksumSha256` and immutable manifest `source.checksumSha256`.
-Missing/unprepared jobs, missing or duplicate files, aliases and changed originals
-fail closed. Retain the exact prepared job bytes separately from the six originals;
-the collector embeds them losslessly in its evidence. Final verification independently
-rehashes archived originals and checks both aggregate authorities. Legacy collections
-without this proof remain `sources-unverified`; there is no override.
+The result must equal the independently fetched immutable manifest's
+`source.checksumSha256`. New collection emits `oss-native-craig-originals-v2`,
+without a prepared-job path or bytes. Craig deletes that job immediately after
+acknowledged delivery; collection never polls, reconstructs or retains it.
+Manifest locator, immutable version, byte size and hash must match native completion
+and the authoritative database. V3 consistent sealed actor provenance and the pinned
+producer capability/revision are mandatory. Completion event digests establish
+consistency only; they are not full event payload evidence.
+Missing, duplicate or aliased originals and changed bytes fail closed. The opened
+runtime source inode must be regular, singly linked, bounded and contained before
+copying. Final verification rehashes all six archive files independently. Legacy
+v1 decoding still requires its original job proof; missing-job v1 collections remain
+`sources-unverified` and are never silently upgraded.
 
 ## Exact target and configuration
+
+Before actors join, verify the actual Platform active room route includes the admitted
+guild, voice channel and results channel. Craig's static environment allowlist is
+overridden by authoritative empty Platform configuration; static values alone do
+not admit a room. Discord acceptance remains pending a separately authorized run.
 
 Use the existing isolated project `vtoss-test-oss-8f49a06-r1`; no public guild,
 user account, self-bot, real-user project or non-test data. Platform's
@@ -196,15 +207,13 @@ Wait for native completion and successful post-call settlement, then send one
 JSON line to the running collector's stdin, using that scenario's exact `runId`:
 
 ```json
-{"runId":"oss-r1-sequential","recordingId":"ACTUAL_RECORDING_ID","actorPath":"/absolute/root-owned/actor-output.json","preparedJobPath":"RELATIVE_PREPARED_JOB_PATH_UNDER_CRAIG_REC"}
+{"runId":"oss-r1-sequential","recordingId":"ACTUAL_RECORDING_ID","actorPath":"/absolute/root-owned/actor-output.json"}
 ```
 
 `actorPath` is supplemental fixture/timing evidence from root's official actor
-orchestrator. `preparedJobPath` selects the original producer job beneath the
-independently discovered Craig recordings bind mount; it is not an arbitrary
-host pathname. Root determines the producer's actual relative outbox path. The
-collector reads the job and all six `${recordingId}.ogg.kind` files directly from
-that runtime mount, and applies the unchanged pinned checksum algorithm.
+orchestrator. The collector reads all six `${recordingId}.ogg.kind` files from the
+independently discovered Craig recordings bind mount and applies the pinned checksum
+algorithm against the durable manifest commitment.
 It performs two independent DB/object/Discord observations itself. Wait for its
 `settled` event before starting the next scenario, and repeat for overlap and
 reconnect. No retry under the same run identity; preserve failed captures and
@@ -299,5 +308,5 @@ pnpm --filter @discord-meeting/meeting-platform exec vitest run test/oss-native-
 
 Capture-to-parser integration tests live in the Platform test root so the actor
 package's build root remains unchanged. Test failures, truncation, duplicate or
-omitted sessions/stages, metadata changes and missing prepared original-source proof
+omitted sessions/stages, metadata changes and missing versioned original-source proof
 remain disqualifying. Keep dependency-cache symlinks out of the patch.

@@ -97,7 +97,7 @@ export async function assembleOssNativeArchive(input: {
     }
     const originalInventoryPath = json(`${prefix}/original-inventory.json`, "craig", {
       recordingId: original.recordingId, craigRevision: original.craigRevision,
-      // Final verification independently recomputes from archived bytes and prepared job.
+      // Final verification independently recomputes from archived bytes against the versioned original proof.
       sourceFilesChecksumSha256: original.declaredSourceFilesChecksumSha256,
       files: originals.map((path) => ({ path, size: files.get(path)!.length, sha256: sha256(files.get(path)!) })),
     });
