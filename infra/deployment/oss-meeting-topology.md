@@ -4,7 +4,17 @@ This is the one supported clean-checkout Compose workflow for the core
 self-hosted lane. It runs Meeting Platform, a user-owned Craig bot with its own
 PostgreSQL, Redis, and recording custody, and the OSS VoiceText gateway with its
 own PostgreSQL and Caddy TLS edge. It never uses the public hosted Craig bot or
-private VoiceText SaaS.
+private VoiceText SaaS. Private SaaS reuse is deferred/unverified; current
+self-hosting does not require SaaS. Future adapter adoption must first pin the
+SaaS contract/version and validate authentication, profile identity, batch
+idempotency, live ACK/finalization, bounded failures and evidence retention in
+an isolated synthetic-fixture deployment, then obtain separate provider and
+private-Discord acceptance before adoption. No private SaaS compatibility is
+claimed by the native OSS results.
+
+The [native provider-fixture results](voicetext-gateway.md#implemented-profile-mapping-and-qualification-status)
+cover four profiles on one synthetic RU/EN fixture only. Real Discord acceptance
+remains PENDING; Ukrainian is not voice-qualified.
 
 ## Immutable sources and identities
 

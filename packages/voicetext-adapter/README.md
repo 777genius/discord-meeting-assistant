@@ -26,6 +26,14 @@ gateway image.
 
 ## Qualification boundaries
 
+The [root-verified native campaign results](../../infra/deployment/voicetext-gateway.md#implemented-profile-mapping-and-qualification-status)
+record four profiles on gateway `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b`
+with one 26-second synthetic RU/EN fixture. This narrow provider-fixture
+qualification is separate from the providerless suite and the canary contract
+below. Native WER/CER thresholds are 0.35/0.25; Discord retains 0.35/0.20 and
+acceptance remains PENDING. Broad language/acoustic coverage and all mixed
+combinations are unqualified; Ukrainian is not voice-qualified.
+
 The default package suite is providerless. Its in-process contract gateway
 drives the production `FetchVoicetextBatchClient` and production live session
 for every configured profile. It proves client encoding, response parsing, ACK

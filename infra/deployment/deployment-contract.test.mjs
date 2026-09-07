@@ -155,17 +155,17 @@ test("shares the pinned Git-context-capable Craig frontend across both services"
   }
 });
 
-test("keeps exact-revision language and profile qualification pending", async () => {
+test("distinguishes native fixture qualification from pending Discord acceptance", async () => {
   const [readme, deploymentReadme, gatewayGuide] = await Promise.all([
     readFile(new URL("README.md", repositoryRoot), "utf8"),
     deploymentFile("README.md"),
     deploymentFile("voicetext-gateway.md"),
   ]);
   const claims = `${readme}\n${deploymentReadme}\n${gatewayGuide}`;
-  assert.match(claims, /Historical\/private EN\/RU/iu);
-  assert.match(claims, /all four provider\/mode profiles remain pending/iu);
-  assert.match(gatewayGuide, /No English or Russian provider flow is qualified/iu);
-  assert.match(gatewayGuide, /no retained EN\/RU acoustic-quality campaign/iu);
+  assert.match(claims, /Real Discord acceptance remains PENDING/u);
+  assert.match(gatewayGuide, /narrow provider-fixture qualification/u);
+  assert.match(gatewayGuide, /8de7b998-a09f-4d9a-9c39-01dc33828eef/u);
+  assert.match(gatewayGuide, /Native thresholds remain WER <= 0\.35 and\s+CER <= 0\.25; Discord thresholds remain WER <= 0\.35 and CER <= 0\.20/u);
   assert.doesNotMatch(claims, /Only (?:the )?English and Russian provider flows are qualified on this exact/iu);
 });
 

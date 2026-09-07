@@ -4,9 +4,13 @@ Owner: `apps/discord-e2e-actors` qualification (including `oss-database.ts` and
 `oss-trusted-collection.ts`, classified by the existing `e2e.discord-actors`
 source root in `architecture/foundation/source-dependencies.yaml`), Voicetext adapter native session
 capture, and Meeting Platform composition/post-call taps. Hosted V10 is unchanged.
-This is private, unreviewed integration. No live collection, provider/Discord call,
-service change, secret access, queue replay or campaign PASS was performed here.
-Root must integrate and obtain a separate physically read-only review before use.
+Root verified independent B0/H0 review and full gates/CI PASS for Discord
+`d934481304ea8791462f59261db11827dfc9eb20` and gateway
+`550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` (Discord PR #63, gateway PR #1;
+Canary PR #19). The [native provider-fixture qualification](voicetext-gateway.md#implemented-profile-mapping-and-qualification-status)
+is separate: real Discord campaign acceptance remains PENDING and is run by root.
+Native WER/CER thresholds remain 0.35/0.25; this Discord campaign requires
+0.35/0.20. Never relax the Discord thresholds to promote native results.
 
 ## Supported sources
 
@@ -84,7 +88,11 @@ with the identities above, project/testOnly/service names, exact
 public `operatorCaSha256`, `summaryProvider:"transcript-outline"`,
 `conversationEnabled:false`, `liveEnabled:true`; and these ordered `runs`:
 
-| runId | scenario | Speaker B delay |
+Each strict plan run contains only `runId` and `scenario`. Actor application IDs
+and Speaker B delay belong to root orchestration, not the plan's run or target
+objects. The delay column below is orchestration configuration only.
+
+| runId | scenario | Speaker B delay (orchestration only) |
 | --- | --- | ---: |
 | oss-r1-sequential | sequential | 3500 ms |
 | oss-r1-overlap | overlap | 750 ms |
@@ -160,9 +168,11 @@ The finite control sequence has three JSON lines and a final `sealed` line, with
 a one-hour deadline. EOF, failed reads, wrong identities or incomplete evidence
 leave no PASS and retain diagnostics/source files.
 
-Zero initial recordings are mandatory. Arm the existing official `observe:live`
+Zero initial recordings are mandatory. Start the existing official `observe:live`
 observer before each actor, with `DISCORD_E2E_LIVE_DURATION_MS=600000`, poll interval
 2000, the exact results/publication IDs, corresponding run ID, and fresh output.
+The observer has no `armed` event or readiness receipt; do not wait for or invent
+one. The collector's `armed` event remains mandatory before the first actor.
 Its V2 mutation trace is supplementary; the native journal proves packet/session
 behavior. The observer starts no packet collector. Use its existing
 `src/observe-live-discord.ts` command and official publication credential directory.
@@ -266,8 +276,8 @@ pnpm --filter @discord-meeting/meeting-platform exec tsx \
 Replay rechecks all bytes and the complete receipt inventory, while still returning
 `sources-unverified`: it cannot reauthenticate the receipt's original custody from
 files alone. Keep the original trusted process output/receipt under root custody.
-Offline fixtures never emit the same PASS receipt as trusted collection. Root must
-integrate the patch and obtain the requested independent review before execution.
+Offline fixtures never emit the same PASS receipt as trusted collection. The
+reviewed integration does not substitute for root's pending real campaign.
 
 The OSS-specific database parser preserves numeric `snapshot.transcript.version`
 and `snapshot.transcript.recordingId`; the latter must match the recording. The

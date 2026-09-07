@@ -118,8 +118,8 @@ TRANSCRIPTION_LEGACY_EXECUTION_BINDING=voicetext-batch-v2:deepgram-nova-3
 ```
 
 Batch also permits `elevenlabs-scribe-v2`; live also permits
-`elevenlabs-scribe-v2-realtime`. Every mixed combination is supported. Invalid
-values fail Meeting Platform startup, and omitted selectors default
+`elevenlabs-scribe-v2-realtime`. Every mixed combination is supported by
+configuration, not acoustically qualified. Invalid values fail Meeting Platform startup, and omitted selectors default
 independently to Deepgram. The Deepgram batch choice preserves contract v2 and
 its existing idempotency identity; ElevenLabs batch uses strict contract v3.
 The legacy binding has no default: it is explicit historical provenance for
@@ -135,13 +135,11 @@ transcript from Craig's authoritative per-speaker Ogg tracks remains the only
 final evidence used by summary, memory, or RAG; live text stays derived.
 
 Recognition languages are provider- and model-dependent. The four selectable
-profiles have deterministic routing and contract coverage. No retained campaign
-in this public repository qualifies English, Russian, or provider acoustic
-quality on the current exact Meeting Platform and VoiceText revisions. Any
-historical/private EN/RU evidence applies only to the revisions named by its
-receipt and is not transferable. Qualification remains closed until a retained
-exact-revision campaign passes with both user-owned official test bots in a
-private test guild.
+profiles have deterministic routing and contract coverage, plus narrow native
+qualification on one synthetic RU/EN fixture at gateway `550ec217`.
+See the [exact results, revisions, and retained operator evidence](voicetext-gateway.md#implemented-profile-mapping-and-qualification-status).
+Broad language/acoustic coverage and all mixed combinations are unqualified;
+Ukrainian is not voice-qualified. Real Discord acceptance remains PENDING.
 
 Rollback is a profile change on the binding-aware release: set both selectors
 back to Deepgram and redeploy the same source revision. Do not code-revert to a

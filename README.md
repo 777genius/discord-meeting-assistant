@@ -39,7 +39,7 @@ playback is enabled.
 | Historical meeting memory | Ground answers in authorized previous meetings from the same configured room. | Optional, requires qualified memory serving |
 | Recording playback | Open a private signed link to a synchronized browser player. | Optional deployment feature |
 | Output presentation | Discord labels and attachments support English, Russian, or Ukrainian; generated title and overview language depends on the selected summary provider. | Depends on the feature |
-| Speech recognition | Recognition languages depend on the selected provider and model. The configured batch/live adapters are implemented and conformance-tested, but this exact OSS revision has no retained provider-quality qualification evidence. | Provider/model-dependent; exact-revision qualification pending |
+| Speech recognition | Recognition languages depend on the selected provider and model. The four configured batch/live profiles have retained qualification on one synthetic RU/EN fixture; see the [exact results and limits](infra/deployment/voicetext-gateway.md#implemented-profile-mapping-and-qualification-status). | Narrow provider-fixture qualification; Discord acceptance PENDING |
 
 This is not a claim that any configured provider supports only those languages.
 
@@ -48,10 +48,9 @@ post-call flow does not depend on live voice, historical memory, or playback.
 Meeting Platform talks only to the versioned VoiceText contract; configured
 speech providers are implemented, conformance-tested adapters behind the
 self-hosted gateway. The Rust domain/application ports are provider-agnostic.
-Those tests establish contract behavior only: real acoustic qualification
-requires retained exact-revision receipts that bind the provider and model to
-the tested source revision. A new public V1 profile still requires an explicit
-identity/config addition in gateway composition and the Discord consumer.
+Contract tests establish contract behavior only; the separately retained native
+campaign below binds narrow provider-fixture results to the gateway revision.
+A new public V1 profile still requires an explicit identity/config addition in gateway composition and the Discord consumer.
 
 ## How it works
 
@@ -175,10 +174,10 @@ Private real-Discord acceptance, Russian and English synthetic fixtures,
 recovery checks, and retained-evidence verification are documented in the
 [E2E runbook](docs/operations/real-e2e-runbook.md).
 
-Those historical/private campaign procedures and any evidence retained outside
-this public checkout do not qualify the current OSS revision. EN/RU acoustic
-quality and all four provider/mode profiles remain pending until a campaign
-receipt binds the exact Meeting Platform and VoiceText source revisions.
+The [retained native campaign](infra/deployment/voicetext-gateway.md#implemented-profile-mapping-and-qualification-status)
+qualifies four provider/mode profiles on one 26-second synthetic RU/EN fixture.
+It does not qualify broad language/acoustic coverage or all mixed combinations.
+Ukrainian is not voice-qualified. Real Discord campaign acceptance remains PENDING.
 
 `@agent-teams/engineering-foundation` is an exact development-only dependency.
 Production code must never import it.

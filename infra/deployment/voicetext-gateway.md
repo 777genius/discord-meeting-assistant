@@ -28,7 +28,7 @@ Buildx 0.28.0 or newer and Dockerfile syntax 1.18 or newer.
 The approved source tree is `fdb2e59f79beb40623ce831b494ba3ca193c0e05`.
 The gateway adds configurable database pooling with its default of 10 unchanged.
 The isolated native harness selects 1 in its gateway configuration; this source
-pin update does not change Compose defaults or qualify native EN/RU flows.
+pin update does not change Compose defaults. Native fixture results are recorded below.
 
 Point public DNS for `VOICETEXT_PUBLIC_HOST` to the host and allow inbound TCP
 80/443 and UDP 443. The overlay derives Meeting Platform's sole VoiceText URL
@@ -94,21 +94,37 @@ provider. Keep Deepgram available while draining historical
 
 ### Implemented profile mapping and qualification status
 
-| Platform profile | Provider / model / mode | Language sent | Contract coverage | Exact-revision provider quality |
-| --- | --- | --- | --- | --- |
-| `deepgram-nova-3` batch | Deepgram / `nova-3` / batch contract v2 | `multi` | providerless deterministic contract only | Pending; no retained EN/RU acoustic-quality campaign for the pinned revisions |
-| `deepgram-nova-3` live | Deepgram / `nova-3` / streaming contract v2 | configured live language | providerless deterministic contract only | Pending; derived captions never become authoritative evidence |
-| `elevenlabs-scribe-v2` batch | ElevenLabs / `scribe_v2` / batch contract v3 | `multi` | providerless deterministic contract only | Pending; no retained EN/RU acoustic-quality campaign for the pinned revisions |
-| `elevenlabs-scribe-v2-realtime` live | ElevenLabs / `scribe_v2_realtime` / streaming contract v2 | configured live language | providerless deterministic contract only | Pending; derived captions never become authoritative evidence |
+Root verified independent B0/H0 review and full gates/CI PASS for gateway
+`550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` and Discord
+`d934481304ea8791462f59261db11827dfc9eb20` (gateway PR #1, Discord PR #63;
+Canary PR #19). These are review/gate results, not Discord campaign acceptance.
 
-Recognition languages depend on the selected provider and model, mode, and
-provider account configuration; the gateway contract does not broaden them.
-No English or Russian provider flow is qualified for acoustic quality on this
-exact public OSS revision. Historical/private EN/RU results are evidence only
-for the revisions named in their retained receipts, if any, and are not promoted
-here. The historical statement "Only English and Russian provider flows are
-qualified" applies, if at all, solely to those private receipts; that status does
-not transfer to the exact public OSS revision.
+Native campaign `8de7b998-a09f-4d9a-9c39-01dc33828eef` on that gateway retained:
+
+| Platform profile / mode | Provider model | Language | WER | CER |
+| --- | --- | --- | ---: | ---: |
+| `deepgram-nova-3` batch | Deepgram `nova-3` | `multi` | 0.272727 | 0.233227 |
+| `deepgram-nova-3` live | Deepgram `nova-3` | `multi` | 0.295455 | 0.230032 |
+| `elevenlabs-scribe-v2` batch | ElevenLabs `scribe_v2` | `multi` | 0.204545 | 0.194888 |
+| `elevenlabs-scribe-v2-realtime` live | ElevenLabs `scribe_v2_realtime` | `multi` | 0.227273 | 0.198083 |
+
+This is narrow provider-fixture qualification on one 26-second synthetic RU/EN
+fixture. All five required terms and timestamps passed. Each live profile had
+1,312 contiguous packets accepted, written, and ACKed, with
+`finalize_result_observed` and terminal `finalize_flushed`. There was exactly
+one native operation per profile. Native thresholds remain WER <= 0.35 and
+CER <= 0.25; Discord thresholds remain WER <= 0.35 and CER <= 0.20.
+Native results do not establish the stricter Discord gate.
+
+Retained operator evidence (filesystem paths, not public links) under
+`/mnt/volume_ams3_1784742570542/vtoss-astra-y-20260905`:
+
+- `artifacts/provider-8de7b998-summary-r1/summary.json`
+- `artifacts/provider-8de7b998-retained-r1/manifest.json`
+
+These results do not qualify broad language/acoustic coverage, all mixed
+combinations, or other revisions. Recognition remains provider/model-dependent;
+`multi` is not a language-coverage guarantee. Real Discord acceptance remains PENDING.
 Ukrainian may be selected
 for presentation of already accepted text, but is not a qualified STT language
 and must not be inferred from presentation behavior. The implemented Discord
@@ -117,7 +133,7 @@ Pipecat-to-VoiceText provider adapter is future/unimplemented; it is not part of
 this gateway or the core OSS meeting topology.
 
 The adapter and gateway contract checks do not establish final private-guild
-acceptance; that remains pending until the live Discord campaign passes with an
+acceptance; that remains PENDING until the live Discord campaign passes with an
 official test bot in a private test guild.
 
 ## Validate the configuration
