@@ -25,6 +25,7 @@ export interface LiveOffset {
  */
 export class LiveDeliveryIndex {
   readonly #db: DatabaseSync;
+  readonly #generations = new WeakSet<LiveGeneration>();
   readonly #path: string;
   #stamp = "";
   #closed = false;
@@ -98,42 +99,60 @@ export class LiveDeliveryIndex {
     }
   }
 
+  // Generation numbers are local to one disposable database and can be reused
+  // after recreation. Never query or mutate a new cache with an old handle.
+  #assertGeneration(index: LiveGeneration): void {
+    if (!this.#generations.has(index)) {
+      throw new RecordingIngressError("corrupt-spool", "live metadata cache generation changed");
+    }
+  }
+
   public find(recording: string): LiveGeneration | undefined {
     const found = this.#access(() => this.#db.prepare("SELECT * FROM generations WHERE recording=?")
       .get(JSON.stringify(recording)) as unknown as LiveGeneration | undefined);
-    return found === undefined ? undefined : { ...found, recording };
+    if (found === undefined) { return undefined; }
+    const index = { ...found, recording };
+    this.#generations.add(index);
+    return index;
   }
 
   public begin(recording: string): LiveGeneration {
     const generation = Number(this.#access(() => this.#db.prepare(`INSERT INTO generations
       (recording,stamp,remaining,conflicting) VALUES (?,'invalid',0,0)`)
       .run(JSON.stringify(recording)).lastInsertRowid));
-    return { generation, recording, stamp: "invalid", remaining: 0, conflicting: 0 };
+    const index = { generation, recording, stamp: "invalid", remaining: 0, conflicting: 0 };
+    this.#generations.add(index);
+    return index;
   }
 
   public invalidate(index: LiveGeneration): void {
+    this.#assertGeneration(index);
     this.#access(() => this.#db.prepare("UPDATE generations SET stamp='invalid' WHERE generation=?")
       .run(index.generation));
   }
 
   public publish(index: LiveGeneration): void {
+    this.#assertGeneration(index);
     this.#access(() => this.#db.prepare("UPDATE generations SET stamp=?,remaining=?,conflicting=? WHERE generation=?")
       .run(index.stamp, index.remaining, index.conflicting, index.generation));
   }
 
   public get(index: LiveGeneration, packet: string): LiveOffset | undefined {
+    this.#assertGeneration(index);
     const found = this.#access(() => this.#db.prepare("SELECT packet,offset,length,delivered FROM packets WHERE generation=? AND packet=?")
       .get(index.generation, JSON.stringify(packet)) as unknown as LiveOffset | undefined);
     return found === undefined ? undefined : { ...found, packet };
   }
 
   public put(index: LiveGeneration, row: LiveOffset): void {
+    this.#assertGeneration(index);
     this.#access(() => this.#db.prepare(`INSERT INTO packets VALUES (?,?,?,?,?) ON CONFLICT(generation,packet)
       DO UPDATE SET offset=excluded.offset,length=excluded.length,delivered=excluded.delivered`)
       .run(index.generation, JSON.stringify(row.packet), row.offset, row.length, row.delivered));
   }
 
   public pending(index: LiveGeneration, after: string): LiveOffset[] {
+    this.#assertGeneration(index);
     const rows = this.#access(() => this.#db.prepare(`SELECT packet,offset,length,delivered FROM packets
       WHERE generation=? AND packet>? AND length>0 AND delivered=0 ORDER BY packet LIMIT 256`)
       .all(index.generation, after === "" ? "" : JSON.stringify(after)) as unknown as LiveOffset[]);
@@ -141,6 +160,7 @@ export class LiveDeliveryIndex {
   }
 
   public async forget(index: LiveGeneration): Promise<void> {
+    this.#assertGeneration(index);
     this.invalidate(index);
     let removed: number | bigint;
     do {

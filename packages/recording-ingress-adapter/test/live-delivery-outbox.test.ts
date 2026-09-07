@@ -538,3 +538,44 @@ it("streams exactly one historical rebuild per restart or changed generation", a
   await markLivePacketDelivered(restarted, identity(3));
   expect(parse).toHaveBeenCalledTimes(258);
 });
+
+it.each([
+  { operation: "pending", acquisition: 2 },
+  { operation: "mark", acquisition: 2 },
+  { operation: "mark", acquisition: 3 },
+  { operation: "admit", acquisition: 2 },
+])("fails closed when cache recreation crosses $operation acquisition $acquisition", async ({ operation, acquisition }) => {
+  const { runtime, path } = await fixture();
+  await appendPendingLivePackets(runtime, [packet(0), packet(1)]);
+  const original = await fs.readFile(path, "utf8");
+  const acquire = runtime.liveDeliveryIndex.bind(runtime);
+  const previous = await acquire();
+  let calls = 0;
+  const spy = vi.spyOn(runtime, "liveDeliveryIndex").mockImplementation(async () => {
+    calls += 1;
+    if (calls === acquisition) {
+      await fs.rm(join(runtime.spool.root, "live-delivery-cache-v1", "metadata.sqlite"));
+      const replacement = await acquire();
+      expect(replacement).not.toBe(previous);
+      return replacement;
+    }
+    return acquire();
+  });
+  const result = operation === "pending" ? pendingLivePackets(runtime, "r") :
+    operation === "mark" ? markLivePacketDelivered(runtime, identity(0)) :
+      appendPendingLivePackets(runtime, [packet(2)]);
+  await expect(result).rejects.toMatchObject({ failure: "corrupt-spool" });
+  expect(calls).toBe(acquisition);
+  spy.mockRestore();
+  expect(await fs.readFile(path, "utf8")).toBe(original);
+  expect((await pendingLivePackets(runtime, "r")).map((row) => row.packetId))
+    .toEqual([identity(0), identity(1)]);
+  await appendPendingLivePackets(runtime, [packet(2)]);
+  expect(await markLivePacketDelivered(runtime, identity(0))).toBe("marked");
+  expect(await markLivePacketDelivered(runtime, identity(0))).toBe("reused");
+  await expect(markLivePacketDelivered(runtime, "r:absent")).rejects.toMatchObject({ failure: "invalid-input" });
+  expect(await markLivePacketDelivered(runtime, identity(1))).toBe("marked");
+  expect((await pendingLivePackets(runtime, "r")).map((row) => row.packetId)).toEqual([identity(2)]);
+  expect(await markLivePacketDelivered(runtime, identity(2))).toBe("marked");
+  await expect(fs.stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+});
