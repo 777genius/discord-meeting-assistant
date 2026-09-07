@@ -1,5 +1,6 @@
+import { resolve } from "node:path";
 import { CONTEXT_RETRIEVAL_CONTRACT, CONTEXT_RETRIEVAL_RANKING_POLICY } from "@infinity-context/sdk";
-import type { DiagnosticFinalEvidenceBinding } from "@discord-meeting/postgres-adapter";
+import { normalizeDiagnosticFinalEvidenceBinding, type DiagnosticFinalEvidenceBinding } from "@discord-meeting/postgres-adapter";
 import type { FocusedLocatorRetrievalV2ProviderBinding } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { exactRecord, safeId, digest } from "./canonical.js";
 export interface DiagnosticQuestion {
@@ -84,5 +85,10 @@ export function decodeDiagnosticManifest(value: unknown): DiagnosticManifest {
     JSON.stringify(provider.requiredProviderLanes) !== JSON.stringify(["postgres_keyword", "qdrant_dense"])) {
     throw new Error("diagnostic requires full retrieval profile");
   }
-  return Object.freeze({ ...v, questions: decodeDiagnosticQuestions(v.questions) }) as unknown as DiagnosticManifest;
+  return Object.freeze({ ...v,
+    frozen: normalizeDiagnosticFinalEvidenceBinding(v.frozen),
+    connections: Object.freeze({...connections, artifactRoot:resolve(connections.artifactRoot as string)}),
+    providerBinding: Object.freeze({...provider,
+      requiredProviderLanes:Object.freeze([...provider.requiredProviderLanes as string[]])}),
+    questions: decodeDiagnosticQuestions(v.questions) }) as unknown as DiagnosticManifest;
 }

@@ -1,4 +1,5 @@
-import { open, readFile } from "node:fs/promises";
+import { open, readFile, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Pool } from "pg";
 import { buildHistoricalIndexPlan, historicalEmbeddingTokenProfile, PrepareFocusedLocatorRetrievalV2Request, type HistoricalIndexPlanV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresDiagnosticFinalEvidence } from "@discord-meeting/postgres-adapter";
@@ -44,11 +45,11 @@ export async function runDiagnosticCli(argv: readonly string[], writeSafeLine?: 
   }
   try {
     const manifest = decodeDiagnosticManifest(JSON.parse(await readFile(manifestPath, "utf8")));
-    if (reportPath.startsWith(manifest.connections.artifactRoot + "/") ||
-      (argv[3] !== undefined && argv[3] !== "--reconcile-index") || argv.length > 4) {
+    if ((argv[3] !== undefined && argv[3] !== "--reconcile-index") || argv.length > 4) {
       throw new Error("diagnostic report path or option is invalid");
     }
-    const reportFile = await open(reportPath, "wx", 0o600);
+    const resolvedReportPath = await resolveDiagnosticReportPath(reportPath, manifest.connections.artifactRoot);
+    const reportFile = await open(resolvedReportPath, "wx", 0o600);
     try {
       const report = await runDiagnostic(manifest, argv[3] === "--reconcile-index");
       await reportFile.writeFile(canonicalJson(report));
@@ -65,6 +66,34 @@ export async function runDiagnosticCli(argv: readonly string[], writeSafeLine?: 
     return 1;
   }
 }
+/** Compare physical parents as well as lexical normalization before reserving output. */
+export async function resolveDiagnosticReportPath(reportPath: string, artifactRoot: string): Promise<string> {
+  if (!isAbsolute(artifactRoot)) {throw new Error("invalid diagnostic artifact path");}
+  const [report, root] = await Promise.all([
+    diagnosticPhysicalPath(reportPath), diagnosticPhysicalPath(resolve(artifactRoot)),
+  ]);
+  const child = relative(root, report);
+  if (child === "" || (child !== ".." && !child.startsWith(".." + sep) && !isAbsolute(child))) {
+    throw new Error("diagnostic report overlaps artifact custody");
+  }
+  return report;
+}
+async function diagnosticPhysicalPath(path: string): Promise<string> {
+  if (!isAbsolute(path) || path.includes("\0")) {throw new Error("invalid diagnostic path");}
+  const missing: string[] = [];
+  let existing = path;
+  for (;;) {
+    try {
+      // Resolve before normalizing: a symlink followed by /.. uses its target parent.
+      return join(await realpath(existing), ...missing);
+    } catch (error) {
+      if ((error as {code?:string}).code !== "ENOENT" || dirname(existing) === existing) {throw error;}
+      missing.unshift(basename(existing));
+      existing = dirname(existing);
+    }
+  }
+}
+
 export async function runDiagnostic(manifest: DiagnosticManifest, reconcileIndex = false) {
   // Decode again: exported composition never treats a TypeScript cast as authority.
   const m = decodeDiagnosticManifest(manifest), c = m.connections;

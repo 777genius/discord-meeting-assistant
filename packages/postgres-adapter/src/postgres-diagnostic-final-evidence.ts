@@ -28,24 +28,62 @@ export function assertConstructedPostgresDiagnosticFinalEvidence(value: unknown)
   }
 }
 
+/** Shared fail-closed decoder for manifests and the concrete read-only adapter. */
+export function normalizeDiagnosticFinalEvidenceBinding(value: unknown): DiagnosticFinalEvidenceBinding {
+  const binding = exactDiagnosticRecord(value, ["meetingId", "snapshotSha256", "transcriptSha256",
+    "transcriptVersion", "roster", "scopeId", "roomId", "releaseId"]);
+  const meetingId = diagnosticIdentity(binding.meetingId);
+  const scopeId = diagnosticIdentity(binding.scopeId);
+  const roomId = diagnosticIdentity(binding.roomId);
+  const releaseId = diagnosticIdentity(binding.releaseId);
+  if (!scopeId.startsWith("diagnostic:") || !roomId.startsWith("diagnostic:")) {
+    throw new Error("diagnostic namespace required");
+  }
+  const snapshotSha256 = diagnosticHash(binding.snapshotSha256);
+  const transcriptSha256 = diagnosticHash(binding.transcriptSha256);
+  const transcriptVersion = binding.transcriptVersion;
+  if (typeof transcriptVersion !== "number" || !Number.isSafeInteger(transcriptVersion) ||
+    transcriptVersion < 1) {throw new Error("invalid frozen diagnostic binding");}
+  const roster = exactDiagnosticRecord(binding.roster, ["humans", "automation"]);
+  if (!Array.isArray(roster.humans) || !Array.isArray(roster.automation)) {
+    throw new Error("invalid diagnostic roster");
+  }
+  const humans = roster.humans.map(diagnosticIdentity);
+  const automation = roster.automation.map(diagnosticIdentity);
+  const actors = [...humans, ...automation];
+  if (humans.length === 0 || actors.length > 1_000 || new Set(actors).size !== actors.length) {
+    throw new Error("invalid diagnostic roster");
+  }
+  return Object.freeze({meetingId, snapshotSha256, transcriptSha256, transcriptVersion,
+    scopeId, roomId, releaseId,
+    roster:Object.freeze({humans:Object.freeze(humans), automation:Object.freeze(automation)})});
+}
+function exactDiagnosticRecord(value: unknown, keys: readonly string[]): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value) ||
+    Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) {
+    throw new Error("invalid diagnostic binding shape");
+  }
+  return value as Record<string, unknown>;
+}
+function diagnosticIdentity(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > 512 ||
+    value.includes("\0")) {throw new Error("invalid diagnostic identity");}
+  return value;
+}
+function diagnosticHash(value: unknown): string {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {
+    throw new Error("invalid frozen diagnostic binding");
+  }
+  return value;
+}
+
 /** Nonqualifying legacy projection. Never admits or manufactures lifecycle authority. */
 export class PostgresDiagnosticFinalEvidence {
   readonly #binding: DiagnosticFinalEvidenceBinding;
   readonly #pool: Pool;
   public constructor(pool: Pool, binding: DiagnosticFinalEvidenceBinding) {
-    for (const value of [binding.meetingId, binding.scopeId, binding.roomId, binding.releaseId]) {
-      if (typeof value !== "string" || value.trim().length === 0 || value.length > 512) { throw new Error("invalid diagnostic identity"); }
-    }
-    for (const value of [binding.scopeId, binding.roomId]) {
-      if (!value.startsWith("diagnostic:")) { throw new Error("diagnostic namespace required"); }
-    }
-    if (![binding.snapshotSha256, binding.transcriptSha256].every((value) => /^[a-f0-9]{64}$/u.test(value)) ||
-      !Number.isSafeInteger(binding.transcriptVersion) || binding.transcriptVersion < 1) { throw new Error("invalid frozen diagnostic binding"); }
-    const actors = [...binding.roster.humans, ...binding.roster.automation];
-    if (binding.roster.humans.length === 0 || actors.length > 1_000 || new Set(actors).size !== actors.length ||
-      actors.some((value) => typeof value !== "string" || value.trim().length === 0 || value.length > 512)) { throw new Error("invalid diagnostic roster"); }
     this.#pool = pool;
-    this.#binding = Object.freeze({ ...binding, roster: Object.freeze({ humans: Object.freeze([...binding.roster.humans]), automation: Object.freeze([...binding.roster.automation]) }) });
+    this.#binding = normalizeDiagnosticFinalEvidenceBinding(binding);
     constructed.add(this);
     Object.freeze(this);
   }
