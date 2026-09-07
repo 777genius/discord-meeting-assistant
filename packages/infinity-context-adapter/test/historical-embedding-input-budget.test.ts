@@ -77,6 +77,15 @@ describe("historical document embedding input budget", () => {
     expect(tokenizer.countTokens("word ".repeat(94).trim())).toBe(96);
   });
 
+  it("rejects an oversized body even when its combined input fits", () => {
+    const title = "mkevidence1." + "A".repeat(43);
+    const body = title + " " + "word ".repeat(71);
+    expect(tokenizer.countBodyTokens(body)).toBeGreaterThan(72);
+    expect(tokenizer.countTokens(infinityDocumentEmbeddingInput(title, body)))
+      .toBeLessThanOrEqual(128);
+    expect(() => { tokenizer.assertDocumentInput(title, body); }).toThrow(/maximum/u);
+  });
+
   it("reproduces title overflow and splits the formerly accepted 96-token body", () => {
     const body = "word ".repeat(94).trim();
     const title = `mkevidence1.${ids().keyedId("historical-document-title", ["old-window"])}`;
