@@ -377,7 +377,7 @@ services:
     security_opt: [no-new-privileges:true]
     cpus: ${MEETING_PLATFORM_CPUS:-2.0}
     mem_limit: ${MEETING_PLATFORM_MEMORY_LIMIT:-2g}
-    stop_grace_period: 45s
+    stop_grace_period: 75s
 
 networks:
   meeting-internal:
