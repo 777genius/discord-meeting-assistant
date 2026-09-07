@@ -411,6 +411,7 @@ boundaries:
       - packages/infinity-context-adapter/src/infinity-runtime-provenance.ts
       - packages/infinity-context-adapter/src/infinity-sdk-provenance.ts
       - packages/infinity-context-adapter/src/pinned-multilingual-minilm-tokenizer.ts
+      - packages/infinity-context-adapter/src/infinity-embedding-input.ts
       - packages/infinity-context-adapter/src/semantic-quality-v4-runner.ts
     allow:
       boundaries:

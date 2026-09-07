@@ -21,13 +21,14 @@ export interface HistoricalIndexPlannerReceiptV1 {
   readonly requestSha256: `sha256:${string}`;
   readonly resultSha256: `sha256:${string}`;
   readonly schemaVersion: "meeting-knowledge.historical-index-planner-receipt.v1";
-  readonly workerRevision: "meeting-knowledge.exact-window-planner.v1";
+  readonly workerRevision: "meeting-knowledge.exact-window-planner.v2";
 }
 
 export interface HistoricalWindowPlanningProfileV1 {
   readonly digestSha256: `sha256:${string}`;
   readonly identity: string;
   readonly maximumInputTokens: number;
+  readonly maximumBodyTokens: number;
   readonly schemaVersion: "meeting-knowledge.window-planning-profile.v1";
 }
 

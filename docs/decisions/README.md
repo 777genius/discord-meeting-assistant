@@ -66,6 +66,8 @@
 
 - [ADR-0069: Isolated real40 memory diagnostic](0069-isolated-real40-memory-diagnostic.md)
 
+- [ADR-0070: Bound normalized historical embedding documents](0070-normalized-historical-embedding-budget.md)
+
 ## Superseded
 
 - [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)

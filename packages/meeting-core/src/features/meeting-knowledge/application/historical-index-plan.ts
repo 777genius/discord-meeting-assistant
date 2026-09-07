@@ -164,7 +164,8 @@ export function buildHistoricalIndexPlan(
     ...candidate,
     maximumEmbeddingTokens: Math.min(
       candidate.maximumEmbeddingTokens,
-      tokenizer?.profile.maxInputTokens ?? candidate.maximumEmbeddingTokens,
+      tokenizer?.profile.inputBudget?.maximumBodyTokens ??
+        tokenizer?.profile.maxInputTokens ?? candidate.maximumEmbeddingTokens,
     ),
   });
   let partitionResult: ReturnType<typeof partitionHistoricalEmbeddingWindows>;
@@ -182,6 +183,7 @@ export function buildHistoricalIndexPlan(
       turnOverlap: partitionResult.effectiveTurnOverlap,
     }),
     tokenCounts: partitionResult.windows.map((window) =>
+      tokenizer?.countBodyTokens?.(historicalEmbeddingText(window)) ??
       tokenizer?.countTokens(historicalEmbeddingText(window)) ??
         estimateHistoricalEmbeddingTokens(historicalEmbeddingText(window))
     ),
@@ -203,7 +205,7 @@ export function buildHistoricalIndexPlanFromPreparedWindows(
     ...candidate,
     maximumEmbeddingTokens: Math.min(
       candidate.maximumEmbeddingTokens,
-      prepared.planningProfile.maximumInputTokens,
+      prepared.planningProfile.maximumBodyTokens,
     ),
   });
   const projections = validatePreparedWindows(meeting, prepared, policy);

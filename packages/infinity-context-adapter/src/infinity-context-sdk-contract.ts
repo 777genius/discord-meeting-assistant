@@ -1,3 +1,4 @@
+import { PinnedMultilingualMiniLmTokenizer } from "./pinned-multilingual-minilm-tokenizer.js";
 import {
   type HistoricalDeleteRequestV1,
   type HistoricalIndexDocumentV1,
@@ -92,6 +93,8 @@ export function documentId(document: DocumentRecord): string {
   return value;
 }
 
+let historicalInputTokenizer: PinnedMultilingualMiniLmTokenizer | undefined;
+
 export async function ingestHistoricalDocument(
   client: InfinityContextClient,
   topology: HistoricalTopologyV1,
@@ -99,6 +102,8 @@ export async function ingestHistoricalDocument(
   actorKeys: HistoricalRetrievalActorKeyMapper,
   signal: AbortSignal,
 ): Promise<DocumentRecord> {
+  historicalInputTokenizer ??= new PinnedMultilingualMiniLmTokenizer();
+  historicalInputTokenizer.assertDocumentInput(document.title, document.embeddingText);
   return (await client.documents.ingestDocument({
     classification: "internal",
     idempotencyKey: document.mutationId,
@@ -204,6 +209,12 @@ export function validIndexPlan(
     return false;
   }
   for (const document of request.documents) {
+    try {
+      historicalInputTokenizer ??= new PinnedMultilingualMiniLmTokenizer();
+      historicalInputTokenizer.assertDocumentInput(document.title, document.embeddingText);
+    } catch {
+      return false;
+    }
     if (!validHistoricalRetrievalProjection(request.topology, document, actorKeys)) {
       return false;
     }

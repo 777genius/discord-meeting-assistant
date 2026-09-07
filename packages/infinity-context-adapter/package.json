@@ -30,7 +30,8 @@
     "./test-support": "./test/test-support.ts"
   },
   "files": [
-    "dist"
+    "dist",
+    "assets/paraphrase-multilingual-minilm-l12-v2-e8f8c211"
   ],
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc --project tsconfig.build.json --pretty false",

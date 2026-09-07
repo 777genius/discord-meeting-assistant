@@ -25,7 +25,7 @@ import {
 } from "./pinned-multilingual-minilm-tokenizer.js";
 
 const DEFAULT_JOB_TIMEOUT_MS = 60_000;
-const WORKER_REVISION = "meeting-knowledge.exact-window-planner.v1" as const;
+const WORKER_REVISION = "meeting-knowledge.exact-window-planner.v2" as const;
 
 export interface CooperativeHistoricalIndexPlannerConfigV1 {
   readonly jobTimeoutMs?: number;
@@ -46,12 +46,14 @@ function sha256(value: unknown): `sha256:${string}` {
 const profileIdentity = historicalEmbeddingTokenProfileFromProfile(
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
 );
-const maximumInputTokens =
-  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.maxInputTokens;
+const maximumInputTokens = PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.maxInputTokens;
+const maximumBodyTokens =
+  PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.inputBudget!.maximumBodyTokens;
 const planningProfile: HistoricalWindowPlanningProfileV1 = Object.freeze({
-  digestSha256: sha256({ identity: profileIdentity, maximumInputTokens }),
+  digestSha256: sha256({ identity: profileIdentity, maximumInputTokens, maximumBodyTokens }),
   identity: profileIdentity,
   maximumInputTokens,
+  maximumBodyTokens,
   schemaVersion: "meeting-knowledge.window-planning-profile.v1",
 });
 
@@ -98,7 +100,7 @@ export class CooperativeHistoricalIndexPlanner implements HistoricalIndexPlanner
     try {
       await this.start();
       const tokenizer = this.#tokenizer!;
-      const policy = resolvePolicy(candidatePolicy, tokenizer.profile.maxInputTokens);
+      const policy = resolvePolicy(candidatePolicy, maximumBodyTokens);
       const cooperate = async (): Promise<void> => {
         await new Promise<void>((resolve) => { setImmediate(resolve); });
         options.signal?.throwIfAborted();
@@ -112,7 +114,7 @@ export class CooperativeHistoricalIndexPlanner implements HistoricalIndexPlanner
       const countTokens = async (text: string): Promise<number> => {
         let count: number;
         try {
-          count = tokenizer.countTokens(text);
+          count = tokenizer.countBodyTokens(text);
         } catch (error) {
           throw unavailable("historical exact tokenizer failed", error);
         }

@@ -126,10 +126,10 @@ describe("cooperative historical window planner", () => {
     );
 
     expect(actual).toEqual(expected);
-    expect(actual.documents).toHaveLength(349);
+    expect(actual.documents).toHaveLength(433);
     expect(actual.documents).toHaveLength(prepared.windows.length);
     expect(actual.documents.every(({ manifest }) =>
-      manifest.embeddingTokenEstimate <= 96
+      manifest.embeddingTokenEstimate <= 72
     )).toBe(true);
     const sortedHeartbeatDelays = heartbeatDelaysMs.toSorted((left, right) => left - right);
     expect(heartbeatDelaysMs.length).toBeGreaterThan(0);
@@ -186,7 +186,7 @@ describe("cooperative historical window planner", () => {
     }
     expect(plan.documents.every(({ embeddingText, manifest }) =>
       new TextEncoder().encode(embeddingText).byteLength <= 4_096 &&
-      manifest.embeddingTokenEstimate <= 96
+      manifest.embeddingTokenEstimate <= 72
     )).toBe(true);
   }, 30_000);
 
