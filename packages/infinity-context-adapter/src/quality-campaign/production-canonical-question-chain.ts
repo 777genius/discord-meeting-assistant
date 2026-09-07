@@ -8,6 +8,8 @@ import {
   type GroundedAnswerGenerationBinding,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
+  assertConstructedPostgresDiagnosticFinalEvidence,
+  type PostgresDiagnosticFinalEvidence,
   assertConstructedPostgresHistoricalEvidenceAuthority,
   assertConstructedPostgresHistoricalMemoryStore,
   canonicalFinalReplyTurnHash,
@@ -23,6 +25,8 @@ import {
 import { assertConstructedHmacHistoricalOpaqueIds,
   type HmacHistoricalOpaqueIds } from "../hmac-historical-ids.js";
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
+import { DiagnosticFrozenStore, assertDiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
+import type { DiagnosticQuestion } from "./diagnostic-manifest.js";
 import { canonicalJson } from "./canonical.js";
 import { validateCanonicalRetrievalObservation } from
   "./canonical-execution-artifact-validation.js";
@@ -31,7 +35,6 @@ import type {
   QualificationQuestionExecutionContext,
   QualificationExternalEffectReservationPort,
   QualificationQuestionOutcome,
-  QualificationExecutionPacket,
   QualificationQuestionAnswerPort,
   QualificationQuestionEvidencePort,
   QualificationQuestionOutcomePort,
@@ -87,7 +90,7 @@ interface ProductionCanonicalQuestionChainInput {
 
 interface CanonicalQuestionExecution {
   readonly binding: GroundedAnswerGenerationBinding | null;
-  readonly packet: QualificationExecutionPacket;
+  readonly packet: DiagnosticQuestion;
   readonly topology: QualificationScopeTopology;
   readonly turns: readonly QualificationCanonicalTurn[];
 }
@@ -109,10 +112,39 @@ export function createProductionCanonicalQuestionChain(
   assertConstructedPostgresHistoricalMemoryStore(input.store);
   assertConstructedHmacHistoricalOpaqueIds(input.ids);
   assertGrpcQualifiedGroundedAnswerAdapter(input.answer);
+  return createCanonicalQuestionEngine(input);
+}
+
+interface CanonicalEngineInput extends Omit<ProductionCanonicalQuestionChainInput,
+  "store" | "evidenceAuthority"> {
+  readonly diagnostic?: true;
+  readonly store: Pick<PostgresHistoricalMemoryStore, "findCurrentCandidates" | "isCurrentGeneration">;
+  readonly evidenceAuthority: Pick<PostgresHistoricalEvidenceAuthority, "loadAcceptedFinalMeeting">;
+}
+
+/** Diagnostic construction cannot issue production PostgreSQL authority. */
+export function createDiagnosticCanonicalQuestionChain(input: Omit<ProductionCanonicalQuestionChainInput,
+  "store" | "evidenceAuthority"> & {
+    readonly store: DiagnosticFrozenStore;
+    readonly evidenceAuthority: PostgresDiagnosticFinalEvidence;
+  }) {
+  assertConstructedPostgresDiagnosticFinalEvidence(input.evidenceAuthority);
+  assertDiagnosticFrozenStore(input.store);
+  if (input.store.authority !== input.evidenceAuthority ||
+    !(input.preparer instanceof PrepareFocusedLocatorRetrievalV2Request) ||
+    !(input.retrieval instanceof InfinityContextRetrievalV2Adapter)) {
+    throw new Error("diagnostic chain requires concrete bound adapters");
+  }
+  assertConstructedHmacHistoricalOpaqueIds(input.ids);
+  assertGrpcQualifiedGroundedAnswerAdapter(input.answer);
+  return createCanonicalQuestionEngine({...input, diagnostic:true});
+}
+
+function createCanonicalQuestionEngine(input: CanonicalEngineInput) {
   const state: CanonicalQuestionState = new Map();
 
-  const retrieval: QualificationQuestionRetrievalPort = Object.freeze({
-    retrieve: async (packet: QualificationExecutionPacket,
+  const retrieval = Object.freeze({
+    retrieve: async (packet: DiagnosticQuestion,
       options: QualificationQuestionExecutionContext) => {
       const topology = await input.topology.resolve(packet.scopeTopologyReference,
         packet.questionId);
@@ -203,7 +235,7 @@ export function createProductionCanonicalQuestionChain(
   return Object.freeze({ answer, evidence, outcome, retrieval });
 }
 
-function createEvidencePort(input: ProductionCanonicalQuestionChainInput,
+function createEvidencePort(input: CanonicalEngineInput,
   state: CanonicalQuestionState): QualificationQuestionEvidencePort {
   return Object.freeze({ rehydrate: async (
     request: Parameters<QualificationQuestionEvidencePort["rehydrate"]>[0],
@@ -239,10 +271,21 @@ function createEvidencePort(input: ProductionCanonicalQuestionChainInput,
       if (block.candidateLocator !== request.locatorIds[index]) {
         throw new Error("PostgreSQL locator order or ownership is ambiguous");
       }
-      turns.push(...block.turns.map((turn) => Object.freeze({ endMs: turn.endMs,
-        sourceLocatorId: block.candidateLocator, speakerId: turn.speakerId,
-        startMs: turn.startMs, text: turn.text, turnHash: canonicalFinalReplyTurnHash(turn),
-        turnId: turn.turnId })));
+      for (const turn of block.turns) {
+        const canonical = Object.freeze({ endMs: turn.endMs,
+          sourceLocatorId: block.candidateLocator, speakerId: turn.speakerId,
+          startMs: turn.startMs, text: turn.text, turnHash: canonicalFinalReplyTurnHash(turn),
+          turnId: turn.turnId });
+        const previous = input.diagnostic === true
+          ? turns.find(value => value.turnId === canonical.turnId) : undefined;
+        if (previous !== undefined) {
+          if (previous.turnHash !== canonical.turnHash) {
+            throw new Error("diagnostic selected incompatible slices of one canonical turn");
+          }
+          continue;
+        }
+        turns.push(canonical);
+      }
       const nextBinding = Object.freeze({ canonicalEvidenceHash: sha256Json(
         turns.map(({ turnHash }) => turnHash)), memoryGeneration: block.indexGeneration,
       transcriptVersion: block.binding.transcriptVersion });
@@ -262,7 +305,7 @@ function createEvidencePort(input: ProductionCanonicalQuestionChainInput,
   } });
 }
 
-function createAnswerPort(input: ProductionCanonicalQuestionChainInput,
+function createAnswerPort(input: CanonicalEngineInput,
   state: CanonicalQuestionState): QualificationQuestionAnswerPort {
   return Object.freeze({ generate: async (
     request: Parameters<QualificationQuestionAnswerPort["generate"]>[0],

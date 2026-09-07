@@ -65,3 +65,9 @@ export {
   PostgresSchemaReadinessError,
   type PostgresSchemaReadinessPort,
 } from "./postgres-schema-readiness.js";
+export {
+  PostgresDiagnosticFinalEvidence,
+  normalizeDiagnosticFinalEvidenceBinding,
+  assertConstructedPostgresDiagnosticFinalEvidence,
+  type DiagnosticFinalEvidenceBinding,
+} from "./postgres-diagnostic-final-evidence.js";
