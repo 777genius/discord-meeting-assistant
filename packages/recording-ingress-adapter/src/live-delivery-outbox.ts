@@ -1,143 +1,85 @@
 import { constants } from "node:fs";
-import {
-  appendFile,
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  rm,
-  truncate,
-} from "node:fs/promises";
+import { lstat, mkdir, open, rm, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import { RecordingIngressError } from "./errors.js";
+import type { LiveDeliveryIndex, LiveGeneration } from "./live-delivery-index.js";
+import {
+  durableLivePacketIdentity, fileStamp, openEvidence, readOffset,
+  scanEvidence, syncDirectory, verifiedStamp,
+  type DurableLiveVoicePacket, type OutboxRecord, type PendingRecord,
+} from "./live-delivery-jsonl.js";
 import type { DecodedPacket } from "./recording-ingress-invariants.js";
 import type { RecordingIngressRuntime } from "./recording-ingress-runtime.js";
 import { spoolToken } from "./spool.js";
 
-export interface DurableLiveVoicePacket {
-  readonly mediaTimestamp: number;
-  readonly packetId: string;
-  readonly payloadBase64: string;
-  readonly receivedAtMs: number;
-  readonly recordingId: string;
-  readonly relativeTimeMs: number;
-  readonly sequenceNumber: number;
-  readonly speakerId: string;
-}
+export type { DurableLiveVoicePacket } from "./live-delivery-jsonl.js";
+const RECOVERY_LOCK = Symbol("live-delivery-recovery");
 
-interface PendingRecord extends DurableLiveVoicePacket {
-  readonly schemaVersion: 1;
-  readonly type: "pending";
-}
-
-interface DeliveredRecord {
-  readonly packetId: string;
-  readonly schemaVersion: 1;
-  readonly type: "delivered";
-}
-
-type OutboxRecord = PendingRecord | DeliveredRecord;
-
-// A bounded, disposable acceleration of durable evidence, never receipt authority.
-// One recording per runtime bounds aggregate retention even across many recordings.
-const MAX_INDEX_BYTES = 32 * 1024 * 1024;
-const MAX_INDEX_IDENTITIES = 65_536;
-interface OutboxIndex {
-  readonly recordingId: string;
-  stamp: string;
-  bytes: number;
-  readonly packets: Map<string, PendingRecord>;
-  readonly delivered: Set<string>;
-  remaining: number;
-  conflicting: boolean;
-}
-const indexes = new WeakMap<RecordingIngressRuntime, OutboxIndex>();
-
-function applyRecords(index: OutboxIndex, records: readonly OutboxRecord[]): void {
-  for (const record of records) {
-    if (record.type === "delivered") {
-      if (!index.delivered.has(record.packetId) && index.packets.has(record.packetId)) {
-        index.remaining -= 1;
-      }
-      index.delivered.add(record.packetId);
-    } else {
-      const previous = index.packets.get(record.packetId);
-      if (previous !== undefined && !samePacket(previous, record)) {
-        index.conflicting = true;
-      }
-      if (previous === undefined && !index.delivered.has(record.packetId)) {
-        index.remaining += 1;
-      }
-      index.packets.set(record.packetId, record);
+async function applyRecord(
+  db: LiveDeliveryIndex, index: LiveGeneration, handle: FileHandle,
+  record: OutboxRecord, location: { offset: number; length: number },
+): Promise<void> {
+  const previous = db.get(index, record.packetId);
+  if (record.type === "delivered") {
+    if (previous !== undefined && previous.length > 0 && previous.delivered === 0) {
+      index.remaining -= 1;
     }
-  }
-}
-
-function cacheIndex(runtime: RecordingIngressRuntime, index: OutboxIndex): void {
-  if (index.bytes <= MAX_INDEX_BYTES &&
-    index.packets.size + index.delivered.size <= MAX_INDEX_IDENTITIES) {
-    indexes.set(runtime, index);
+    db.put(index, { packet: record.packetId, offset: previous?.offset ?? 0,
+      length: previous?.length ?? 0, delivered: 1 });
   } else {
-    indexes.delete(runtime);
+    if (previous !== undefined && previous.length > 0) {
+      const prior = await readOffset(handle, previous.offset, previous.length);
+      if (prior.type !== "pending" || !samePacket(prior, record)) { index.conflicting = 1; }
+    } else if (previous?.delivered !== 1) { index.remaining += 1; }
+    db.put(index, { packet: record.packetId, ...location, delivered: previous?.delivered ?? 0 });
   }
 }
 
-async function fileStamp(path: string): Promise<string> {
-  try {
-    const stats = await lstat(path, { bigint: true });
-    if (!stats.isFile() || stats.isSymbolicLink()) {
-      throw new RecordingIngressError("path-policy", "live outbox path is unsafe");
-    }
-    return [stats.dev, stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return "missing";
-    }
-    throw error;
-  }
-}
-
-async function readIndex(
-  runtime: RecordingIngressRuntime,
-  recordingId: string,
-): Promise<OutboxIndex> {
+async function readIndex(runtime: RecordingIngressRuntime, recordingId: string): Promise<LiveGeneration> {
+  const db = await runtime.liveDeliveryIndex();
   const path = outboxPath(runtime, recordingId);
-  const stamp = await fileStamp(path);
-  const cached = indexes.get(runtime);
-  if (cached?.recordingId === recordingId && cached.stamp === stamp) {
-    return cached;
+  try {
+    const root = await lstat(join(runtime.spool.root, "live-delivery-v1"));
+    if (!root.isDirectory() || root.isSymbolicLink()) {
+      throw new RecordingIngressError("path-policy", "live outbox root is unsafe");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") { throw error; }
   }
-  indexes.delete(runtime);
-  const records = await readRecords(runtime, recordingId);
-  const index: OutboxIndex = {
-    recordingId,
-    stamp: await fileStamp(path),
-    bytes: records.reduce((total, record) => total + Buffer.byteLength(JSON.stringify(record)) + 1, 0),
-    packets: new Map(),
-    delivered: new Set(),
-    remaining: 0,
-    conflicting: false,
-  };
-  applyRecords(index, records);
-  cacheIndex(runtime, index);
-  return index;
-}
-
-function durableLivePacketIdentity(packet: {
-  readonly mediaTimestamp: number;
-  readonly recordingId: string;
-  readonly relativeTimeMs: number;
-  readonly sequenceNumber: number;
-  readonly speakerId: string;
-}): string {
-  return [
-    packet.recordingId,
-    packet.speakerId,
-    packet.mediaTimestamp,
-    packet.sequenceNumber,
-    packet.relativeTimeMs,
-  ].join(":");
+  const stamp = await fileStamp(path);
+  const cached = db.find(recordingId);
+  if (cached?.stamp === stamp) { return cached; }
+  return runtime.exclusive(RECOVERY_LOCK, async () => {
+    if (cached !== undefined) { await db.forget(cached); }
+    const index = db.begin(recordingId);
+    const initial = await fileStamp(path);
+    if (initial === "missing") {
+      index.stamp = initial;
+      db.publish(index);
+      return index;
+    }
+    const handle = await openEvidence(path);
+    let finalStamp: string;
+    try {
+      if (await verifiedStamp(handle, path) !== initial) {
+        throw new RecordingIngressError("corrupt-spool", "live outbox changed before recovery");
+      }
+      await scanEvidence(handle, initial, (record, offset, length) =>
+        applyRecord(db, index, handle, record, { offset, length }));
+      // Includes surviving complete receipts from an earlier uncertain append.
+      await handle.sync();
+      await syncDirectory(join(runtime.spool.root, "live-delivery-v1"));
+      await syncDirectory(runtime.spool.root);
+      finalStamp = await verifiedStamp(handle, path);
+    } finally { await handle.close(); }
+    if (await fileStamp(path) !== finalStamp) {
+      throw new RecordingIngressError("corrupt-spool", "live outbox changed on recovery close");
+    }
+    index.stamp = finalStamp;
+    db.publish(index);
+    return index;
+  });
 }
 
 export async function appendPendingLivePackets(
@@ -172,66 +114,72 @@ export async function appendPendingLivePackets(
 }
 
 export async function pendingLivePackets(
-  runtime: RecordingIngressRuntime,
-  recordingId: string,
+  runtime: RecordingIngressRuntime, recordingId: string,
 ): Promise<readonly DurableLiveVoicePacket[]> {
-  return runtime.withExclusiveSpoolOwnership(
-    () => runtime.exclusive(recordingId, async () => {
-      const index = await readIndex(runtime, recordingId);
-      if (index.conflicting) {
-        throw new RecordingIngressError(
-          "conflicting-duplicate",
-          "live outbox packet identity was replayed with different content",
-        );
+  return runtime.withExclusiveSpoolOwnership(() => runtime.exclusive(recordingId, async () => {
+    const index = await readIndex(runtime, recordingId);
+    if (index.conflicting !== 0) {
+      throw new RecordingIngressError("conflicting-duplicate", "live outbox packet identity was replayed with different content");
+    }
+    if (index.stamp === "missing") { return []; }
+    const db = await runtime.liveDeliveryIndex();
+    const path = outboxPath(runtime, recordingId);
+    const handle = await openEvidence(path);
+    const packets: DurableLiveVoicePacket[] = [];
+    try {
+      if (await verifiedStamp(handle, path) !== index.stamp) {
+        throw new RecordingIngressError("corrupt-spool", "live outbox changed before pending read");
       }
-      return [...index.packets.values()]
-        .filter(({ packetId }) => !index.delivered.has(packetId))
-        .map((packet) => ({ ...packet }))
-        .toSorted(comparePackets);
-    }),
-  );
+      let after = "";
+      for (;;) {
+        const rows = db.pending(index, after);
+        if (rows.length === 0) { break; }
+        for (const row of rows) {
+          const record = await readOffset(handle, row.offset, row.length);
+          if (record.type !== "pending" || record.packetId !== row.packet) {
+            throw new RecordingIngressError("corrupt-spool", "live outbox offset identity is invalid");
+          }
+          packets.push(record);
+          after = row.packet;
+        }
+      }
+      if (await verifiedStamp(handle, path) !== index.stamp) {
+        throw new RecordingIngressError("corrupt-spool", "live outbox changed during pending read");
+      }
+    } catch (error) { db.invalidate(index); throw error; }
+    finally { await handle.close(); }
+    return packets.toSorted(comparePackets);
+  }));
 }
 
 export async function markLivePacketDelivered(
-  runtime: RecordingIngressRuntime,
-  packetId: string,
+  runtime: RecordingIngressRuntime, packetId: string,
 ): Promise<"marked" | "reused"> {
   const recordingId = packetId.split(":", 1)[0];
   if (recordingId === undefined || recordingId.length === 0) {
     throw new RecordingIngressError("invalid-input", "live packet identity is invalid");
   }
-  return runtime.withExclusiveSpoolOwnership(
-    () => runtime.exclusive(recordingId, async () => {
-      const index = await readIndex(runtime, recordingId);
-      if (index.delivered.has(packetId)) {
-        return "reused";
-      }
-      if (!index.packets.has(packetId)) {
-        throw new RecordingIngressError("invalid-input", "live packet identity is unknown");
-      }
-      await appendRecords(runtime, recordingId, [{
-        packetId,
-        schemaVersion: 1,
-        type: "delivered",
-      }]);
-      // appendRecords updates cached state only after sync. Uncached oversized
-      // evidence still uses this operation-local index without a second scan.
-      if (!index.delivered.has(packetId)) {
-        applyRecords(index, [{ packetId, schemaVersion: 1, type: "delivered" }]);
-      }
-      if (index.remaining === 0) {
-        indexes.delete(runtime);
-        await rm(outboxPath(runtime, recordingId), { force: true });
-      }
-      return "marked";
-    }),
-  );
+  return runtime.withExclusiveSpoolOwnership(() => runtime.exclusive(recordingId, async () => {
+    const index = await readIndex(runtime, recordingId);
+    const db = await runtime.liveDeliveryIndex();
+    const row = db.get(index, packetId);
+    if (row?.delivered === 1) { return "reused"; }
+    if (row === undefined || row.length === 0) {
+      throw new RecordingIngressError("invalid-input", "live packet identity is unknown");
+    }
+    await appendRecords(runtime, recordingId, [{ packetId, schemaVersion: 1, type: "delivered" }], index);
+    if (index.remaining === 0) {
+      db.invalidate(index);
+      await rm(outboxPath(runtime, recordingId), { force: true });
+      await db.forget(index);
+    }
+    return "marked";
+  }));
 }
 
 async function appendRecords(
-  runtime: RecordingIngressRuntime,
-  recordingId: string,
-  records: readonly OutboxRecord[],
+  runtime: RecordingIngressRuntime, recordingId: string, records: readonly OutboxRecord[],
+  known?: LiveGeneration,
 ): Promise<void> {
   const root = join(runtime.spool.root, "live-delivery-v1");
   await mkdir(root, { recursive: true, mode: 0o700 });
@@ -239,108 +187,50 @@ async function appendRecords(
   if (!stats.isDirectory() || stats.isSymbolicLink()) {
     throw new RecordingIngressError("path-policy", "live outbox root is unsafe");
   }
+  const db = await runtime.liveDeliveryIndex();
+  const index = known ?? await readIndex(runtime, recordingId);
   const path = outboxPath(runtime, recordingId);
-  const bytes = records.map((record) => JSON.stringify(record)).join("\n") + "\n";
-  const cached = indexes.get(runtime);
-  const index = cached?.recordingId === recordingId &&
-      cached.stamp === await fileStamp(path) ? cached : undefined;
-  // Any uncertain append/sync/stat outcome forces durable replay on the next call.
-  indexes.delete(runtime);
-  await appendFile(path, bytes, {
-    encoding: "utf8",
-    flag: constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW,
-    mode: 0o600,
-  });
-  const handle = await open(path, "r+");
+  db.invalidate(index);
+  const handle = await open(path, constants.O_APPEND | constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+  let finalStamp: string;
   try {
+    const before = await verifiedStamp(handle, path);
+    if (index.stamp !== "missing" && before !== index.stamp) {
+      throw new RecordingIngressError("corrupt-spool", "live outbox changed before append");
+    }
+    const startOffset = (await handle.stat()).size;
+    let offset = startOffset;
+    if (index.stamp === "missing" && offset !== 0) {
+      throw new RecordingIngressError("corrupt-spool", "live outbox appeared before append");
+    }
+    for (const record of records) {
+      const bytes = JSON.stringify(record) + "\n";
+      await handle.writeFile(bytes, "utf8");
+      offset += Buffer.byteLength(bytes);
+    }
     await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  if (index !== undefined) {
-    applyRecords(index, records);
-    index.bytes += Buffer.byteLength(bytes);
-    index.stamp = await fileStamp(path);
-    cacheIndex(runtime, index);
-  }
-}
-
-async function readRecords(
-  runtime: RecordingIngressRuntime,
-  recordingId: string,
-): Promise<readonly OutboxRecord[]> {
-  const path = outboxPath(runtime, recordingId);
-  let text: string;
-  try {
-    const stats = await lstat(path);
-    if (!stats.isFile() || stats.isSymbolicLink()) {
-      throw new RecordingIngressError("path-policy", "live outbox path is unsafe");
+    if (index.stamp === "missing") {
+      await syncDirectory(root);
+      await syncDirectory(runtime.spool.root);
     }
-    text = await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+    finalStamp = await verifiedStamp(handle, path);
+    if (Number(finalStamp.split(":")[2]) !== offset) {
+      throw new RecordingIngressError("corrupt-spool", "live outbox append length changed");
     }
-    throw error;
+    // Publish metadata only after the authoritative bytes passed durability and
+    // descriptor checks. No SQLite transaction spans any of these awaits.
+    offset = startOffset;
+    for (const record of records) {
+      const length = Buffer.byteLength(JSON.stringify(record));
+      await applyRecord(db, index, handle, record, { offset, length });
+      offset += length + 1;
+    }
+  } finally { await handle.close(); }
+  if (await fileStamp(path) !== finalStamp) {
+    throw new RecordingIngressError("corrupt-spool", "live outbox changed on append close");
   }
-  const finalNewline = text.lastIndexOf("\n");
-  if (finalNewline !== text.length - 1) {
-    await truncate(path, Math.max(0, finalNewline + 1));
-    text = finalNewline < 0 ? "" : text.slice(0, finalNewline + 1);
-  }
-  return text.split("\n").filter(Boolean).map(parseRecord);
-}
-
-function parseRecord(line: string): OutboxRecord {
-  let value: unknown;
-  try {
-    value = JSON.parse(line);
-  } catch (error) {
-    throw new RecordingIngressError("corrupt-spool", "live outbox record is invalid JSON", {
-      cause: error,
-    });
-  }
-  if (typeof value !== "object" || value === null) {
-    throw new RecordingIngressError("corrupt-spool", "live outbox record is invalid");
-  }
-  const record = value as Record<string, unknown>;
-  if (
-    record.schemaVersion !== 1 ||
-    typeof record.packetId !== "string" ||
-    record.packetId.length === 0 ||
-    record.packetId.length > 4_096
-  ) {
-    throw new RecordingIngressError("corrupt-spool", "live outbox identity is invalid");
-  }
-  if (record.type === "delivered") {
-    return { packetId: record.packetId, schemaVersion: 1, type: "delivered" };
-  }
-  if (
-    record.type !== "pending" ||
-    typeof record.payloadBase64 !== "string" ||
-    typeof record.recordingId !== "string" ||
-    typeof record.speakerId !== "string" ||
-    !Number.isSafeInteger(record.mediaTimestamp) ||
-    !Number.isSafeInteger(record.receivedAtMs) ||
-    !Number.isSafeInteger(record.relativeTimeMs) ||
-    !Number.isSafeInteger(record.sequenceNumber)
-  ) {
-    throw new RecordingIngressError("corrupt-spool", "live outbox packet is invalid");
-  }
-  const packet = {
-    mediaTimestamp: record.mediaTimestamp as number,
-    packetId: record.packetId,
-    payloadBase64: record.payloadBase64,
-    receivedAtMs: record.receivedAtMs as number,
-    recordingId: record.recordingId,
-    relativeTimeMs: record.relativeTimeMs as number,
-    sequenceNumber: record.sequenceNumber as number,
-    speakerId: record.speakerId,
-  };
-  if (durableLivePacketIdentity(packet) !== packet.packetId) {
-    throw new RecordingIngressError("corrupt-spool", "live outbox packet identity does not match");
-  }
-  return { ...packet, schemaVersion: 1, type: "pending" };
+  index.stamp = finalStamp;
+  db.publish(index);
 }
 
 function outboxPath(runtime: RecordingIngressRuntime, recordingId: string): string {

@@ -447,6 +447,7 @@ boundaries:
         - node:fs
         - node:fs/promises
         - node:path
+        - node:sqlite
       runtimeReferences: []
   - id: adapters.object-storage
     roots:

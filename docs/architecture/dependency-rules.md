@@ -90,3 +90,11 @@ existing consumer-owned transcription, summary and publishing ports. Its finite
 filesystem journal captures invocation identity and timestamps, not infrastructure
 request payloads. The actor OSS collection boundary consumes the retained native
 bytes. Native capture-to-parser integration tests live in the Platform test root.
+
+Recording ingress owns the private `live-delivery-index.ts` and
+`live-delivery-jsonl.ts` helpers in `packages/recording-ingress-adapter/src`.
+The accepted compact-cache decision uses adapter-local built-in `node:sqlite`
+for disposable payload-free identity/offset metadata, recreated under runtime
+spool ownership. JSONL remains the sole durable receipt authority. Recovery
+streams records; short synchronous cache transactions never span filesystem
+I/O. SQLite closes before spool ownership is released.
