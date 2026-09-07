@@ -375,6 +375,13 @@ function adjudicationEffectEvidence(input: { readonly answerAttempt: AttemptIden
       signedProviderTerminal }), signedProviderTerminal };
 }
 
+function testProviderRequestBytes(identity: ReturnType<typeof artifactAttemptIdentity>): Buffer {
+  if (identity.callKind === "capability") {return Buffer.alloc(0);}
+  return Buffer.from(canonicalJson({ callKind: identity.callKind,
+    questionDigestSha256: identity.questionDigestSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_test_provider_request.v1" }));
+}
+
 function finalFixture() {
   const authorities = authorityFixture(); const targetInventoryAuthority = authorities.signers.inventory;
   const release = releaseFixture(authorities); const spendAuthority = authorities.signers.spend;
@@ -435,9 +442,7 @@ function finalFixture() {
       let predecessorPlaintextSha256: string | null = null;
       for (const kind of kinds) {
         const artifactIdentity = artifactAttemptIdentity(identity, kind);
-        const providerRequestBytes = Buffer.from(canonicalJson({ callKind:
-          artifactIdentity.callKind, questionDigestSha256: artifactIdentity.questionDigestSha256,
-        schemaVersion: "meeting_knowledge.semantic_quality_test_provider_request.v1" }));
+        const providerRequestBytes = testProviderRequestBytes(artifactIdentity);
         const providerResultBytes = Buffer.from(canonicalJson({ callKind:
           artifactIdentity.callKind, questionId: artifactIdentity.questionId,
         schemaVersion: "meeting_knowledge.semantic_quality_test_provider_result.v1" }));
@@ -1004,7 +1009,13 @@ describe("production quality campaign effect evidence", () => {
 // oxlint-disable-next-line max-lines-per-function
 describe("production quality campaign final evidence", () => {
   // A cold run verifies and decrypts the complete 3 x 240 AES-GCM inventory before reconstruction.
-  it("qualifies real AES-GCM evidence and reconstructs all bounded metric groups", async () => {
+  it("accepts exact empty capability GET bytes and reconstructs all bounded metric groups",
+    async () => {
+    const capabilityRequest = FINAL.input.artifacts.find(({ kind }) =>
+      kind === "capability_request")!;
+    const capabilityValue = JSON.parse(Buffer.from(FINAL.stored.get(
+      capabilityRequest.envelopeSha256)!.plaintext).toString("utf8")) as Record<string, unknown>;
+    expect(capabilityValue.requestBytesBase64).toBe("");
     const result = await admitFinalCampaign(FINAL.authorities.policy, FINAL.input);
     expect(result.qualified).toBe(true);
     const metrics = FINAL.evidence[0]!.payload.metrics;
@@ -1424,6 +1435,11 @@ describe("production quality campaign final evidence", () => {
     });
     await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
       ...rewrittenRequest })).rejects.toThrow(/exact provider request|predecessor|follow/u);
+    const emptyRetrievalRequest = rewriteFrom("retrieval_request", (value) => ({ ...value,
+      chain: { ...(value.chain as Record<string, unknown>), requestDigestSha256:
+        sha256(Buffer.alloc(0)) }, requestBytesBase64: "" }));
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      ...emptyRetrievalRequest })).rejects.toThrow(/provider-input bound/u);
     const swappedKind = rewriteFrom("capability_request", (value) => ({ ...value,
       schemaVersion: "meeting_knowledge.semantic_quality_retrieval_request.v1" }));
     await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,

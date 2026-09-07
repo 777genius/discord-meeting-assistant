@@ -87,6 +87,31 @@ export interface CampaignEvidenceCustodyPort {
     readonly releaseRootSha256: string }): Promise<ExactCampaignEvidence>;
 }
 
+export interface MainCanonicalEvidenceProjection {
+  readonly answerAbstained: boolean;
+  readonly attemptId: string;
+  readonly campaignRootSha256: string;
+  readonly capabilityRequestSha256: string;
+  readonly capabilityResponseSha256: string;
+  readonly citationLocatorIds: readonly string[];
+  readonly evidenceLocatorIds: readonly string[];
+  readonly evidenceTurnIds: readonly string[];
+  readonly rankedLocatorIds: readonly string[];
+  readonly retrievalLatencyUs: number;
+  readonly retrievalRequestSha256: string;
+  readonly retrievalResponseSha256: string;
+}
+
+export interface VerifiedMainCanonicalEvidence {
+  readonly inventorySha256: string;
+}
+
+/** Consumer-owned local proof boundary; no corpus, gold, or adjudication facts cross it. */
+export interface MainCanonicalEvidenceVerificationPort {
+  verify(input: { readonly attempts: readonly MainCanonicalEvidenceProjection[];
+    readonly campaignRootSha256: string }): Promise<VerifiedMainCanonicalEvidence>;
+}
+
 export interface ObservedProductionReleasePort {
   observe(context: CampaignCallContext): Promise<QualityCampaignRelease>;
 }
@@ -100,6 +125,7 @@ export interface QualityCampaignProductionPorts {
   readonly evidenceCustody: CampaignEvidenceCustodyPort;
   readonly holdoutProvider: CampaignProviderPorts;
   readonly mainExecutorFactory: QualificationQuestionExecutorFactoryPort;
+  readonly mainCanonicalEvidence: MainCanonicalEvidenceVerificationPort;
   readonly mainResultAuthority: { readonly keyId: string; readonly publicKeyPem: string };
   readonly release: ObservedProductionReleasePort;
   readonly review: CampaignReviewPorts;

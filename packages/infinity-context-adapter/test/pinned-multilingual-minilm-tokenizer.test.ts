@@ -137,7 +137,7 @@ describe("pinned multilingual MiniLM tokenizer", () => {
     expect(tokenizer.profile.maxInputTokens).toBe(128);
   });
 
-  it("splits the exact 190-token Cyrillic regression before the 96-token limit", () => {
+  it("splits the exact 190-token Cyrillic regression before the normalized 72-token body limit", () => {
     const tokenizer = new PinnedMultilingualMiniLmTokenizer();
     const base = finalMeeting(1, "Tuesday");
     const text = "Привет".repeat(94);
@@ -165,8 +165,8 @@ describe("pinned multilingual MiniLM tokenizer", () => {
     expect(tokenizer.countTokens(text)).toBe(190);
     expect(plan.documents.length).toBeGreaterThan(1);
     expect(plan.documents.every(({ embeddingText, manifest }) =>
-      tokenizer.countTokens(embeddingText) === manifest.embeddingTokenEstimate &&
-      manifest.embeddingTokenEstimate <= 96
+      tokenizer.countBodyTokens(embeddingText) === manifest.embeddingTokenEstimate &&
+      manifest.embeddingTokenEstimate <= 72
     )).toBe(true);
   });
 

@@ -157,6 +157,10 @@ describe("installed production quality-campaign CLI", () => {
           artifactSha256: digest("hostile-substitution") } : original));
       expect(await fixture.cli("cleanup-absence", "substituted-cleanup.json")).toBe(1);
       expect(fixture.deletedIds).toHaveLength(0);
+      await fixture.writeCleanupProtectedOriginals(fixture.protectedOriginals);
+      fixture.changeLocalCanonicalInventory();
+      expect(await fixture.cli("cleanup-absence", "changed-local-inventory.json")).toBe(1);
+      expect(fixture.deletedIds).toHaveLength(0);
     }, 300_000);
 });
 
@@ -508,6 +512,7 @@ async function createFixture() {
     get maximumProviderConcurrency() {return runtime.maximumProviderConcurrency;},
     observedIds: runtime.observedIds, protectedOriginals, release, reviewCalls: runtime.reviewCalls,
     root, startedAt, releaseEvidence: () => {runtime.releaseEvidence();}, writeCleanupProtectedOriginals,
+    changeLocalCanonicalInventory: () => {runtime.changeLocalCanonicalInventory();},
     writeCustody, writeHoldoutRoot };
 }
 
@@ -565,6 +570,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
     QualityCampaignProductionPorts["mainExecutorFactory"]["recover"]>>>();
   let activeProviderCalls = 0; let maximumProviderConcurrency = 0;
   let ambiguousNext = false;
+  let localInventoryRevision = 0;
   const exchange = (collection: ProviderCall[], resultSigner: ReturnType<typeof signer>) =>
     ({ exchange: async (call: { readonly attempt: AttemptIdentity;
       readonly deadlineEpochMs: number; readonly request: Uint8Array;
@@ -925,6 +931,10 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         questionReviewReceipts: [{}, {}], repetitionEvidence: [] };})() },
     holdoutProvider: { answer: holdoutExchange, capability: holdoutExchange,
       resultAuthority: input.holdoutProvider, retrieval: holdoutExchange },
+    mainCanonicalEvidence: { verify: async ({ attempts, campaignRootSha256 }) => ({
+      inventorySha256: sha256({ attempts, campaignRootSha256,
+        localInventoryRevision,
+        schemaVersion: "synthetic.local_canonical_inventory.v1" }) }) },
     mainExecutorFactory: { create: async (binding) => ({ execute: async (packet) => {
       activeProviderCalls += 1;
       maximumProviderConcurrency = Math.max(maximumProviderConcurrency, activeProviderCalls);
@@ -1008,6 +1018,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
     set ambiguousNext(value: boolean) {ambiguousNext = value;}, deletedIds,
     holdoutCalls, mainCalls,
     get maximumProviderConcurrency() {return maximumProviderConcurrency;}, observedIds, ports,
+    changeLocalCanonicalInventory() {localInventoryRevision += 1;},
     releaseEvidence() {artifactsByAttempt.clear(); artifactBindingsByAttempt.clear();
       envelopeByDigest.clear(); finalAdjudicationByAttempt.clear();}, reviewCalls };
 }

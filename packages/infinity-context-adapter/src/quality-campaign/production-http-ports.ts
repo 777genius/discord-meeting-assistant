@@ -7,6 +7,8 @@ import { createLocalEvidenceCustody } from "./production-evidence-custody.js";
 import { createProductionCanonicalExecutorFactory,
   type ProductionCanonicalExecutionConnectionConfiguration } from
   "./production-canonical-executor-factory.js";
+import { createProductionLocalCanonicalEvidenceReader } from
+  "./production-local-canonical-evidence-reader.js";
 import type { QualityCampaignRelease } from "./release.js";
 import type { CampaignCallContext, CampaignProviderPorts,
   CampaignReviewEvidence, QualityCampaignProductionPorts } from "./production-ports.js";
@@ -78,6 +80,10 @@ Promise<QualityCampaignProductionPorts> {
   const evidenceCustody = Object.freeze({ open: async (input: Parameters<
     typeof mainEvidenceCustody.open>[0]) => input.kind === "main" ?
       await mainEvidenceCustody.open(input) : await holdoutEvidenceCustody.open(input) });
+  const mainCanonicalEvidence = createProductionLocalCanonicalEvidenceReader({ artifactKey:
+    decodeAesKey(await readQualityCampaignText(absolute(config.canonicalExecution.artifactKeyPath),
+      "canonical artifact key", 16_384)), artifactKeyId: config.canonicalExecution.artifactKeyId,
+  artifactRoot: config.canonicalExecution.artifactRoot });
   let canonicalFactory: Promise<Awaited<ReturnType<
     typeof createProductionCanonicalExecutorFactory>>> | undefined;
   return Object.freeze({
@@ -123,6 +129,7 @@ Promise<QualityCampaignProductionPorts> {
       canonicalFactory ??= createProductionCanonicalExecutorFactory(config.canonicalExecution);
       return await (await canonicalFactory).recover(input);
     } },
+    mainCanonicalEvidence,
     mainResultAuthority,
     release: { observe: async (callContext: CampaignCallContext) => await requestJson(
       config.releaseObservationEndpoint, token, {}, callContext) as QualityCampaignRelease },
@@ -319,8 +326,11 @@ function absolute(path: string): string {
 
 
 function decodeAesKey(value: string): Buffer {
-  const key = Buffer.from(value.trim(), "base64");
-  if (key.byteLength !== 32) {throw new Error("evidence custody key is invalid");}
+  const encoded = value.trim();
+  const key = Buffer.from(encoded, "base64");
+  if (key.byteLength !== 32 || key.toString("base64") !== encoded) {
+    throw new Error("evidence custody key is invalid");
+  }
   return key;
 }
 

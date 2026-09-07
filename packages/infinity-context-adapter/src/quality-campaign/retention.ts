@@ -344,7 +344,7 @@ function validateAuthenticatedPlaintext(policy: QualityCampaignAuthorityPolicy,
     assertArtifactHeader(value, artifact.kind, expectedArtifact.identity);
     verifyArtifactChain(policy, artifact, expectedArtifact.identity, value.chain, context, false);
     assertProviderRequestDigest(value.requestBytesBase64, value.chain,
-      artifact.kind.replaceAll("_", " "));
+      artifact.kind.replaceAll("_", " "), artifact.kind === "capability_request");
   } else if (artifact.kind === "capability_response") {
     const value = exactRecord(decoded, ["attempt", "chain", "responseBytesBase64",
       "schemaVersion"], "retained capability response");
@@ -389,9 +389,10 @@ function assertArtifactHeader(value: Record<string, unknown>, kind: RetainedArti
   }
 }
 
-function assertProviderRequestDigest(value: unknown, chainValue: unknown, label: string): string {
+function assertProviderRequestDigest(value: unknown, chainValue: unknown, label: string,
+  allowEmpty: boolean): string {
   const bytes = decodeCanonicalBase64Value(value, `${label} request bytes`);
-  if (bytes.byteLength < 1 || bytes.byteLength > MAX_PROVIDER_INPUT_BYTES) {
+  if ((!allowEmpty && bytes.byteLength < 1) || bytes.byteLength > MAX_PROVIDER_INPUT_BYTES) {
     throw new Error(`authenticated ${label} exceeds the production provider-input bound`);
   }
   const chain = chainValue as Record<string, unknown>;

@@ -7,6 +7,8 @@ import type {
   HistoricalEmbeddingTokenizerProfileV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 
+import { normalizeInfinityEmbeddingInput, infinityDocumentEmbeddingInput } from "./infinity-embedding-input.js";
+
 import { INFINITY_CONTEXT_SDK_PROVENANCE } from "./infinity-runtime-provenance.js";
 
 interface TokenizerRuntime {
@@ -97,6 +99,10 @@ HistoricalEmbeddingTokenizerProfileV1 = Object.freeze({
   embeddingModelRevision: "e8f8c211226b894fcb81acc59f3b34ba3efd5f42",
   id: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
   maxInputTokens: 128,
+  inputBudget: Object.freeze({
+    identity: "meeting-knowledge.normalized-document-title-reserve56.v1",
+    maximumBodyTokens: 72,
+  }),
   servingRuntimeRevision: "78502d8e61223d2c73d4bb7aeaea46787e90d596",
   tokenizerArtifactSha256,
   tokenizerConfigSha256,
@@ -168,6 +174,7 @@ export function historicalIndexProfileIdForSemanticTuple(
 
   const canonicalTuple = JSON.stringify([
     "meeting-knowledge.infinity-index.semantic-tuple.v2",
+    PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE.inputBudget,
     tuple.serviceRevision,
     tuple.embeddingProfileId,
     tuple.embeddingProfileInstanceDigestSha256,
@@ -268,6 +275,7 @@ implements HistoricalEmbeddingTokenizerPort {
       "tokenizer_config.json",
     );
     assertEmbeddedMaximum(tokenizerJson);
+    assertTitleReserve(tokenizerJson);
     const conformance = parseConformance(artifacts.conformance);
     this.#tokenizer = new tokenizerModule.Tokenizer(tokenizerJson, tokenizerConfig);
     this.#verifyConformance(conformance);
@@ -281,6 +289,20 @@ implements HistoricalEmbeddingTokenizerPort {
       );
     }
     return count;
+  }
+
+  public countBodyTokens(text: string): number {
+    return this.countTokens(normalizeInfinityEmbeddingInput(text));
+  }
+
+  public assertDocumentInput(title: string, body: string): void {
+    const count = this.countTokens(infinityDocumentEmbeddingInput(title, body));
+    if (count > this.profile.maxInputTokens || this.profile.inputBudget === undefined ||
+      this.countBodyTokens(body) > this.profile.inputBudget.maximumBodyTokens) {
+      throw new PinnedMultilingualMiniLmTokenizerError(
+        "historical document embedding input exceeds the qualified maximum",
+      );
+    }
   }
 
   #encode(text: string): readonly number[] {
@@ -395,4 +417,33 @@ function parseConformance(bytes: Uint8Array): ConformanceReceipt {
 
 function sameNumbers(left: readonly number[], right: readonly number[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/**
+ * The 55 ASCII title characters plus one Metaspace marker cost at most 56
+ * pieces: Unigram has a one-character fallback for every normalized title
+ * character. WhitespaceSplit isolates title and body; body counting already
+ * includes both special tokens. Therefore body <=72 implies document <=128.
+ * Artifact checksums also bind the normalization map and special-token rules.
+ */
+function assertTitleReserve(tokenizer: Readonly<Record<string, unknown>>): void {
+  const model = tokenizer.model as Readonly<Record<string, unknown>> | undefined;
+  const pre = tokenizer.pre_tokenizer as Readonly<Record<string, unknown>> | undefined;
+  const vocabulary = model?.vocab;
+  const characters = "abcdefghijklmnopqrstuvwxyz0123456789._-▁";
+  const pieces = new Set(Array.isArray(vocabulary)
+    ? vocabulary.map((entry: unknown) =>
+      Array.isArray(entry) && typeof entry[0] === "string" ? entry[0] : undefined)
+    : []);
+  if (
+    model?.type !== "Unigram" ||
+    JSON.stringify(pre) !== JSON.stringify({
+      type: "Sequence",
+      pretokenizers: [{ type: "WhitespaceSplit" },
+        { type: "Metaspace", replacement: "▁", add_prefix_space: true }],
+    }) ||
+    Array.from(characters).some((character) => !pieces.has(character))
+  ) {
+    throw new PinnedMultilingualMiniLmTokenizerError("tokenizer does not prove the historical title reserve");
+  }
 }

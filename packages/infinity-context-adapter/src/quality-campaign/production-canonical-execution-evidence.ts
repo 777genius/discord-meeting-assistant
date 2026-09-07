@@ -1,9 +1,14 @@
 import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import { canonicalJson, digest } from "./canonical.js";
+import { canonicalJson, digest, exactRecord } from "./canonical.js";
 import { SemanticQualityV4EncryptedArtifactStore } from
   "./canonical-execution-evidence-store.js";
+import type { SemanticQualityV4DurabilityFaults } from
+  "./canonical-execution-evidence-store.js";
+import { validateSemanticQualityV4ArtifactReceipt,
+  type SemanticQualityV4ArtifactKind, type SemanticQualityV4ArtifactReceipt } from
+  "./canonical-execution-artifact-validation.js";
 import type { QualificationCreateOnlyJournalPort, QualificationEncryptedAuditPort } from
   "./production-canonical-question-chain.js";
 import { decodeQualificationQuestionOutcome, type QualificationQuestionOutcome } from
@@ -22,6 +27,7 @@ export function createProductionCanonicalExecutionEvidence(input: {
   readonly repetition: 1 | 2 | 3;
   readonly retrievalJournalRoot: string;
   readonly rootBindingSha256: string;
+  readonly durabilityFaults?: SemanticQualityV4DurabilityFaults;
 }): { readonly audit: QualificationEncryptedAuditPort;
   readonly journal: QualificationCreateOnlyJournalPort } {
   assertBinding(input);
@@ -29,7 +35,8 @@ export function createProductionCanonicalExecutionEvidence(input: {
     answer: new CanonicalPhaseJournal(input.answerJournalRoot, input, "answer"),
     retrieval: new CanonicalPhaseJournal(input.retrievalJournalRoot, input, "retrieval"),
   });
-  const artifacts = new SemanticQualityV4EncryptedArtifactStore(input.artifactRoot);
+  const artifacts = new SemanticQualityV4EncryptedArtifactStore(input.artifactRoot,
+    input.durabilityFaults);
   const journal: QualificationCreateOnlyJournalPort = Object.freeze({
     reserve: async ({ attemptId, payloadSha256, phase }: Parameters<
       QualificationCreateOnlyJournalPort["reserve"]>[0]) => {
@@ -49,13 +56,18 @@ export function createProductionCanonicalExecutionEvidence(input: {
       const receipt = await artifacts.sealCreateOnly({ artifactKind: kind,
         attemptId, key: input.artifactKey, keyId: input.artifactKeyId, plaintext,
         rootBindingSha256: input.rootBindingSha256 });
+      const receiptDirectory = join(resolve(input.artifactRoot), "receipts", attemptId);
+      await ensureDirectory(receiptDirectory, input.durabilityFaults);
+      await writeCreateOnly(join(receiptDirectory, `${kind}.json`), canonicalJson(receipt),
+        input.durabilityFaults);
       if (kind === "answer_normalized_outcome") {
         const outcomeDirectory = join(resolve(input.artifactRoot), "outcomes");
-        await ensureDirectory(outcomeDirectory);
+        await ensureDirectory(outcomeDirectory, input.durabilityFaults);
         await writeCreateOnly(join(outcomeDirectory, `${attemptId}.json`), canonicalJson({
           attemptId, envelopeSha256: receipt.envelopeSha256,
           plaintextSha256: receipt.plaintextSha256, rootBindingSha256: input.rootBindingSha256,
-          schemaVersion: "meeting_knowledge.canonical_quality_outcome_pointer.v1" }));
+          schemaVersion: "meeting_knowledge.canonical_quality_outcome_pointer.v1" }),
+        input.durabilityFaults);
       }
     },
   });
@@ -64,26 +76,37 @@ export function createProductionCanonicalExecutionEvidence(input: {
 
 export async function recoverProductionCanonicalOutcome(input: {
   readonly answerJournalRoot: string; readonly artifactKey: Uint8Array;
-  readonly artifactRoot: string; readonly attemptId: string; readonly questionId: string;
+  readonly artifactKeyId: string; readonly artifactRoot: string; readonly attemptId: string;
+  readonly questionId: string;
   readonly repetition: 1 | 2 | 3; readonly retrievalJournalRoot: string;
   readonly rootBindingSha256: string;
 }): Promise<QualificationQuestionOutcome | "outcome_unknown" | null> {
   assertBinding(input);
   const pointerPath = join(resolve(input.artifactRoot), "outcomes", `${input.attemptId}.json`);
-  try {
-    const pointer = JSON.parse(await readFile(pointerPath, "utf8")) as Record<string, unknown>;
-    if (pointer.attemptId !== input.attemptId ||
-      pointer.rootBindingSha256 !== input.rootBindingSha256 ||
+  const pointerBytes = await readOptionalBounded(pointerPath, 16_384,
+    "canonical normalized outcome pointer");
+  if (pointerBytes !== null) {
+    const pointer = exactRecord(JSON.parse(Buffer.from(pointerBytes).toString("utf8")) as unknown,
+      ["attemptId", "envelopeSha256", "plaintextSha256", "rootBindingSha256", "schemaVersion"],
+      "canonical normalized outcome pointer");
+    if (
+      pointer.attemptId !== input.attemptId || pointer.rootBindingSha256 !== input.rootBindingSha256 ||
       pointer.schemaVersion !== "meeting_knowledge.canonical_quality_outcome_pointer.v1" ||
-      typeof pointer.envelopeSha256 !== "string") {
+      typeof pointer.envelopeSha256 !== "string" || typeof pointer.plaintextSha256 !== "string") {
       throw new Error("canonical normalized outcome pointer is invalid");
     }
-    const artifacts = new SemanticQualityV4EncryptedArtifactStore(input.artifactRoot);
-    const plaintext = await artifacts.open({ envelopeSha256: pointer.envelopeSha256,
-      key: input.artifactKey });
+    const opened = await readProductionCanonicalArtifact({ artifactKey: input.artifactKey,
+      artifactKeyId: input.artifactKeyId, artifactRoot: input.artifactRoot, attemptId: input.attemptId,
+      kind: "answer_normalized_outcome", rootBindingSha256: input.rootBindingSha256 });
+    if (canonicalJson(pointer) !== canonicalJson({ attemptId: opened.receipt.attemptId,
+      envelopeSha256: opened.receipt.envelopeSha256,
+      plaintextSha256: opened.receipt.plaintextSha256,
+      rootBindingSha256: opened.receipt.rootBindingSha256,
+      schemaVersion: "meeting_knowledge.canonical_quality_outcome_pointer.v1" })) {
+      throw new Error("canonical normalized outcome pointer is not receipt-bound");
+    }
+    const plaintext = opened.plaintext;
     return decodeQualificationQuestionOutcome(JSON.parse(Buffer.from(plaintext).toString("utf8")));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {throw error;}
   }
   for (const root of [input.answerJournalRoot, input.retrievalJournalRoot]) {
     if (await exists(join(resolve(root), input.attemptId, "provider_reserved.json"))) {
@@ -91,6 +114,34 @@ export async function recoverProductionCanonicalOutcome(input: {
     }
   }
   return null;
+}
+
+/** Reads the mandatory deterministic receipt index and authenticates its exact envelope bytes. */
+export async function readProductionCanonicalArtifact(input: { readonly artifactKey: Uint8Array;
+  readonly artifactKeyId: string; readonly artifactRoot: string; readonly attemptId: string;
+  readonly kind: SemanticQualityV4ArtifactKind; readonly rootBindingSha256: string }):
+Promise<{ readonly plaintext: Uint8Array; readonly receipt: SemanticQualityV4ArtifactReceipt }> {
+  if (!isAbsolute(input.artifactRoot) || input.artifactRoot.includes("\0")) {
+    throw new Error("canonical artifact root is invalid");
+  }
+  if (!/^sqv4-[a-f0-9]{64}$/u.test(input.attemptId)) {
+    throw new Error("canonical artifact attempt ID is invalid");
+  }
+  if (!isArtifactKind(input.kind)) {throw new Error("canonical artifact kind is invalid");}
+  digest(input.rootBindingSha256, "canonical artifact root binding");
+  const receiptPath = join(resolve(input.artifactRoot), "receipts", input.attemptId,
+    `${input.kind}.json`);
+  const receiptBytes = await readBounded(receiptPath, 16_384, "canonical artifact receipt index");
+  const receipt = validateSemanticQualityV4ArtifactReceipt(JSON.parse(
+    Buffer.from(receiptBytes).toString("utf8")) as unknown);
+  if (receipt.attemptId !== input.attemptId || receipt.artifactKind !== input.kind ||
+    receipt.rootBindingSha256 !== input.rootBindingSha256) {
+    throw new Error("canonical artifact receipt index is foreign or substituted");
+  }
+  const store = new SemanticQualityV4EncryptedArtifactStore(input.artifactRoot);
+  const plaintext = await store.openReceipt({ expectedKeyId: input.artifactKeyId,
+    key: input.artifactKey, receipt });
+  return Object.freeze({ plaintext, receipt });
 }
 
 class CanonicalPhaseJournal {
@@ -161,15 +212,85 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function ensureDirectory(path: string): Promise<void> {
-  await mkdir(path, { recursive: true, mode: 0o700 });
+async function ensureDirectory(path: string, faults: SemanticQualityV4DurabilityFaults = {}):
+Promise<void> {
+  await ensureDurableDirectory(path, faults);
+  const metadata = await stat(path);
+  if (!metadata.isDirectory() || (metadata.mode & 0o077) !== 0) {
+    throw new Error("canonical evidence directory permissions are not private");
+  }
   const handle = await open(path, "r");
   try {await handle.sync();} finally {await handle.close();}
 }
 
-async function writeCreateOnly(path: string, value: string): Promise<void> {
+async function ensureDurableDirectory(path: string,
+  faults: SemanticQualityV4DurabilityFaults): Promise<void> {
+  const absolute = resolve(path);
+  const parent = resolve(absolute, "..");
+  if (parent !== absolute) {await ensureDurableDirectory(parent, faults);}
+  let created = false;
+  try {await mkdir(absolute, { mode: 0o700 }); created = true;}
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !(await stat(absolute)).isDirectory()) {
+      throw error;
+    }
+  }
+  await syncDirectory(absolute, faults);
+  if (created && parent !== absolute) {await syncDirectory(parent, faults);}
+}
+
+async function syncDirectory(path: string, faults: SemanticQualityV4DurabilityFaults): Promise<void> {
+  const handle = await open(path, "r");
+  try {await handle.sync();} finally {await handle.close();}
+  faults.afterDirectorySync?.(path);
+}
+
+async function writeCreateOnly(path: string, value: string,
+  faults: SemanticQualityV4DurabilityFaults = {}): Promise<void> {
   const handle = await open(path, "wx", 0o600);
-  try {await handle.writeFile(value); await handle.sync();} finally {await handle.close();}
+  try {await handle.writeFile(value); await handle.sync(); faults.afterFileSync?.(path);}
+  finally {await handle.close();}
   const directory = await open(dirname(path), "r");
   try {await directory.sync();} finally {await directory.close();}
+  faults.afterDirectorySync?.(dirname(path));
+}
+
+async function readBounded(path: string, maximumBytes: number, label: string): Promise<Uint8Array> {
+  const handle = await open(path, "r");
+  try {
+    const metadata = await handle.stat({ bigint: true });
+    if (!metadata.isFile() || metadata.size < 1 || metadata.size > maximumBytes) {
+      throw new Error(`${label} exceeds its byte bound`);
+    }
+    const size = Number(metadata.size);
+    const bytes = Buffer.alloc(size);
+    const { bytesRead } = await handle.read(bytes, 0, size, 0);
+    const { bytesRead: trailingBytes } = await handle.read(Buffer.alloc(1), 0, 1, size);
+    const after = await handle.stat({ bigint: true });
+    if (bytesRead !== size || trailingBytes !== 0 || after.size !== metadata.size ||
+      after.dev !== metadata.dev || after.ino !== metadata.ino ||
+      after.mtimeNs !== metadata.mtimeNs || after.ctimeNs !== metadata.ctimeNs) {
+      throw new Error(`${label} changed while being read`);
+    }
+    return bytes;
+  } finally {await handle.close();}
+}
+
+async function readOptionalBounded(path: string, maximumBytes: number,
+  label: string): Promise<Uint8Array | null> {
+  try {return await readBounded(path, maximumBytes, label);}
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {return null;}
+    throw error;
+  }
+}
+
+function isArtifactKind(value: unknown): value is SemanticQualityV4ArtifactKind {
+  return ["adjudication", "answer", "answer_normalized_outcome", "answer_original_model_surface",
+    "answer_original_request", "answer_original_response", "answer_repair_model_surface",
+    "answer_repair_request", "answer_repair_response", "capability_request", "capability_response",
+    "evidence", "original_model_input", "original_provider_request", "original_provider_response",
+    "repair_model_input", "repair_provider_request", "repair_provider_response", "raw_outcome",
+    "response_runtime", "retrieval_request", "retrieval_response", "retrieval_observation",
+    "selected_canonical_turns"].includes(value as string);
 }

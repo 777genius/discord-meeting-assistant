@@ -142,7 +142,8 @@ export async function createProductionCanonicalExecutorFactory(
     return new ExecuteAdmittedQualificationQuestion(chain);
   }, recover: async (binding: Parameters<QualificationQuestionExecutorFactoryPort[
     "recover"]>[0]) => await recoverProductionCanonicalOutcome({ answerJournalRoot:
-      config.answerJournalRoot, artifactKey, artifactRoot: config.artifactRoot,
+      config.answerJournalRoot, artifactKey, artifactKeyId: config.artifactKeyId,
+      artifactRoot: config.artifactRoot,
       attemptId: binding.attemptId, questionId: binding.questionId,
       repetition: binding.repetition, retrievalJournalRoot: config.retrievalJournalRoot,
       rootBindingSha256: binding.campaignRootSha256 }) });

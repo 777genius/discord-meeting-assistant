@@ -140,6 +140,7 @@ describe("PostgreSQL question reconciliation enumeration readiness", () => {
         reconciliationDisposition === "reconcile")).toBe(true);
     });
 
+  // Forty thousand fixture rows and ANALYZE use bounded, joined setup; assertions retain a 30-second timeout.
   describe("sparse terminal corpus", () => {
     const active = currentBinding("79999999999999999");
     let preparation: Promise<void> | undefined;
@@ -180,7 +181,7 @@ describe("PostgreSQL question reconciliation enumeration readiness", () => {
           .listActiveQuestionsForReconciliation({ afterQuestionId: null,
             maximumRows: 10 });
         expect(page.map(({ questionId }) => questionId)).toEqual([active.questionId]);
-      });
+      }, 30_000);
   });
 
   it("upgrades one exact legacy binding once under concurrent leases without starving the queue",

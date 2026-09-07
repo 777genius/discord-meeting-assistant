@@ -182,7 +182,8 @@ export function partitionHistoricalEmbeddingWindows(
   policy: HistoricalEmbeddingWindowPolicy,
   tokenizer?: HistoricalEmbeddingTokenizerPort,
 ): HistoricalEmbeddingPartitions {
-  const countTokens = tokenizer?.countTokens.bind(tokenizer) ??
+  const countTokens = tokenizer?.countBodyTokens?.bind(tokenizer) ??
+    tokenizer?.countTokens.bind(tokenizer) ??
     estimateHistoricalEmbeddingTokens;
   const planner = planHistoricalEmbeddingWindows(meeting, policy);
   let step = planner.next();

@@ -111,23 +111,23 @@ Promise<ProductionCompositionResult> {
     const adjudicatedReceiptSha256 = await checkpoints.requirePhase(admitted.rootBindingSha256, "adjudicated");
     const evidence = await loadMainExecutionEvidence({ ports: input.ports, campaignRootSha256:
       admitted.rootBindingSha256, questions: admitted.questions,
-      journalRoot: config.journalRoot, policy,
       deadlineEpochMs: deadline.campaignDeadlineEpochMs,
-      release: verifiedRelease.release,
       releaseRootSha256: verifiedRelease.releaseRootSha256,
       spendReservationSha256ByRepetition: spendDigests });
-    assertAdjudicationCheckpoint(adjudicatedReceiptSha256, admitted.rootBindingSha256, evidence.adjudications);
+    assertAdjudicationCheckpoint(adjudicatedReceiptSha256, admitted.rootBindingSha256,
+      evidence.externalEvidence.adjudications);
     const reconstructed = await reconstructExactMainEvidence({ authorityPolicy: policy,
       artifactKeyCustodySha256:
       verifiedRelease.release.artifactKeyCustodySha256, campaignRootSha256:
       admitted.rootBindingSha256, custody: input.ports.artifactCustody,
-    effectVerificationEpochMs: input.ports.clock.nowEpochMs(), evidence,
+    effectVerificationEpochMs: input.ports.clock.nowEpochMs(), evidence: evidence.externalEvidence,
     providerResultAuthority: input.ports.mainResultAuthority,
     release: verifiedRelease.release,
     questions: admitted.questions, releaseRootSha256: verifiedRelease.releaseRootSha256,
     releaseDocumentSha256: sha256(pinnedRelease.document), spendReservations: reservations,
     spendReservationSha256ByRepetition: spendDigests });
-    const receipt = retentionCheckpointReceipt(admitted.rootBindingSha256, reconstructed);
+    const receipt = retentionCheckpointReceipt(admitted.rootBindingSha256, reconstructed,
+      evidence.localEvidence.inventorySha256);
     await checkpoints.completePhase({ campaignRootSha256: admitted.rootBindingSha256,
       phase: "retained", receipt });
     return { blockerCode: "campaign_incomplete", receipt, status: "paused" };
@@ -136,22 +136,21 @@ Promise<ProductionCompositionResult> {
     const retainedReceiptSha256 = await checkpoints.requirePhase(admitted.rootBindingSha256, "retained");
     const evidence = await loadMainExecutionEvidence({ ports: input.ports, campaignRootSha256:
       admitted.rootBindingSha256, questions: admitted.questions,
-      journalRoot: config.journalRoot, policy,
       deadlineEpochMs: deadline.campaignDeadlineEpochMs,
-      release: verifiedRelease.release,
       releaseRootSha256: verifiedRelease.releaseRootSha256,
       spendReservationSha256ByRepetition: spendDigests });
     const reconstructed = await reconstructExactMainEvidence({ authorityPolicy: policy,
       artifactKeyCustodySha256:
       verifiedRelease.release.artifactKeyCustodySha256, campaignRootSha256:
       admitted.rootBindingSha256, custody: input.ports.artifactCustody,
-    effectVerificationEpochMs: input.ports.clock.nowEpochMs(), evidence,
+    effectVerificationEpochMs: input.ports.clock.nowEpochMs(), evidence: evidence.externalEvidence,
     providerResultAuthority: input.ports.mainResultAuthority,
     release: verifiedRelease.release,
     questions: admitted.questions, releaseRootSha256: verifiedRelease.releaseRootSha256,
     releaseDocumentSha256: sha256(pinnedRelease.document), spendReservations: reservations,
     spendReservationSha256ByRepetition: spendDigests });
-    if (sha256(retentionCheckpointReceipt(admitted.rootBindingSha256, reconstructed)) !==
+    if (sha256(retentionCheckpointReceipt(admitted.rootBindingSha256, reconstructed,
+      evidence.localEvidence.inventorySha256)) !==
       retainedReceiptSha256) {throw new Error("exact retained evidence changed before cleanup");}
     const cleanup = input.command === "cleanup-absence" ?
       await withProductionCallContext(deadline.campaignDeadlineEpochMs, async (context) =>
@@ -180,20 +179,20 @@ Promise<ProductionCompositionResult> {
     const spendLedger = new DurableAttemptJournal(config.journalRoot, policy);
     const final = await withOwnedAttemptJournal(spendLedger, async () =>
       await admitFinalCampaign(policy, { artifactCustody: input.ports.artifactCustody,
-      artifacts: evidence.artifacts,
-      campaignByteCeiling: evidence.campaignByteCeiling,
+      artifacts: evidence.externalEvidence.artifacts,
+      campaignByteCeiling: evidence.externalEvidence.campaignByteCeiling,
       campaignRootSha256: admitted.rootBindingSha256,
       cleanupAuthorityKeyId: absenceAuthority.keyId,
       cleanupReceipt: cleanup.cleanupReceipt,
       effectVerificationEpochMs: input.ports.clock.nowEpochMs(),
       goldRelevanceAuthorityKeyId: policy.authority("gold_relevance").keyId,
-      goldRelevanceReceipt: evidence.goldRelevanceReceipt,
+      goldRelevanceReceipt: evidence.externalEvidence.goldRelevanceReceipt,
       locatorAuthorityKeyId: policy.authority("locator").keyId,
-      authorizedLocatorInventory: evidence.authorizedLocatorInventory,
-      questionReviewReceipts: evidence.questionReviewReceipts,
+      authorizedLocatorInventory: evidence.externalEvidence.authorizedLocatorInventory,
+      questionReviewReceipts: evidence.externalEvidence.questionReviewReceipts,
       release: pinnedRelease, repetitionAuthorityKeyId: repetitionAuthority.keyId,
-      repetitionEvidence: evidence.repetitionEvidence,
-      rootBindingSha256: evidence.finalRootBindingSha256,
+      repetitionEvidence: evidence.externalEvidence.repetitionEvidence,
+      rootBindingSha256: evidence.externalEvidence.finalRootBindingSha256,
       spendLedger,
       spendReservationsByRepetition: spendDocuments as [unknown, unknown, unknown],
       spendReservationSha256ByRepetition, targetInventoryAuthorityKeyId: deletionAuthority.keyId,
@@ -281,10 +280,8 @@ Promise<ProductionCompositionResult | null> {
       input.admitted.rootBindingSha256, "holdout-adjudicated");
     const evidence = await loadHoldoutExecutionEvidence({ ports: input.ports,
       campaignRootSha256: holdoutRootSha256, questions: holdout.questions,
-      journalRoot: input.config.holdoutJournalRoot, policy: input.policy,
       deadlineEpochMs: input.deadlineEpochMs, releaseRootSha256:
       input.release.releaseRootSha256,
-      release: input.verifiedRelease,
       spendReservationSha256ByRepetition: holdout.spendReservationSha256ByRepetition });
     assertAdjudicationCheckpoint(adjudicatedReceiptSha256, holdoutRootSha256,
       evidence.adjudications);

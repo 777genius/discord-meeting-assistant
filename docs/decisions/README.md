@@ -65,6 +65,10 @@
 - [ADR-0067: Two-application self-hosting topology](0067-two-application-self-hosting-topology.md)
 - [ADR-0068: Verified legacy recording compatibility](0068-verified-legacy-recording-compatibility.md)
 
+- [ADR-0069: Isolated real40 memory diagnostic](0069-isolated-real40-memory-diagnostic.md)
+
+- [ADR-0070: Bound normalized historical embedding documents](0070-normalized-historical-embedding-budget.md)
+
 ## Superseded
 
 - [ADR-0024: Possession-based recording playback](0024-possession-based-recording-playback.md)

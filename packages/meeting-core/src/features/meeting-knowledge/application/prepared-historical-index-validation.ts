@@ -90,8 +90,10 @@ function validatePreparedReceipt(
   const expectedProfile = digest.digestUtf8(canonicalHistoricalPlannerJson({
     identity: prepared.planningProfile.identity,
     maximumInputTokens: prepared.planningProfile.maximumInputTokens,
+    maximumBodyTokens: prepared.planningProfile.maximumBodyTokens,
   }));
   if (
+    !validWorkerRevision(receipt.workerRevision) ||
     receipt.requestSha256 !== expectedRequest ||
     receipt.resultSha256 !== expectedResult ||
     prepared.planningProfile.digestSha256 !== expectedProfile
@@ -103,6 +105,10 @@ function validatePreparedReceipt(
   }
 }
 
+function validWorkerRevision(value: unknown): boolean {
+  return value === "meeting-knowledge.exact-window-planner.v2";
+}
+
 function validPlanningProfile(
   profile: HistoricalWindowPlanningProfileV1,
 ): boolean {
@@ -111,7 +117,10 @@ function validPlanningProfile(
     /^sha256:[a-f0-9]{64}$/u.test(profile.digestSha256) &&
     Number.isSafeInteger(profile.maximumInputTokens) &&
     profile.maximumInputTokens >= 16 &&
-    profile.maximumInputTokens <= 512;
+    profile.maximumInputTokens <= 512 &&
+    Number.isSafeInteger(profile.maximumBodyTokens) &&
+    profile.maximumBodyTokens >= 16 &&
+    profile.maximumBodyTokens <= profile.maximumInputTokens;
 }
 
 function validatePreparedWindow(

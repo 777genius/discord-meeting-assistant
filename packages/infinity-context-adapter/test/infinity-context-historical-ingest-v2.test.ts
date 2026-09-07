@@ -115,6 +115,22 @@ describe("Infinity Context historical Retrieval V2 projection ingest", () => {
     });
   });
 
+  it("rejects normalized document overflow before topology or ingestion transport", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const plan = fixture();
+    const document = plan.documents[0]!;
+    const overflow = {
+      ...plan,
+      documents: [{ ...document, embeddingText: "word ".repeat(200).trim() }],
+    };
+    await expect(adapter(endpoint).indexFinalMeeting(overflow)).resolves.toEqual({
+      code: "memory.index_plan_outside_qualified_bounds",
+      retryable: false,
+      status: "rejected",
+    });
+    expect(endpoint.requests).toEqual([]);
+  });
+
   it("rejects an invalid canonical projection before any transport call", async () => {
     const endpoint = new DisposableInfinityEndpoint();
     const plan = fixture();

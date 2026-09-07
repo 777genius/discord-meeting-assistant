@@ -2,6 +2,7 @@ export interface HistoricalEmbeddingTokenizerProfileV1 {
   readonly conformanceVectorSetSha256: `sha256:${string}`;
   readonly embeddingModelRevision: string;
   readonly id: string;
+  readonly inputBudget?: Readonly<{ identity: string; maximumBodyTokens: number }>;
   readonly maxInputTokens: number;
   readonly servingRuntimeRevision: string;
   readonly tokenizerArtifactSha256: `sha256:${string}`;
@@ -12,6 +13,7 @@ export interface HistoricalEmbeddingTokenizerProfileV1 {
 export interface HistoricalEmbeddingTokenizerPort {
   readonly profile: HistoricalEmbeddingTokenizerProfileV1;
   countTokens(text: string): number;
+  countBodyTokens?(text: string): number;
 }
 
 export function historicalEmbeddingTokenProfile(
@@ -35,6 +37,9 @@ export function historicalEmbeddingTokenProfileFromProfile(
     profile.tokenizerConfigSha256,
     profile.conformanceVectorSetSha256,
     String(profile.maxInputTokens),
+    ...(profile.inputBudget === undefined ? [] : [
+      profile.inputBudget.identity, String(profile.inputBudget.maximumBodyTokens),
+    ]),
   ].join("|");
 }
 
@@ -101,7 +106,13 @@ function assertProfile(
     !sha256.test(profile.tokenizerConfigSha256) ||
     !sha256.test(profile.conformanceVectorSetSha256) ||
     !Number.isSafeInteger(profile.maxInputTokens) ||
-    profile.maxInputTokens < 1
+    profile.maxInputTokens < 1 ||
+    (profile.inputBudget !== undefined && (
+      profile.inputBudget.identity.length === 0 ||
+      !Number.isSafeInteger(profile.inputBudget.maximumBodyTokens) ||
+      profile.inputBudget.maximumBodyTokens < 16 ||
+      profile.inputBudget.maximumBodyTokens > profile.maxInputTokens
+    ))
   ) {
     throw new HistoricalEmbeddingTokenizerQualificationError(`${label} is invalid`);
   }
@@ -117,5 +128,7 @@ function sameProfile(
     left.tokenizerArtifactSha256 === right.tokenizerArtifactSha256 &&
     left.tokenizerConfigSha256 === right.tokenizerConfigSha256 &&
     left.conformanceVectorSetSha256 === right.conformanceVectorSetSha256 &&
-    left.maxInputTokens === right.maxInputTokens;
+    left.maxInputTokens === right.maxInputTokens &&
+    left.inputBudget?.identity === right.inputBudget?.identity &&
+    left.inputBudget?.maximumBodyTokens === right.inputBudget?.maximumBodyTokens;
 }
