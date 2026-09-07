@@ -18,7 +18,7 @@ import { testHistoricalActorKeys } from "./historical-e2e-test-kit.js";
 const digest = (value: unknown) => createHash("sha256").update(canonicalHistoricalPlannerJson(value)).digest("hex");
 const exec = promisify(execFile);
 const container = `test-diagnostic-${randomUUID()}`;
-let pool: Pool;
+let pool: Pool | undefined;
 beforeAll(async () => {
   await exec("docker", ["run", "--rm", "-d", "--name", container, "-e", "POSTGRES_PASSWORD=synthetic", "-e", "POSTGRES_DB=meeting_test", "-p", "127.0.0.1::5432", "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15"]);
   const { stdout } = await exec("docker", ["port", container, "5432/tcp"]);
@@ -33,6 +33,8 @@ beforeAll(async () => {
 afterAll(async () => { await pool?.end(); await exec("docker", ["rm", "-f", container]); }, 30_000);
 describe("nonqualifying diagnostic concrete boundaries", () => {
   it("indexes and retrieves through official SDK HTTP, then rehydrates only frozen PostgreSQL text", async () => {
+    const database = pool;
+    if (database === undefined) { throw new Error("disposable PostgreSQL did not initialize"); }
     const http = await startDisposableInfinityHttpService();
     const transport = new GrpcSubscriptionRuntimeTransport({ address: "127.0.0.1:1", serviceToken: "synthetic-token-1234" });
     try {
@@ -42,12 +44,12 @@ describe("nonqualifying diagnostic concrete boundaries", () => {
             text: "Project Cedar launch is Tuesday; Maya owns the release." },
           { turnId: "bot-1", speakerId: "automation", startMs: 1000, endMs: 2000,
             text: "AUTOMATION TEXT MUST NEVER BECOME HUMAN EVIDENCE" }] } };
-      await pool.query("INSERT INTO meeting_core.meetings (meeting_id, revision, snapshot) VALUES ($1, $2, $3::jsonb)",
+      await database.query("INSERT INTO meeting_core.meetings (meeting_id, revision, snapshot) VALUES ($1, $2, $3::jsonb)",
         [snapshot.meetingId, snapshot.revision, JSON.stringify(snapshot)]);
       const release = createHistoricalReleaseBinding({ acceptedMeetingRevision: 7, desiredGeneration: 1,
         meetingId: snapshot.meetingId, transcriptId: snapshot.transcript.transcriptId, transcriptVersion: 1,
         scopeId: "diagnostic:scope", roomId: "diagnostic:room" });
-      const authority = new PostgresDiagnosticFinalEvidence(pool, { meetingId: snapshot.meetingId,
+      const authority = new PostgresDiagnosticFinalEvidence(database, { meetingId: snapshot.meetingId,
         snapshotSha256: digest(snapshot), transcriptSha256: digest(snapshot.transcript), transcriptVersion: 1,
         roster: { humans: ["human-maya"], automation: ["automation"] }, scopeId: release.scopeId,
         roomId: release.roomId, releaseId: release.releaseId });
@@ -88,7 +90,7 @@ describe("nonqualifying diagnostic concrete boundaries", () => {
       expect(auditKinds).toContain("selected_canonical_turns");
       expect(answerCalls).toBe(0);
       await expect(store.findCurrentCandidates(release.scopeId, release.roomId, ["foreign-locator"])).rejects.toThrow();
-      await pool.query("UPDATE meeting_core.meetings SET snapshot = jsonb_set(snapshot, '{transcript,version}', '2') WHERE meeting_id = $1", [snapshot.meetingId]);
+      await database.query("UPDATE meeting_core.meetings SET snapshot = jsonb_set(snapshot, '{transcript,version}', '2') WHERE meeting_id = $1", [snapshot.meetingId]);
       await expect(chain.evidence.rehydrate({ locatorIds: locators, questionId: packet.questionId, scopeTopologyReference: packet.scopeTopologyReference }, options)).rejects.toThrow("changed");
     } finally { transport.close(); await http.close(); }
   }, 60_000);
