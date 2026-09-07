@@ -5,8 +5,8 @@ import { canonicalJson, digest, exactRecord, publicKeyFingerprintSha256,
 import type { SignedValue } from "./execution.js";
 
 export const FROZEN_ANSWER_EXECUTION = Object.freeze({
-  model: "gpt-5.6-sol",
-  reasoning: "medium",
+  model: "gpt-5.6-terra",
+  reasoning: "low",
   serviceTier: "default",
 });
 
@@ -84,10 +84,10 @@ export interface QualityCampaignRelease {
   readonly infinityProfileSha256: string;
   readonly infinityReleaseSha256: string;
   readonly mapperSha256: string;
-  readonly model: "gpt-5.6-sol";
+  readonly model: "gpt-5.6-terra";
   readonly policySha256: string;
   readonly promptSha256: string;
-  readonly reasoning: "medium";
+  readonly reasoning: "low";
   readonly sdkArchiveSha256: string;
   readonly serviceTier: "default";
   readonly tokenizerSha256: string;
@@ -145,7 +145,7 @@ export function verifyReleaseRoot(policy: QualityCampaignAuthorityPolicy, input:
   if (record.model !== FROZEN_ANSWER_EXECUTION.model ||
     record.reasoning !== FROZEN_ANSWER_EXECUTION.reasoning ||
     record.serviceTier !== FROZEN_ANSWER_EXECUTION.serviceTier) {
-    throw new Error("answer execution is not frozen to gpt-5.6-sol/medium/default");
+    throw new Error("answer execution is not frozen to gpt-5.6-terra/low/default");
   }
   if (record.authorityPolicySha256 !== policy.bindingSha256 ||
     record.targetInventoryAuthorityKeySha256 !==

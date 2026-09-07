@@ -1721,3 +1721,21 @@ describe("production quality campaign final evidence", () => {
   });
 
 });
+
+describe("memory default profile authority", () => {
+  it("rejects correctly signed previous Sol/medium release and spend bindings", () => {
+    const staleProfile = { model: "gpt-5.6-sol", reasoning: "medium" };
+    const staleRelease = FINAL.release.authority.signed({ ...FINAL.release.release,
+      ...staleProfile });
+    expect(() => verifyReleaseRoot(FINAL.authorities.policy, {
+      authorityKeyId: FINAL.release.authority.keyId, document: staleRelease }))
+      .toThrow(/gpt-5.6-terra\/low\/default/u);
+    const staleSpend = spendReceipt({ authority: FINAL.authorities.signers.spend,
+      releaseRootSha256: FINAL.release.releaseRootSha256, repetition: 1,
+      overrides: staleProfile });
+    expect(() => verifySpendReservation(FINAL.authorities.policy, {
+      campaignRootSha256: CAMPAIGN_ROOT, expectedRepetition: 1, nowEpochMs: 1_000,
+      releaseRootSha256: FINAL.release.releaseRootSha256, reservation: staleSpend })).toThrow();
+  });
+
+});

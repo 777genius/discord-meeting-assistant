@@ -7,6 +7,8 @@ export const subscriptionRuntimeKnowledgeCoveragePurpose = "discord_meeting.know
 export const subscriptionRuntimeKnowledgeEvidenceSelectorPurpose = "discord_meeting.knowledge.evidence_select.v1" as const;
 export const subscriptionRuntimeProvider = "codex" as const;
 export const subscriptionRuntimeModel = "gpt-5.6-sol" as const;
+export const subscriptionRuntimeKnowledgeModel = "gpt-5.6-terra" as const;
+export const subscriptionRuntimeKnowledgeReasoningEffort = "low" as const;
 export const subscriptionRuntimeIncrementalModel = "gpt-5.6-luna" as const;
 export const subscriptionRuntimeConversationModel = "gpt-5.6-luna" as const;
 export const subscriptionRuntimeReasoningEffort = "medium" as const;
@@ -34,9 +36,9 @@ export const knowledgeEvidenceSelectorOutputSchemaName = "discord_meeting_knowle
 export const meetingSummaryPolicyVersion = "meeting-summary.subscription-runtime.v16" as const;
 export const incrementalMeetingSummaryPolicyVersion = "meeting-summary.incremental.subscription-runtime.v7" as const;
 export const conversationAnswerPolicyVersion = "meeting-conversation.subscription-runtime.v1" as const;
-export const knowledgeAnswerPolicyVersion = "meeting-knowledge.answer.subscription-runtime.v3" as const;
-export const knowledgeCoveragePolicyVersion = "meeting-knowledge.coverage.subscription-runtime.v1" as const;
-export const knowledgeEvidenceSelectorPolicyVersion = "meeting-knowledge.evidence-select.subscription-runtime.v1" as const;
+export const knowledgeAnswerPolicyVersion = "meeting-knowledge.answer.subscription-runtime.v4" as const;
+export const knowledgeCoveragePolicyVersion = "meeting-knowledge.coverage.subscription-runtime.v2" as const;
+export const knowledgeEvidenceSelectorPolicyVersion = "meeting-knowledge.evidence-select.subscription-runtime.v2" as const;
 
 export type SubscriptionRuntimeOutputSchemaName =
   | typeof conversationAnswerOutputSchemaName
@@ -53,6 +55,7 @@ export interface SubscriptionRuntimeExecutionProfile {
     | typeof subscriptionRuntimeKnowledgeEvidenceSelectorMaxOutputTokens
     | typeof subscriptionRuntimeSummaryMaxOutputTokens;
   readonly model:
+    | typeof subscriptionRuntimeKnowledgeModel
     | typeof subscriptionRuntimeIncrementalModel
     | typeof subscriptionRuntimeModel;
   readonly outputSchemaName: SubscriptionRuntimeOutputSchemaName;
@@ -117,30 +120,32 @@ export const conversationAnswerExecutionProfile: SubscriptionRuntimeExecutionPro
 
 export const knowledgeAnswerExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
   maxOutputTokens: subscriptionRuntimeKnowledgeAnswerMaxOutputTokens,
-  model: subscriptionRuntimeModel,
+  model: subscriptionRuntimeKnowledgeModel,
   outputSchemaName: knowledgeAnswerOutputSchemaName,
   policyVersion: knowledgeAnswerPolicyVersion,
   purpose: subscriptionRuntimeKnowledgeAnswerPurpose,
-  reasoningEffort: subscriptionRuntimeReasoningEffort,
+  reasoningEffort: subscriptionRuntimeKnowledgeReasoningEffort,
   serviceTier: subscriptionRuntimeDefaultServiceTier,
 });
 
 export const knowledgeCoverageExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
   maxOutputTokens: subscriptionRuntimeKnowledgeCoverageMaxOutputTokens,
-  model: subscriptionRuntimeModel,
+  model: subscriptionRuntimeKnowledgeModel,
   outputSchemaName: knowledgeCoverageOutputSchemaName,
   policyVersion: knowledgeCoveragePolicyVersion,
   purpose: subscriptionRuntimeKnowledgeCoveragePurpose,
-  reasoningEffort: subscriptionRuntimeReasoningEffort,
+  reasoningEffort: subscriptionRuntimeKnowledgeReasoningEffort,
+  serviceTier: subscriptionRuntimeDefaultServiceTier,
 });
 export const knowledgeEvidenceSelectorExecutionProfile: SubscriptionRuntimeExecutionProfile =
   Object.freeze({
     maxOutputTokens: subscriptionRuntimeKnowledgeEvidenceSelectorMaxOutputTokens,
-    model: subscriptionRuntimeModel,
+    model: subscriptionRuntimeKnowledgeModel,
     outputSchemaName: knowledgeEvidenceSelectorOutputSchemaName,
     policyVersion: knowledgeEvidenceSelectorPolicyVersion,
     purpose: subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
-    reasoningEffort: subscriptionRuntimeReasoningEffort,
+    reasoningEffort: subscriptionRuntimeKnowledgeReasoningEffort,
+    serviceTier: subscriptionRuntimeDefaultServiceTier,
   });
 
 export const admittedSubscriptionRuntimeExecutionProfiles = Object.freeze([

@@ -340,10 +340,10 @@ async function assertPostSendPreEnvelopeCrashIsUnknown(): Promise<void> {
     await journal.reserveProviderCall({ attemptId: reservation.attemptId,
       callOrdinal: "original", purpose: "discord_meeting.knowledge.answer.v1",
       requestRunId: "provider-run-1", rootBindingSha256: binding.rootBindingSha256,
-      runtimeProfile: { maxOutputTokens: 2_048, model: "gpt-5.6-sol",
+      runtimeProfile: { maxOutputTokens: 2_048, model: "gpt-5.6-terra",
         outputSchemaName: "discord_meeting_knowledge_answer_v1",
-        policyVersion: "meeting-knowledge.answer.subscription-runtime.v3",
-        reasoningEffort: "medium" } });
+        policyVersion: "meeting-knowledge.answer.subscription-runtime.v4",
+        reasoningEffort: "low" } });
     expect({ authenticatedRawEnvelopeReceipts: [], providerBytesSent: true })
       .toEqual({ authenticatedRawEnvelopeReceipts: [], providerBytesSent: true });
     const reopened = new SemanticQualityV4CreateOnlyJournal(root);

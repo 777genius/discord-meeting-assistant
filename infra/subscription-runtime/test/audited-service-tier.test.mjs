@@ -48,24 +48,24 @@ test("requires the default service tier throughout qualified admission", () => {
 
 test("admits only the exact default-tier packaged-exec argv", () => {
   const argv = pinnedCodexTaskArgv(
-    "gpt-5.6-sol",
-    "medium",
+    "gpt-5.6-terra",
+    "low",
     "/tmp/subscription-runtime-codex-schema-test/schema.json",
     "default",
   );
   assert.equal(
-    isPinnedCodexTaskInvocation(argv, "gpt-5.6-sol", "medium", "default"),
+    isPinnedCodexTaskInvocation(argv, "gpt-5.6-terra", "low", "default"),
     true,
   );
-  assert.equal(isPinnedCodexTaskInvocation(argv, "gpt-5.6-sol", "medium"), false);
+  assert.equal(isPinnedCodexTaskInvocation(argv, "gpt-5.6-terra", "low"), false);
   const substituted = [...argv];
   substituted[substituted.indexOf('service_tier="default"')] =
     'service_tier="fast"';
   assert.equal(
     isPinnedCodexTaskInvocation(
       substituted,
-      "gpt-5.6-sol",
-      "medium",
+      "gpt-5.6-terra",
+      "low",
       "default",
     ),
     false,
@@ -78,7 +78,7 @@ test("passes the admitted default tier to the qualified CLI worker", async (t) =
   const requestPath = join(root, "request.json");
   await writeFile(requestPath, JSON.stringify(knowledgeAnswerRequest()));
   const previousReasoningEffort = process.env.AGENT_RUNTIME_REASONING_EFFORT;
-  process.env.AGENT_RUNTIME_REASONING_EFFORT = "medium";
+  process.env.AGENT_RUNTIME_REASONING_EFFORT = "low";
   t.after(() => restoreEnvironment(
     "AGENT_RUNTIME_REASONING_EFFORT",
     previousReasoningEffort,
@@ -94,7 +94,7 @@ test("passes the admitted default tier to the qualified CLI worker", async (t) =
       "--provider", "codex",
       "--input", requestPath,
       "--state-root", root,
-      "--model", "gpt-5.6-sol",
+      "--model", "gpt-5.6-terra",
       "--service-tier", "default",
     ],
     {
@@ -112,7 +112,7 @@ test("passes the admitted default tier to the qualified CLI worker", async (t) =
           cwd: root,
           encryptionKey: "test-key",
           env: { PATH: process.env.PATH },
-          model: "gpt-5.6-sol",
+          model: "gpt-5.6-terra",
           provider: "codex",
           providerInstanceId: "test-provider",
           stateRootDir: root,
@@ -124,8 +124,8 @@ test("passes the admitted default tier to the qualified CLI worker", async (t) =
   ));
 
   assert.equal(value, 0);
-  assert.equal(workerOptions.model, "gpt-5.6-sol");
-  assert.equal(workerOptions.reasoningEffort, "medium");
+  assert.equal(workerOptions.model, "gpt-5.6-terra");
+  assert.equal(workerOptions.reasoningEffort, "low");
   assert.equal(workerOptions.serviceTier, "default");
   assert.equal(runtimeArgv.includes("--service-tier"), false);
 });
@@ -141,7 +141,7 @@ for (const [label, serviceTierArguments] of [
     const requestPath = join(root, "request.json");
     await writeFile(requestPath, JSON.stringify(knowledgeAnswerRequest()));
     const previousReasoningEffort = process.env.AGENT_RUNTIME_REASONING_EFFORT;
-    process.env.AGENT_RUNTIME_REASONING_EFFORT = "medium";
+    process.env.AGENT_RUNTIME_REASONING_EFFORT = "low";
     t.after(() => restoreEnvironment(
       "AGENT_RUNTIME_REASONING_EFFORT",
       previousReasoningEffort,
@@ -154,7 +154,7 @@ for (const [label, serviceTierArguments] of [
           "--provider", "codex",
           "--input", requestPath,
           "--state-root", root,
-          "--model", "gpt-5.6-sol",
+          "--model", "gpt-5.6-terra",
           ...serviceTierArguments,
         ],
         {
@@ -176,11 +176,11 @@ for (const [label, serviceTierArguments] of [
 function knowledgeAnswerRequest() {
   return requestFor({
     maxOutputTokens: 2_048,
-    model: "gpt-5.6-sol",
+    model: "gpt-5.6-terra",
     outputSchemaName: "discord_meeting_knowledge_answer_v1",
-    policyVersion: "meeting-knowledge.answer.subscription-runtime.v3",
+    policyVersion: "meeting-knowledge.answer.subscription-runtime.v4",
     purpose: "discord_meeting.knowledge.answer.v1",
-    reasoningEffort: "medium",
+    reasoningEffort: "low",
     serviceTier: "default",
   });
 }

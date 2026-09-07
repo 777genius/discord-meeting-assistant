@@ -241,8 +241,8 @@ function packedRelease(authorities: Record<string, ReturnType<typeof localSigner
     discordReleaseSha256: d("discord-release"), infinityCapabilitySha256: sha256(capability),
     infinityCommitSha256: d("infinity-commit"), infinityImageSha256: d("infinity-image"),
     infinityProfileSha256: d("profile"), infinityReleaseSha256: d("infinity-release"),
-    mapperSha256: d("mapper"), model: "gpt-5.6-sol", policySha256: d("policy"),
-    promptSha256: d("prompt"), reasoning: "medium", sdkArchiveSha256: d("sdk"),
+    mapperSha256: d("mapper"), model: "gpt-5.6-terra", policySha256: d("policy"),
+    promptSha256: d("prompt"), reasoning: "low", sdkArchiveSha256: d("sdk"),
     serviceTier: "default", targetInventoryAuthorityKeySha256:
     fingerprint(authorities.deletion!.publicKeyPem), tokenizerSha256: d("tokenizer") };
 }
@@ -450,8 +450,8 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string, 
     expiresAtEpochMs: 4_000_000_000_000, maxCalls: 1_440, maxEncryptedBytes: 100_000_000,
     maxCallsByKind: { adjudicator_1: 240, adjudicator_2: 240, answer: 240, capability: 240,
       resolver: 240, retrieval: 240 }, maximumEffectDurationMs: 120_000,
-    maxTokens: 10_000_000, model: "gpt-5.6-sol", provider: "local-fake-http",
-    reasoning: "medium", releaseRootSha256, repetition, serviceTier: "default" }));
+    maxTokens: 10_000_000, model: "gpt-5.6-terra", provider: "local-fake-http",
+    reasoning: "low", releaseRootSha256, repetition, serviceTier: "default" }));
   await writeFile(spendReservationsPath, canonicalJson(spendDocuments));
   const protectedEvidence = ["original_craig_recording", "final_transcript", "meeting_database",
     "frozen_snapshot", "frozen_signed_root"].map((kind) => ({ artifactId: `custody-${kind}`,
@@ -732,9 +732,9 @@ async function startPackedGroundedAnswerRuntime(launcherSha256: string, forceRep
     const structuredOutput = { claims: [{ evidenceIds: ["evidence-000001"],
       text: "The launch proposal was approved." }], locale: "en", status: "answered" };
     callback(null, { executionAttestation: { canonicalRequestSha256:
-      canonicalJsonSha256(request), launcherSha256, model: "gpt-5.6-sol",
+      canonicalJsonSha256(request), launcherSha256, model: "gpt-5.6-terra",
     provider: "AGENT_RUNTIME_PROVIDER_CODEX", purpose: request.context.purpose,
-    reasoningEffort: "medium", requestId: request.runId, serviceTier: "default",
+    reasoningEffort: "low", requestId: request.runId, serviceTier: "default",
     runtimeEngine: "subscription-runtime-cli", runtimePackageVersion: "0.1.0-main.27",
     schemaVersion: 1, selectedOutputKind:
       "AGENT_RUNTIME_SELECTED_OUTPUT_KIND_STRUCTURED_OUTPUT",

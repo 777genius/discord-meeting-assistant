@@ -35,13 +35,16 @@ must call that version's
 `subscription-runtime-run-agent-task` JSON bridge while constructing the Codex
 worker with the exact selected profile: `gpt-5.6-sol`/`medium` for final
 summaries with an admitted 8192-token post-execution output budget and policy
-version `v15`, and `gpt-5.6-luna`/`low` for incremental summaries with an
-admitted 2048-token post-execution output budget and policy version `v6`.
+version `v16`, and `gpt-5.6-luna`/`low` for incremental summaries with an
+admitted 2048-token post-execution output budget and policy version `v7`.
 Conversation uses `gpt-5.6-luna`/`low`, a 512-token budget, policy
 `meeting-conversation.subscription-runtime.v1`, and schema
-`discord_meeting_conversation_answer_v1`. Every profile has disabled tools, no
+`discord_meeting_conversation_answer_v1`. Memory answers, every-block coverage,
+and focused evidence selection use `gpt-5.6-terra`/`low` with explicit `default`
+service tier and budgets of 2048, 2048, and 1024 tokens respectively. Their
+policy versions are answer `v4`, coverage `v2`, and evidence-select `v2`. Every profile has disabled tools, no
 interactive flow, and stateless-completion semantics. A generic launcher that
-does not enforce all three
+does not enforce all six
 exact profiles is not an admitted production installation.
 
 The final purpose admits only `discord_meeting_summary_v4`: title up to 96
