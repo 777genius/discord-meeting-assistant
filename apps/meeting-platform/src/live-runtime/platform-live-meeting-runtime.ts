@@ -26,6 +26,7 @@ const refreshSchedulerIntervalMs = 100;
 export class PlatformLiveMeetingRuntime {
   private closePromise: Promise<void> | null = null;
   private closed = false;
+  private shutdownSignal: AbortSignal | undefined;
   private readonly clock: LiveRuntimeClock;
   private readonly finalizer: LiveMeetingFinalizer;
   private readonly meetings = new Map<string, ActiveLiveMeeting>();
@@ -176,25 +177,24 @@ export class PlatformLiveMeetingRuntime {
     );
   }
 
-  public async close(): Promise<void> {
-    if (this.closePromise !== null) {
-      return this.closePromise;
+  public async close(signal?: AbortSignal): Promise<void> {
+    this.shutdownSignal ??= signal;
+    const cancel = (): void => {
+      for (const state of this.meetings.values()) { state.transcriptionFenceClosed = true; state.transcription.cancel(); }
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted === true) { cancel(); }
+    if (this.closePromise === null) {
+      this.closed = true;
+      this.timer.cancel(this.refreshTimer);
+      const nowMs = this.clock.nowMilliseconds();
+      const recordingIds = new Set([...this.meetings.keys(),
+        ...this.recordingOperations.pendingRecordingIds(), ...this.finalizer.pendingRecordingIds(nowMs)]);
+      this.closePromise = closeLiveMeetings({
+        endedAtMs: nowMs, finalizer: this.finalizer, recordingIds, recordingOperations: this.recordingOperations,
+      });
     }
-    this.closed = true;
-    this.timer.cancel(this.refreshTimer);
-    const nowMs = this.clock.nowMilliseconds();
-    const recordingIds = new Set([
-      ...this.meetings.keys(),
-      ...this.recordingOperations.pendingRecordingIds(),
-      ...this.finalizer.pendingRecordingIds(nowMs),
-    ]);
-    this.closePromise = closeLiveMeetings({
-      endedAtMs: nowMs,
-      finalizer: this.finalizer,
-      recordingIds,
-      recordingOperations: this.recordingOperations,
-    });
-    return this.closePromise;
+    try { await this.closePromise; } finally { signal?.removeEventListener("abort", cancel); }
   }
 
   /** Releases derived ownership without committing a terminal transition. */
@@ -255,6 +255,7 @@ export class PlatformLiveMeetingRuntime {
     });
     state.projection.restoreFinalCaptions(result.finalizedTurns);
     this.meetings.set(state.meetingId, state);
+    if (this.shutdownSignal?.aborted === true) { state.transcriptionFenceClosed = true; state.transcription.cancel(); }
     const recovery = this.initializeRecovery(state);
     this.dependencies.logger.info("Derived live meeting started", {
       meetingId: state.meetingId, reused: result.status === "reused",

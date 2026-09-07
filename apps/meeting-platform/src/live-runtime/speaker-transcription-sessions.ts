@@ -38,6 +38,7 @@ export interface SpeakerTranscriptionSessionsDependencies {
 export class SpeakerTranscriptionSessions {
   // Survives speaker deletion/cancellation; only a new runtime/configuration resets it.
   private readonly admissionRejections = new Map<string, AbortController>();
+  private cancelled = false;
   private readonly ledger = new LivePacketDeliveryLedger();
   private readonly speakers = new Map<string, SpeakerTranscriptionSession>();
 
@@ -74,6 +75,11 @@ export class SpeakerTranscriptionSessions {
     return cancelled;
   }
 
+  public cancel(): void {
+    this.cancelled = true;
+    for (const rejection of this.admissionRejections.values()) { rejection.abort(); }
+  }
+
   public beginFinish(): void {
     for (const speaker of this.speakers.values()) {
       speaker.beginFinish();
@@ -81,9 +87,11 @@ export class SpeakerTranscriptionSessions {
   }
 
   public async finish(): Promise<void> {
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       [...this.speakers.values()].map((speaker) => speaker.finish()),
     );
+    const failures = results.filter((result) => result.status === "rejected");
+    if (failures.length > 0) { throw new AggregateError(failures.map((result) => result.reason as unknown), "Live speaker shutdown incomplete"); }
   }
 
   private speaker(speakerId: string): SpeakerTranscriptionSession {
@@ -93,6 +101,7 @@ export class SpeakerTranscriptionSessions {
     }
     const admissionRejection = this.admissionRejections.get(speakerId) ?? new AbortController();
     this.admissionRejections.set(speakerId, admissionRejection);
+    if (this.cancelled) { admissionRejection.abort(); }
     const created = new SpeakerTranscriptionSession({
       admissionRejection,
       ...this.dependencies,

@@ -679,7 +679,7 @@ describe("meeting platform shutdown", () => {
     ]));
   });
 
-  it("uses one deadline across stalled shutdown phases and still starts final cleanup", async () => {
+  it("uses one deadline across stalled shutdown phases and retains live dependencies", async () => {
     const calls: string[] = [];
     const never = new Promise<void>(() => {});
     const startedAt = performance.now();
@@ -706,12 +706,9 @@ describe("meeting platform shutdown", () => {
     })).rejects.toBeInstanceOf(AggregateError);
 
     expect(performance.now() - startedAt).toBeLessThan(250);
-    expect(calls).toEqual(expect.arrayContaining([
-      "discord:destroy",
-      "runtime:close",
-      "s3:destroy",
-      "worker:cancel",
-    ]));
+    expect(calls).toEqual(expect.arrayContaining(["s3:destroy", "worker:cancel"]));
+    expect(calls).not.toContain("discord:destroy");
+    expect(calls).not.toContain("runtime:close");
   });
 
   it("observes an immediate post-call rejection while HTTP shutdown is pending", async () => {

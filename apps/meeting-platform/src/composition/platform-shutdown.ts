@@ -89,7 +89,7 @@ export async function closeMeetingPlatformResources(
   const timeoutMilliseconds = resolvePlatformShutdownTimeoutMilliseconds(
     input.shutdownTimeoutMilliseconds,
   );
-  const deadlineAtMilliseconds = Date.now() + timeoutMilliseconds;
+  const deadlineAtMilliseconds = performance.now() + timeoutMilliseconds;
   const failures: unknown[] = [];
   const postCallShutdown = observeRejection(closePostCallResources({
     outboxDispatcher: input.outboxDispatcher,
@@ -127,15 +127,21 @@ export async function closeMeetingPlatformResources(
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
+  const liveCancellation = new AbortController();
+  const liveShutdown = startOperation(() => input.live?.close(liveCancellation.signal));
+  const liveFailures = await collectFailures([
+    awaitBounded("derived live runtime", liveShutdown,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds)),
+  ]);
+  failures.push(...liveFailures);
+  if (liveFailures.length > 0) { liveCancellation.abort(); }
+  // Cancellation fences new transcripts, but an admitted durable write cannot
+  // be revoked. A failed drain must retain dependencies for that continuation.
+  const liveDrained = liveFailures.length === 0;
   failures.push(...await collectFailures([
     awaitBounded(
       "Craig playback WebSocket",
       startOperation(() => input.craigPlayback?.webSocket.close()),
-      remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
-    awaitBounded(
-      "derived live runtime",
-      startOperation(() => input.live?.close()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
     awaitBounded(
@@ -156,7 +162,7 @@ export async function closeMeetingPlatformResources(
   // A timed-out drain still owns Discord, transport, and PostgreSQL work. Keep
   // those dependencies alive and surface the failure instead of racing their
   // teardown against an operation that may complete after this function exits.
-  const meetingKnowledgeDrained = meetingKnowledgeFailures.length === 0;
+  const meetingKnowledgeDrained = meetingKnowledgeFailures.length === 0 && liveDrained;
   failures.push(...await collectFailures([
     awaitBounded(
       "historical memory reconciler",
@@ -173,11 +179,11 @@ export async function closeMeetingPlatformResources(
       startOperation(() => input.discord.destroy()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     )] : []),
-    awaitBounded(
+    ...(liveDrained ? [awaitBounded(
       "Pipecat conversation runtime",
       startOperation(() => input.conversationRuntime?.close()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
+    )] : []),
     ...(meetingKnowledgeDrained ? [awaitBounded(
       "subscription runtime transport",
       startOperation(() => {
@@ -223,7 +229,7 @@ export async function closeMeetingPlatformResources(
 }
 
 function remainingShutdownMilliseconds(deadlineAtMilliseconds: number): number {
-  return Math.max(0, deadlineAtMilliseconds - Date.now());
+  return Math.max(0, deadlineAtMilliseconds - performance.now());
 }
 
 async function awaitBounded(

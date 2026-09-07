@@ -35,7 +35,9 @@ export class SpeakerTranscriptionSession {
   private admissionChain: Promise<void> = Promise.resolve();
   private admissionClosed = false;
   private finishing: Promise<void> | null = null;
+  private providerFinalization: Promise<void> | null = null;
   private deliveryBudgetMs = 0;
+  private pendingReceipt = false;
   private renewDeliveryWatchdog: ((budgetMs: number) => void) | undefined;
   private readonly admissionCancellation = new AbortController();
   private readonly admissionRejection: AbortController;
@@ -60,7 +62,7 @@ export class SpeakerTranscriptionSession {
     this.pacer = new SourceTimelinePacer(dependencies.clock, dependencies.timer);
     this.providerSession = new SpeakerTranscriptionProviderSession({
       logger: dependencies.logger, meetingId: dependencies.meetingId,
-      onTranscript: dependencies.onTranscript,
+      onTranscript: (event) => { if (!this.isDeliveryCancelled()) { dependencies.onTranscript(event); } },
       sessionAdmission: dependencies.sessionAdmission,
       speakerId: dependencies.speakerId, transcriber: dependencies.transcriber,
     });
@@ -128,12 +130,10 @@ export class SpeakerTranscriptionSession {
   }
 
   private cancelDelivery(): void {
-    this.admissionClosed = true;
-    this.admissionCancellation.abort();
+    this.admissionClosed = true; this.admissionCancellation.abort();
     this.admissionRejection.signal.removeEventListener("abort", this.onAdmissionRejected);
     this.packetFlow.cancel();
-    this.providerSession.abortOpening();
-    this.providerSession.terminate();
+    this.providerSession.abortOpening(); this.providerSession.terminate();
   }
 
   private async untilCancelled(work: Promise<void>): Promise<void> {
@@ -179,8 +179,7 @@ export class SpeakerTranscriptionSession {
   }
 
   public beginFinish(): void {
-    this.cancelIdleFinalization();
-    this.admissionClosed = true;
+    this.cancelIdleFinalization(); this.admissionClosed = true;
     this.admissionCancellation.abort();
     this.packetFlow.wakeAdmissionWaiters();
     this.cancelRecovery();
@@ -194,9 +193,11 @@ export class SpeakerTranscriptionSession {
 
   private async finishAdmittedPackets(): Promise<void> {
     await this.supervise(this.admissionChain, this.dependencies.packetBackpressureTimeoutMs);
-    const stallMs = this.dependencies.packetBackpressureTimeoutMs;
-    await this.supervise(this.chain, Math.max(this.deliveryBudgetMs, stallMs), true);
+    // Idle finalization owns its original provider timer, including while joined.
+    if (this.providerFinalization !== null) { await this.providerFinalization; }
+    await this.supervise(this.chain, Math.max(this.deliveryBudgetMs, this.dependencies.packetBackpressureTimeoutMs), true);
     if (!this.isDeliveryCancelled()) { await this.finalize("Derived live speaker finalize failed"); }
+    if (this.pendingReceipt) { throw new Error("Live packet durable receipt is still pending"); }
   }
 
   private supervise(work: Promise<void>, budgetMs: number, renewOnDelivery = false): Promise<void> {
@@ -334,7 +335,8 @@ export class SpeakerTranscriptionSession {
       this.backpressureDegraded = false;
       this.dependencies.logger.info("Derived live transcription recovered from backpressure", this.logFields());
     }
-    await this.dependencies.markLivePacketDelivered?.(input.packetId);
+    this.pendingReceipt = true;
+    try { await this.dependencies.markLivePacketDelivered?.(input.packetId); } finally { this.pendingReceipt = false; }
   }
 
   private isSuppressed(packet: LiveVoicePacket, packetId?: string): boolean {
@@ -346,8 +348,11 @@ export class SpeakerTranscriptionSession {
     return true;
   }
 
-  private async finalize(failureMessage: string): Promise<void> {
-    await this.supervise(this.providerSession.finalize(failureMessage), providerFinalizeTimeoutMs);
+  private finalize(failureMessage: string): Promise<void> {
+    this.renewDeliveryWatchdog?.(providerFinalizeTimeoutMs);
+    this.providerFinalization ??= this.supervise(this.providerSession.finalize(failureMessage), providerFinalizeTimeoutMs)
+      .finally(() => { this.providerFinalization = null; });
+    return this.providerFinalization;
   }
 
   private scheduleIdleFinalizationIfReady(): void {
@@ -374,11 +379,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private shouldSkipIdleFinalization(): boolean {
-    return (
-      this.dependencies.isMeetingFinishing() ||
-      this.packetFlow.queuedPacketCount > 0 ||
-      !this.providerSession.isOpen
-    );
+    return this.dependencies.isMeetingFinishing() || this.packetFlow.queuedPacketCount > 0 || !this.providerSession.isOpen;
   }
 
   private cancelIdleFinalization(): void {

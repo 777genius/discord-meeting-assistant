@@ -138,13 +138,17 @@ it.each(["healthy", "stalled ACK", "stalled receipt", "stalled finalize", "cance
     await speaker.accept(batch, 12_000);
     const finish = speaker.finish();
     const duplicateFinish = speaker.finish();
+    const finished = Promise.allSettled([finish, duplicateFinish]);
     await speaker.accept([{ ...batch[0]!, relativeTimeMs: 9_000 }], 12_000);
     await vi.advanceTimersByTimeAsync(1_000);
     if (mode === "cancelled") { rejection.abort(); }
     await vi.advanceTimersByTimeAsync(4_000);
     if (mode === "cancelled finalize") { rejection.abort(); }
     await vi.advanceTimersByTimeAsync(35_000);
-    await Promise.all([finish, duplicateFinish]);
+    const outcomes = await finished;
+    expect(outcomes.map((outcome) => outcome.status)).toEqual(
+      mode === "stalled receipt" ? ["rejected", "rejected"] : ["fulfilled", "fulfilled"],
+    );
     if (mode === "healthy" || mode === "stalled finalize" || mode === "cancelled finalize") {
       expect(sent).toEqual(batch.map(livePacketIdentity));
       expect(new Set(sent).size).toBe(201);
@@ -275,4 +279,33 @@ it("finish removes a pending global admission timer and FIFO head without blocki
   f.packetAdmission.release(1);
   expect(await f.packetAdmission.reserve(2, 2_000, signal)).toBe(true);
   f.packetAdmission.release(2);
+});
+
+it.each(["healthy", "stalled"] as const)("joins idle finalize with its original provider budget: %s", async (mode) => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const p = provider();
+  const speaker = new SpeakerTranscriptionSession({
+    clock: systemLiveRuntimeClock, timer: systemLiveRuntimeTimer,
+    isMeetingFinishing: () => false, ledger: new LivePacketDeliveryLedger(), logger,
+    maximumQueuedPackets: 512, meetingId: "meeting", onTranscript: (event) => { p.events.push(event.text); },
+    packetAdmission: new GlobalPacketFlowControl(512), packetBackpressureTimeoutMs: 2_000,
+    packetInspector: { durationSamples48Khz: () => 960 }, sessionAdmission: new LiveSessionAdmission(1),
+    speakerId: "speaker", speakerIdleFinalizeMs: 750, startedAtMs: 0, transcriber: p.transcriber,
+  });
+  await speaker.accept([{ ...packets().packets[0]!, relativeTimeMs: 0 }], 2_000);
+  await vi.advanceTimersByTimeAsync(750);
+  expect(p.finalize).toHaveBeenCalledTimes(1);
+  if (mode === "stalled") { await vi.advanceTimersByTimeAsync(34_000); }
+  let settled = false;
+  const finish = speaker.finish().then(() => { settled = true; return null; });
+  await vi.advanceTimersByTimeAsync(mode === "healthy" ? 3_000 : 999);
+  expect(settled).toBe(false);
+  expect(p.terminate).not.toHaveBeenCalled();
+  if (mode === "healthy") { p.complete(); } else { await vi.advanceTimersByTimeAsync(1); }
+  await finish;
+  expect(p.events).toEqual(mode === "healthy" ? ["Late final evidence"] : []);
+  expect(p.finalize).toHaveBeenCalledTimes(1);
+  expect(p.terminate).toHaveBeenCalledTimes(mode === "healthy" ? 0 : 1);
+  expect(vi.getTimerCount()).toBe(0);
 });

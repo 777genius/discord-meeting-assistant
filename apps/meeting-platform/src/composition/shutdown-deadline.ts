@@ -1,4 +1,4 @@
-export const defaultPlatformShutdownTimeoutMilliseconds = 15_000;
+export const defaultPlatformShutdownTimeoutMilliseconds = 60_000;
 
 const maximumPlatformShutdownTimeoutMilliseconds = 60_000;
 
