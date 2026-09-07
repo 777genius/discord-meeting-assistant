@@ -142,6 +142,7 @@ describe("PostgreSQL question reconciliation enumeration readiness", () => {
         reconciliationDisposition === "reconcile")).toBe(true);
     });
 
+  // Forty thousand fixture rows and ANALYZE need bounded setup time under parallel CI.
   it("uses bounded partial eligible indexes with a sparse terminal corpus",
     async (context) => {
       const database = databaseOrSkip(context);
@@ -212,7 +213,7 @@ describe("PostgreSQL question reconciliation enumeration readiness", () => {
         .listActiveQuestionsForReconciliation({ afterQuestionId: null,
           maximumRows: 10 });
       expect(page.map(({ questionId }) => questionId)).toEqual([active.questionId]);
-    });
+    }, 30_000);
 
   it("upgrades one exact legacy binding once under concurrent leases without starving the queue",
     async (context) => {
