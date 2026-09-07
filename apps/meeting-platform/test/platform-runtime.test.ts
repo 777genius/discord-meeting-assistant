@@ -595,18 +595,20 @@ describe("meeting platform shutdown", () => {
       worker,
     });
 
-    await vi.waitFor(() => {
-      expect(calls).toEqual([
-        "worker:pause",
-        "worker:cancel",
-        "outbox:idle",
-        "server:close",
-        "recordings:close",
-      ]);
-    });
-    expect(calls).not.toContain("live:close");
-    resumePause();
-    await closing;
+    try {
+      await vi.waitFor(() => {
+        expect(calls).toEqual([
+          "worker:pause",
+          "worker:cancel",
+          "outbox:idle",
+          "server:close",
+        ]);
+      });
+      expect(calls).not.toContain("live:close");
+    } finally {
+      resumePause();
+      await closing;
+    }
 
     expect(calls.indexOf("worker:cancel")).toBeLessThan(
       calls.indexOf("server:close"),
@@ -618,6 +620,9 @@ describe("meeting platform shutdown", () => {
       calls.indexOf("live:close"),
     );
     expect(calls.indexOf("server:close")).toBeLessThan(
+      calls.indexOf("recordings:close"),
+    );
+    expect(calls.indexOf("live:close")).toBeLessThan(
       calls.indexOf("recordings:close"),
     );
     expect(calls.indexOf("worker:close:true")).toBeLessThan(
