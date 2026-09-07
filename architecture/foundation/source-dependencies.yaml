@@ -534,8 +534,10 @@ boundaries:
     entrypoints: []
     allow:
       boundaries:
+        - adapters.discord
         - contracts.conversation-runtime
       packages:
+        - "@discord-meeting/discord-adapter"
         - "@discord-meeting/conversation-runtime-contracts"
         - "@discordjs/opus"
         - "@discordjs/voice"

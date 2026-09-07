@@ -138,6 +138,42 @@ services:
       - ${OSS_CAPTURE_HOST_DIRECTORY:?fresh capture directory}:/evidence/oss-stt
 ```
 
+The pinned Craig deployment renderer defaults to lifecycle v1. Its old real
+manifest `schemaVersion: 1` and completion `lifecycleSchemaVersion: 1` correctly
+fail the sealed-v3 collector. The pinned Craig revision already supports this
+node-config override; root must include it in the isolated TEST-only Compose
+overlay for a fresh campaign after source approval:
+
+```yaml
+services:
+  craig-bot:
+    environment:
+      NODE_CONFIG: >-
+        {"dexare":{"craig":{"meetingIntegration":{"lifecycleProducer":{
+          "schemaVersion":3,
+          "actorSemanticsVersion":1,
+          "producerCapabilityId":"meeting.lifecycle.sealed-actor-roster.v1",
+          "producerRevision":"37b86a958b567cb7fcff75946e94fe5e7ee38f42",
+          "e2eTestOnly":true,
+          "e2eSyntheticHumanActorIds":["1533227577286852649","1533228054724346087"]
+        }}}}}
+```
+
+These IDs remain official synthetic bot identities. This explicit E2E policy
+exercises human classification only in the private test guild; never use it for
+customer data, real user accounts, or self-bots. Before actors join, verify the
+effective nonsecret `dexare.craig.meetingIntegration.lifecycleProducer` config
+matches every value above through the actual config loader and pinned lifecycle
+parser. Retain only that nonsecret subtree, never the full generated config.
+Root's inert probe already passed with the actual config loader, existing
+`--require=/app/deploy/meeting/node24-compat.cjs`, and pinned lifecycle parser;
+`NODE_CONFIG_DIR` pointed to a nonexistent test directory to avoid reading generated
+secrets. That isolated probe does not prove the later running deployment's config.
+After each fresh recording, require manifest `schemaVersion: 3`, completion
+`lifecycleSchemaVersion: 3`, and a sealed, consistent actor roster with the pinned
+producer provenance. Never relabel or fabricate an upgrade of old v1 receipts.
+Discord acceptance remains PENDING until root runs and qualifies the fresh campaign.
+
 Set `VOICETEXT_WS_URL` to the plan endpoint and `NODE_EXTRA_CA_CERTS` to the mounted
 public CA. Set `DISCORD_LEGACY_GUILD_ID`, `DISCORD_LEGACY_VOICE_CHANNEL_ID`,
 `DISCORD_RESULTS_CHANNEL_ID`, `DISCORD_APPLICATION_ID` to the exact plan values.

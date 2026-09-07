@@ -79,6 +79,11 @@
 
 OSS STT native collection extends the existing Voicetext adapter and Platform
 composition, with qualification owned by `apps/discord-e2e-actors/src/oss-*`.
+This infrastructure/test composition reuses the public
+`decodeDiscordExternalPublicationId` API from `@discord-meeting/discord-adapter`
+for publication collection and verification. The actor package declares that runtime
+dependency, and its closed policy permits exactly `adapters.discord` and the public
+package; no deep imports or generic codec package are introduced.
 The native session journal is opt-in for the isolated TEST project, bounded,
 append-only, and excludes transport configuration and audio bytes. It is evidence
 input, never a standalone campaign PASS. See the [OSS runbook](../../infra/deployment/oss-discord-stt-campaign.md).
