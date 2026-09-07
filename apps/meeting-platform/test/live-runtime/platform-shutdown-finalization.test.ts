@@ -18,6 +18,15 @@ it.each(["healthy", "timeout", "pending write", "pending receipt"] as const)(
     const meetings = new MemoryLiveMeetingRepository();
     const projector = new ProjectionStub();
     let poolClosed = false;
+    let recordingsClosed = false;
+    let httpClosed = false;
+    let admittedReceipts = 0;
+    let completedReceipts = 0;
+    const closeRecordings = vi.fn(async () => {
+      recordingsClosed = true;
+      expect(httpClosed).toBe(true);
+      expect(completedReceipts).toBe(admittedReceipts);
+    });
     const writes: number[] = [];
     const save = meetings.save.bind(meetings);
     let heldWrite = false;
@@ -44,11 +53,15 @@ it.each(["healthy", "timeout", "pending write", "pending receipt"] as const)(
       refreshMeeting: new RefreshLiveMeeting({ meetings, projector, summarizer: new SummaryStub() }),
       startMeeting: new StartLiveMeeting({ meetings }),
       markLivePacketDelivered: async () => {
+        if (recordingsClosed) { throw new Error("Recording receipt owner is closed"); }
+        admittedReceipts += 1;
         if (mode === "pending receipt") {
           await new Promise<void>((resolve) => { releaseWrite = resolve; });
           expect(poolClosed).toBe(false);
           writes.push(performance.now());
         }
+        expect(recordingsClosed).toBe(false);
+        completedReceipts += 1;
       },
       packetInspector: { durationSamples48Khz: () => 960 },
       transcriber: { openSession: async (request) => {
@@ -68,8 +81,8 @@ it.each(["healthy", "timeout", "pending write", "pending receipt"] as const)(
       discord: { destroy: () => {} } as unknown as Client,
       outboxDispatcher: { whenIdle: async () => {} }, pool: { end } as unknown as Pool,
       queue: { close: async () => {} }, queueEvents: { close: async () => {} },
-      recordings: { close: async () => {} }, s3: { destroy: () => {} } as unknown as S3Client,
-      server: { close: async () => {}, start: async () => {} },
+      recordings: { close: closeRecordings }, s3: { destroy: () => {} } as unknown as S3Client,
+      server: { close: async () => { httpClosed = true; }, start: async () => {} },
       ...(mode === "timeout" ? { shutdownTimeoutMilliseconds: 15_000 } : {}),
       worker: { cancelActivePostCallJobs: () => {}, close: async () => {}, pause: async () => {}, waitForActivePostCallJobs: async () => {} } as unknown as PostCallWorker,
     });
@@ -80,10 +93,14 @@ it.each(["healthy", "timeout", "pending write", "pending receipt"] as const)(
     vi.setSystemTime(Date.now() - 3_600_000);
     await vi.advanceTimersByTimeAsync(11_000);
     expect(end).not.toHaveBeenCalled();
+    expect(closeRecordings).not.toHaveBeenCalled();
     if (mode === "timeout") { expect(terminate).toHaveBeenCalledTimes(1); }
     await vi.advanceTimersByTimeAsync(9_000);
     if (mode === "healthy") {
       expect(await outcome).toBe("closed");
+      expect(admittedReceipts).toBe(201);
+      expect(completedReceipts).toBe(201);
+      expect(closeRecordings).toHaveBeenCalledOnce();
       expect(end).toHaveBeenCalledTimes(1);
       expect(meetings.snapshot?.status).toBe("ended");
       expect(projector.requests.at(-1)?.status).toBe("ended");
@@ -91,10 +108,18 @@ it.each(["healthy", "timeout", "pending write", "pending receipt"] as const)(
     } else {
       await vi.advanceTimersByTimeAsync(36_000);
       expect(await outcome).toBe("failed");
+      expect(closeRecordings).not.toHaveBeenCalled();
       expect(end).not.toHaveBeenCalled();
       expect(abort).toHaveBeenCalledOnce();
       if (mode === "pending write") { releaseWrite(); await live.close(); }
-      if (mode === "pending receipt") { releaseWrite(); await vi.advanceTimersByTimeAsync(0); }
+      if (mode === "pending receipt") {
+        expect(admittedReceipts).toBe(1);
+        expect(completedReceipts).toBe(0);
+        releaseWrite();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(completedReceipts).toBe(1);
+        expect(recordingsClosed).toBe(false);
+      }
       if (mode === "timeout") { expect(meetings.finalizedTurns).toHaveLength(0); }
     }
     const writeCount = writes.length;
