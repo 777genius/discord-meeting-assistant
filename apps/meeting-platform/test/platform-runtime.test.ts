@@ -728,3 +728,62 @@ describe("meeting platform shutdown", () => {
     }
   });
 });
+
+function ossShutdownResources(close: () => Promise<void>, serverClose = async () => {}) {
+  return {
+    ossNativeEvidence: { close },
+    discord: { destroy: () => {} } as unknown as Client,
+    logger: { flush: async () => {} } as unknown as Logger,
+    outboxDispatcher: { whenIdle: async () => {} },
+    pool: { end: async () => {} } as unknown as Pool,
+    queue: { close: async () => {} },
+    queueEvents: { close: async () => {} },
+    recordings: { close: async () => {} },
+    s3: { destroy: () => {} } as unknown as S3Client,
+    server: { close: serverClose, start: async () => {} },
+    shutdownTimeoutMilliseconds: 100,
+    worker: {
+      cancelActivePostCallJobs: () => {}, close: async () => {},
+      pause: async () => {}, waitForActivePostCallJobs: async () => {},
+    } as unknown as PostCallWorker,
+  };
+}
+
+describe("OSS durable shutdown supervision", () => {
+  it("awaits capture durability before reporting successful shutdown", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const close = vi.fn(() => gate);
+    let done = false;
+    const closing = closeMeetingPlatformResources(ossShutdownResources(close)).then(() => { done = true; return null; });
+    await vi.waitFor(() => { expect(close).toHaveBeenCalledOnce(); });
+    expect(done).toBe(false);
+    release();
+    await closing;
+    expect(done).toBe(true);
+  });
+
+  it("does not authorize capture closure after an earlier drain failure", async () => {
+    const close = vi.fn(async () => {});
+    await expect(closeMeetingPlatformResources(ossShutdownResources(close, async () => {
+      throw new Error("HTTP drain failed");
+    }))).rejects.toThrow("shutdown was incomplete");
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("does not seal capture when a dependency teardown fails after producer drains", async () => {
+    const close = vi.fn(async () => {});
+    const input = ossShutdownResources(close);
+    input.pool = { end: async () => { throw new Error("pool drain failed"); } } as unknown as Pool;
+    await expect(closeMeetingPlatformResources(input)).rejects.toThrow("shutdown was incomplete");
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it.each(["failure", "timeout"])("fails shutdown on capture close %s", async (mode) => {
+    const close = vi.fn(() => mode === "failure"
+      ? Promise.reject(new Error("writer failed"))
+      : new Promise<void>(() => {}));
+    await expect(closeMeetingPlatformResources(ossShutdownResources(close))).rejects.toThrow("shutdown was incomplete");
+    expect(close).toHaveBeenCalledOnce();
+  });
+});

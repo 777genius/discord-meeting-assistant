@@ -6,7 +6,7 @@ import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 export interface OssPlatformEvidence {
   readonly live: OssNativeEvidenceJournal;
   readonly postCall: OssPostCallEvidence;
-  seal(): void;
+  close(): Promise<void>;
 }
 
 /** Explicit TEST-only admission; absent directory leaves normal runtime unchanged. */
@@ -26,18 +26,20 @@ export function createOssNativeEvidence(
     revision: environment.OSS_STT_NATIVE_EVIDENCE_REVISION ?? "",
     testOnly: environment.E2E_TEST_ONLY_LABEL === "true"
   });
-  cleanup.defer("OSS native evidence seal", () => { journal.seal(); });
-  const postCall = new OssPostCallEvidence(directory, environment.OSS_STT_NATIVE_EVIDENCE_REVISION!);
-  cleanup.defer("OSS post-call evidence seal", () => { postCall.seal(); });
-  return {
-    live: journal, postCall, seal: () => {
-      const failures: unknown[] = [];
-      for (const capture of [journal, postCall]) {
-        try { capture.seal(); } catch (error) { failures.push(error); }
-      }
-      if (failures.length) { throw new AggregateError(failures, "OSS capture sealing failed"); }
-    }
+  // Register before constructing the post-call tap so partial startup still drains
+  // the live writer. One coordinated callback prevents a premature post-call seal.
+  let postCall: OssPostCallEvidence | undefined;
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closing ??= (async () => {
+      await journal.close();
+      postCall?.seal();
+    })();
+    return closing;
   };
+  cleanup.defer("OSS native evidence close", close);
+  postCall = new OssPostCallEvidence(directory, environment.OSS_STT_NATIVE_EVIDENCE_REVISION!);
+  return { live: journal, postCall, close };
 }
 
 export function hasLiveTranscriptionConfiguration(

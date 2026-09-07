@@ -41,7 +41,7 @@ export interface PostCallShutdownResources {
 }
 
 export interface MeetingPlatformShutdownResources extends PostCallShutdownResources {
-  readonly ossNativeEvidence?: { seal(): void };
+  readonly ossNativeEvidence?: { close(): Promise<void> };
   readonly conversationRuntime?: GrpcPipecatConversationRuntime;
   readonly craigPlayback?: {
     readonly gateway: CraigPlaybackGateway;
@@ -144,7 +144,7 @@ export async function closeMeetingPlatformResources(
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
-  if (failures.length === 0) { collectSynchronousCloseFailure(failures, () => input.ossNativeEvidence?.seal()); }
+
   const meetingKnowledgeFailures = await collectFailures([
     awaitBounded(
       "Meeting Knowledge local final reply",
@@ -203,6 +203,21 @@ export async function closeMeetingPlatformResources(
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
+  // Only successful producer and dependency drains may authorize capture closure.
+  // A rejected or timed-out writer remains a shutdown failure, never a PASS.
+  if (failures.length === 0 && input.ossNativeEvidence) {
+    if (remainingShutdownMilliseconds(deadlineAtMilliseconds) === 0) {
+      failures.push(new Error("No shutdown time remains for OSS native evidence"));
+    } else {
+      failures.push(...await collectFailures([
+        awaitBounded(
+          "OSS native evidence",
+          startOperation(() => input.ossNativeEvidence!.close()),
+          remainingShutdownMilliseconds(deadlineAtMilliseconds),
+        ),
+      ]));
+    }
+  }
   throwIfShutdownIncomplete(failures, "Meeting platform shutdown was incomplete");
 }
 

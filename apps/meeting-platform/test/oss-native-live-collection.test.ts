@@ -27,7 +27,7 @@ describe("native collector parsing actual failed connection capture", () => {
           idempotencyKey: speakerId, onTranscript: () => { }
         })).rejects.toThrow();
       }
-      journal.seal();
+      await journal.close();
       const bytes = readFileSync(join(directory, "live-native.jsonl"));
       const collected = collectNativeLive(bytes, revision);
       expect(collected.sessions.size).toBe(2);
@@ -93,7 +93,7 @@ emit({
       relativeTimeMs: 0, durationSamples48Khz: 960
     });
     await session.finalize();
-    journal.seal();
+    await journal.close();
     const capture = collectNativeLive(readFileSync(join(directory, "live-native.jsonl")), revision);
     expect(capture.sessions.size).toBe(1);
     const rows = [...capture.sessions.values()][0]!;
