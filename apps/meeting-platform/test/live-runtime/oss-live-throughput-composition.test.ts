@@ -136,7 +136,7 @@ function synchronization() {
     wait(operation: Promise<void>): Promise<void> {
       return new Promise<void>((resolve, reject) => {
         const rejected = (error: unknown) => { pending.delete(rejected); reject(error); };
-        void operation.then(() => { pending.delete(rejected); resolve(); }, fail);
+        void operation.then(() => { pending.delete(rejected); return resolve(); }, fail);
         if (primary) { rejected(primary.error); } else { pending.add(rejected); }
       });
     },
@@ -249,8 +249,8 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
         })();
         outstanding.add(operation);
         waits.observe(operation);
-        void operation.then(() => { outstanding.delete(operation); },
-          () => { outstanding.delete(operation); });
+        void operation.then(() => outstanding.delete(operation),
+          () => outstanding.delete(operation));
         return operation;
       },
     });
@@ -328,7 +328,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
       await packetSends.wait(Math.min(3334 + index, 3731));
       io.journal.splice(0).forEach((release) => { release(); });
     }
-    await waits.wait(finish.then(() => {}));
+    await waits.wait(finish.then(() => void 0));
     await runtime.settleBeforeFinalPublication(recordingId);
     expect(Date.now() - finishAt).toBe(4000);
     expect(io.syncs - syncs).toBe(3731);
@@ -387,11 +387,11 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
       sockets.forEach((socket) => { socket.hold = false; socket.release?.(); socket.release = undefined; });
       // sync release is not receipt completion: descriptor verification and close
       // still belong to the live consumer before cancellation or ingress closure.
-      while (outstanding.size) { await Promise.allSettled([...outstanding]); }
+      while (outstanding.size) { await Promise.allSettled(outstanding); }
     },
     async () => { await runtime?.close(AbortSignal.abort()); },
     async () => { await finish; },
-    async () => { while (outstanding.size) { await Promise.allSettled([...outstanding]); } },
+    async () => { while (outstanding.size) { await Promise.allSettled(outstanding); } },
     async () => { await journal.close(); },
     async () => { await ingress.close(); },
     async () => { await fs.rm(root, { recursive: true, force: true }); },
@@ -406,7 +406,7 @@ it("retains the primary failure while draining receipt work and collecting clean
   const failures: unknown[] = [];
   let receiptComplete = false;
   let ingressClosed = false;
-  const operation = receipt.promise.then(() => { receiptComplete = true; });
+  const operation = receipt.promise.then(() => { receiptComplete = true; return; });
   const result = withCleanup(async () => { throw primary; }, [
     async () => { entered.resolve(); await operation; },
     async () => { throw secondary; },
@@ -439,7 +439,7 @@ it("unblocks every barrier on receipt or finish failure and tears down with the 
     const closed: string[] = [];
     const operation = receipt.promise.then(() => {
       if (source === "marked assertion") { throw primary; }
-      completions.arrive();
+      return completions.arrive();
     });
     waits.observe(operation);
     waits.observe(terminal.promise);
