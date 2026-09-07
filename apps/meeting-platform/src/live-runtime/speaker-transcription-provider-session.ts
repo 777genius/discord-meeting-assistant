@@ -12,6 +12,7 @@ import type {
 interface SpeakerTranscriptionProviderSessionDependencies {
   readonly logger: LiveRuntimeLogger;
   readonly meetingId: string;
+  readonly onFailure?: (error: unknown) => boolean;
   readonly onTranscript: (event: LiveTranscriptionEvent) => void;
   readonly sessionAdmission: LiveSessionAdmission;
   readonly speakerId: string;
@@ -101,7 +102,9 @@ export class SpeakerTranscriptionProviderSession {
     try {
       await session.finalize();
     } catch (error) {
+      const fenced = this.dependencies.onFailure?.(error) === true;
       if (this.session === session) { this.terminate(); }
+      if (fenced) { return; }
       this.dependencies.logger.warn(failureMessage, {
         errorName: error instanceof Error ? error.name : "UnknownError",
         meetingId: this.dependencies.meetingId,

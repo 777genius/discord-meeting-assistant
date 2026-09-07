@@ -28,7 +28,7 @@ export type VoicetextServerMessage =
   | { readonly segment: VoicetextPartialSegment | null; readonly type: "partial" }
   | ({ readonly type: "segment_final" } & VoicetextFinalSegment)
   | { readonly type: "usage_update" }
-  | { readonly code: string; readonly message: string; readonly type: "error" }
+  | { readonly code: string; readonly message: string; readonly failureClass?: "known_accepted_terminal"; readonly type: "error" }
   | VoicetextFinalizeComplete
   | { readonly type: "resumed" };
 
@@ -132,7 +132,10 @@ function parseError(
   ) {
     throw protocolError("Voicetext returned an invalid error message");
   }
-  return { code: value.code, message: value.message, type: "error" };
+  return { code: value.code, message: value.message, type: "error",
+    ...(value.failure_class === "known_accepted_terminal"
+      ? { failureClass: value.failure_class } : {}),
+  };
 }
 
 function parseFinalizeComplete(

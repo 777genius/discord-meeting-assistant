@@ -4,7 +4,7 @@ import { SpeakerTranscriptionSession } from "../../src/live-runtime/speaker-tran
 import { GlobalPacketFlowControl, LiveSessionAdmission } from "../../src/live-runtime/live-packet-flow-control.js";
 import { livePacketIdentity, LivePacketDeliveryLedger } from "../../src/live-runtime/packet-delivery-ledger.js";
 import { systemLiveRuntimeClock, systemLiveRuntimeTimer } from "../../src/live-runtime/runtime-clock.js";
-import type { LiveTranscriptionEvent, LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
+import { LiveTranscriptionTerminalFailure, type LiveTranscriptionEvent, type LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
 import { logger, packets } from "./live-runtime-fixtures.js";
 
 afterEach(() => vi.useRealTimers());
@@ -363,5 +363,39 @@ it("retries failed settlement after a stalled receipt without repeating provider
   expect(markLivePacketDelivered).toHaveBeenCalledTimes(1);
   expect(finalize).not.toHaveBeenCalled();
   expect(terminate).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("idle terminal finalization fences queued new speech and repeated finish without losing accepted effects", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const finalization = Promise.withResolvers<void>();
+  const failure = new LiveTranscriptionTerminalFailure();
+  const finalize = vi.fn(() => finalization.promise); const terminate = vi.fn();
+  const sendPacket = vi.fn(async () => "accepted" as const);
+  const openSession = vi.fn(async () => ({ finalize, terminate, sendPacket }));
+  const delivered = vi.fn(async () => {}); const warn = vi.fn<typeof logger.warn>();
+  const packetAdmission = new GlobalPacketFlowControl(8); const sessionAdmission = new LiveSessionAdmission(1);
+  const ledger = new LivePacketDeliveryLedger();
+  const speaker = new SpeakerTranscriptionSession({
+    clock: systemLiveRuntimeClock, timer: systemLiveRuntimeTimer, isMeetingFinishing: () => false,
+    logger: { ...logger, warn }, markLivePacketDelivered: delivered, maximumQueuedPackets: 8,
+    ledger, meetingId: "meeting", speakerId: "speaker", onTranscript: () => {},
+    packetAdmission, packetBackpressureTimeoutMs: 100, packetInspector: { durationSamples48Khz: () => 960 },
+    sessionAdmission, speakerIdleFinalizeMs: 1000, startedAtMs: 0, transcriber: { openSession },
+  });
+  const packet = { ...packets().packets[0]!, relativeTimeMs: 0 };
+  await speaker.accept([packet], 100); await vi.advanceTimersByTimeAsync(1000);
+  expect(finalize).toHaveBeenCalledTimes(1);
+  await speaker.accept([{ ...packet, sequenceNumber: 2, relativeTimeMs: 1000 }], 1100);
+  finalization.reject(failure); await vi.advanceTimersByTimeAsync(0);
+  await expect(speaker.finish()).rejects.toBe(failure);
+  await expect(speaker.finish()).rejects.toBe(failure);
+  expect(openSession).toHaveBeenCalledTimes(1); expect(sendPacket).toHaveBeenCalledTimes(1);
+  expect(delivered).toHaveBeenCalledExactlyOnceWith(livePacketIdentity(packet));
+  expect(ledger.isDelivered(livePacketIdentity(packet))).toBe(true);
+  expect(finalize).toHaveBeenCalledTimes(1); expect(terminate).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls.filter(call => call[1]?.errorCode === "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL")).toHaveLength(1);
+  expect(await packetAdmission.reserve(8, 1100, new AbortController().signal)).toBe(true); packetAdmission.release(8);
+  const lease = await sessionAdmission.acquire(new AbortController().signal); expect(lease).not.toBeNull(); lease?.();
   expect(vi.getTimerCount()).toBe(0);
 });

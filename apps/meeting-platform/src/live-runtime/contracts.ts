@@ -164,6 +164,22 @@ export class LiveTranscriptionAdmissionRejected extends Error {
   }
 }
 
+/** Provider evidence forbids reopening for this meeting/speaker lifecycle. */
+export class LiveTranscriptionTerminalFailure extends Error {
+  public constructor() {
+    super("Live transcription provider reported terminal failure");
+    this.name = "LiveTranscriptionTerminalFailure";
+  }
+}
+
+/** Audio may have been accepted; replay requires resume/reconciliation evidence. */
+export class LiveTranscriptionAcceptanceUnknown extends Error {
+  public constructor() {
+    super("Live transcription audio acceptance remains unresolved");
+    this.name = "LiveTranscriptionAcceptanceUnknown";
+  }
+}
+
 export interface LiveTranscriptionPort {
   openSession(
     request: OpenLiveTranscriptionSession,

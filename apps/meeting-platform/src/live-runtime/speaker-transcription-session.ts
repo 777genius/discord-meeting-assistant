@@ -1,4 +1,4 @@
-import { LiveTranscriptionAdmissionRejected } from "./contracts.js";
+import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure, LiveTranscriptionAdmissionRejected } from "./contracts.js";
 import { superviseLiveWork, LiveSessionAdmission, GlobalPacketFlowControl, SourceTimelinePacer, SpeakerPacketFlowControl } from "./live-packet-flow-control.js";
 import type { LivePacketInspector, LiveRuntimeClock, LiveRuntimeLogger, LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent, LiveTranscriptionPort, LiveVoicePacket } from "./contracts.js";
 import { LivePacketDeliveryLedger, livePacketIdentity } from "./packet-delivery-ledger.js";
@@ -62,6 +62,7 @@ export class SpeakerTranscriptionSession {
     this.pacer = new SourceTimelinePacer(dependencies.clock, dependencies.timer);
     this.providerSession = new SpeakerTranscriptionProviderSession({
       logger: dependencies.logger, meetingId: dependencies.meetingId,
+      onFailure: (error) => this.latchFailure(error),
       onTranscript: (event) => { if (!this.isDeliveryCancelled()) { dependencies.onTranscript(event); } },
       sessionAdmission: dependencies.sessionAdmission,
       speakerId: dependencies.speakerId, transcriber: dependencies.transcriber,
@@ -203,6 +204,7 @@ export class SpeakerTranscriptionSession {
     await this.supervise(this.chain, Math.max(this.deliveryBudgetMs, this.dependencies.packetBackpressureTimeoutMs), true);
     if (!this.isDeliveryCancelled()) { await this.finalize("Derived live speaker finalize failed"); }
     if (this.pendingReceipt) { throw new Error("Live packet durable receipt is still pending"); }
+    if (this.hasTerminalFence()) { throw this.admissionRejection.signal.reason; }
   }
 
   private supervise(work: Promise<void>, budgetMs: number, renewOnDelivery = false): Promise<void> {
@@ -294,15 +296,7 @@ export class SpeakerTranscriptionSession {
         });
       } catch (error) {
         this.providerSession.terminate();
-        if (error instanceof LiveTranscriptionAdmissionRejected) {
-          if (!this.isAdmissionRejected()) {
-            this.admissionRejection.abort();
-            this.dependencies.logger.warn("Derived live transcription degraded: configuration admission rejected", {
-              ...this.logFields(), errorCode: "LIVE_TRANSCRIPTION_ADMISSION_REJECTED",
-            });
-          }
-          return;
-        }
+        if (this.latchFailure(error)) { return; }
         if (this.isDeliveryCancelled()) { return; }
         if (attempt === maximumLivePacketDeliveryAttempts) {
           this.rememberRetryablePacket(input.packet, input.packetId);
@@ -310,11 +304,34 @@ export class SpeakerTranscriptionSession {
         }
         continue;
       }
-      if (this.isDeliveryCancelled()) { return; }
+      if (this.isDeliveryCancelled() && !this.hasTerminalFence()) { return; }
       // A durable acknowledgement failure must not repeat the provider send.
       await this.commitDelivery(input, sendStartedAtMs);
       return;
     }
+  }
+
+  private hasTerminalFence(): boolean {
+    return this.admissionRejection.signal.reason instanceof LiveTranscriptionTerminalFailure ||
+      this.admissionRejection.signal.reason instanceof LiveTranscriptionAcceptanceUnknown;
+  }
+
+  private latchFailure(error: unknown): boolean {
+    if (!(error instanceof LiveTranscriptionAdmissionRejected) &&
+        !(error instanceof LiveTranscriptionTerminalFailure) &&
+        !(error instanceof LiveTranscriptionAcceptanceUnknown)) { return false; }
+    if (!this.isAdmissionRejected()) {
+      // The registry owns this controller across deletion and late completions.
+      this.admissionRejection.abort(error);
+      const errorCode = error instanceof LiveTranscriptionAdmissionRejected
+        ? "LIVE_TRANSCRIPTION_ADMISSION_REJECTED"
+        : error instanceof LiveTranscriptionTerminalFailure
+          ? "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL" : "LIVE_TRANSCRIPTION_ACCEPTANCE_UNKNOWN";
+      this.dependencies.logger.warn("Derived live transcription degraded: lifecycle fenced", {
+        ...this.logFields(), errorCode,
+      });
+    }
+    return true;
   }
 
   private async commitDelivery(

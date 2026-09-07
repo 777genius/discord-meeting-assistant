@@ -1,7 +1,7 @@
 import { AppendLiveTranscriptTurn, FinishLiveMeeting, RefreshLiveMeeting, StartLiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
 import { afterEach, expect, it, vi } from "vitest";
 import { PlatformLiveMeetingRuntime } from "../../src/live-meeting-runtime.js";
-import type { LivePacketFlowControl, LiveVoicePacket, LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
+import { LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown, type LivePacketFlowControl, type LiveVoicePacket, type LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
 import { livePacketIdentity } from "../../src/live-runtime/packet-delivery-ledger.js";
 import { ended, logger, MemoryLiveMeetingRepository, packets, ProjectionStub, started, SummaryStub } from "./live-runtime-fixtures.js";
 
@@ -48,7 +48,7 @@ function fixture(
         : [...durable.values()];
     },
   });
-  return { acknowledgements, durable, makeRuntime, sends, reads: () => reads, terminations: () => terminations, repair: () => { failingPacketId = undefined; } };
+  return { acknowledgements, durable, makeRuntime, meetings, sends, reads: () => reads, terminations: () => terminations, repair: () => { failingPacketId = undefined; } };
 }
 
 function backlog(size: number): LiveVoicePacket[] {
@@ -405,4 +405,45 @@ it("disconnect cancels a lease handoff between two 513-packet speakers before op
   await close;
   expect(active.size).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown])("reconnect retains %s fence, accepted transcript effects and receipts", async (Failure) => {
+  vi.useFakeTimers(); vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  const pending = backlog(3); const sends: string[] = [];
+  const openSession = vi.fn(async (request: Parameters<LiveTranscriptionPort["openSession"]>[0]) => ({
+    finalize: async () => {}, terminate: () => {},
+    sendPacket: async (packet: { packetId: string }) => {
+      sends.push(packet.packetId);
+      if (sends.length > 1) { throw new Failure(); }
+      request.onTranscript({ meetingId: request.meetingId, speakerId: request.speakerId,
+        startMs: 0, endMs: 20, text: "Accepted final", isFinal: true });
+      return "accepted" as const;
+    },
+  }));
+  const f = fixture(pending, undefined, undefined, { transcriber: { openSession } });
+  const runtime = f.makeRuntime(); await runtime.acceptLifecycle(started());
+  await vi.advanceTimersByTimeAsync(100);
+  expect(f.acknowledgements).toEqual([livePacketIdentity(pending[0]!)]);
+  await runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_lost" });
+  await runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_recovered" });
+  await runtime.acceptVoiceBatch({ ...packets(), packets: pending });
+  await vi.advanceTimersByTimeAsync(100);
+  expect(openSession).toHaveBeenCalledTimes(1); expect(sends).toHaveLength(2);
+  expect(f.acknowledgements).toEqual([livePacketIdentity(pending[0]!)]);
+  expect([...f.durable.keys()]).toEqual(pending.slice(1).map(livePacketIdentity));
+  expect(f.meetings.finalizedTurns.map(turn => turn.text)).toEqual(["Accepted final"]);
+  await expect(runtime.close()).rejects.toThrow();
+});
+
+it("receipt failure across reconnect never repeats an accepted provider send", async () => {
+  vi.useFakeTimers(); vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  const pending = backlog(1); const f = fixture(pending, undefined, undefined, { failAck: true });
+  const runtime = f.makeRuntime(); await runtime.acceptLifecycle(started());
+  await vi.advanceTimersByTimeAsync(0);
+  await runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_lost" });
+  await runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_recovered" });
+  await vi.advanceTimersByTimeAsync(100);
+  expect(f.sends).toEqual([livePacketIdentity(pending[0]!)]);
+  expect(f.acknowledgements).toEqual([]); expect(f.durable.size).toBe(1);
+  await runtime.close();
 });

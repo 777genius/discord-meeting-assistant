@@ -7,6 +7,8 @@ export type VoicetextAdapterErrorCode =
   | "cancelled"
   | "idempotency_conflict"
   | "live_admission_rejected"
+  | "live_provider_terminal"
+  | "live_acceptance_unknown"
   | "invalid_input"
   | "invalid_provider_response"
   | "limit_exceeded"
@@ -22,10 +24,14 @@ export type VoicetextAdapterErrorCode =
 export interface VoicetextAdapterErrorOptions extends ErrorOptions {
   /** Bounded server retry hint. It is never derived from a response body. */
   readonly retryAfterMs?: number;
+  readonly gatewayCode?: string;
+  readonly failureClass?: "known_accepted_terminal";
 }
 
 export class VoicetextAdapterError extends Error {
   public readonly retryAfterMs?: number;
+  public readonly gatewayCode?: string;
+  public readonly failureClass?: "known_accepted_terminal";
 
   public constructor(
     public readonly code: VoicetextAdapterErrorCode,
@@ -35,6 +41,8 @@ export class VoicetextAdapterError extends Error {
   ) {
     super(message, options);
     this.name = "VoicetextAdapterError";
+    if (options.gatewayCode !== undefined) { this.gatewayCode = options.gatewayCode; }
+    if (options.failureClass !== undefined) { this.failureClass = options.failureClass; }
     if (options.retryAfterMs !== undefined) {
       this.retryAfterMs = options.retryAfterMs;
     }
@@ -94,4 +102,18 @@ function transportErrorIsRetryable(error: VoicetextTransportError): boolean {
     return error.details.closeCode !== 1_008 && error.details.closeCode !== 1_009;
   }
   return true;
+}
+
+/** Normalize only confirmed wire evidence, never an arbitrary retryable property. */
+export function liveProviderError(message: {
+  readonly code: string; readonly message: string;
+  readonly failureClass?: "known_accepted_terminal";
+}): VoicetextAdapterError {
+  const terminal = message.code === "PROVIDER_QUOTA_EXCEEDED" ||
+    message.failureClass === "known_accepted_terminal";
+  return new VoicetextAdapterError(
+    terminal ? "live_provider_terminal" : "provider_error", message.message, !terminal,
+    { gatewayCode: message.code,
+      ...(message.failureClass === undefined ? {} : { failureClass: message.failureClass }) },
+  );
 }

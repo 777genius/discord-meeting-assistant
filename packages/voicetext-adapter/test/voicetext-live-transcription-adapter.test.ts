@@ -1,3 +1,4 @@
+import { parseServerMessage } from "../src/protocol.js";
 import { createHash } from "node:crypto";
 import type { OssSessionEvidenceEvent } from "../src/oss-native-evidence.js";
 import { describe, expect, it, vi } from "vitest";
@@ -527,7 +528,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
       expect(socket.terminated).toBe(true);
     });
     await expect(session.finalize()).rejects.toMatchObject({
-      code: "protocol_error",
+      code: _label === "invalid" ? "live_acceptance_unknown" : "protocol_error",
       retryable: false,
     });
   });
@@ -849,4 +850,55 @@ it("does not classify INVALID_CONFIG after ready as permanent admission", async 
   await expect(session.sendPacket({ opus: new Uint8Array([0xf8, 0xff, 0xfe]), durationSamples48Khz: 960, packetId: "p", relativeTimeMs: 0 }))
     .rejects.toMatchObject({ code: "provider_error", retryable: true });
   session.terminate();
+});
+
+const quota = { type: "error", code: "PROVIDER_QUOTA_EXCEEDED", message: "synthetic quota" };
+const terminalRequest = { idempotencyKey: "quota", meetingId: "meeting", speakerId: "speaker", onTranscript: () => {} };
+const terminalPacket = { packetId: "quota-packet", opus: new Uint8Array([0xf8, 0xff, 0xfe]), durationSamples48Khz: 960, relativeTimeMs: 0 };
+
+it.each([undefined, "known_accepted_terminal"])("retains quota code and classification before ready: %s", async (failure_class) => {
+  const socket = new QueueSocket();
+  socket.enqueue({ ...quota, ...(failure_class === undefined ? {} : { failure_class }) });
+  await expect(adapter(socket).openSession(terminalRequest)).rejects.toMatchObject({
+    code: "live_provider_terminal", gatewayCode: quota.code, retryable: false,
+    ...(failure_class === undefined ? {} : { failureClass: failure_class }),
+  });
+  expect(socket.terminated).toBe(true);
+});
+
+it.each(["awaiting-ack", "between-packets"])("preserves first terminal failure %s through send, finalize and cleanup", async (phase) => {
+  const socket = new DelayedAckSocket();
+  const session = await adapter(socket).openSession(terminalRequest);
+  const sent = session.sendPacket(terminalPacket);
+  const outcome = sent.catch((error: unknown) => error);
+  await Promise.resolve();
+  if (phase === "between-packets") { socket.acknowledge(1); await expect(sent).resolves.toBe("accepted"); }
+  socket.enqueue({ ...quota, failure_class: "known_accepted_terminal" });
+  await vi.waitFor(() => expect(socket.terminated).toBe(true));
+  const failure: unknown = await session.finalize().catch((error: unknown) => error);
+  expect(failure).toMatchObject({ code: "live_provider_terminal", gatewayCode: quota.code, failureClass: "known_accepted_terminal", retryable: false });
+  if (phase === "awaiting-ack") { expect(await outcome).toBe(failure); }
+  session.terminate();
+  await expect(session.sendPacket({ ...terminalPacket, packetId: "later" })).rejects.toBe(failure);
+  await expect(session.finalize()).rejects.toBe(failure);
+  expect(socket.binary).toHaveLength(1);
+});
+
+it("keeps opening INVALID_CONFIG distinct from provider terminal failure", async () => {
+  const socket = new QueueSocket();
+  socket.enqueue({ type: "error", code: "INVALID_CONFIG", message: "synthetic" });
+  await expect(adapter(socket).openSession(terminalRequest)).rejects.toMatchObject({ code: "live_admission_rejected", retryable: false });
+});
+
+it("validates bounded terminal wire evidence without trusting arbitrary classification", async () => {
+  for (const failure_class of [false, {}, "terminal", "retryable:false"]) {
+    expect(parseServerMessage(JSON.stringify({ ...quota, code: "OTHER", failure_class }), 100))
+      .toEqual({ type: "error", code: "OTHER", message: quota.message });
+  }
+  expect(() => parseServerMessage(JSON.stringify({ ...quota, code: "q".repeat(129) }), 100)).toThrow();
+  const socket = new QueueSocket();
+  socket.enqueue({ ...quota, code: "OTHER", failure_class: "known_accepted_terminal" });
+  await expect(adapter(socket).openSession(terminalRequest)).rejects.toMatchObject({
+    code: "live_provider_terminal", gatewayCode: "OTHER", failureClass: "known_accepted_terminal",
+  });
 });

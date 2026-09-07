@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { liveMeetingVocabulary, meetingVocabulary } from "../src/composition/meeting-vocabulary.js";
-import { VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-adapter";
+import { VoicetextAdapterError, VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-adapter";
 
 const options = { endpoint: "ws://localhost", token: "synthetic-token-123456", profile: "elevenlabs-scribe-v2-realtime" as const };
 const request = { meetingId: "m", speakerId: "s", idempotencyKey: "k", onTranscript: () => {} };
@@ -25,3 +25,31 @@ for (const keyterms of [["a".repeat(21)], ["a".repeat(22)], ["😀".repeat(21)],
     expect(connect).not.toHaveBeenCalled();
   });
 }
+
+import { mapLiveAdmission } from "../src/composition/discord-live.js";
+import { LiveTranscriptionAdmissionRejected, LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown } from "../src/live-runtime/contracts.js";
+
+it.each(["open", "send", "finalize"] as const)("composition translates actual %s failures", async (phase) => {
+  for (const [code, expected] of [
+    ["live_admission_rejected", LiveTranscriptionAdmissionRejected],
+    ["live_provider_terminal", LiveTranscriptionTerminalFailure],
+    ["live_acceptance_unknown", LiveTranscriptionAcceptanceUnknown],
+  ] as const) {
+    const error = new VoicetextAdapterError(code, "synthetic", false);
+    const mapped = mapLiveAdmission({ openSession: async () => {
+      if (phase === "open") { throw error; }
+      return { sendPacket: async () => { throw error; }, finalize: async () => { throw error; }, terminate: () => {} };
+    } });
+    if (phase === "open") { await expect(mapped.openSession(request)).rejects.toBeInstanceOf(expected); }
+    else {
+      const session = await mapped.openSession(request);
+      await expect(phase === "finalize" ? session.finalize() : session.sendPacket({
+        packetId: "p", opus: new Uint8Array([1]), durationSamples48Khz: 960, relativeTimeMs: 0,
+      })).rejects.toBeInstanceOf(expected);
+    }
+  }
+});
+it("composition does not trust arbitrary retryable:false", async () => {
+  const error = Object.assign(new Error("unclassified"), { retryable: false });
+  await expect(mapLiveAdmission({ openSession: async () => { throw error; } }).openSession(request)).rejects.toBe(error);
+});

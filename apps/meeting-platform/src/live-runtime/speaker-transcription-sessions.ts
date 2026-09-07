@@ -36,8 +36,9 @@ export interface SpeakerTranscriptionSessionsDependencies {
 
 /** Meeting-local registry of independent speaker transcription sessions. */
 export class SpeakerTranscriptionSessions {
-  // Survives speaker deletion/cancellation; only a new runtime/configuration resets it.
-  private readonly admissionRejections = new Map<string, AbortController>();
+  // Abort reasons distinguish admission, terminal provider and unresolved acceptance.
+  // Survives speaker deletion/disconnect; restart durability requires separate storage.
+  private readonly lifecycleFences = new Map<string, AbortController>();
   private cancelled = false;
   private readonly ledger = new LivePacketDeliveryLedger();
   private readonly speakers = new Map<string, SpeakerTranscriptionSession>();
@@ -77,7 +78,7 @@ export class SpeakerTranscriptionSessions {
 
   public cancel(): void {
     this.cancelled = true;
-    for (const rejection of this.admissionRejections.values()) { rejection.abort(); }
+    for (const rejection of this.lifecycleFences.values()) { rejection.abort(); }
   }
 
   public beginFinish(): void {
@@ -99,8 +100,8 @@ export class SpeakerTranscriptionSessions {
     if (existing !== undefined) {
       return existing;
     }
-    const admissionRejection = this.admissionRejections.get(speakerId) ?? new AbortController();
-    this.admissionRejections.set(speakerId, admissionRejection);
+    const admissionRejection = this.lifecycleFences.get(speakerId) ?? new AbortController();
+    this.lifecycleFences.set(speakerId, admissionRejection);
     if (this.cancelled) { admissionRejection.abort(); }
     const created = new SpeakerTranscriptionSession({
       admissionRejection,

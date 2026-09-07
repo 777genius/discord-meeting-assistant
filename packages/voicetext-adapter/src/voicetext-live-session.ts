@@ -1,7 +1,7 @@
 import { createLiveSessionConfig } from "./voicetext-live-session-config.js";
 import { createHash } from "node:crypto";
 import { ossReceivedEvidence, type OssSessionEvidence } from "./oss-native-evidence.js";
-import { VoicetextAdapterError } from "./errors.js";
+import { liveProviderError, VoicetextAdapterError } from "./errors.js";
 import {
   asLiveSessionError, createLiveSessionDeferred, rememberLiveSessionPacketId,
   requireLiveSessionActive, validateLiveSessionFinalizeStatus,
@@ -81,7 +81,7 @@ export class LiveSession implements VoicetextLiveSession {
         if (message.code === "INVALID_CONFIG") {
           throw new VoicetextAdapterError("live_admission_rejected", "Live configuration rejected before provider opening", false);
         }
-        throw new VoicetextAdapterError("provider_error", message.message, true);
+        throw liveProviderError(message);
       }
       if (message.type !== "usage_update" && message.type !== "partial") {
         throw new VoicetextAdapterError(
@@ -96,6 +96,7 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   public async sendPacket(packet: VoicetextLivePacket): Promise<"accepted" | "reused"> {
+    if (this.terminalError !== undefined) { throw this.terminalError; }
     requireLiveSessionActive(this.state);
     validateVoicetextLiveIdentity(packet.packetId, "packetId");
     if (this.packetIds.has(packet.packetId)) {
@@ -112,6 +113,7 @@ export class LiveSession implements VoicetextLiveSession {
     this.sending = true;
     try {
       await this.waitForAckCapacity();
+      if (this.terminalError !== undefined) { throw this.terminalError; }
       requireLiveSessionActive(this.state);
       const sequence = this.nextSequence + 1;
       const waiter = createLiveSessionDeferred<void>();
@@ -142,7 +144,14 @@ export class LiveSession implements VoicetextLiveSession {
         this.evidence?.record({ type: "failure" });
         this.ackWaiters.delete(sequence);
         this.timeline.restore(timelineCheckpoint);
-        throw error;
+        // Once binary delivery starts, a missing ACK cannot establish nonacceptance.
+        const failure = this.terminalError instanceof VoicetextAdapterError &&
+          this.terminalError.code === "live_provider_terminal" ? this.terminalError :
+          new VoicetextAdapterError("live_acceptance_unknown",
+            error instanceof Error ? error.message : "Voicetext live packet acknowledgement outcome is unknown", false, { cause: error });
+        this.terminalError = failure;
+        this.closeAfterReceiveFailure(failure);
+        throw failure;
       }
     } finally {
       this.sending = false;
@@ -150,6 +159,7 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   public finalize(): Promise<void> {
+    if (this.terminalError !== undefined) { return Promise.reject(this.terminalError); }
     if (this.finalizePromise !== undefined) {
       return this.finalizePromise;
     }
@@ -202,7 +212,7 @@ export class LiveSession implements VoicetextLiveSession {
     } catch (error) {
       failure = error;
     } finally {
-      if (this.closeState === "idle") {
+      if (this.closeState === "idle" && !this.transportClosed) {
         await this.closeAfterFailure();
       }
       if (this.closeState === "failed" || !this.transportClosed) {
@@ -213,6 +223,7 @@ export class LiveSession implements VoicetextLiveSession {
       this.abortController.abort(failure);
       await this.pump?.catch(() => {});
     }
+    failure = this.terminalError ?? failure;
     this.evidence?.record({ type: failure === undefined ? "success" : "failure" });
     if (failure !== undefined) {
       throw asLiveSessionError(failure, "Voicetext live session finalization failed");
@@ -351,7 +362,7 @@ export class LiveSession implements VoicetextLiveSession {
       return;
     }
     if (message.type === "error") {
-      throw new VoicetextAdapterError("provider_error", message.message, true);
+      throw liveProviderError(message);
     }
     if (message.type !== "usage_update" && message.type !== "resumed") {
       throw new VoicetextAdapterError(

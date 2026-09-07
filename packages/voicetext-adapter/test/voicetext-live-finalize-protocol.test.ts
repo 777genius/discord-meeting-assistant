@@ -137,6 +137,7 @@ describe("VoiceText live finalize terminal evidence", () => {
 });
 
 type FinalizeBehavior =
+  | "quota"
   | "after-close"
   | "close-before-terminal"
   | "compliant"
@@ -181,6 +182,7 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
       return;
     }
     if (message.type === "finalize") {
+      if (this.behavior === "quota") { this.enqueue({ type: "error", code: "PROVIDER_QUOTA_EXCEEDED", message: "quota", failure_class: "known_accepted_terminal" }); return; }
       if (this.behavior === "close-before-terminal") {
         this.enqueueClose();
         return;
@@ -243,7 +245,7 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
     this.terminated = true;
   }
 
-  private enqueue(message: Readonly<Record<string, unknown>>): void {
+  public enqueue(message: Readonly<Record<string, unknown>>): void {
     this.push({ data: JSON.stringify(message), type: "text" });
   }
 
@@ -276,3 +278,21 @@ async function finalize(socket: FinalizeSocket, timeoutMs = 1_000, evidence?: Os
   await session.start();
   await session.finalize();
 }
+
+it.each(["idle", "finalizing"])("retains terminal quota through %s cleanup and repeated finalization", async (phase) => {
+  const socket = new FinalizeSocket("quota");
+  const session = new LiveSession(socket, {
+    idempotencyKey: "quota", meetingId: "meeting", speakerId: "speaker", onTranscript: () => {},
+  }, validateVoicetextLiveTranscriptionOptions({ endpoint: "wss://voice.example.test/api/v1/transcribe/stream", token: "test-machine-token", finalizeTimeoutMs: 1000 }));
+  await session.start();
+  if (phase === "idle") {
+    socket.enqueue({ type: "error", code: "PROVIDER_QUOTA_EXCEEDED", message: "quota", failure_class: "known_accepted_terminal" });
+    await nextTask();
+  }
+  const failure: unknown = await session.finalize().catch((error: unknown) => error);
+  expect(failure).toMatchObject({ code: "live_provider_terminal", gatewayCode: "PROVIDER_QUOTA_EXCEEDED", failureClass: "known_accepted_terminal", retryable: false });
+  session.terminate();
+  await expect(session.finalize()).rejects.toBe(failure);
+  await expect(session.sendPacket({ packetId: "later", opus: new Uint8Array([1]), durationSamples48Khz: 960, relativeTimeMs: 0 })).rejects.toBe(failure);
+  expect(socket.terminated).toBe(true);
+});

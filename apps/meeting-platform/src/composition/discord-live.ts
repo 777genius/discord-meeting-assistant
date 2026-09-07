@@ -1,4 +1,4 @@
-import { LiveTranscriptionAdmissionRejected, type LiveTranscriptionPort } from "../live-runtime/contracts.js";
+import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure, LiveTranscriptionAdmissionRejected, type LiveTranscriptionPort } from "../live-runtime/contracts.js";
 import { hasLiveTranscriptionConfiguration, createOssNativeEvidence, type OssPlatformEvidence } from "./oss-native-evidence.js";
 import type { OssNativeEvidenceSink } from "@discord-meeting/voicetext-adapter";
 import { randomUUID } from "node:crypto";
@@ -404,11 +404,27 @@ function createDiscordClient(config: PlatformConfig): Client {
   });
 }
 
-function mapLiveAdmission(adapter: VoicetextLiveTranscriptionAdapter): LiveTranscriptionPort {
-  return { openSession: async (request) => {
-    try { return await adapter.openSession(request); } catch (error) {
-      if (error instanceof VoicetextAdapterError && error.code === "live_admission_rejected") { throw new LiveTranscriptionAdmissionRejected(); }
-      throw error;
+export function mapLiveAdmission(adapter: LiveTranscriptionPort): LiveTranscriptionPort {
+  const translate = (error: unknown): never => {
+    if (error instanceof VoicetextAdapterError) {
+      if (error.code === "live_admission_rejected") { throw new LiveTranscriptionAdmissionRejected(); }
+      if (error.code === "live_provider_terminal") { throw new LiveTranscriptionTerminalFailure(); }
+      if (error.code === "live_acceptance_unknown") { throw new LiveTranscriptionAcceptanceUnknown(); }
     }
+    throw error;
+  };
+  return { openSession: async (request) => {
+    try {
+      const session = await adapter.openSession(request);
+      return {
+        sendPacket: async (packet) => {
+          try { return await session.sendPacket(packet); } catch (error) { return translate(error); }
+        },
+        finalize: async () => {
+          try { await session.finalize(); } catch (error) { translate(error); }
+        },
+        terminate: () => { session.terminate(); },
+      };
+    } catch (error) { return translate(error); }
   } };
 }
