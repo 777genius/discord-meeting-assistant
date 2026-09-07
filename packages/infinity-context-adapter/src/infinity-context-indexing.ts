@@ -277,9 +277,9 @@ class HistoricalMeetingIndexer {
 }
 
 function processMutationAlreadyComplete(document: DocumentRecord): boolean {
-  return processMutationAccepted(document) &&
-    (document.indexing_status === "indexed" ||
-      document.indexing_status === "already_indexed_or_pending");
+  // An ingest replay may still be pending without an accepted process mutation.
+  // Reconcile that ambiguity through the stable process idempotency key.
+  return processMutationAccepted(document) && document.indexing_status === "indexed";
 }
 
 function assertTopologyLookupComplete(values: readonly unknown[], subject: string): void {

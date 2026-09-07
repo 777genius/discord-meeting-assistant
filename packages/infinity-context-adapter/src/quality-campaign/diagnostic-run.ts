@@ -130,7 +130,7 @@ export async function runDiagnostic(manifest: DiagnosticManifest, reconcileIndex
       throw new Error("frozen diagnostic plan differs");
     }
     const memory = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: c.infinityBaseUrl, token: infinityToken, requestTimeoutMs: 2000, operationTimeoutMs: 60000,
+      baseUrl: c.infinityBaseUrl, token: infinityToken, requestTimeoutMs: 30_000, operationTimeoutMs: 600_000,
       schemaVersion: 1, embeddingTokenProfile: () => historicalEmbeddingTokenProfile(tokenizer),
       actorKeys: { activeActorKey: actor => `dactor1.diagnostic.${ids.keyedId("diagnostic-actor", [actor])}` },
     });
