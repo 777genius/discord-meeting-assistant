@@ -280,19 +280,22 @@ async function waitForLivePacketTime(
   return readyToSend && !signal.aborted;
 }
 
-/** A fixed phase deadline, or a packet-progress deadline renewed by a finite queue. */
+/** Relative timers bound each phase; only finite admitted packet progress renews drain. */
 export async function superviseLiveWork(
   work: Promise<void>, budgetMs: number, timer: LiveRuntimeTimer,
-  supervision: { readonly clock: LiveRuntimeClock; readonly cancel: () => void; readonly deadline?: (() => number) | undefined },
+  supervision: {
+    readonly cancel: () => void;
+    readonly setRenewal?: (renew: ((budgetMs: number) => void) | undefined) => void;
+  },
 ): Promise<void> {
-  const { clock, cancel, deadline } = supervision;
-  let timeout: LiveRuntimeTimerHandle;
-  const check = (): void => {
-    const remaining = (deadline?.() ?? 0) - clock.nowMilliseconds();
-    if (remaining > 0) { timeout = timer.schedule(remaining, check); }
-    else { cancel(); }
-  };
-  timeout = timer.schedule(budgetMs, check);
+  let timeout = timer.schedule(budgetMs, supervision.cancel);
+  supervision.setRenewal?.((nextBudgetMs) => {
+    timer.cancel(timeout);
+    timeout = timer.schedule(nextBudgetMs, supervision.cancel);
+  });
   try { await work; }
-  finally { timer.cancel(timeout); }
+  finally {
+    supervision.setRenewal?.(undefined);
+    timer.cancel(timeout);
+  }
 }

@@ -35,7 +35,9 @@ export class SpeakerTranscriptionSession {
   private admissionChain: Promise<void> = Promise.resolve();
   private admissionClosed = false;
   private finishing: Promise<void> | null = null;
-  private deliveryDeadlineMs = 0;
+  private deliveryBudgetMs = 0;
+  private renewDeliveryWatchdog: ((budgetMs: number) => void) | undefined;
+  private readonly admissionCancellation = new AbortController();
   private readonly admissionRejection: AbortController;
   private deliveryFailed = false;
   private recoveryBlocked = false;
@@ -75,9 +77,7 @@ export class SpeakerTranscriptionSession {
     // Keep one global slot available for the recovery that deferred live work awaits.
     const recoveryHeadroom = this.recovery === null ? 0 : 1;
     const globallyReserved = await this.dependencies.packetAdmission.reserve(
-      packets.length + recoveryHeadroom,
-      deadlineMs,
-      this.packetFlow.signal,
+      packets.length + recoveryHeadroom, deadlineMs, this.admissionCancellation.signal,
     );
     if (!globallyReserved) {
       if (!this.dependencies.isMeetingFinishing()) {
@@ -129,6 +129,7 @@ export class SpeakerTranscriptionSession {
 
   private cancelDelivery(): void {
     this.admissionClosed = true;
+    this.admissionCancellation.abort();
     this.admissionRejection.signal.removeEventListener("abort", this.onAdmissionRejected);
     this.packetFlow.cancel();
     this.providerSession.abortOpening();
@@ -163,7 +164,7 @@ export class SpeakerTranscriptionSession {
       this.deliveryFailed = false;
       if (this.isAdmissionClosed()) { return; }
       const deadline = this.dependencies.clock.nowMilliseconds() + this.dependencies.packetBackpressureTimeoutMs;
-      if (!await this.dependencies.packetAdmission.reserve(1, deadline, this.packetFlow.signal)) {
+      if (!await this.dependencies.packetAdmission.reserve(1, deadline, this.admissionCancellation.signal)) {
         this.recoveryBlocked = true;
         return;
       }
@@ -180,6 +181,7 @@ export class SpeakerTranscriptionSession {
   public beginFinish(): void {
     this.cancelIdleFinalization();
     this.admissionClosed = true;
+    this.admissionCancellation.abort();
     this.packetFlow.wakeAdmissionWaiters();
     this.cancelRecovery();
   }
@@ -193,14 +195,14 @@ export class SpeakerTranscriptionSession {
   private async finishAdmittedPackets(): Promise<void> {
     await this.supervise(this.admissionChain, this.dependencies.packetBackpressureTimeoutMs);
     const stallMs = this.dependencies.packetBackpressureTimeoutMs;
-    this.deliveryDeadlineMs = Math.max(this.deliveryDeadlineMs, this.dependencies.clock.nowMilliseconds() + stallMs);
-    await this.supervise(this.chain, stallMs, () => this.deliveryDeadlineMs);
+    await this.supervise(this.chain, Math.max(this.deliveryBudgetMs, stallMs), true);
     if (!this.isDeliveryCancelled()) { await this.finalize("Derived live speaker finalize failed"); }
   }
 
-  private supervise(work: Promise<void>, budgetMs: number, deadline?: () => number): Promise<void> {
+  private supervise(work: Promise<void>, budgetMs: number, renewOnDelivery = false): Promise<void> {
     return superviseLiveWork(this.untilCancelled(work), budgetMs, this.dependencies.timer,
-      { clock: this.dependencies.clock, cancel: () => { this.cancelDelivery(); }, deadline });
+      { cancel: () => { this.cancelDelivery(); },
+        ...(renewOnDelivery ? { setRenewal: (renew: ((budgetMs: number) => void) | undefined) => { this.renewDeliveryWatchdog = renew; } } : {}) });
   }
 
   private async admit(packet: LiveVoicePacket, deadlineMs: number): Promise<void> {
@@ -217,7 +219,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private async reservePacketSlot(packet: LiveVoicePacket, deadlineMs: number): Promise<boolean> {
-    if (this.isPacketDeliveryBlocked() || this.isSuppressed(packet)) { return false; }
+    if (this.isAdmissionClosed() || this.dependencies.isMeetingFinishing() || this.isPacketDeliveryBlocked() || this.isSuppressed(packet)) { return false; }
     const hasCapacity = await this.packetFlow.waitForQueueSlot(deadlineMs, () => this.isAdmissionClosed() || this.dependencies.isMeetingFinishing());
     if (!hasCapacity) {
       if (!this.dependencies.isMeetingFinishing()) {
@@ -225,14 +227,14 @@ export class SpeakerTranscriptionSession {
       }
       return false;
     }
-    if (this.isPacketDeliveryBlocked() || this.isSuppressed(packet)) { return false; }
+    if (this.isAdmissionClosed() || this.dependencies.isMeetingFinishing() || this.isPacketDeliveryBlocked() || this.isSuppressed(packet)) { return false; }
     this.cancelIdleFinalization();
     this.packetFlow.reserveQueueSlot();
     const delivery = async (): Promise<void> => {
       try {
         const pacingMs = this.pacer.packetWaitMs(this.dependencies.startedAtMs, packet.relativeTimeMs);
-        this.deliveryDeadlineMs = this.dependencies.clock.nowMilliseconds()
-          + Math.min(pacingMs, maximumDrainPacingWaitMs) + this.dependencies.packetBackpressureTimeoutMs;
+        this.deliveryBudgetMs = Math.min(pacingMs, maximumDrainPacingWaitMs) + this.dependencies.packetBackpressureTimeoutMs;
+        this.renewDeliveryWatchdog?.(this.deliveryBudgetMs);
         await this.untilCancelled(this.send(packet));
       } catch (error) {
         this.deliveryFailed = true;
@@ -345,7 +347,6 @@ export class SpeakerTranscriptionSession {
   }
 
   private async finalize(failureMessage: string): Promise<void> {
-    this.deliveryDeadlineMs = this.dependencies.clock.nowMilliseconds() + providerFinalizeTimeoutMs;
     await this.supervise(this.providerSession.finalize(failureMessage), providerFinalizeTimeoutMs);
   }
 

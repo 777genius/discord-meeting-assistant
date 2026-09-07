@@ -194,3 +194,85 @@ it("freezes a pending queue reservation without cancelling already admitted audi
   packetAdmission.release(2);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+function freezeFixture(packetAdmission = new GlobalPacketFlowControl(2), stalled = false) {
+  const sendPacket = vi.fn(async () => {
+    if (stalled) { await new Promise<void>(() => {}); }
+    return "accepted" as const;
+  });
+  const finalize = vi.fn(async () => {});
+  const terminate = vi.fn();
+  const speaker = new SpeakerTranscriptionSession({
+    clock: systemLiveRuntimeClock, timer: systemLiveRuntimeTimer,
+    isMeetingFinishing: () => false, ledger: new LivePacketDeliveryLedger(), logger,
+    maximumQueuedPackets: 2, meetingId: "meeting", onTranscript: () => {},
+    packetAdmission, packetBackpressureTimeoutMs: 2_000,
+    packetInspector: { durationSamples48Khz: () => 960 }, sessionAdmission: new LiveSessionAdmission(1),
+    speakerId: "speaker", speakerIdleFinalizeMs: 750, startedAtMs: 0,
+    transcriber: { openSession: async () => ({ finalize, terminate, sendPacket }) },
+  });
+  const packet = { ...packets().packets[0]!, relativeTimeMs: 0 };
+  return { speaker, packet, sendPacket, finalize, terminate, packetAdmission };
+}
+
+it("bounds a stalled drain to two relative seconds across a backward one-hour wall-clock jump", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(10_000);
+  const f = freezeFixture(undefined, true);
+  await f.speaker.accept([f.packet], 12_000);
+  await vi.advanceTimersByTimeAsync(0);
+  let finished = false;
+  const finish = f.speaker.finish().then(() => { finished = true; return null; });
+  await vi.advanceTimersByTimeAsync(0);
+  vi.setSystemTime(Date.now() - 3_600_000);
+  await vi.advanceTimersByTimeAsync(1_999);
+  expect(finished).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(finished).toBe(true);
+  await finish;
+  expect(f.sendPacket).toHaveBeenCalledTimes(1);
+  expect(f.terminate).toHaveBeenCalledTimes(1);
+  expect(f.finalize).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("rechecks finish after the resolved queue-capacity await before reserving the first packet", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const f = freezeFixture();
+  const accept = f.speaker.accept([f.packet], 2_000);
+  await Promise.resolve();
+  await Promise.resolve();
+  const finish = f.speaker.finish();
+  await Promise.all([accept, finish]);
+  expect(f.sendPacket).not.toHaveBeenCalled();
+  expect(f.finalize).not.toHaveBeenCalled();
+  expect(await f.packetAdmission.reserve(2, 2_000, new AbortController().signal)).toBe(true);
+  f.packetAdmission.release(2);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("finish removes a pending global admission timer and FIFO head without blocking another speaker", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const f = freezeFixture();
+  const signal = new AbortController().signal;
+  expect(await f.packetAdmission.reserve(1, 2_000, signal)).toBe(true);
+  let accepted = false;
+  const accept = f.speaker.accept([f.packet, { ...f.packet, sequenceNumber: 2 }], 2_000)
+    .then(() => { accepted = true; return null; });
+  const other = freezeFixture(f.packetAdmission);
+  const otherAccept = other.speaker.accept([other.packet], 2_000);
+  expect(vi.getTimerCount()).toBe(2);
+  await f.speaker.finish();
+  expect(accepted).toBe(true);
+  await accept;
+  await otherAccept;
+  await other.speaker.finish();
+  expect(other.sendPacket).toHaveBeenCalledTimes(1);
+  expect(f.sendPacket).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+  f.packetAdmission.release(1);
+  expect(await f.packetAdmission.reserve(2, 2_000, signal)).toBe(true);
+  f.packetAdmission.release(2);
+});
