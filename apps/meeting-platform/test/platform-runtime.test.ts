@@ -666,10 +666,15 @@ describe("meeting platform shutdown", () => {
       } as unknown as PostCallWorker,
     });
 
-    await vi.waitFor(() => {
-      expect(calls).toContain("recordings:close");
-    });
-    releaseRecordings();
+    const closingObserved = Promise.allSettled([closing]);
+    try {
+      await vi.waitFor(() => {
+        expect(calls).toContain("recordings:close");
+      });
+    } finally {
+      releaseRecordings();
+      await closingObserved;
+    }
     await expect(closing).rejects.toBeInstanceOf(AggregateError);
 
     expect(performance.now() - startedAt).toBeLessThan(1_000);
