@@ -222,3 +222,29 @@ it("process death during pending seal fsync exposes no final collector artifact"
   expect(readFileSync(join(directory, "live-native.staging.jsonl"), "utf8")).toContain("capture_seal");
   expect(existsSync(join(directory, "live-native.jsonl"))).toBe(false);
 });
+
+it("abort before close is sticky and repeated close cannot publish", async () => {
+  const { sink, published } = fixture();
+  sink.abort();
+  sink.abort();
+  expect(() => sink.open()).toThrow("cannot qualify");
+  const closing = sink.close();
+  expect(sink.close()).toBe(closing);
+  await expect(closing).rejects.toThrow("cannot qualify");
+  expect(published()).toBe(false);
+  expect(() => sink.seal()).toThrow();
+});
+
+it("abort returns immediately while the row writer is stalled and stays failed after release", async () => {
+  control.hold = true;
+  const { sink, published } = fixture();
+  sink.open().record({ type: "success" });
+  await vi.waitFor(() => { expect(control.releases).toHaveLength(1); });
+  const closing = sink.close();
+  expect(sink.abort()).toBeUndefined();
+  expect(published()).toBe(false);
+  control.hold = false;
+  control.releases.splice(0).forEach((release) => { release(); });
+  await expect(closing).rejects.toThrow("cannot qualify");
+  expect(published()).toBe(false);
+});

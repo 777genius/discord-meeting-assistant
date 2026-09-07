@@ -41,7 +41,7 @@ export interface PostCallShutdownResources {
 }
 
 export interface MeetingPlatformShutdownResources extends PostCallShutdownResources {
-  readonly ossNativeEvidence?: { close(): Promise<void> };
+  readonly ossNativeEvidence?: { abort(): void; close(): Promise<void> };
   readonly conversationRuntime?: GrpcPipecatConversationRuntime;
   readonly craigPlayback?: {
     readonly gateway: CraigPlaybackGateway;
@@ -218,6 +218,7 @@ export async function closeMeetingPlatformResources(
       ]));
     }
   }
+  if (failures.length > 0) { input.ossNativeEvidence?.abort(); }
   throwIfShutdownIncomplete(failures, "Meeting platform shutdown was incomplete");
 }
 

@@ -1,3 +1,33 @@
+import { existsSync, readFileSync } from "node:fs";
+import { createOssNativeEvidence } from "../src/composition/oss-native-evidence.js";
+import { PlatformStartupCleanup } from "../src/composition/startup-cleanup.js";
+
+const filesystemGate = vi.hoisted(() => ({
+  stage: "" as string, releases: [] as (() => void)[],
+}));
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...fs,
+    write: (...args: Parameters<typeof fs.write>) => {
+      if (filesystemGate.stage === "write") {
+        filesystemGate.releases.push(() => { fs.write(...args); });
+      } else { fs.write(...args); }
+    },
+    fsync: (fd: number, callback: (error: Error | null) => void) => {
+      if (filesystemGate.stage === "fsync") {
+        filesystemGate.releases.push(() => { fs.fsync(fd, callback); });
+      } else { fs.fsync(fd, callback); }
+    },
+    close: (fd: number, callback: (error: Error | null) => void) => {
+      fs.close(fd, (error) => {
+        if (filesystemGate.stage === "close") {
+          filesystemGate.releases.push(() => { callback(error); });
+        } else { callback(error); }
+      });
+    },
+  };
+});
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -731,7 +761,7 @@ describe("meeting platform shutdown", () => {
 
 function ossShutdownResources(close: () => Promise<void>, serverClose = async () => {}) {
   return {
-    ossNativeEvidence: { close },
+    ossNativeEvidence: { close, abort: vi.fn() },
     discord: { destroy: () => {} } as unknown as Client,
     logger: { flush: async () => {} } as unknown as Logger,
     outboxDispatcher: { whenIdle: async () => {} },
@@ -777,13 +807,50 @@ describe("OSS durable shutdown supervision", () => {
     input.pool = { end: async () => { throw new Error("pool drain failed"); } } as unknown as Pool;
     await expect(closeMeetingPlatformResources(input)).rejects.toThrow("shutdown was incomplete");
     expect(close).not.toHaveBeenCalled();
+    expect(input.ossNativeEvidence.abort).toHaveBeenCalledOnce();
   });
 
   it.each(["failure", "timeout"])("fails shutdown on capture close %s", async (mode) => {
     const close = vi.fn(() => mode === "failure"
       ? Promise.reject(new Error("writer failed"))
       : new Promise<void>(() => {}));
-    await expect(closeMeetingPlatformResources(ossShutdownResources(close))).rejects.toThrow("shutdown was incomplete");
+    const input = ossShutdownResources(close);
+    await expect(closeMeetingPlatformResources(input)).rejects.toThrow("shutdown was incomplete");
     expect(close).toHaveBeenCalledOnce();
+    expect(input.ossNativeEvidence.abort).toHaveBeenCalledOnce();
   });
+});
+
+it.each(["write", "fsync", "close", "prior failure"])("actual shutdown failure cancels %s before publication", async (stage) => {
+  const directory = await mkdtemp(join(tmpdir(), "oss-shutdown-cancel-"));
+  const evidence = createOssNativeEvidence(new PlatformStartupCleanup(), {
+    OSS_STT_NATIVE_EVIDENCE_DIRECTORY: directory,
+    OSS_STT_NATIVE_EVIDENCE_PROJECT: "vtoss-test-oss-8f49a06-r1",
+    OSS_STT_NATIVE_EVIDENCE_REVISION: "a".repeat(40),
+    E2E_TEST_ONLY_LABEL: "true", CONVERSATION_ENABLED: "false",
+    SUMMARY_PROVIDER: "transcript-outline",
+  })!;
+  await evidence.live.settle();
+  filesystemGate.stage = stage;
+  try {
+    const input = { ...ossShutdownResources(() => evidence.close()), ossNativeEvidence: evidence };
+    if (stage === "prior failure") {
+      input.server.close = async () => { throw new Error("HTTP drain failed"); };
+    }
+    await expect(closeMeetingPlatformResources(input)).rejects.toThrow("shutdown was incomplete");
+    expect(filesystemGate.releases).toHaveLength(stage === "prior failure" ? 0 : 1);
+    expect(existsSync(join(directory, "live-native.jsonl"))).toBe(false);
+    filesystemGate.stage = "";
+    filesystemGate.releases.splice(0).forEach((release) => { release(); });
+    await expect(evidence.close()).rejects.toThrow("cannot qualify");
+    await expect(evidence.close()).rejects.toThrow("cannot qualify");
+    expect(existsSync(join(directory, "live-native.jsonl"))).toBe(false);
+    expect(readFileSync(join(directory, "post-call-native.jsonl"), "utf8")).not.toContain("capture_seal");
+  } finally {
+    filesystemGate.stage = "";
+    filesystemGate.releases.splice(0).forEach((release) => { release(); });
+    await evidence.close().catch(() => {});
+    evidence.postCall.seal();
+    await rm(directory, { recursive: true });
+  }
 });

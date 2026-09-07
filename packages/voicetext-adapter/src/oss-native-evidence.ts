@@ -104,15 +104,18 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
     await this.writer;
     if (this.failed) { throw this.captureError(); }
   }
-  /** Freeze admission, durably drain, then append and sync the seal and close. */
-  public close(): Promise<void> {
+  /** Sticky and synchronous: cancellation never waits for filesystem callbacks. */
+  public abort(): void { this.failed = true; }
+  /** Freeze admission, durably drain, then append and sync the seal and close.
+   * The optional synchronous barrier runs before create-only publication. */
+  public close(beforePublish?: () => void): Promise<void> {
     if (this.closeResult) { return this.closeResult; }
     this.closing = true;
     if (this.pending.size > 0) { this.failed = true; }
-    this.closeResult = this.finishClose();
+    this.closeResult = this.finishClose(beforePublish);
     return this.closeResult;
   }
-  private async finishClose(): Promise<void> {
+  private async finishClose(beforePublish?: () => void): Promise<void> {
     try {
       await this.settle();
       const row = this.snapshot({ type: "capture_seal", priorSha256: this.digest.copy().digest("hex") });
@@ -135,7 +138,11 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
     // may lose this unsynced directory entry; if retained, it names synced bytes.
     // Missing publication always fails collection closed. Retain staging so no
     // cleanup failure can turn successful publication into a rejected close.
-    try { linkSync(this.stagingPath, this.publishedPath); }
+    try {
+      beforePublish?.();
+      if (this.failed) { throw this.captureError(); }
+      linkSync(this.stagingPath, this.publishedPath);
+    }
     catch { this.failed = true; throw this.captureError(); }
   }
   private captureError(): Error {

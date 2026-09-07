@@ -6,6 +6,7 @@ import type { PlatformStartupCleanup } from "./startup-cleanup.js";
 export interface OssPlatformEvidence {
   readonly live: OssNativeEvidenceJournal;
   readonly postCall: OssPostCallEvidence;
+  abort(): void;
   close(): Promise<void>;
 }
 
@@ -30,16 +31,27 @@ export function createOssNativeEvidence(
   // the live writer. One coordinated callback prevents a premature post-call seal.
   let postCall: OssPostCallEvidence | undefined;
   let closing: Promise<void> | undefined;
+  let aborted = false;
+  const abort = (): void => { aborted = true; journal.abort(); };
   const close = (): Promise<void> => {
     closing ??= (async () => {
-      await journal.close();
-      postCall?.seal();
+      try {
+        await journal.close(() => {
+          if (aborted) { throw new Error("OSS native evidence aborted"); }
+          postCall?.seal();
+        });
+      } catch (error) { abort(); throw error; }
     })();
     return closing;
   };
-  cleanup.defer("OSS native evidence close", close);
+  cleanup.defer("OSS native evidence close", () => {
+    // Invalidate before the startup coordinator bounds descriptor cleanup. A
+    // timeout or another cleanup rejection cannot leave a publishable writer.
+    abort();
+    return close();
+  });
   postCall = new OssPostCallEvidence(directory, environment.OSS_STT_NATIVE_EVIDENCE_REVISION!);
-  return { live: journal, postCall, close };
+  return { live: journal, postCall, abort, close };
 }
 
 export function hasLiveTranscriptionConfiguration(

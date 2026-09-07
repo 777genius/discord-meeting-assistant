@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -20,19 +20,19 @@ function fixture() {
 }
 
 describe("OSS composition durable cleanup", () => {
-  it("waits for live close before sealing post-call evidence and completing startup cleanup", async () => {
-    const { directory, cleanup, evidence } = fixture();
+  it("waits for live close before sealing post-call evidence and completing close", async () => {
+    const { directory, evidence } = fixture();
     const originalClose = evidence.live.close.bind(evidence.live);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const started = vi.fn();
-    vi.spyOn(evidence.live, "close").mockImplementation(async () => {
+    vi.spyOn(evidence.live, "close").mockImplementation(async (beforePublish) => {
       started();
       await gate;
-      await originalClose();
+      await originalClose(beforePublish);
     });
     let completed = false;
-    const closing = cleanup.close().then(() => { completed = true; return null; });
+    const closing = evidence.close().then(() => { completed = true; return null; });
     try {
       await vi.waitFor(() => { expect(started).toHaveBeenCalledOnce(); });
       expect(completed).toBe(false);
@@ -52,22 +52,22 @@ describe("OSS composition durable cleanup", () => {
     try {
       await expect(cleanup.close()).rejects.toThrow("startup cleanup was incomplete");
       await expect(evidence.close()).rejects.toThrow("capture failed");
-      for (const name of ["live-native.jsonl", "post-call-native.jsonl"]) {
-        expect(readFileSync(join(directory, name), "utf8")).not.toContain("capture_seal");
-      }
+      expect(existsSync(join(directory, "live-native.jsonl"))).toBe(false);
+      expect(readFileSync(join(directory, "post-call-native.jsonl"), "utf8")).not.toContain("capture_seal");
     } finally { evidence.postCall.seal(); rmSync(directory, { recursive: true }); }
   });
 
-  it("keeps a post-call seal failure sticky after the live writer has closed", async () => {
+  it("keeps a post-call seal failure sticky before live publication", async () => {
     const { directory, cleanup, evidence } = fixture();
     const seal = vi.spyOn(evidence.postCall, "seal").mockImplementation(() => {
       throw new Error("post-call durable seal failed");
     });
     try {
-      await expect(evidence.close()).rejects.toThrow("post-call durable seal failed");
+      await expect(evidence.close()).rejects.toThrow("cannot qualify");
       await expect(cleanup.close()).rejects.toThrow("startup cleanup was incomplete");
-      await expect(evidence.close()).rejects.toThrow("post-call durable seal failed");
+      await expect(evidence.close()).rejects.toThrow("cannot qualify");
       expect(seal).toHaveBeenCalledOnce();
+      expect(existsSync(join(directory, "live-native.jsonl"))).toBe(false);
       expect(readFileSync(join(directory, "post-call-native.jsonl"), "utf8")).not.toContain("capture_seal");
     } finally {
       seal.mockRestore();
@@ -75,4 +75,14 @@ describe("OSS composition durable cleanup", () => {
       rmSync(directory, { recursive: true });
     }
   });
+});
+
+it("startup rollback cancels before close and cannot later qualify", async () => {
+  const { directory, cleanup, evidence } = fixture();
+  await expect(cleanup.close()).rejects.toThrow("startup cleanup was incomplete");
+  await expect(evidence.close()).rejects.toThrow("cannot qualify");
+  expect(existsSync(join(directory, "live-native.jsonl"))).toBe(false);
+  expect(readFileSync(join(directory, "post-call-native.jsonl"), "utf8")).not.toContain("capture_seal");
+  evidence.postCall.seal();
+  rmSync(directory, { recursive: true });
 });
