@@ -35,8 +35,8 @@ export async function assertInstalledTokenizer(installed: {
   expect(tokenizer.countTokens("word ".repeat(127))).toBe(129);
   expect(tokenizer.countBodyTokens("WORD ".repeat(70))).toBe(72);
   const title = `mkevidence1.${"A".repeat(43)}`;
-  expect(() => tokenizer.assertDocumentInput(title, "word ".repeat(70))).not.toThrow();
-  expect(() => tokenizer.assertDocumentInput(title, "word ".repeat(127)))
+  expect(() => { tokenizer.assertDocumentInput(title, "word ".repeat(70)); }).not.toThrow();
+  expect(() => { tokenizer.assertDocumentInput(title, "word ".repeat(127)); })
     .toThrow("historical document embedding input exceeds the qualified maximum");
 }
 
