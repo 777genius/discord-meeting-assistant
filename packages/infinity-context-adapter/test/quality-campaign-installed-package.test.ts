@@ -135,7 +135,7 @@ describe("packed production quality-campaign entrypoint", () => {
     });
     expect(mismatch.stderr).toBe("");
     expect(JSON.parse(mismatch.stdout)).toEqual(bindings.map(() => ({
-      citations: [], claims: [], rawRetrievalResponseSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      citations: [], claims: [], rawRetrievalResponseSha256: expect.stringMatching(/^[a-f0-9]{64}$/u) as unknown,
       reason: "evidence_rehydration_failed", retrievalCandidates: [expect.objectContaining({
         locatorId: fixture.selectedLocator })], selectedTurns: [], status: "failed",
     })));
@@ -167,7 +167,8 @@ describe("packed production quality-campaign entrypoint", () => {
     await expect(module.createProductionCanonicalExecutorFactory(fixture.canonicalExecution))
       .rejects.toThrow(/scope topology is invalid/u);
     await fixture.replaceTopologyProfile(ACTOR_KEY_PROFILE);
-    const topology = JSON.parse(await readFile(fixture.canonicalExecution.topologyPath, "utf8"));
+    const topology = JSON.parse(await readFile(fixture.canonicalExecution.topologyPath, "utf8")) as
+      { payload: Record<string, unknown> };
     topology.payload.actorKeyProfileId = "discord-infinity-actor-key.v1:wrong";
     await writeFile(fixture.canonicalExecution.topologyPath, canonicalJson(topology));
     await expect(module.createProductionCanonicalExecutorFactory({ ...fixture.canonicalExecution,
@@ -599,7 +600,8 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string,
     spendReservationSha256: sha256(spendDocuments[0]!) });
   return { async replaceTopologyProfile(actorKeyProfileId: string,
     schemaVersion = "meeting_knowledge.quality_scope_topology.v2") {
-    const document = JSON.parse(await readFile(topologyPath, "utf8"));
+    const document = JSON.parse(await readFile(topologyPath, "utf8")) as
+      { payload: Record<string, unknown> };
     await writeFile(topologyPath, canonicalJson(authorities["main-result"]!.signed({
       ...document.payload, actorKeyProfileId, schemaVersion })));
   }, answerExecutionBindingPath, answerPrompts: runtime.prompts, answerRequests: runtime.requests, canonicalExecution, childEnvironment, connectionsPath,
