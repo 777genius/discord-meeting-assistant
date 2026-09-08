@@ -209,7 +209,7 @@ describe("SubscriptionRuntimeExecutor execution profiles and output", () => {
 
   it.each([
     [knowledgeAnswerCanonicalRequest, knowledgeAnswerStructuredOutput, "default"],
-    [knowledgeCoverageCanonicalRequest, knowledgeCoverageStructuredOutput, undefined],
+    [knowledgeCoverageCanonicalRequest, knowledgeCoverageStructuredOutput, "default"],
   ] as const)(
     "executes and attests the dedicated knowledge purpose %#",
     executesDedicatedKnowledgePurpose,
@@ -296,9 +296,9 @@ async function executesDedicatedKnowledgePurpose(
 
   await expect(executor.execute(request)).resolves.toMatchObject({
     executionAttestation: {
-      model: "gpt-5.6-sol",
+      model: "gpt-5.6-terra",
       purpose: request.context.purpose,
-      reasoningEffort: "medium",
+      reasoningEffort: "low",
       ...(serviceTier === undefined ? {} : { serviceTier }),
     },
     status: "completed",
@@ -469,9 +469,9 @@ describe("SubscriptionRuntimeExecutor telemetry", () => {
                 totalTokens: 100 + outputTokens,
               },
             }),
-            ...(request.context.purpose === "discord_meeting.knowledge.answer.v1"
-              ? { serviceTier: "default" }
-              : {}),
+            ...(request.task.controls.serviceTier === undefined
+              ? {}
+              : { serviceTier: request.task.controls.serviceTier }),
           }),
         },
       }),
