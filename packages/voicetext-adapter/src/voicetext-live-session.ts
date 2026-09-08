@@ -142,12 +142,7 @@ export class LiveSession implements VoicetextLiveSession {
         this.ackWaiters.delete(sequence);
         this.timeline.restore(timelineCheckpoint);
         // Once binary delivery starts, a missing ACK cannot establish nonacceptance.
-        const failure = this.terminalError instanceof VoicetextAdapterError &&
-          (this.terminalError.code === "live_provider_terminal" ||
-            this.terminalError.code === "live_acceptance_unknown" ||
-            this.terminalError.gatewayCode === "PROVIDER_UNAVAILABLE") ? this.terminalError :
-          new VoicetextAdapterError("live_acceptance_unknown",
-            error instanceof Error ? error.message : "Voicetext live packet acknowledgement outcome is unknown", false, { cause: error });
+        const failure = this.classifyPacketFailure(error);
         this.terminalError = failure;
         this.closeAfterReceiveFailure(failure);
         throw failure;
@@ -155,6 +150,17 @@ export class LiveSession implements VoicetextLiveSession {
     } finally {
       this.sending = false;
     }
+  }
+
+  private classifyPacketFailure(error: unknown): VoicetextAdapterError {
+    // Read current receive-loop state without the pre-await control-flow narrowing.
+    const terminalError = this.terminalError;
+    return terminalError instanceof VoicetextAdapterError &&
+      (terminalError.code === "live_provider_terminal" ||
+        terminalError.code === "live_acceptance_unknown" ||
+        terminalError.gatewayCode === "PROVIDER_UNAVAILABLE") ? terminalError :
+      new VoicetextAdapterError("live_acceptance_unknown",
+        error instanceof Error ? error.message : "Voicetext live packet acknowledgement outcome is unknown", false, { cause: error });
   }
 
   public finalize(): Promise<void> {
