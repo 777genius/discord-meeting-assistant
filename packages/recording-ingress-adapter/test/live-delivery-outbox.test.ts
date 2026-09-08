@@ -390,14 +390,14 @@ it("rejects same-inode mutation while streaming recovery", async () => {
   expect(await pendingLivePackets(runtime, "r")).toHaveLength(2);
 });
 
-it("stores only exact identity and offset metadata in the real disposable database", async () => {
+it("stores only identity, offsets and bounded recovery ordering metadata in the real disposable database", async () => {
   const { runtime } = await fixture();
   await appendPendingLivePackets(runtime, [packet(0), packet(1)]);
   const path = join(runtime.spool.root, "live-delivery-cache-v1", "metadata.sqlite");
   const db = new DatabaseSync(path, { readOnly: true });
   try {
     expect(db.prepare("PRAGMA table_info(packets)").all().map((row) => row.name))
-      .toEqual(["generation", "packet", "offset", "length", "delivered"]);
+      .toEqual(["generation", "packet", "offset", "length", "delivered", "speaker", "time", "media", "sequence"]);
     expect(db.prepare("SELECT count(*) AS count FROM packets").get()?.count).toBe(2);
   } finally { db.close(); }
 });
