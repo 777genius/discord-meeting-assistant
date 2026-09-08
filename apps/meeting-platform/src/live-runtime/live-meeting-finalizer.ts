@@ -126,7 +126,7 @@ export class LiveMeetingFinalizer {
   }
 
   private async finish(state: ActiveLiveMeeting, endedAtMs: number): Promise<void> {
-    await state.transcription.finish();
+    await state.transcription.settle();
     state.transcriptionFenceClosed = true;
     await state.summary.settle();
     await state.farewell?.settle();

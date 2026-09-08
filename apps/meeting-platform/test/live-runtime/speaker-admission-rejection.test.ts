@@ -182,3 +182,54 @@ it.each([LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown])(
   const lease = await sessionAdmission.acquire(new AbortController().signal); expect(lease).not.toBeNull(); lease?.();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it.each([false, true].flatMap(retire => ["terminal", "unknown", "accepted"].map(outcome => ({ retire, outcome }))))(
+  "shutdown retains pending acceptance and late evidence: %j", async ({ retire, outcome }) => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const send = Promise.withResolvers<"accepted">();
+    const receipt = Promise.withResolvers<void>();
+    const sendPacket = vi.fn(() => send.promise);
+    const finalize = vi.fn(async () => {}); const terminate = vi.fn();
+    const openSession = vi.fn(async () => ({ sendPacket, finalize, terminate }));
+    const delivered = vi.fn(() => receipt.promise); const warn = vi.fn<typeof logger.warn>();
+    const packetAdmission = new GlobalPacketFlowControl(8); const sessionAdmission = new LiveSessionAdmission(1);
+    const registry = new SpeakerTranscriptionSessions({
+      clock: systemLiveRuntimeClock, timer: systemLiveRuntimeTimer, isMeetingFinishing: () => false,
+      logger: { ...logger, warn }, markLivePacketDelivered: delivered, maximumQueuedPackets: 8,
+      meetingId: "meeting", onTranscript: () => {}, packetAdmission, packetBackpressureTimeoutMs: 100,
+      packetInspector: { durationSamples48Khz: () => 960 }, sessionAdmission,
+      speakerIdleFinalizeMs: 1000, startedAtMs: 0, transcriber: { openSession },
+    });
+    const packet = { ...packets().packets[0]!, relativeTimeMs: 0 };
+    const recovery = retire ? registry.recover([packet]) : registry.accept({ ...packets(), packets: [packet] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sendPacket).toHaveBeenCalledTimes(1);
+    if (retire) { expect(registry.cancelRecovery()).toBe(true); }
+    registry.cancel();
+    await recovery;
+    await expect(registry.finish()).rejects.toBeInstanceOf(AggregateError);
+    await expect(registry.settle()).rejects.toBeInstanceOf(AggregateError);
+    expect(delivered).not.toHaveBeenCalled();
+    expect(warn.mock.calls.filter(call => call[1]?.errorCode === "LIVE_TRANSCRIPTION_ACCEPTANCE_UNKNOWN")).toHaveLength(1);
+    if (outcome === "accepted") { send.resolve("accepted"); }
+    else { send.reject(outcome === "terminal" ? new LiveTranscriptionTerminalFailure() : new LiveTranscriptionAcceptanceUnknown()); }
+    await vi.advanceTimersByTimeAsync(0);
+    if (outcome === "accepted") {
+      expect(delivered).toHaveBeenCalledTimes(1);
+      await expect(registry.settle()).rejects.toBeInstanceOf(AggregateError);
+      receipt.resolve(); await vi.advanceTimersByTimeAsync(0);
+    } else { expect(delivered).not.toHaveBeenCalled(); }
+    await expect(registry.finish()).rejects.toBeInstanceOf(AggregateError);
+    await expect(registry.settle()).resolves.toBeUndefined();
+    await expect(registry.settle()).resolves.toBeUndefined();
+    await registry.accept({ ...packets(), packets: [packet] });
+    await registry.recover([packet]);
+    expect(openSession).toHaveBeenCalledTimes(1);
+    expect(sendPacket).toHaveBeenCalledTimes(1);
+    expect(finalize).not.toHaveBeenCalled(); expect(terminate).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls.filter(call => call[1]?.errorCode === "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL")).toHaveLength(outcome === "terminal" ? 1 : 0);
+    expect(await packetAdmission.reserve(8, 100, new AbortController().signal)).toBe(true); packetAdmission.release(8);
+    const lease = await sessionAdmission.acquire(new AbortController().signal); expect(lease).not.toBeNull(); lease?.();
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);

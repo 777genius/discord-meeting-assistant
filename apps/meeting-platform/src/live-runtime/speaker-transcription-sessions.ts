@@ -41,6 +41,7 @@ export class SpeakerTranscriptionSessions {
   // Survives speaker deletion/disconnect; restart durability requires separate storage.
   private readonly lifecycleFences = new Map<string, AbortController>();
   private cancelled = false;
+  private readonly retiredSpeakers = new Set<SpeakerTranscriptionSession>();
   private readonly ledger = new LivePacketDeliveryLedger();
   private readonly speakers = new Map<string, SpeakerTranscriptionSession>();
 
@@ -70,6 +71,7 @@ export class SpeakerTranscriptionSessions {
     let cancelled = false;
     for (const [speakerId, speaker] of this.speakers) {
       if (speaker.cancelRecovery()) {
+        this.retiredSpeakers.add(speaker);
         this.speakers.delete(speakerId);
         cancelled = true;
       }
@@ -88,13 +90,18 @@ export class SpeakerTranscriptionSessions {
     }
   }
 
-  public async finish(): Promise<void> {
+  /** Settles local ownership without claiming successful live transcription. */
+  public settle(): Promise<void> { return this.finishSpeakers(true); }
+
+  public finish(): Promise<void> { return this.finishSpeakers(false); }
+
+  private async finishSpeakers(ownershipOnly: boolean): Promise<void> {
     const results = await Promise.allSettled(
-      [...this.speakers.values()].map((speaker) => speaker.finish()),
+      [...this.retiredSpeakers, ...this.speakers.values()].map((speaker) => ownershipOnly ? speaker.settle() : speaker.finish()),
     );
     const failures: unknown[] = results.flatMap((result) => result.status === "rejected" ? [result.reason as unknown] : []);
     // A cancelled recovery may have deleted the speaker while retaining its fence.
-    for (const fence of this.lifecycleFences.values()) {
+    for (const fence of ownershipOnly ? [] : this.lifecycleFences.values()) {
       const reason: unknown = fence.signal.reason;
       if ((reason instanceof LiveTranscriptionTerminalFailure || reason instanceof LiveTranscriptionAcceptanceUnknown) &&
           !failures.includes(reason)) { failures.push(reason); }

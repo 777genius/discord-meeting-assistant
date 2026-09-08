@@ -35,6 +35,9 @@ export class SpeakerTranscriptionSession {
   private admissionChain: Promise<void> = Promise.resolve();
   private admissionClosed = false;
   private finishing: Promise<void> | null = null;
+  private settling: Promise<void> | null = null;
+  private terminalFailure: LiveTranscriptionTerminalFailure | LiveTranscriptionAcceptanceUnknown | null = null;
+  private readonly reportedFailures = new Set<string>();
   private providerFinalization: Promise<void> | null = null;
   private deliveryBudgetMs = 0;
   private pendingReceipt = false;
@@ -128,8 +131,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private cancelDelivery(): void {
-    if (this.providerSendPending && !this.isAdmissionRejected()) {
-      this.providerSendPending = false;
+    if (this.providerSendPending) {
       this.latchFailure(new LiveTranscriptionAcceptanceUnknown());
     }
     this.admissionClosed = true; this.admissionCancellation.abort();
@@ -190,7 +192,10 @@ export class SpeakerTranscriptionSession {
   public finish(): Promise<void> {
     this.beginFinish();
     if (this.finishing === null) {
-      const finishing = this.finishAdmittedPackets().catch((error: unknown) => {
+      const finishing = this.settle().then(() => {
+        if (this.hasTerminalFence()) { throw this.terminalFailure ?? this.admissionRejection.signal.reason; }
+        return;
+      }).catch((error: unknown) => {
         // Retry settlement after a pending receipt completes; admission stays closed.
         if (this.finishing === finishing) { this.finishing = null; }
         throw error;
@@ -200,6 +205,16 @@ export class SpeakerTranscriptionSession {
     return this.finishing;
   }
 
+  /** Ownership barrier only: a fenced, terminated live path is not successful speech. */
+  public settle(): Promise<void> {
+    this.beginFinish();
+    this.settling ??= this.finishAdmittedPackets().catch((error: unknown) => {
+      this.settling = null;
+      throw error;
+    });
+    return this.settling;
+  }
+
   private async finishAdmittedPackets(): Promise<void> {
     await this.supervise(this.admissionChain, this.dependencies.packetBackpressureTimeoutMs);
     // Idle finalization owns its original provider timer, including while joined.
@@ -207,7 +222,7 @@ export class SpeakerTranscriptionSession {
     await this.supervise(this.chain, Math.max(this.deliveryBudgetMs, this.dependencies.packetBackpressureTimeoutMs), true);
     if (!this.isDeliveryCancelled()) { await this.finalize("Derived live speaker finalize failed"); }
     if (this.pendingReceipt) { throw new Error("Live packet durable receipt is still pending"); }
-    if (this.hasTerminalFence()) { throw this.admissionRejection.signal.reason; }
+    if (this.providerSendPending) { throw new LiveTranscriptionAcceptanceUnknown(); }
   }
 
   private supervise(work: Promise<void>, budgetMs: number, renewOnDelivery = false): Promise<void> {
@@ -310,7 +325,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private hasTerminalFence(): boolean {
-    return this.admissionRejection.signal.reason instanceof LiveTranscriptionTerminalFailure ||
+    return this.terminalFailure !== null || this.admissionRejection.signal.reason instanceof LiveTranscriptionTerminalFailure ||
       this.admissionRejection.signal.reason instanceof LiveTranscriptionAcceptanceUnknown;
   }
 
@@ -318,16 +333,18 @@ export class SpeakerTranscriptionSession {
     if (!(error instanceof LiveTranscriptionAdmissionRejected) &&
         !(error instanceof LiveTranscriptionTerminalFailure) &&
         !(error instanceof LiveTranscriptionAcceptanceUnknown)) { return false; }
-    if (!this.isAdmissionRejected()) {
-      // The registry owns this controller across deletion and late completions.
-      this.admissionRejection.abort(error);
-      const errorCode = error instanceof LiveTranscriptionAdmissionRejected
-        ? "LIVE_TRANSCRIPTION_ADMISSION_REJECTED"
-        : error instanceof LiveTranscriptionTerminalFailure
-          ? "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL" : "LIVE_TRANSCRIPTION_ACCEPTANCE_UNKNOWN";
-      this.dependencies.logger.warn("Derived live transcription degraded: lifecycle fenced", {
-        ...this.logFields(), errorCode,
-      });
+    if (error instanceof LiveTranscriptionTerminalFailure || error instanceof LiveTranscriptionAcceptanceUnknown) {
+      this.terminalFailure = error; this.finishing = null;
+    }
+    // Abort is immutable: retain and diagnose late evidence even after shutdown cancellation.
+    this.admissionRejection.abort(error);
+    const errorCode = error instanceof LiveTranscriptionAdmissionRejected
+      ? "LIVE_TRANSCRIPTION_ADMISSION_REJECTED"
+      : error instanceof LiveTranscriptionTerminalFailure
+        ? "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL" : "LIVE_TRANSCRIPTION_ACCEPTANCE_UNKNOWN";
+    if (!this.reportedFailures.has(errorCode)) {
+      this.reportedFailures.add(errorCode);
+      this.dependencies.logger.warn("Derived live transcription degraded: lifecycle fenced", { ...this.logFields(), errorCode });
     }
     return true;
   }
@@ -370,26 +387,19 @@ export class SpeakerTranscriptionSession {
   }
 
   private scheduleIdleFinalizationIfReady(): void {
-    if (
-      this.admissionClosed ||
-      this.packetFlow.queuedPacketCount !== 0 ||
-      !this.providerSession.isOpen ||
-      this.dependencies.isMeetingFinishing()
-    ) {
+    if (this.admissionClosed || this.packetFlow.queuedPacketCount !== 0 ||
+        !this.providerSession.isOpen || this.dependencies.isMeetingFinishing()) {
       return;
     }
     this.cancelIdleFinalization();
-    this.inactivityTimer = this.dependencies.timer.schedule(
-      this.dependencies.speakerIdleFinalizeMs,
-      () => {
-        this.inactivityTimer = null;
-        const finalize = async (): Promise<void> => {
-          if (this.shouldSkipIdleFinalization()) { return; }
-          await this.finalize("Derived live idle speaker finalize failed");
-        };
-        this.chain = this.chain.then(finalize, finalize);
-      },
-    );
+    this.inactivityTimer = this.dependencies.timer.schedule(this.dependencies.speakerIdleFinalizeMs, () => {
+      this.inactivityTimer = null;
+      const finalize = async (): Promise<void> => {
+        if (this.shouldSkipIdleFinalization()) { return; }
+        await this.finalize("Derived live idle speaker finalize failed");
+      };
+      this.chain = this.chain.then(finalize, finalize);
+    });
   }
 
   private shouldSkipIdleFinalization(): boolean {
@@ -404,23 +414,15 @@ export class SpeakerTranscriptionSession {
   private rememberRetryablePacket(packet: LiveVoicePacket, packetId: string): void {
     if (!this.dependencies.ledger.markRetryable(packetId)) { return; }
     this.dependencies.logger.warn("Derived live transcription packet exhausted bounded delivery retries", {
-      ...this.logFields(),
-      errorCode: "LIVE_PACKET_DELIVERY_RETRY_EXHAUSTED",
-      relativeTimeMs: packet.relativeTimeMs,
+      ...this.logFields(), errorCode: "LIVE_PACKET_DELIVERY_RETRY_EXHAUSTED", relativeTimeMs: packet.relativeTimeMs,
     });
   }
 
-  private noteDegradation(
-    errorCode:
-      | "LIVE_PACKET_ADMISSION_BACKLOG_FULL"
-      | "LIVE_PACKET_GLOBAL_BACKLOG_FULL"
-      | "LIVE_PACKET_BACKPRESSURE_TIMEOUT",
-  ): void {
+  private noteDegradation(errorCode: "LIVE_PACKET_ADMISSION_BACKLOG_FULL" | "LIVE_PACKET_GLOBAL_BACKLOG_FULL" | "LIVE_PACKET_BACKPRESSURE_TIMEOUT"): void {
     if (this.backpressureDegraded) { return; }
     this.backpressureDegraded = true;
     this.dependencies.logger.warn("Derived live transcription degraded after packet backpressure", {
-      ...this.logFields(),
-      errorCode,
+      ...this.logFields(), errorCode,
       maximumQueuedPacketsPerSpeaker: this.packetFlow.maximumQueuedPackets,
       maximumQueuedPacketsGlobally: this.dependencies.packetAdmission.maximumPackets,
       packetBackpressureTimeoutMs: this.dependencies.packetBackpressureTimeoutMs,
@@ -430,16 +432,12 @@ export class SpeakerTranscriptionSession {
   }
 
   private logAdmissionFailure(error: unknown): void {
-    this.dependencies.logger.warn("Derived live packet admission failed", {
-      ...this.logFields(), errorName: error instanceof Error ? error.name : "UnknownError",
-    });
+    this.dependencies.logger.warn("Derived live packet admission failed", { ...this.logFields(), errorName: error instanceof Error ? error.name : "UnknownError" });
   }
 
   private logPacketFailure(error: unknown): void {
     if (this.dependencies.isMeetingFinishing() || this.packetFlow.signal.aborted) { return; }
-    this.dependencies.logger.warn("Derived live transcription packet failed", {
-      ...this.logFields(), errorName: error instanceof Error ? error.name : "UnknownError",
-    });
+    this.dependencies.logger.warn("Derived live transcription packet failed", { ...this.logFields(), errorName: error instanceof Error ? error.name : "UnknownError" });
   }
 
   private logFields(): Readonly<Record<string, unknown>> { return { meetingId: this.dependencies.meetingId, speakerId: this.dependencies.speakerId }; }

@@ -232,7 +232,13 @@ it.each(["end", "disconnect", "shutdown", "restart"] as const)("%s cancels a sta
   await vi.advanceTimersByTimeAsync(30_000);
   expect(f.sends).toHaveLength(1);
   expect(f.acknowledgements).toEqual([livePacketIdentity(pending[0]!)]);
-  await expect(runtime.close()).rejects.toThrow();
+  if (control === "shutdown" || control === "restart") {
+    await expect(runtime.close()).rejects.toThrow();
+  } else {
+    await expect(runtime.close()).resolves.toBeUndefined();
+    expect(f.meetings.snapshot?.status).toBe("ended");
+    expect(f.durable.size).toBe(1024);
+  }
   if (control === "restart") {
     const restarted = f.makeRuntime();
     await restarted.acceptLifecycle(started());
@@ -330,7 +336,8 @@ it("reconnect retains an in-flight cancellation unresolved without replaying aud
   // A late positive ACK can settle the accepted packet but cannot clear the fence.
   expect(f.acknowledgements).toEqual([livePacketIdentity(pending[0]!)]);
   expect(f.durable.size).toBe(512);
-  await expect(runtime.close()).rejects.toThrow();
+  await expect(runtime.close()).resolves.toBeUndefined();
+  expect(f.meetings.snapshot?.status).toBe("ended");
 });
 
 it("bounds live admission during a stalled initialization and discards its late read after shutdown", async () => {
@@ -439,7 +446,8 @@ it.each([LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown])(
   expect(f.acknowledgements).toEqual([livePacketIdentity(pending[0]!)]);
   expect([...f.durable.keys()]).toEqual(pending.slice(1).map(livePacketIdentity));
   expect(f.meetings.finalizedTurns.map(turn => turn.text)).toEqual(["Accepted final"]);
-  await expect(runtime.close()).rejects.toThrow();
+  await expect(runtime.close()).resolves.toBeUndefined();
+  expect(f.meetings.snapshot?.status).toBe("ended");
 });
 
 it("receipt failure across reconnect never repeats an accepted provider send", async () => {
