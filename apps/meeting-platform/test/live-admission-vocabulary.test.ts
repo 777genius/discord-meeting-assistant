@@ -67,7 +67,7 @@ it.each(["open", "send", "finalize"] as const)("translates deployed two-field ga
       if (waiting === undefined) { frames.push(frame); }
       else { const resolve = waiting; waiting = undefined; resolve(frame); }
     };
-    const fail = () => enqueue({ type: "error", code, message: "synthetic" });
+    const fail = () => { enqueue({ type: "error", code, message: "synthetic" }); };
     const socket: import("@discord-meeting/voicetext-adapter").VoicetextWebSocketConnection = {
       sendText: async (raw) => {
         const message = JSON.parse(raw) as { type: string };

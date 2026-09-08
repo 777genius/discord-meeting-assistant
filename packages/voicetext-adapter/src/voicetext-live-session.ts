@@ -92,7 +92,7 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   public async sendPacket(packet: VoicetextLivePacket): Promise<"accepted" | "reused"> {
-    if (this.terminalError !== undefined) { throw this.terminalError; }
+    this.throwIfTerminalError();
     requireLiveSessionActive(this.state);
     validateVoicetextLiveIdentity(packet.packetId, "packetId");
     if (this.packetIds.has(packet.packetId)) {
@@ -110,7 +110,7 @@ export class LiveSession implements VoicetextLiveSession {
     this.sending = true;
     try {
       await Promise.resolve(); // Let queued receive failures settle before binary delivery.
-      if (this.terminalError !== undefined) { throw this.terminalError; }
+      this.throwIfTerminalError();
       requireLiveSessionActive(this.state);
       const sequence = this.nextSequence + 1;
       const waiter = createLiveSessionDeferred<void>();
@@ -203,10 +203,15 @@ export class LiveSession implements VoicetextLiveSession {
     }
   }
 
+  private throwIfTerminalError(): void {
+    // Read again after awaits without carrying stale property narrowing.
+    if (this.terminalError !== undefined) { throw asLiveSessionError(this.terminalError, "Voicetext live session receive failed"); }
+  }
+
   private async joinClosedReceive(): Promise<void> {
     // Only callers join the pump; receive failure cleanup must never await itself.
     await this.pump;
-    if (this.terminalError !== undefined) { throw this.terminalError; }
+    this.throwIfTerminalError();
   }
 
   private async finalizeOnce(): Promise<void> {
@@ -262,9 +267,7 @@ export class LiveSession implements VoicetextLiveSession {
       terminalFailure = error;
     }
     await this.closeTransport();
-    if (this.terminalError !== undefined) {
-      throw asLiveSessionError(this.terminalError, "Voicetext live session receive failed");
-    }
+    this.throwIfTerminalError();
     if (terminalFailure !== undefined) {
       throw asLiveSessionError(terminalFailure, "Voicetext live finalize validation failed");
     }

@@ -821,7 +821,7 @@ it.each(["awaiting-ack", "between-packets"].flatMap(phase => [
   await Promise.resolve();
   if (phase === "between-packets") { socket.acknowledge(1); await expect(sent).resolves.toBe("accepted"); }
   socket.enqueue({ type: "error", code, message: "synthetic provider failure" });
-  await vi.waitFor(() => expect(socket.terminated).toBe(true));
+  await vi.waitFor(() => { expect(socket.terminated).toBe(true); });
   const failure: unknown = await session.finalize().catch((error: unknown) => error);
   expect(failure).toMatchObject({ code: expected, gatewayCode: code, retryable: false });
   if (phase === "awaiting-ack") { expect(await outcome).toBe(failure); }
