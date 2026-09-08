@@ -74,6 +74,8 @@
 
 - [ADR-0073: Bounded signed legacy historical admission](0073-signed-legacy-historical-admission.md)
 
+- [ADR-0074: Align focused production and qualification retrieval budgets](0074-focused-retrieval-budget-alignment.md)
+
 ## Superseded
 
 - [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)

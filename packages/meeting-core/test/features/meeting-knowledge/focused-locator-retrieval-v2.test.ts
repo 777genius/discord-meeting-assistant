@@ -11,6 +11,18 @@ import { authority, authorization, expectPrepared, fixture, identitySkeletons, m
   providerBinding, providerCandidate } from "./focused-locator-retrieval-v2.fixture.test.js";
 
 describe("persisted focused locator Retrieval V2 request", () => {
+  it("prepares the default 2000 ms wire budget with unchanged candidate and evidence bounds",
+    async () => {
+      const { prepare } = fixture();
+      const request = await prepare.prepare({ currentMeetingId: "current",
+        question: "What was approved?", roomId: "room-1", scopeId: "scope-1" });
+      expectPrepared(request);
+      expect(request.schemaVersion).toBe(2);
+      expect(request.budgets).toEqual({ candidateLimit: 100, deadlineMs: 2_000,
+        evidenceByteLimit: 16_000, neighborRadius: 0, responseByteLimit: 16_384,
+        resultLimit: 10 });
+    });
+
   it("distinguishes a proven room with no historical index from runtime failure",
     async () => {
       await expect(new PrepareFocusedLocatorRetrievalV2Request({
