@@ -49,8 +49,7 @@ vi.mock("node:fs/promises", async (original) => {
           if (typeof writeArgs[0] !== "string") { throw new Error("expected textual delivery receipt"); }
           for (const line of writeArgs[0].trimEnd().split("\n")) {
             const row = JSON.parse(line) as { type: string; completion?: SttCompletion };
-            if (row.type === "stt-outcome" && row.completion?.outcome === "accepted" &&
-                row.completion.operation.kind === "send") { pendingRows.push(row.completion.operation.packetId); }
+            if (row.type === "stt-outcome" && row.completion?.outcome === "accepted") { pendingRows.push(row.completion.operation.packetId); }
           }
         };
         handle.read = new Proxy(handle.read.bind(handle), {
@@ -188,6 +187,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
   const receiptArrivals = arrivals(waits);
   const completions = arrivals(waits);
   const packetSends = arrivals(waits);
+  const sendAttempts = arrivals(waits);
   Object.assign(io, { holdJournal: true, holdReceipt: false, journal: [], receipts: [],
     syncs: 0, reads: 0, durableRows: [],
     journalArrived: () => { journalArrivals.arrive(); },
@@ -254,10 +254,16 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
       // Observe real production completions; accepted outcomes are the delivery receipts.
       liveSttDurability: {
         ...durability,
+        beginSend: (session, packetId) => {
+          const operation = durability.beginSend(session, packetId);
+          sendAttempts.arrive();
+          waits.observe(operation);
+          return operation;
+        },
         complete: (completion) => {
           const operation = (async () => {
             await durability.complete(completion);
-            if (completion.outcome === "accepted" && completion.operation.kind === "send") {
+            if (completion.outcome === "accepted") {
               const id = completion.operation.packetId;
               delivered.push(id);
               bySpeaker.get(id.split(":")[1]!)!.delivered++;
@@ -295,6 +301,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
         }
       }
       if (time < tailStart) { await completions.wait(admitted); }
+      if (time === tailStart) { await packetSends.wait(admitted); }
       for (const state of progress) {
         const queued = state.cursor - state.delivered;
         expect(queued).toBeLessThanOrEqual(512);
@@ -340,12 +347,19 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
         } finally { io.afterReceiptSync = async () => {}; postSync.resolve(); }
       }
       await completions.wait(3332 + index);
-      // Receipt completion wakes the test before the speaker chain starts its
-      // next send. Wait for that send before advancing another 10ms: otherwise
-      // both speakers can start at the later clock tick and then require a
-      // pacing timer while the test is waiting for a receipt. The last two
-      // receipts have no following packet. Keep exactly 400 held 10ms receipts.
-      await packetSends.wait(Math.min(3334 + index, 3731));
+      // Observe the next attempt after source pacing, before advancing time.
+      // Its real intent queues behind the other speaker's held outcome in the
+      // shared journal. Waiting for Gateway.sendBinary here deadlocks: that
+      // intent cannot fsync until the next receipt slot releases the outcome.
+      // beginSend entry fixes the pacing timestamp without awaiting that lock;
+      // the real grant still precedes provider send. The last two receipts
+      // have no following packet. Keep exactly 400 held 10ms receipts.
+      await sendAttempts.wait(Math.min(3334 + index, 3731));
+      if (index === 0) {
+        await receiptArrivals.wait(2);
+        expect(io.receipts).toHaveLength(1);
+        expect(sockets.reduce((total, socket) => total + socket.sent, 0)).toBe(3333);
+      }
       io.journal.splice(0).forEach((release) => { release(); });
     }
     await waits.wait(finish.then(() => void 0));
