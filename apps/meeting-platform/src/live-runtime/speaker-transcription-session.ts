@@ -107,12 +107,9 @@ export class SpeakerTranscriptionSession {
 
   /** Single-packet batches preserve order even across delivery failure/restart. */
   public recover(packets: readonly LiveVoicePacket[]): Promise<void> {
-    if (this.recovery !== null) { return this.recovery; }
-    const recovery = this.drainRecovery(packets).finally(() => {
-      if (this.recovery === recovery) { this.recovery = null; }
+    return this.recovery ??= this.drainRecovery(packets).finally(() => {
+      this.recovery = null;
     });
-    this.recovery = recovery;
-    return recovery;
   }
 
   public cancelRecovery(): boolean {
@@ -381,8 +378,7 @@ export class SpeakerTranscriptionSession {
     }
   }
 
-  private isSuppressed(packet: LiveVoicePacket, packetId?: string): boolean {
-    const identity = packetId ?? livePacketIdentity(packet);
+  private isSuppressed(packet: LiveVoicePacket, identity = livePacketIdentity(packet)): boolean {
     if (this.dependencies.ledger.isDelivered(identity)) { return true; }
     if (this.dependencies.ledger.isRetryable(identity)) { return false; }
     if (this.lastRelativeTimeMs === null || packet.relativeTimeMs >= this.lastRelativeTimeMs) { return false; }
@@ -398,10 +394,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private scheduleIdleFinalizationIfReady(): void {
-    if (this.admissionClosed || this.packetFlow.queuedPacketCount !== 0 || this.packetFlow.pendingAdmissionPacketCount !== 0 ||
-        !this.providerSession.isOpen || this.dependencies.isMeetingFinishing()) {
-      return;
-    }
+    if (this.admissionClosed || this.shouldSkipIdleFinalization()) { return; }
     this.cancelIdleFinalization();
     this.inactivityTimer = this.dependencies.timer.schedule(this.dependencies.speakerIdleFinalizeMs, () => {
       this.inactivityTimer = null;
