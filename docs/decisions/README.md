@@ -72,6 +72,8 @@
 
 - [ADR-0072: Diagnostic index readiness before question reservation](0072-diagnostic-index-readiness.md)
 
+- [ADR-0073: Bounded signed legacy historical admission](0073-signed-legacy-historical-admission.md)
+
 ## Superseded
 
 - [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)

@@ -336,6 +336,11 @@
       "id": "ADR-0072",
       "path": "docs/decisions/0072-diagnostic-index-readiness.md",
       "immutableDigest": "sha256:c5fab835107ebfa49cc55f4f455f39ca2c42b39ac92a7b5becbc8d1d9e1bd249"
+    },
+    {
+      "id": "ADR-0073",
+      "path": "docs/decisions/0073-signed-legacy-historical-admission.md",
+      "immutableDigest": "sha256:3d4560f9027f8db2a45f87e7436b639e556030a26927b03c29d1a469878f598e"
     }
   ]
 }

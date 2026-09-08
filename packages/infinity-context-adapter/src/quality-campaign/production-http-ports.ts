@@ -4,7 +4,7 @@ import { digest, exactRecord, safeId } from "./canonical.js";
 import { assertAttemptIdentity, attemptIdentity, type AttemptIdentity,
   type ProviderExchangePort } from "./execution.js";
 import { createLocalEvidenceCustody } from "./production-evidence-custody.js";
-import { createProductionCanonicalExecutorFactory,
+import { createProductionCanonicalExecutorFactory, validateLegacyHistoricalPublicTrust,
   type ProductionCanonicalExecutionConnectionConfiguration } from
   "./production-canonical-executor-factory.js";
 import { createProductionLocalCanonicalEvidenceReader } from
@@ -267,7 +267,9 @@ function decodeCanonicalExecutionConfiguration(value:
     "infinityCapabilityPath", "infinityTokenPath", "postgresUrlPath", "requestTimeoutMs",
     "retrievalJournalRoot", "runtimeAddress", "runtimeTokenPath", "topologyAuthority",
     "topologyKeyPath", "topologyPath"];
+  if (value.legacyHistoricalPublicTrust !== undefined) { keys.push("legacyHistoricalPublicTrust"); }
   const record = exactRecord(value, keys, "canonical execution connection configuration");
+  validateLegacyHistoricalPublicTrust(value.legacyHistoricalPublicTrust);
   const topologyAuthority = exactRecord(record.topologyAuthority, ["keyId", "publicKeyPath"],
     "scope topology authority");
   absolute(String(topologyAuthority.publicKeyPath));

@@ -226,6 +226,7 @@ export class PostgresSchemaReadiness implements PostgresSchemaReadinessPort {
 
   private async assertTriggers(): Promise<void> {
     const missing = await findMissingPostgresTriggers(this.pool, [
+      "meeting_core.legacy_historical_admissions.legacy_historical_admissions_immutable",
       "meeting_core.post_call_outbox.post_call_outbox_transcription_execution_binding_is_immutable",
       "meeting_knowledge.question_jobs.question_jobs_binding_is_immutable",
     ]);
