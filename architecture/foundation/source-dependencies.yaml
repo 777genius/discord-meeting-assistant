@@ -109,6 +109,8 @@ boundaries:
       packages: []
       builtins: []
       runtimeReferences: []
+  # ADR-0073: domain/legacy-historical-admission.ts and its consumer-owned ports
+  # remain in the closed Meeting Knowledge feature root.
   - id: core.meeting.knowledge
     roots:
       - packages/meeting-core/src/features/meeting-knowledge
@@ -226,6 +228,8 @@ boundaries:
       builtins:
         - node:crypto
       runtimeReferences: []
+  # ADR-0073: postgres-legacy-historical-{admission,verifier}.ts and
+  # postgres-accepted-historical-meeting.ts implement Knowledge ports here.
   - id: adapters.postgres
     roots:
       - packages/postgres-adapter/src

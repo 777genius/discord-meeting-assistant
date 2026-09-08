@@ -72,6 +72,8 @@
 
 - [ADR-0072: Diagnostic index readiness before question reservation](0072-diagnostic-index-readiness.md)
 
+- [ADR-0073: Bounded signed legacy historical admission](0073-signed-legacy-historical-admission.md)
+
 - [ADR-0074: Align focused production and qualification retrieval budgets](0074-focused-retrieval-budget-alignment.md)
 
 ## Superseded

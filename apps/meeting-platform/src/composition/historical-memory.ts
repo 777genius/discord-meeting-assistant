@@ -8,6 +8,7 @@ import {
   type InfinityContextProductionQualificationPolicyV1,
 } from "@discord-meeting/infinity-context-adapter";
 import {
+  type LegacyHistoricalReceiptVerifierPort,
   DEFAULT_HISTORICAL_SYNC_POLICY,
   DeterministicCoverageReducer, ExhaustiveCoverage,
   type HistoricalFocusedLocatorRetrievalV2,
@@ -163,6 +164,7 @@ function qualifyPlanningProfile(
 }
 
 interface PlatformHistoricalMemoryInput {
+  readonly legacyVerifier?: LegacyHistoricalReceiptVerifierPort;
   readonly config: PlatformConfig;
   readonly logger: Logger;
   readonly pool: Pool;
@@ -209,7 +211,7 @@ function createPlatformExhaustiveCoverage(
     },
   );
   return new ExhaustiveCoverage({
-    authority: new PostgresHistoricalEvidenceAuthority(factory.input.pool),
+    authority: new PostgresHistoricalEvidenceAuthority(factory.input.pool, undefined, factory.input.legacyVerifier),
     authorization: factory.authorization,
     checkpoints: factory.checkpoints,
     extractor: extraction,
@@ -267,6 +269,7 @@ export function createPlatformHistoricalMemory(
     input.config, input.pool, token, historicalIds, {
       actorKeysForSpeaker: (speakerId) => actorKeys.actorKeysForFilter(speakerId),
       actorReferences, identitySkeletons, servingAuthorized, speakerAliases,
+      ...(input.legacyVerifier === undefined ? {} : { legacyVerifier: input.legacyVerifier }),
     },
   );
   const memory = new InfinityContextHistoricalMemoryAdapter({
@@ -284,7 +287,7 @@ export function createPlatformHistoricalMemory(
   const profileMaintenance = input.profileMaintenance ?? store;
   const checkpoints = new PostgresExhaustiveCoverageStore(input.pool);
   const worker = new HistoricalSyncWorker({
-    authority: new PostgresHistoricalEvidenceAuthority(input.pool),
+    authority: new PostgresHistoricalEvidenceAuthority(input.pool, undefined, input.legacyVerifier),
     ids: historicalIds,
     indexProfileId: configuredHistoricalIndexProfileId(
       config.activation,

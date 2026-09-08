@@ -4,7 +4,8 @@ import { PrepareFocusedLocatorRetrievalV2Request,
   type FocusedLocatorRetrievalV2ProviderBinding } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
-  PostgresHistoricalRoomAuthoritySnapshot } from "@discord-meeting/postgres-adapter";
+  PostgresHistoricalRoomAuthoritySnapshot, PinnedLegacyHistoricalReceiptVerifier,
+  type LegacyHistoricalPublicTrustV1 } from "@discord-meeting/postgres-adapter";
 import { createGrpcQualifiedGroundedAnswerAdapter, GrpcSubscriptionRuntimeTransport,
   subscriptionRuntimeCliEngine, type KnowledgeAnswerQualificationExecutionBinding } from
   "@discord-meeting/subscription-runtime-adapter";
@@ -27,6 +28,7 @@ import { readCanonicalQualityCampaignJson, readQualityCampaignBytes,
   readQualityCampaignText } from "./production-execution-corpus-custody.js";
 
 export interface ProductionCanonicalExecutionConnectionConfiguration {
+  readonly legacyHistoricalPublicTrust?: readonly LegacyHistoricalPublicTrustV1[];
   readonly answerExecutionBindingPath: string;
   readonly answerJournalRoot: string;
   readonly artifactKeyId: string;
@@ -57,6 +59,9 @@ export async function createProductionCanonicalExecutorFactory(
   config: ProductionCanonicalExecutionConnectionConfiguration,
 ): Promise<QualificationQuestionExecutorFactoryPort> {
   validateConfiguration(config);
+  validateLegacyHistoricalPublicTrust(config.legacyHistoricalPublicTrust);
+  const legacyVerifier = config.legacyHistoricalPublicTrust === undefined ? undefined
+    : new PinnedLegacyHistoricalReceiptVerifier(config.legacyHistoricalPublicTrust);
   const [artifactKeyText, capabilityValue, executionBindingValue, infinityToken,
     postgresUrl, runtimeToken, topologyKey, topologyValue, topologyPublicKeyPem] =
     await Promise.all([
@@ -89,10 +94,10 @@ export async function createProductionCanonicalExecutorFactory(
   const pool = new Pool({ connectionString: postgresUrl.trim(), connectionTimeoutMillis: 5_000,
     max: 32 });
   const store = new PostgresHistoricalMemoryStore(pool);
-  const evidenceAuthority = new PostgresHistoricalEvidenceAuthority(pool);
+  const evidenceAuthority = new PostgresHistoricalEvidenceAuthority(pool, undefined, legacyVerifier);
   const ids = new HmacHistoricalOpaqueIds(topologyKey);
   const preparer = new PrepareFocusedLocatorRetrievalV2Request({ ids, providerBinding,
-    snapshot: new PostgresHistoricalRoomAuthoritySnapshot(pool) });
+    snapshot: new PostgresHistoricalRoomAuthoritySnapshot(pool, undefined, legacyVerifier) });
   const transport = new GrpcSubscriptionRuntimeTransport({ address: config.runtimeAddress,
     serviceToken: runtimeToken.trim() });
   const topologyPort = topologyResolver(topology);
@@ -283,4 +288,14 @@ async function readJson(path: string, label: string): Promise<unknown> {
 function absolute(path: string, label: string): string {
   if (!isAbsolute(path) || path.includes("\0")) {throw new Error(`${label} must be absolute`);}
   return resolve(path);
+}
+
+export function validateLegacyHistoricalPublicTrust(trust: readonly LegacyHistoricalPublicTrustV1[] | undefined): void {
+  if (trust === undefined) { return; }
+  if (!Array.isArray(trust)) { throw new Error("legacy public trust must be an array"); }
+  for (const candidate of trust) {
+    const entry = exactRecord(candidate, ["policyId", "signerId", "publicKeyPem"], "legacy public trust entry");
+    safeId(entry.policyId, "legacy policy"); safeId(entry.signerId, "legacy signer");
+    if (typeof entry.publicKeyPem !== "string") { throw new Error("legacy public key must be PEM text"); }
+  }
 }

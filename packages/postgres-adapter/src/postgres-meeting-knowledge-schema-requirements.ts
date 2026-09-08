@@ -1,4 +1,5 @@
 export const meetingKnowledgeRequiredRelations = [
+  "meeting_core.legacy_historical_admissions",
   "meeting_core.answer_effects",
   "meeting_core.answer_effect_reconciliation_quarantine",
   "meeting_core.conversation_one_shot_receipts",
@@ -31,6 +32,13 @@ export const meetingKnowledgeRequiredIndexes = [
 ] as const;
 
 export const meetingKnowledgeRequiredColumns = [
+  "meeting_core.legacy_historical_admissions.release_id", "meeting_core.legacy_historical_admissions.meeting_id",
+  "meeting_core.legacy_historical_admissions.receipt_json",
+  "meeting_core.legacy_historical_admissions.snapshot_sha256", "meeting_core.legacy_historical_admissions.transcript_sha256",
+  "meeting_core.legacy_historical_admissions.saved_source_sha256", "meeting_core.legacy_historical_admissions.identity_evidence_sha256",
+  "meeting_core.legacy_historical_admissions.scope_room_evidence_sha256",
+  "meeting_core.legacy_historical_admissions.duration_evidence_sha256",
+
   "meeting_core.historical_memory_sync.applied_index_profile_id",
   "meeting_core.historical_memory_sync.profile_rebuild_requested",
   "meeting_core.answer_effects.effect_id",
@@ -167,6 +175,7 @@ export const meetingKnowledgeRequiredColumns = [
 ] as const;
 
 export const meetingKnowledgeRequiredCheckConstraints = [
+  ["meeting_core", "legacy_historical_admissions", "legacy_historical_receipt_binding"],
   ["meeting_core", "historical_memory_sync", "historical_memory_sync_applied_profile_is_present"],
   ["meeting_core", "historical_memory_sync", "historical_memory_sync_applied_profile_is_bounded"],
   ["meeting_core", "answer_effects", "answer_effects_state_is_supported"],
@@ -290,6 +299,7 @@ export const meetingKnowledgeRequiredCheckConstraints = [
 ] as const;
 
 export const meetingKnowledgeRequiredStructuralConstraints = [
+  ["meeting_core", "legacy_historical_admissions", "legacy_historical_admissions_pkey", "p"],
   ["meeting_core", "answer_effects", "answer_effects_pkey", "p"],
   [
     "meeting_core",

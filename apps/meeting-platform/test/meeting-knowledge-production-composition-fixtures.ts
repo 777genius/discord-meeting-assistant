@@ -6,7 +6,7 @@ import {
   type DisposableInfinityHttpService,
 } from "@discord-meeting/infinity-context-adapter/test-support";
 import { GroundedMeetingAnswer, type GroundingSafetyLimits,
-  type HistoricalAuthorizationPort } from
+  type HistoricalAuthorizationPort, type LegacyHistoricalReceiptVerifierPort } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   EvidenceBackedSummary,
@@ -111,6 +111,7 @@ export function requiredHistoricalRuntime(
   searchEnabled: boolean,
   environment: "production" | "test" = "test",
   options: {
+    readonly legacyVerifier?: LegacyHistoricalReceiptVerifierPort;
     readonly embeddingProfileAttestation?: NonNullable<
       PlatformConfig["infinityContext"]
     >["activation"]["embeddingProfileAttestation"];
@@ -146,6 +147,7 @@ export function requiredHistoricalRuntime(
       ? baseConfig
       : { ...baseConfig, participantGreetingProfiles: options.participantGreetingProfiles },
     logger: silentLogger,
+    ...(options.legacyVerifier === undefined ? {} : { legacyVerifier: options.legacyVerifier }),
     pool,
     profileMaintenance: {
       enqueueAppliedProfileRebuilds: async () => ({ enqueued: 0, remaining: false }),

@@ -119,7 +119,9 @@ and nullable producer provenance. Craig v3 carries its immutable capability,
 source revision, actor-semantics version, observation state, and terminal roster
 seal through the durable spool and authoritative finalization. Lifecycle alone
 canonicalizes those observations. Meeting Knowledge admits final and historical
-evidence only from supported, consistent, sealed v3 provenance. During an active
+evidence from supported, consistent, sealed v3 provenance. ADR-0073 adds a
+separate signed legacy historical admission, bound to the exact current snapshot
+and independently pinned public trust; it never synthesizes lifecycle provenance. During an active
 meeting, the same trusted capability may admit an unsealed roster solely to the
 transient generation-fenced hot tail; it can never create a historical or
 Infinity intent. Capability-less v2, v1, old

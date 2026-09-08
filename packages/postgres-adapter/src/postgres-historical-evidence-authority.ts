@@ -1,5 +1,5 @@
 import {
-  admitAcceptedFinalMeeting,
+  type LegacyHistoricalReceiptVerifierPort,
   validateHistoricalReleaseBinding,
   type AcceptedFinalMeetingV1,
   type HistoricalEvidenceAuthority,
@@ -23,12 +23,20 @@ import {
 import { historicalAppliedFromRow, historicalSyncRowProjection,
   type HistoricalSyncRow } from "./postgres-historical-memory-row.js";
 
+import { resolveAcceptedHistoricalMeeting } from "./postgres-accepted-historical-meeting.js";
+
 interface MeetingRow {
+  readonly legacy_receipt?: unknown;
+  readonly legacy_current?: boolean;
+  readonly withdrawn?: boolean;
   readonly revision: number;
   readonly snapshot: unknown;
 }
 
 interface SnapshotRow extends HistoricalSyncRow {
+  readonly legacy_receipt?: unknown;
+  readonly legacy_current?: boolean;
+  readonly withdrawn?: boolean;
   readonly meeting_revision: number | null;
   readonly meeting_snapshot: unknown;
 }
@@ -47,6 +55,7 @@ export class PostgresHistoricalEvidenceAuthority implements HistoricalEvidenceAu
   public constructor(
     private readonly pool: Pool,
     private readonly cancellation?: HistoricalPostgresCancellationPort,
+    private readonly legacyVerifier?: LegacyHistoricalReceiptVerifierPort,
   ) {
     constructedHistoricalEvidenceAuthorities.add(this);
     Object.freeze(this);
@@ -59,14 +68,23 @@ export class PostgresHistoricalEvidenceAuthority implements HistoricalEvidenceAu
     const binding = validateHistoricalReleaseBinding(candidate);
     const result = await queryHistoricalPostgres<MeetingRow>(this.pool, {
       text: `
-        SELECT revision::float8 AS revision, snapshot
+        SELECT revision::float8 AS revision, snapshot,
+          (SELECT receipt_json::jsonb FROM meeting_core.legacy_historical_admissions
+           WHERE release_id = $2 AND meeting_id = $1) AS legacy_receipt,
+          EXISTS (SELECT 1 FROM meeting_core.historical_memory_sync
+            WHERE release_id = $2 AND meeting_id = $1 AND is_current
+              AND operation = 'index' AND state <> 'deleted'
+              AND desired_generation = $3 AND accepted_meeting_revision = $4) AS legacy_current,
+          EXISTS (SELECT 1 FROM meeting_knowledge.withdrawn_meeting_sources
+            WHERE meeting_id = $1) AS withdrawn
         FROM meeting_core.meetings
         WHERE meeting_id = $1
       `,
-      values: [binding.meetingId],
+      values: [binding.meetingId, binding.releaseId, binding.desiredGeneration, binding.acceptedMeetingRevision],
     }, options.signal, this.cancellation);
     const row = result.rows[0];
-    if (row === undefined) {
+    if (row === undefined || row.withdrawn === true ||
+      (row.legacy_receipt !== undefined && row.legacy_receipt !== null && row.legacy_current !== true)) {
       return null;
     }
     let snapshot: MeetingSnapshot;
@@ -81,20 +99,9 @@ export class PostgresHistoricalEvidenceAuthority implements HistoricalEvidenceAu
     if (snapshot.transcriptionStage.status !== "succeeded") {
       return null;
     }
-    return admitAcceptedFinalMeeting({
-      actors: snapshot.actors,
-      authoritativeDurationMs:
-        snapshot.recording.authoritativeDurationMs ?? null,
-      binding,
-      identityProvenance: snapshot.identityProvenance,
-      lifecycleGeneration: snapshot.lifecycleGeneration,
-      meetingRevision: snapshot.revision,
-      roomId: snapshot.source?.roomId ?? null,
-      scopeId: snapshot.source?.scopeId ?? null,
-      transcriptId: snapshot.transcript?.transcriptId ?? null,
-      transcriptVersion: snapshot.transcript?.version ?? null,
-      turns: snapshot.transcript?.turns ?? null,
-    });
+    return resolveAcceptedHistoricalMeeting({ binding, revision: row.revision,
+      snapshot: row.snapshot, receipt: row.legacy_receipt,
+      ...(this.legacyVerifier === undefined ? {} : { verifier: this.legacyVerifier }) });
   }
 }
 
@@ -103,6 +110,7 @@ implements HistoricalRoomAuthoritySnapshotPort {
   public constructor(
     private readonly pool: Pool,
     private readonly cancellation?: HistoricalPostgresCancellationPort,
+    private readonly legacyVerifier?: LegacyHistoricalReceiptVerifierPort,
   ) {}
 
   public async loadRoomAuthoritySnapshot(
@@ -128,7 +136,10 @@ implements HistoricalRoomAuthoritySnapshotPort {
             const page = await client.query<SnapshotRow>(
               `SELECT historical.*,
                       meeting.revision::float8 AS meeting_revision,
-                      meeting.snapshot AS meeting_snapshot
+                      meeting.snapshot AS meeting_snapshot,
+                      admission.receipt_json::jsonb AS legacy_receipt,
+                      EXISTS (SELECT 1 FROM meeting_knowledge.withdrawn_meeting_sources
+                        WHERE meeting_id = historical.meeting_id) AS withdrawn
                FROM (
                  SELECT ${historicalSyncRowProjection}
                  FROM meeting_core.historical_memory_sync
@@ -141,6 +152,10 @@ implements HistoricalRoomAuthoritySnapshotPort {
                ) AS historical
                LEFT JOIN meeting_core.meetings AS meeting
                  ON meeting.meeting_id = historical.meeting_id
+               LEFT JOIN meeting_core.legacy_historical_admissions AS admission
+                 ON admission.release_id = historical.release_id
+                   AND admission.meeting_id = historical.meeting_id
+
                ORDER BY historical.release_id`,
               [input.scopeId, input.roomId, cursor, input.pageSize],
             );
@@ -174,7 +189,7 @@ implements HistoricalRoomAuthoritySnapshotPort {
             entries: Object.freeze(rows.map((row) => {
               const applied = historicalAppliedFromRow(row);
               return Object.freeze({ ...applied,
-                acceptedMeeting: acceptedMeetingFromSnapshotRow(row, applied.binding) });
+                acceptedMeeting: acceptedMeetingFromSnapshotRow(row, applied.binding, this.legacyVerifier) });
             })),
             schemaVersion: 1 as const,
             status: "current" as const,
@@ -193,25 +208,10 @@ implements HistoricalRoomAuthoritySnapshotPort {
 function acceptedMeetingFromSnapshotRow(
   row: SnapshotRow,
   binding: HistoricalReleaseBindingV1,
+  verifier?: LegacyHistoricalReceiptVerifierPort,
 ): AcceptedFinalMeetingV1 | null {
-  if (row.meeting_snapshot === null || row.meeting_revision === null) {return null;}
-  try {
-    const snapshot = Meeting.restore(row.meeting_snapshot as MeetingSnapshot).toSnapshot();
-    if (snapshot.revision !== row.meeting_revision ||
-      snapshot.meetingId !== binding.meetingId ||
-      snapshot.transcriptionStage.status !== "succeeded") {return null;}
-    return admitAcceptedFinalMeeting({
-      actors: snapshot.actors,
-      authoritativeDurationMs: snapshot.recording.authoritativeDurationMs ?? null,
-      binding,
-      identityProvenance: snapshot.identityProvenance,
-      lifecycleGeneration: snapshot.lifecycleGeneration,
-      meetingRevision: snapshot.revision,
-      roomId: snapshot.source?.roomId ?? null,
-      scopeId: snapshot.source?.scopeId ?? null,
-      transcriptId: snapshot.transcript?.transcriptId ?? null,
-      transcriptVersion: snapshot.transcript?.version ?? null,
-      turns: snapshot.transcript?.turns ?? null,
-    });
-  } catch {return null;}
+  if (row.withdrawn === true || row.meeting_snapshot === null || row.meeting_revision === null) { return null; }
+  return resolveAcceptedHistoricalMeeting({ binding, revision: row.meeting_revision,
+    snapshot: row.meeting_snapshot, receipt: row.legacy_receipt,
+    ...(verifier === undefined ? {} : { verifier }) });
 }

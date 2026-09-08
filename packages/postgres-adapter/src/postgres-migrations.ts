@@ -70,6 +70,7 @@ const migrationDefinitions = [
     transactional: false,
   },
   { fileName: "0043_validate_question_reconciliation_quarantine.sql" },
+  { fileName: "0044_legacy_historical_admissions.sql" },
 ] as const;
 
 const migrationLockKey = "718330091620232601";

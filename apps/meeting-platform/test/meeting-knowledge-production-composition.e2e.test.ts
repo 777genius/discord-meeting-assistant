@@ -70,6 +70,8 @@ import { assertDirectMixedEvidence, assertFinalReplyMixedEvidence,
 import { assertRetrievalRequestPrivacy, proveActorScopedRetrievalRequest } from
   "./meeting-knowledge-production-composition-privacy.js";
 
+import { proveLegacyHistoricalComposition } from "./legacy-historical-composition-fixture.js";
+
 const postgresImage =
   "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const postgresPort = 5_432;
@@ -94,8 +96,7 @@ const unicodePrivacyProfiles = Object.freeze({
   }),
 });
 
-describe("Meeting Knowledge V2 production composition", () => {
-  beforeAll(async () => {
+async function initializeProductionCompositionDatabase(): Promise<void> {
     if (externalPostgresUrl === undefined) {
       container = await new GenericContainer(postgresImage)
         .withEnvironment({
@@ -121,13 +122,17 @@ describe("Meeting Knowledge V2 production composition", () => {
     }
     await database.query("SELECT 1");
     await new PostgresMigrationRunner(database).migrate();
-  }, 150_000);
+}
+
+describe("Meeting Knowledge V2 production composition", () => {
+  beforeAll(initializeProductionCompositionDatabase, 150_000);
 
   afterAll(async () => {
     await database?.end();
     await container?.stop();
   });
 
+  it("indexes signed legacy evidence through the official SDK and canonical chain", () => proveLegacyHistoricalComposition(requiredDatabase()), 120_000);
   it("answers voice from deterministically mixed live and V2 locator-only history",
     async () => {
       const pool = requiredDatabase();

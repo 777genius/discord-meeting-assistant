@@ -1,5 +1,5 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -39,6 +39,22 @@ describe("concrete HTTP production review evidence", () => {
     expect(fixture.fetchCalls().every((call) => call.init.redirect === "error" &&
       (call.init.headers as Record<string, string>).authorization ===
         `Bearer ${fixture.providerCredential}`)).toBe(true);
+  });
+
+  it("accepts independently configured legacy public trust and rejects open trust entries", async () => {
+    const fixture = await httpFixture();
+    const trustedConfig = JSON.parse(await readFile(fixture.connectionsPath, "utf8")) as Record<string, unknown>;
+    (trustedConfig.canonicalExecution as Record<string, unknown>).legacyHistoricalPublicTrust = [
+      { policyId: "synthetic-policy", signerId: "synthetic-signer", publicKeyPem: fixture.providerPublicKeyPem }];
+    await writeFile(fixture.connectionsPath, canonicalJson(trustedConfig));
+    await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath)).resolves.toBeDefined();
+    expect(fixture.fetchCalls()).toHaveLength(0);
+    await fixture.writeInvalidEndpoint((config) => {
+      (config.canonicalExecution as Record<string, unknown>).legacyHistoricalPublicTrust = [
+        { policyId: "synthetic-policy", signerId: "synthetic-signer", publicKeyPem: fixture.providerPublicKeyPem, extra: true }];
+    });
+    await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath)).rejects.toThrow();
+    expect(fixture.fetchCalls()).toHaveLength(0);
   });
 
   it("rejects every plaintext endpoint before credential reads or network access", async () => {
