@@ -76,6 +76,8 @@
 
 - [ADR-0074: Align focused production and qualification retrieval budgets](0074-focused-retrieval-budget-alignment.md)
 
+- [ADR-0075: Bind canonical memory execution to the signed actor profile](0075-canonical-memory-actor-profile.md)
+
 ## Superseded
 
 - [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)
