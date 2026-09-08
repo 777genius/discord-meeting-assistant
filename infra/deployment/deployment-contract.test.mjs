@@ -222,7 +222,7 @@ test("installs Platform image test workspace dependencies before the mandatory g
     "@discord-meeting/meeting-platform...",
   ], "install both workspace closures, including the test-only native collectors");
   const buildIndex = commands.indexOf("pnpm --filter=@discord-meeting/meeting-platform... --if-present run build");
-  const gateIndex = commands.indexOf("pnpm --filter @discord-meeting/meeting-platform check:image");
+  const gateIndex = commands.indexOf("VITEST_MAX_WORKERS=1 pnpm --filter @discord-meeting/meeting-platform check:image");
   assert.ok(buildIndex > installIndex, "production workspace build follows installation");
   assert.ok(gateIndex > buildIndex, "check:image remains mandatory after the build");
   const manifest = JSON.parse(await readFile(new URL("apps/meeting-platform/package.json", repositoryRoot), "utf8"));

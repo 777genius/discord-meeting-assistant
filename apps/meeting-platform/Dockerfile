@@ -24,7 +24,7 @@ COPY --chown=10001:10001 . .
 RUN node vendor/infinity-context/prepare-official-sdk.mjs \
   && pnpm install --frozen-lockfile --filter @discord-meeting/meeting-platform... --filter @discord-meeting/discord-e2e-actors... \
   && pnpm --filter=@discord-meeting/meeting-platform... --if-present run build \
-  && pnpm --filter @discord-meeting/meeting-platform check:image \
+  && VITEST_MAX_WORKERS=1 pnpm --filter @discord-meeting/meeting-platform check:image \
   && node vendor/infinity-context/prepare-official-sdk.mjs --cleanup-source \
   && test ! -e vendor/infinity-context/.upstream \
   && pnpm store prune
