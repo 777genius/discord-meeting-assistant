@@ -336,6 +336,11 @@
       "id": "ADR-0072",
       "path": "docs/decisions/0072-diagnostic-index-readiness.md",
       "immutableDigest": "sha256:c5fab835107ebfa49cc55f4f455f39ca2c42b39ac92a7b5becbc8d1d9e1bd249"
+    },
+    {
+      "id": "ADR-0074",
+      "path": "docs/decisions/0074-focused-retrieval-budget-alignment.md",
+      "immutableDigest": "sha256:6ee3a29d2cf9cc73bb321abd041b14e802443d68fe9e628d3ed924d159347e40"
     }
   ]
 }

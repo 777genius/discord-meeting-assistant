@@ -43,7 +43,7 @@ export interface FocusedLocatorRetrievalV2Policy {
 export const DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY:
 FocusedLocatorRetrievalV2Policy = Object.freeze({
   candidateLimit: 100,
-  deadlineMs: 1_000,
+  deadlineMs: 2_000,
   evidenceByteLimit: retrievalV2ConsumerEvidenceByteLimit,
   maximumSources: 100,
   responseByteLimit: 16_384,

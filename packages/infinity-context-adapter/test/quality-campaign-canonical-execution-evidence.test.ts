@@ -364,7 +364,7 @@ class SyntheticUnavailableEndpoint implements HttpTransport {
 function unavailableResponse(): Record<string, unknown> {
   const response = structuredClone(successfulResponse);
   Object.assign(response, { candidates: [], status: "unavailable" });
-  Object.assign(response.applied_bounds as Record<string, unknown>, { deadline_ms: 1_000,
+  Object.assign(response.applied_bounds as Record<string, unknown>, { deadline_ms: 2_000,
     neighbor_radius: 0, returned_neighbors: 0, returned_seeds: 0 });
   response.provider_outcomes = (response.provider_outcomes as Record<string, unknown>[])
     .map((outcome) => ({ ...outcome, reason_code: "provider_unavailable",
@@ -430,7 +430,7 @@ function retrievalRequest(): InfinityContextRetrievalV2Request {
     rankingPolicy: "weighted_rrf_canonical_preferences.v1",
     requiredProviderLanes: capability.required_provider_lanes as string[],
     serviceRevision: capability.service_revision as string },
-  budgets: { candidateLimit: 100, deadlineMs: 1_000, evidenceByteLimit: 16_000,
+  budgets: { candidateLimit: 100, deadlineMs: 2_000, evidenceByteLimit: 16_000,
     neighborRadius: 0, responseByteLimit: 16_384, resultLimit: 10 },
   filters: { actorKeys: [], category: null, documentKeys: [], excludedSourceKeys: [],
     kinds: ["record_block"], relativeTimeInterval: null,
