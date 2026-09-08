@@ -97,6 +97,7 @@ export class SpeakerTranscriptionSession {
         for (const packet of packets) { await this.admit(packet, deadlineMs); }
       } finally {
         this.packetFlow.releaseAdmission(packets.length);
+        this.scheduleIdleFinalizationIfReady();
       }
     };
     const completion = this.admissionChain.then(admission, admission);
@@ -198,7 +199,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private async finishAdmittedPackets(): Promise<void> {
-    await this.supervise(this.admissionChain, this.dependencies.packetBackpressureTimeoutMs);
+    await this.supervise(this.admissionChain, Math.max(this.deliveryBudgetMs, this.dependencies.packetBackpressureTimeoutMs), true);
     // Idle finalization owns its original provider timer, including while joined.
     if (this.providerFinalization !== null) { await this.providerFinalization; }
     await this.supervise(this.chain, Math.max(this.deliveryBudgetMs, this.dependencies.packetBackpressureTimeoutMs), true);
@@ -219,6 +220,7 @@ export class SpeakerTranscriptionSession {
     try {
       deliveryOwnsReservation = await this.reservePacketSlot(packet, deadlineMs);
     } catch (error) {
+      this.failDurableAdmission();
       this.logAdmissionFailure(error);
     } finally {
       if (!deliveryOwnsReservation) { this.dependencies.packetAdmission.release(1); }
@@ -226,15 +228,24 @@ export class SpeakerTranscriptionSession {
   }
 
   private async reservePacketSlot(packet: LiveVoicePacket, deadlineMs: number): Promise<boolean> {
-    if (this.isAdmissionClosed() || this.dependencies.isMeetingFinishing() || this.isPacketDeliveryBlocked() || this.isSuppressed(packet)) { return false; }
-    const hasCapacity = await this.packetFlow.waitForQueueSlot(deadlineMs, () => this.isAdmissionClosed() || this.dependencies.isMeetingFinishing());
+    // These packets already hold bounded global and speaker admission reservations.
+    // A batch deadline limits ingress waiting, not ownership of durable pending audio.
+    const admissionStopped = (): boolean => this.isPacketDeliveryBlocked() ||
+      (!this.hasDurablePackets() &&
+        (this.isAdmissionClosed() || this.dependencies.isMeetingFinishing()));
+    if (admissionStopped() || this.isSuppressed(packet)) { return false; }
+    const hasCapacity = await this.packetFlow.waitForQueueSlot(deadlineMs, admissionStopped);
     if (!hasCapacity) {
       if (!this.dependencies.isMeetingFinishing()) {
         this.noteDegradation("LIVE_PACKET_BACKPRESSURE_TIMEOUT");
       }
-      return false;
+      if (!this.hasDurablePackets() || admissionStopped()) { return false; }
+      // Keep the reservation and source order while the already scheduled delivery
+      // drains. Only actual delivery progress renews this existing bounded watchdog.
+      await this.supervise(this.chain, Math.max(this.deliveryBudgetMs, this.dependencies.packetBackpressureTimeoutMs), true);
+      if (admissionStopped()) { this.failDurableAdmission(); return false; }
     }
-    if (this.isAdmissionClosed() || this.dependencies.isMeetingFinishing() || this.isPacketDeliveryBlocked() || this.isSuppressed(packet)) { return false; }
+    if (admissionStopped() || this.isSuppressed(packet)) { return false; }
     this.cancelIdleFinalization();
     this.packetFlow.reserveQueueSlot();
     const delivery = async (): Promise<void> => {
@@ -376,7 +387,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private scheduleIdleFinalizationIfReady(): void {
-    if (this.admissionClosed || this.packetFlow.queuedPacketCount !== 0 ||
+    if (this.admissionClosed || this.packetFlow.queuedPacketCount !== 0 || this.packetFlow.pendingAdmissionPacketCount !== 0 ||
         !this.providerSession.isOpen || this.dependencies.isMeetingFinishing()) {
       return;
     }
@@ -392,7 +403,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private shouldSkipIdleFinalization(): boolean {
-    return this.dependencies.isMeetingFinishing() || this.packetFlow.queuedPacketCount > 0 || !this.providerSession.isOpen;
+    return this.dependencies.isMeetingFinishing() || this.packetFlow.queuedPacketCount > 0 || this.packetFlow.pendingAdmissionPacketCount > 0 || !this.providerSession.isOpen;
   }
 
   private cancelIdleFinalization(): void {
@@ -405,6 +416,14 @@ export class SpeakerTranscriptionSession {
     this.dependencies.logger.warn("Derived live transcription packet exhausted bounded delivery retries", {
       ...this.logFields(), errorCode: "LIVE_PACKET_DELIVERY_RETRY_EXHAUSTED", relativeTimeMs: packet.relativeTimeMs,
     });
+  }
+
+  private hasDurablePackets(): boolean {
+    return this.dependencies.liveSttDurability !== undefined || this.dependencies.markLivePacketDelivered !== undefined;
+  }
+
+  private failDurableAdmission(): void {
+    if (this.hasDurablePackets() && !this.hasTerminalFence()) { this.latchFailure(new LiveTranscriptionTerminalFailure()); }
   }
 
   private noteDegradation(errorCode: "LIVE_PACKET_ADMISSION_BACKLOG_FULL" | "LIVE_PACKET_GLOBAL_BACKLOG_FULL" | "LIVE_PACKET_BACKPRESSURE_TIMEOUT"): void {

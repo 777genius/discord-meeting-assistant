@@ -1,7 +1,7 @@
 import { AppendLiveTranscriptTurn, FinishLiveMeeting, RefreshLiveMeeting, StartLiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
 import { afterEach, expect, it, vi } from "vitest";
 import { PlatformLiveMeetingRuntime } from "../../src/live-meeting-runtime.js";
-import { LiveTranscriptionNotAccepted, LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown, type LivePacketFlowControl, type LiveVoicePacket, type LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
+import { LiveTranscriptionNotAccepted, LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown, type LiveSttDurabilityPort, type LiveOperation, type LivePacketFlowControl, type LiveVoicePacket, type LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
 import { livePacketIdentity } from "../../src/live-runtime/packet-delivery-ledger.js";
 import { ended, logger, MemoryLiveMeetingRepository, packets, ProjectionStub, started, SummaryStub } from "./live-runtime-fixtures.js";
 
@@ -9,7 +9,7 @@ afterEach(() => vi.useRealTimers());
 
 function fixture(
   pending: readonly LiveVoicePacket[] = [], failAt?: string, firstSend?: Promise<void>,
-  options: { transcriber?: LiveTranscriptionPort; flow?: LivePacketFlowControl; failAck?: boolean; duplicate?: boolean; failReadOnce?: boolean; readGate?: Promise<void> } = {},
+  options: { durableAdmission?: boolean; transcriber?: LiveTranscriptionPort; flow?: LivePacketFlowControl; failAck?: boolean; duplicate?: boolean; failReadOnce?: boolean; readGate?: Promise<void> } = {},
 ) {
   let failingPacketId = failAt;
   let reads = 0;
@@ -29,16 +29,43 @@ function fixture(
       },
     }),
   };
+  let operation = 0;
+  let generation = 0;
+  let recordingClosed = false;
+  const accepted = new Set<string>();
+  const events: string[] = [];
+  const grant = (effect: Omit<LiveOperation, "operation">) =>
+    ({ status: "granted" as const, operation: { ...effect, operation: ++operation } as LiveOperation });
+  const durability: LiveSttDurabilityPort = {
+    recoverRecording: async (recordingId) => ({ owner: { recordingId, epoch: 1 },
+      closed: recordingClosed, legacy: false, fences: [] }),
+    beginOpen: async (owner, speakerId) => {
+      if (recordingClosed) { return { status: "recording-closed" }; }
+      events.push("open");
+      return grant({ session: { owner, speakerId, generation: ++generation }, kind: "open" });
+    },
+    beginSend: async (session, packetId) => accepted.has(packetId)
+      ? { status: "already-accepted" } : grant({ session, kind: "send", packetId } as LiveOperation),
+    beginFinalize: async (session) => { events.push("finalize"); return grant({ session, kind: "finalize" }); },
+    complete: async (completion) => {
+      if (completion.outcome === "accepted") {
+        const id = completion.operation.packetId;
+        accepted.add(id); acknowledgements.push(id); durable.delete(id);
+      }
+    },
+    fence: async () => { events.push("fence"); },
+    closeRecording: async () => { recordingClosed = true; events.push("close"); },
+  };
   const makeRuntime = () => new PlatformLiveMeetingRuntime({
     ...(options.flow === undefined ? {} : { packetFlowControl: options.flow }),
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: new FinishLiveMeeting(meetings), logger,
     refreshMeeting: new RefreshLiveMeeting({ meetings, projector: new ProjectionStub(), summarizer: new SummaryStub() }),
     startMeeting: new StartLiveMeeting({ meetings }), transcriber: options.transcriber ?? transcriber,
-    markLivePacketDelivered: async (packetId) => {
+    ...(options.durableAdmission === true ? { liveSttDurability: durability } : { markLivePacketDelivered: async (packetId: string) => {
       if (options.failAck === true) { throw new Error("synthetic acknowledgement failure"); }
       acknowledgements.push(packetId); durable.delete(packetId);
-    },
+    } }),
     pendingLivePackets: async () => {
       reads += 1;
       await options.readGate;
@@ -48,7 +75,7 @@ function fixture(
         : [...durable.values()];
     },
   });
-  return { acknowledgements, durable, makeRuntime, meetings, sends, reads: () => reads, terminations: () => terminations, repair: () => { failingPacketId = undefined; } };
+  return { acknowledgements, durable, events, makeRuntime, meetings, sends, reads: () => reads, terminations: () => terminations, repair: () => { failingPacketId = undefined; } };
 }
 
 function backlog(size: number): LiveVoicePacket[] {
@@ -461,4 +488,75 @@ it("receipt failure across reconnect never repeats an accepted provider send", a
   expect(f.sends).toEqual([livePacketIdentity(pending[0]!)]);
   expect(f.acknowledgements).toEqual([]); expect(f.durable.size).toBe(1);
   await runtime.close();
+});
+
+it.each([false, true])("retains durable queue-timeout ownership through retry and close=%s", async (closeDuringAdmission) => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  let acknowledge!: () => void;
+  const firstAck = new Promise<void>((resolve) => { acknowledge = resolve; });
+  const f = fixture([], undefined, firstAck, { durableAdmission: true, flow: {
+    maximumQueuedPacketsPerSpeaker: 1, maximumQueuedPacketsGlobally: 4,
+    packetBackpressureTimeoutMs: 100,
+  } });
+  const runtime = f.makeRuntime();
+  await runtime.acceptLifecycle(started());
+  const pending = backlog(closeDuringAdmission ? 2 : 3);
+  for (const packet of pending) { f.durable.set(livePacketIdentity(packet), packet); }
+  const batch = (index: number) => ({ ...packets(), packets: [pending[index]!] });
+  await runtime.acceptVoiceBatch(batch(0));
+  const admission = runtime.acceptVoiceBatch(batch(1));
+  await vi.advanceTimersByTimeAsync(100);
+  expect(f.events).toEqual(["open"]);
+  expect(f.durable.has(livePacketIdentity(pending[1]!))).toBe(true);
+  const closing = closeDuringAdmission ? runtime.close() : undefined;
+  acknowledge();
+  await vi.advanceTimersByTimeAsync(50);
+  await admission;
+  if (!closeDuringAdmission) {
+    await runtime.acceptVoiceBatch(batch(2));
+    await vi.advanceTimersByTimeAsync(50);
+    // A duplicate retry after later source time cannot cause loss or a second send.
+    await runtime.acceptVoiceBatch(batch(1));
+  }
+  await vi.advanceTimersByTimeAsync(100);
+  await (closing ?? runtime.close());
+  expect(f.sends).toEqual(pending.map(livePacketIdentity));
+  expect(f.events.filter((event) => event === "open")).toHaveLength(1);
+  expect(f.events.filter((event) => event === "finalize")).toHaveLength(1);
+  expect(f.events).not.toContain("fence");
+  expect(f.acknowledgements).toEqual(f.sends);
+  expect(f.durable.size).toBe(0);
+});
+
+it("drains all 398 durably pending packets after a shared batch deadline expires behind a full queue", async () => {
+  vi.useFakeTimers(); vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  let release!: () => void;
+  const ack = new Promise<void>((resolve) => { release = resolve; });
+  const f = fixture([], undefined, ack, { durableAdmission: true, flow: {
+    maximumQueuedPacketsPerSpeaker: 512, maximumQueuedPacketsGlobally: 1024,
+    packetBackpressureTimeoutMs: 100,
+  } });
+  const runtime = f.makeRuntime();
+  await runtime.acceptLifecycle(started());
+  const pending = backlog(910);
+  for (const packet of pending) { f.durable.set(livePacketIdentity(packet), packet); }
+  await runtime.acceptVoiceBatch({ ...packets(), packets: pending.slice(0, 512) });
+  const admission = runtime.acceptVoiceBatch({ ...packets(), packets: pending.slice(512) });
+  await vi.advanceTimersByTimeAsync(100);
+  expect(f.sends).toEqual([livePacketIdentity(pending[0]!)]);
+  expect(f.acknowledgements).toHaveLength(0);
+  release();
+  await vi.advanceTimersByTimeAsync(20_000);
+  await admission;
+  expect(f.durable.size).toBe(0);
+  expect(f.sends).toHaveLength(910);
+  await runtime.acceptVoiceBatch({ ...packets(), packets: pending.slice(512) });
+  await runtime.close();
+  expect(f.sends).toEqual(pending.map(livePacketIdentity));
+  expect(f.acknowledgements).toEqual(f.sends);
+  expect(f.durable.size).toBe(0);
+  expect(f.events.filter((event) => event === "open")).toHaveLength(1);
+  expect(f.events.filter((event) => event === "finalize")).toHaveLength(1);
+  expect(f.events).not.toContain("fence");
 });

@@ -422,3 +422,58 @@ it("healthy idle finalization permits new speech with the same lifecycle identit
   expect(finalize).toHaveBeenCalledTimes(2); expect(terminate).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it.each([false, true])("durable reserved admission survives finish and stalled=%s never reports successful speech", async (stalled) => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  let release!: () => void;
+  const ack = new Promise<void>((resolve) => { release = resolve; });
+  const sent: string[] = [];
+  const delivered: string[] = [];
+  const finalize = vi.fn(async () => {});
+  const terminate = vi.fn();
+  let finishing = false;
+  const packetAdmission = new GlobalPacketFlowControl(2);
+  const speaker = new SpeakerTranscriptionSession({
+    clock: systemLiveRuntimeClock, timer: systemLiveRuntimeTimer,
+    isMeetingFinishing: () => finishing, ledger: new LivePacketDeliveryLedger(), logger,
+    maximumQueuedPackets: 1, meetingId: "meeting", onTranscript: () => {},
+    packetAdmission, packetBackpressureTimeoutMs: 100,
+    packetInspector: { durationSamples48Khz: () => 960 }, sessionAdmission: new LiveSessionAdmission(1),
+    speakerId: "speaker", speakerIdleFinalizeMs: 10, startedAtMs: 0,
+    markLivePacketDelivered: async (id) => { delivered.push(id); },
+    transcriber: { openSession: async () => ({ finalize, terminate,
+      sendPacket: async (packet) => {
+        sent.push(packet.packetId); if (sent.length === 1) { await ack; } return "accepted";
+      },
+    }) },
+  });
+  const first = { ...packets().packets[0]!, relativeTimeMs: 0 };
+  const second = { ...first, relativeTimeMs: 20, sequenceNumber: first.sequenceNumber + 1 };
+  await speaker.accept([first], 100);
+  const admission = speaker.accept([second], 100);
+  await vi.advanceTimersByTimeAsync(100);
+  finishing = true;
+  const finish = speaker.finish();
+  const outcome = finish.then(() => "finished", (error: unknown) => error);
+  if (!stalled) { release(); }
+  await vi.advanceTimersByTimeAsync(100);
+  await admission;
+  if (stalled) {
+    expect(await outcome).toBeInstanceOf(LiveTranscriptionAcceptanceUnknown);
+    expect(finalize).not.toHaveBeenCalled();
+    release();
+    await vi.advanceTimersByTimeAsync(100);
+    await speaker.accept([first, second], 400);
+    expect(sent).toEqual([livePacketIdentity(first)]);
+    expect(terminate).toHaveBeenCalledTimes(1);
+  } else {
+    expect(await outcome).toBe("finished");
+    expect(sent).toEqual([livePacketIdentity(first), livePacketIdentity(second)]);
+    expect(delivered).toEqual(sent);
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(terminate).not.toHaveBeenCalled();
+  }
+  expect(await packetAdmission.reserve(2, 500, new AbortController().signal)).toBe(true);
+  packetAdmission.release(2);
+  expect(vi.getTimerCount()).toBe(0);
+});
