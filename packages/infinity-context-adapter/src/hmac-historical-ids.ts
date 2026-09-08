@@ -16,8 +16,10 @@ export function assertConstructedHmacHistoricalOpaqueIds(value: unknown): assert
 
 export class HmacHistoricalOpaqueIds implements HistoricalOpaqueIdPort {
   readonly #key: Buffer;
+  readonly #actorKeyProfileId: string | undefined;
 
-  public constructor(key: Uint8Array | string) {
+  public constructor(key: Uint8Array | string, actorKeyProfileId?: string) {
+    this.#actorKeyProfileId = actorKeyProfileId;
     this.#key = Buffer.from(key);
     if (this.#key.byteLength < 32) {
       throw new RangeError("historical topology HMAC key must contain at least 32 bytes");
@@ -29,8 +31,12 @@ export class HmacHistoricalOpaqueIds implements HistoricalOpaqueIdPort {
     if (namespace.trim().length === 0 || parts.some((part) => typeof part !== "string")) {
       throw new TypeError("historical opaque identity input is invalid");
     }
+    const boundParts = namespace === "historical-index-generation" &&
+      this.#actorKeyProfileId !== undefined
+      ? [...parts, this.#actorKeyProfileId]
+      : parts;
     return createHmac("sha256", this.#key)
-      .update([identityPart(namespace), ...parts.map(identityPart)].join("|"), "utf8")
+      .update([identityPart(namespace), ...boundParts.map(identityPart)].join("|"), "utf8")
       .digest("base64url");
   }
 }

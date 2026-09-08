@@ -114,14 +114,6 @@ export function createInfinityRetrievalV2Composition(
 export function createActorKeyBoundHistoricalIds(
   topologyKey: string,
   actorKeyProfileId: string,
-): HistoricalOpaqueIdPort {
-  const ids = new HmacHistoricalOpaqueIds(topologyKey);
-  return Object.freeze({
-    keyedId: (namespace: string, parts: readonly string[]) => ids.keyedId(
-      namespace,
-      namespace === "historical-index-generation"
-        ? [...parts, actorKeyProfileId]
-        : parts,
-    ),
-  });
+): HmacHistoricalOpaqueIds {
+  return new HmacHistoricalOpaqueIds(topologyKey, actorKeyProfileId);
 }

@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { HmacHistoricalOpaqueIds, InfinityContextRetrievalV2Adapter } from "@discord-meeting/infinity-context-adapter";
+import { InfinityContextRetrievalV2Adapter } from "@discord-meeting/infinity-context-adapter";
 import { createProductionCanonicalQuestionChain } from "@discord-meeting/infinity-context-adapter/quality-campaign/canonical-chain";
 import { DISPOSABLE_RETRIEVAL_V2_BINDING, startDisposableInfinityHttpService } from
   "@discord-meeting/infinity-context-adapter/test-support";
@@ -14,8 +14,10 @@ import { createGrpcQualifiedGroundedAnswerAdapter, GrpcSubscriptionRuntimeTransp
 import type { Pool } from "pg";
 import { expect } from "vitest";
 import { runLegacyHistoricalAdmissionCommand } from "../src/composition/legacy-historical-admission.js";
-import { currentActor, currentMeeting, requiredHistoricalRuntime } from "./meeting-knowledge-production-composition-fixtures.js";
+import { currentActor, currentMeeting, platformConfig, requiredHistoricalRuntime } from "./meeting-knowledge-production-composition-fixtures.js";
 import { waitForHistoricalRows } from "./meeting-knowledge-production-composition-diagnostics.js";
+
+import { createDiscordInfinityActorCustody, requireHistoricalRuntimeSecrets } from "../src/composition/discord-infinity-actor-custody.js";
 
 const canonical = legacyHistoricalCanonicalJson;
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -52,7 +54,7 @@ export async function proveLegacyHistoricalComposition(pool: Pool): Promise<void
   const infinity = await startDisposableInfinityHttpService();
   const runtime = requiredHistoricalRuntime(pool, infinity, true, true, "test", { legacyVerifier: verifier });
   const transport = new GrpcSubscriptionRuntimeTransport({ address: "127.0.0.1:1", serviceToken: "synthetic-unused-token" });
-  const options = { attemptId: "synthetic-legacy-attempt", signal: new AbortController().signal };
+  const options = { attemptId: `sqv4-${sha("synthetic-legacy-attempt")}`, signal: new AbortController().signal };
   try {
     await pool.query("INSERT INTO meeting_core.meetings (meeting_id, revision, snapshot) VALUES ($1, $2, $3)",
       [snapshot.meetingId, snapshot.revision, snapshot]);
@@ -64,7 +66,9 @@ export async function proveLegacyHistoricalComposition(pool: Pool): Promise<void
     await runtime.assertReady(); await runtime.start();
     await waitForHistoricalRows(pool, (row) => row.meeting_id === snapshot.meetingId && row.state === "applied", 1, options.signal);
     await runtime.close();
-    const ids = new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(7));
+    const config = platformConfig(infinity.baseUrl, true, true, "test");
+    const { topologyKey } = requireHistoricalRuntimeSecrets(config);
+    const { historicalIds: ids } = createDiscordInfinityActorCustody(config, topologyKey);
     const chain = createProductionCanonicalQuestionChain({ ids,
       answer: createGrpcQualifiedGroundedAnswerAdapter({ transport,
         beforeProviderCall: async () => { throw new Error("answer providers are prohibited in this fixture"); },
@@ -80,7 +84,7 @@ export async function proveLegacyHistoricalComposition(pool: Pool): Promise<void
     const packet = { locale: "en" as const, questionId: "legacy-question", source: "automatic" as const,
       questionText: "When was Project Atlas deployment approved?", scopeTopologyReference: "synthetic-topology" };
     const retrieved = await chain.retrieval.retrieve(packet, options);
-    expect(retrieved.status).toBe("completed");
+    expect(retrieved.status, retrieved.status === "completed" ? undefined : retrieved.reason).toBe("completed");
     if (retrieved.status !== "completed") { throw new Error(retrieved.reason); }
     expect(retrieved.candidates.length).toBeGreaterThan(0);
     const evidence = await chain.evidence.rehydrate({ ...packet,
