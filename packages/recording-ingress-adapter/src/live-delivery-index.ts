@@ -177,15 +177,16 @@ export class LiveDeliveryIndex {
       index.generation, JSON.stringify(packet)));
   }
 
-  public eligible(index: LiveGeneration, after: string): LiveOffset[] {
+  public eligible(index: LiveGeneration, after: string, closed = false): LiveOffset[] {
     this.#assertGeneration(index);
     const rows = this.#access(() => this.#db.prepare(`SELECT p.packet,p.offset,p.length,p.delivered FROM packets p
       LEFT JOIN stt s ON s.generation=p.generation AND s.key=p.speaker
       WHERE p.generation=? AND p.length>0 AND p.delivered=0 AND json_extract(s.value,'$.fence') IS NULL
+      AND (?=0 OR json_extract(s.value,'$.opened')=1)
       AND (?='' OR (p.time,p.speaker,p.media,p.sequence,p.packet) >
         (SELECT time,speaker,media,sequence,packet FROM packets WHERE generation=p.generation AND packet=?))
       ORDER BY p.time,p.speaker,p.media,p.sequence,p.packet LIMIT 256`)
-      .all(index.generation, after, JSON.stringify(after)) as unknown as LiveOffset[]);
+      .all(index.generation, Number(closed), after, JSON.stringify(after)) as unknown as LiveOffset[]);
     return rows.map((row) => ({ ...row, packet: JSON.parse(row.packet) as string }));
   }
 

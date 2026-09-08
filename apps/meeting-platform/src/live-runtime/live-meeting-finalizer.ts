@@ -138,8 +138,8 @@ export class LiveMeetingFinalizer {
   private async finish(state: ActiveLiveMeeting, endedAtMs: number): Promise<void> {
     if (this.dependencies.runtime.liveSttDurability !== undefined &&
         this.dependencies.runtime.pendingLivePackets !== undefined && state.packetRecovery !== null) {
-      // Terminal owns admission now, but the durable outbox remains eligible
-      // until its last page has drained. Closing first would hide that tail.
+      // Ingress may already have closed admission. Its journal keeps this
+      // owner's opened sessions eligible until the last page drains and settles.
       await state.transcription.drainPending();
       await state.packetRecovery;
       if (state.packetDrainReady) { await scheduleDurableLivePacketDrain(this.dependencies.runtime, state); }

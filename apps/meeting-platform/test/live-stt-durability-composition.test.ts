@@ -363,11 +363,14 @@ it("terminal before idle drains the owned generation and persists finalize-only 
   }
 });
 
-it("terminal drains newly admitted bounded outbox pages before the real close tombstone hides eligibility", async () => {
+it("terminal ingress during held ACK drains every pending page before settlement", async () => {
   const f = await fixture();
   const meetings = new MemoryLiveMeetingRepository();
   const sent: string[] = [];
   const pageSizes: number[] = [];
+  const sending = deferred();
+  const ack = deferred();
+  let finalizes = 0;
   const runtime = new PlatformLiveMeetingRuntime({
     appendTurn: new AppendLiveTranscriptTurn(meetings), startMeeting: new StartLiveMeeting({ meetings }),
     finishMeeting: new FinishLiveMeeting(meetings),
@@ -381,10 +384,15 @@ it("terminal drains newly admitted bounded outbox pages before the real close to
     packetFlowControl: { maximumQueuedPacketsPerSpeaker: 1, maximumQueuedPacketsGlobally: 1 },
     transcriber: { openSession: async (input) => ({
       terminate: () => {},
-      sendPacket: async (packet) => { sent.push(packet.packetId); return "accepted"; },
+      sendPacket: async (packet) => {
+        sent.push(packet.packetId);
+        if (sent.length === 2) { sending.resolve(); await ack.promise; }
+        return "accepted";
+      },
       finalize: async () => {
         assert.equal((await f.storage.recoverRecording("r")).closed, true);
-        input.onTranscript({ meetingId: "r", speakerId, startMs: 0, endMs: 5420,
+        finalizes += 1;
+        input.onTranscript({ meetingId: "r", speakerId, startMs: 0, endMs: 10300,
           isFinal: true, text: `Complete durable speech: ${sent.length} packets` });
       },
     }) },
@@ -392,7 +400,7 @@ it("terminal drains newly admitted bounded outbox pages before the real close to
   });
   try {
     await runtime.acceptLifecycle(started("r", [speakerId]));
-    const tail = Array.from({ length: 270 }, (_, index) => ({ ...event, speakerId,
+    const tail = Array.from({ length: 514 }, (_, index) => ({ ...event, speakerId,
       opusBase64: "+P/+", receivedAtMs: 0, relativeTimeMs: (index + 1) * 20,
       rtpTimestamp: (index + 1) * 960, rtpSequence: index + 1 }));
     for (let index = 0; index < tail.length; index += 256) {
@@ -400,15 +408,25 @@ it("terminal drains newly admitted bounded outbox pages before the real close to
     }
     const pending = await f.ingress.pendingLivePackets("r", "");
     assert.equal(pending.length, 256);
-    await runtime.acceptVoiceBatch({ format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 }, packets: pending });
-    await runtime.acceptLifecycle({ type: "meeting.ended", recordingId: "r", occurredAt: "2026-08-02T10:00:06.000Z" });
+    const draining = runtime.acceptVoiceBatch({ format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 }, packets: pending });
+    await sending.promise;
+    await f.ingress.ingestLifecycleEvent({ ...event, type: "meeting.ended", eventId: "end",
+      occurredAt: "2026-08-02T10:00:16.000Z", reason: null });
+    const ending = runtime.acceptLifecycle({ type: "meeting.ended", recordingId: "r", occurredAt: "2026-08-02T10:00:16.000Z" });
+    assert.equal(finalizes, 0);
+    ack.resolve();
+    await draining;
+    await ending;
+    await runtime.settleBeforeFinalPublication("r");
+    assert.equal(finalizes, 1);
+    assert.equal(sent.length, 515, "the loaded page and all subsequent pages must reach the provider");
     assert.deepEqual(sent, [f.packet.packetId, ...tail.map((p) => `r:${speakerId}:${p.rtpTimestamp}:${p.rtpSequence}:${p.relativeTimeMs}`)]);
     assert.ok(pageSizes.includes(256));
     assert.ok(pageSizes.every((size) => size <= 256));
-    assert.deepEqual(meetings.finalizedTurns.map((turn) => turn.text), ["Complete durable speech: 271 packets"]);
+    assert.deepEqual(meetings.finalizedTurns.map((turn) => turn.text), ["Complete durable speech: 515 packets"]);
     const recovered = await f.storage.recoverRecording("r");
     assert.equal(recovered.closed, true);
     assert.deepEqual(recovered.fences, []);
     assert.equal(meetings.snapshot?.status, "ended");
-  } finally { await runtime.close(); await f.cleanup(); }
+  } finally { ack.resolve(); await runtime.close(); await f.cleanup(); }
 }, 30_000);

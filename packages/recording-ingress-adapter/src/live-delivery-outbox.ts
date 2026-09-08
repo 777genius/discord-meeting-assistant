@@ -140,7 +140,10 @@ export async function pendingLivePackets(
     if (index.stamp === "missing") { return []; }
     const db = await runtime.liveDeliveryIndex();
     const state = db.sttGet<SttRecordingState>(index, "recording");
-    if (afterPacket !== undefined && (state?.initialized !== true || state.endedAtMs !== undefined)) { return []; }
+    const closed = state?.endedAtMs !== undefined;
+    // Terminal ingress may close admission during an ACK. Only this spool's
+    // existing owner can keep paging opened sessions until they settle.
+    if (afterPacket !== undefined && !liveSttJournal(runtime).isDrainEligible(state)) { return []; }
     const path = outboxPath(runtime, recordingId);
     const handle = await openEvidence(path);
     const packets: DurableLiveVoicePacket[] = [];
@@ -150,7 +153,7 @@ export async function pendingLivePackets(
       }
       let after = afterPacket ?? "";
       for (;;) {
-        const rows = afterPacket === undefined ? db.pending(index, after) : db.eligible(index, after);
+        const rows = afterPacket === undefined ? db.pending(index, after) : db.eligible(index, after, closed);
         if (rows.length === 0) { break; }
         for (const row of rows) {
           const record = await readOffset(handle, row.offset, row.length);

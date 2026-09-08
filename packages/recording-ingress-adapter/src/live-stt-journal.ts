@@ -51,6 +51,11 @@ export class LiveSttJournal implements SttJournalPort {
   readonly #lifetime = randomUUID();
   public constructor(private readonly transaction: SttTransaction) {}
 
+  public isDrainEligible(state: SttRecordingState | undefined): boolean {
+    return state?.initialized === true && (state.endedAtMs === undefined ||
+      (state.epoch > 0 && state.lifetime === this.#lifetime));
+  }
+
   public recoverRecording(recordingId: string): Promise<SttRecovery> {
     return this.transaction(recordingId, async (access) => {
       let state = recording(access);

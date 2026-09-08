@@ -155,3 +155,68 @@ for (const stage of ["intent", "outcome", "fence"] as const) {
     });
   }
 }
+
+for (const stage of ["send", "finalize"] as const) {
+  serialTest(`closed warm drain survives cache recreation but cold ${stage} uncertainty never replays`, async () => {
+    const f = await fixture();
+    let next: RecordingIngressRuntime | undefined;
+    try {
+      await appendPendingLivePackets(f.runtime, [packet("a", 0), packet("b", 1), packet("c", 2)]);
+      const opening = await f.journal.beginOpen(f.owner, "a");
+      assert.equal(opening.status, "granted");
+      assert.equal(opening.operation.kind, "open");
+      await f.journal.complete({ operation: opening.operation, outcome: "opened" });
+      const fenced = await f.journal.beginOpen(f.owner, "c");
+      assert.equal(fenced.status, "granted");
+      assert.equal(fenced.operation.kind, "open");
+      await f.journal.complete({ operation: fenced.operation, outcome: "opened" });
+      await f.journal.fence(fenced.operation.session, "acceptance-unknown");
+      await f.journal.closeRecording(f.owner, 1000);
+      assert.equal((await f.journal.beginOpen(f.owner, "b")).status, "recording-closed");
+      const eligible = () => pendingLivePackets(f.runtime, "r", "");
+      assert.deepEqual((await eligible()).map((p) => p.speakerId), ["a"]);
+      const db = await f.runtime.liveDeliveryIndex();
+      await db.forget(db.find("r")!);
+      assert.deepEqual((await eligible()).map((p) => p.speakerId), ["a"]);
+      db.close();
+      assert.deepEqual((await eligible()).map((p) => p.speakerId), ["a"]);
+      const operation = stage === "send"
+        ? await f.journal.beginSend(opening.operation.session, "r:a:0:0:0")
+        : await f.journal.beginFinalize(opening.operation.session);
+      assert.equal(operation.status, "granted");
+      await f.runtime.close(); next = f.makeRuntime();
+      assert.deepEqual(await pendingLivePackets(next, "r", ""), [], "cold reads cannot inherit warm eligibility");
+      const journal = liveSttJournal(next);
+      const cold = await journal.recoverRecording("r");
+      assert.equal(cold.owner.epoch, f.owner.epoch + 1);
+      assert.equal(cold.closed, true);
+      assert.deepEqual(cold.fences.map((fence) => fence.speakerId).toSorted(), ["a", "c"]);
+      assert.ok(cold.fences.every((fence) => fence.reason === "acceptance-unknown"));
+      assert.deepEqual(await pendingLivePackets(next, "r", ""), []);
+      await assert.rejects(journal.beginSend(opening.operation.session, "r:a:0:0:0"));
+      await assert.rejects(journal.beginFinalize(opening.operation.session));
+      assert.equal((await pendingLivePackets(next, "r")).length, 3, "uncertain and unopened payloads remain evidence");
+      assert.deepEqual(await readFile(join(f.root, "original.ogg")), f.original);
+    } finally { await f.runtime.close(); await next?.close(); await rm(f.root, { recursive: true, force: true }); }
+  });
+}
+
+serialTest("closed drain eligibility ends at clean settlement even with retained payloads", async () => {
+  const f = await fixture();
+  try {
+    await appendPendingLivePackets(f.runtime, [packet("a", 0)]);
+    const opening = await f.journal.beginOpen(f.owner, "a");
+    assert.equal(opening.status, "granted");
+    assert.equal(opening.operation.kind, "open");
+    await f.journal.complete({ operation: opening.operation, outcome: "opened" });
+    await f.journal.closeRecording(f.owner, 1000);
+    assert.equal((await pendingLivePackets(f.runtime, "r", "")).length, 1);
+    const finalizing = await f.journal.beginFinalize(opening.operation.session);
+    assert.equal(finalizing.status, "granted");
+    assert.equal(finalizing.operation.kind, "finalize");
+    await f.journal.complete({ operation: finalizing.operation, outcome: "finalized" });
+    assert.deepEqual(await pendingLivePackets(f.runtime, "r", ""), []);
+    assert.equal((await pendingLivePackets(f.runtime, "r")).length, 1);
+    assert.equal((await f.journal.beginFinalize(opening.operation.session)).status, "recording-closed");
+  } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
+});
