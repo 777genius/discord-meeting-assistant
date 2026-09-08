@@ -306,6 +306,8 @@ export class LiveSession implements VoicetextLiveSession {
     try {
       await this.socket.sendText(JSON.stringify({ type: "close" }), this.abortController.signal);
       await this.socket.close(1_000, "finalized");
+      // Graceful cleanup completed even if the receive continuation is still queued.
+      this.transportClosed = true;
     } catch {
       this.closeState = "failed";
     }

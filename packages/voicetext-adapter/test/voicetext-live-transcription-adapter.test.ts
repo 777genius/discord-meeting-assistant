@@ -669,8 +669,11 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
     vi.useFakeTimers();
     try {
       const socket = new NoFinalizeResponseSocket();
+      const close = vi.spyOn(socket, "close");
+      const terminate = vi.spyOn(socket, "terminate");
       const session = await adapter(socket).openSession(liveRequest("live-session-local-timeout"));
       const finalization = session.finalize();
+      expect(session.finalize()).toBe(finalization);
       const rejected = expect(finalization).rejects.toThrow(
         "Voicetext live finalize timed out",
       );
@@ -680,6 +683,13 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
       expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(1);
       expect(socket.closed).toBe(true);
       expect(socket.terminated).toBe(false);
+      const failure: unknown = await finalization.catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: "timeout", retryable: true });
+      await expect(session.finalize()).rejects.toBe(failure);
+      session.terminate();
+      await expect(session.finalize()).rejects.toBe(failure);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(terminate).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -690,6 +700,8 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
     try {
       const socket = new NoFinalizeResponseSocket();
       socket.closeError = new Error("close failed");
+      const close = vi.spyOn(socket, "close");
+      const terminate = vi.spyOn(socket, "terminate");
       const session = await adapter(socket).openSession(liveRequest("live-session-local-timeout-close-failure"));
       const finalization = session.finalize();
       const rejected = expect(finalization).rejects.toThrow(
@@ -699,6 +711,14 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
 
       await rejected;
       expect(socket.terminated).toBe(true);
+      const failure: unknown = await finalization.catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: "timeout", retryable: true });
+      await expect(session.finalize()).rejects.toBe(failure);
+      session.terminate();
+      await expect(session.finalize()).rejects.toBe(failure);
+      expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(1);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(terminate).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
