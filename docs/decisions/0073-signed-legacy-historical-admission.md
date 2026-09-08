@@ -65,3 +65,13 @@ No actual evidence or authorized signer is supplied by this change. Operators mu
 independently establish truthful identity, room/scope and duration, current source
 and sync generation, authentic signatures and release-bound qualification.
 The original recording, transcript and meeting remain authoritative and unchanged.
+
+
+## Canonical executor actor profile
+
+The installed canonical executor requires an explicit actorKeyProfileId matching
+the signed meeting_knowledge.quality_scope_topology.v2 document. It constructs
+the same trusted HMAC adapter as production, including the actor profile in the
+historical index generation. Version 1 topology documents are rejected. Operators
+must issue a new version 2 signature with the production indexing actor profile;
+changing the connection setting alone cannot authorize a different profile.
