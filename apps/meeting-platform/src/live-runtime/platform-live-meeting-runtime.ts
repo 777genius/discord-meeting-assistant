@@ -1,4 +1,4 @@
-import { initializeLivePacketRecovery, waitForLivePacketRecovery, acceptLivePackets, groupPacketsByMeeting } from "./speaker-transcription-sessions.js";
+import { scheduleDurableLivePacketDrain, initializeLivePacketRecovery, waitForLivePacketRecovery, acceptLivePackets, groupPacketsByMeeting } from "./speaker-transcription-sessions.js";
 import { GlobalPacketFlowControl, LiveSessionAdmission,
   resolveLivePacketFlowControl } from "./live-packet-flow-control.js";
 import type { LiveMeetingLifecycleEvent, LiveMeetingParticipantEvent,
@@ -103,6 +103,7 @@ export class PlatformLiveMeetingRuntime {
         const state = this.meetings.get(event.recordingId);
         if (state !== undefined) {
           state.packetRecovery = null;
+          state.packetDrainReady = false;
           state.transcription.cancelRecovery();
         }
         return state?.conversation?.disconnect() ?? Promise.resolve();
@@ -129,6 +130,17 @@ export class PlatformLiveMeetingRuntime {
    */
   public async acceptVoiceBatch(batch: LiveVoicePacketBatch): Promise<void> {
     if (this.closed) { return; }
+    if (this.dependencies.liveSttDurability !== undefined && this.dependencies.pendingLivePackets !== undefined) {
+      // Ingress already committed these payloads. Retain only a coalesced wakeup;
+      // provider delivery must never hold the upstream acknowledgement open.
+      for (const recordingId of new Set(batch.packets.map((packet) => packet.recordingId))) {
+        const state = this.meetings.get(recordingId);
+        if (state !== undefined && !state.finishing && state.packetDrainReady && state.packetRecovery !== null) {
+          void scheduleDurableLivePacketDrain(this.dependencies, state);
+        }
+      }
+      return;
+    }
     const deadlineMs = this.clock.nowMilliseconds() + this.packetFlow.packetBackpressureTimeoutMs;
     const packetsByMeeting = groupPacketsByMeeting(batch.packets);
     await Promise.all(

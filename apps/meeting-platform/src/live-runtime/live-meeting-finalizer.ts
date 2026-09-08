@@ -3,6 +3,7 @@ import type {
   LiveRuntimeClock,
 } from "./contracts.js";
 import type { ActiveLiveMeeting } from "./live-meeting-state.js";
+import { scheduleDurableLivePacketDrain } from "./speaker-transcription-sessions.js";
 import { TerminalEndTimeIntents } from "./terminal-end-time-intents.js";
 
 interface LiveMeetingFinalizerDependencies {
@@ -52,16 +53,17 @@ export class LiveMeetingFinalizer {
     const durability = this.dependencies.runtime.liveSttDurability;
     const recovered = await durability?.recoverRecording(recordingId);
     const terminalTime = reuseTerminalTime ? recovered?.endedAtMs ?? proposedEndedAtMs : proposedEndedAtMs;
-    if (durability !== undefined && recovered !== undefined) {
+    const state = this.dependencies.meetings.get(recordingId);
+    if (durability !== undefined && recovered !== undefined &&
+        (state === undefined || recovered.closed || !Number.isSafeInteger(terminalTime))) {
       // Validate lifecycle evidence, and publish the time to memory only after sync.
       await durability.closeRecording(recovered.owner, terminalTime);
     }
-    const endedAtMs = this.terminalEndTime(recordingId, terminalTime);
-    const state = this.dependencies.meetings.get(recordingId);
     if (state !== undefined) {
-      await this.beginFinish(state, endedAtMs);
+      await this.beginFinish(state, terminalTime);
       return;
     }
+    const endedAtMs = this.terminalEndTime(recordingId, terminalTime);
     const inFlight = this.coldFinishPromises.get(recordingId);
     if (inFlight !== undefined) {
       await inFlight;
@@ -91,7 +93,6 @@ export class LiveMeetingFinalizer {
   }
 
   public async beginFinish(state: ActiveLiveMeeting, endedAtMs: number): Promise<void> {
-    await this.closeAdmission(state.meetingId, endedAtMs);
     if (state.terminalCommitted) {
       return Promise.resolve();
     }
@@ -104,7 +105,6 @@ export class LiveMeetingFinalizer {
       state.farewell?.close();
       state.greetings?.close();
       state.conversation?.close();
-      state.transcription.beginFinish();
       this.dependencies.enqueueDomain(state, async () => {
         await this.dependencies.refreshProjection(state, endedAtMs);
       });
@@ -136,6 +136,16 @@ export class LiveMeetingFinalizer {
   }
 
   private async finish(state: ActiveLiveMeeting, endedAtMs: number): Promise<void> {
+    if (this.dependencies.runtime.liveSttDurability !== undefined &&
+        this.dependencies.runtime.pendingLivePackets !== undefined && state.packetRecovery !== null) {
+      // Terminal owns admission now, but the durable outbox remains eligible
+      // until its last page has drained. Closing first would hide that tail.
+      await state.transcription.drainPending();
+      await state.packetRecovery;
+      if (state.packetDrainReady) { await scheduleDurableLivePacketDrain(this.dependencies.runtime, state); }
+    }
+    await this.closeAdmission(state.meetingId, endedAtMs);
+    this.terminalEndTime(state.meetingId, endedAtMs);
     await state.transcription.settle();
     state.transcriptionFenceClosed = true;
     await state.summary.settle();

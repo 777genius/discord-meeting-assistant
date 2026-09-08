@@ -362,3 +362,53 @@ it("terminal before idle drains the owned generation and persists finalize-only 
     await next?.close(); await f.cleanup();
   }
 });
+
+it("terminal drains newly admitted bounded outbox pages before the real close tombstone hides eligibility", async () => {
+  const f = await fixture();
+  const meetings = new MemoryLiveMeetingRepository();
+  const sent: string[] = [];
+  const pageSizes: number[] = [];
+  const runtime = new PlatformLiveMeetingRuntime({
+    appendTurn: new AppendLiveTranscriptTurn(meetings), startMeeting: new StartLiveMeeting({ meetings }),
+    finishMeeting: new FinishLiveMeeting(meetings),
+    refreshMeeting: new RefreshLiveMeeting({ meetings, projector: new ProjectionStub(), summarizer: new SummaryStub() }),
+    liveSttDurability: f.storage,
+    pendingLivePackets: async (id, after) => {
+      const page = await f.ingress.pendingLivePackets(id, after);
+      pageSizes.push(page.length);
+      return page;
+    },
+    packetFlowControl: { maximumQueuedPacketsPerSpeaker: 1, maximumQueuedPacketsGlobally: 1 },
+    transcriber: { openSession: async (input) => ({
+      terminate: () => {},
+      sendPacket: async (packet) => { sent.push(packet.packetId); return "accepted"; },
+      finalize: async () => {
+        assert.equal((await f.storage.recoverRecording("r")).closed, true);
+        input.onTranscript({ meetingId: "r", speakerId, startMs: 0, endMs: 5420,
+          isFinal: true, text: `Complete durable speech: ${sent.length} packets` });
+      },
+    }) },
+    logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+  });
+  try {
+    await runtime.acceptLifecycle(started("r", [speakerId]));
+    const tail = Array.from({ length: 270 }, (_, index) => ({ ...event, speakerId,
+      opusBase64: "+P/+", receivedAtMs: 0, relativeTimeMs: (index + 1) * 20,
+      rtpTimestamp: (index + 1) * 960, rtpSequence: index + 1 }));
+    for (let index = 0; index < tail.length; index += 256) {
+      await f.ingress.ingestPacketBatch({ schemaVersion: 1, packets: tail.slice(index, index + 256) });
+    }
+    const pending = await f.ingress.pendingLivePackets("r", "");
+    assert.equal(pending.length, 256);
+    await runtime.acceptVoiceBatch({ format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 }, packets: pending });
+    await runtime.acceptLifecycle({ type: "meeting.ended", recordingId: "r", occurredAt: "2026-08-02T10:00:06.000Z" });
+    assert.deepEqual(sent, [f.packet.packetId, ...tail.map((p) => `r:${speakerId}:${p.rtpTimestamp}:${p.rtpSequence}:${p.relativeTimeMs}`)]);
+    assert.ok(pageSizes.includes(256));
+    assert.ok(pageSizes.every((size) => size <= 256));
+    assert.deepEqual(meetings.finalizedTurns.map((turn) => turn.text), ["Complete durable speech: 271 packets"]);
+    const recovered = await f.storage.recoverRecording("r");
+    assert.equal(recovered.closed, true);
+    assert.deepEqual(recovered.fences, []);
+    assert.equal(meetings.snapshot?.status, "ended");
+  } finally { await runtime.close(); await f.cleanup(); }
+}, 30_000);

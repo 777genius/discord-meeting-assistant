@@ -44,9 +44,7 @@ export class SpeakerTranscriptionSession {
 
   public constructor(private readonly dependencies: SpeakerTranscriptionSessionDependencies) {
     this.admissionRejection = dependencies.admissionRejection ?? new AbortController();
-    this.packetFlow = new SpeakerPacketFlowControl(
-      dependencies.maximumQueuedPackets, dependencies.clock, dependencies.timer,
-    );
+    this.packetFlow = new SpeakerPacketFlowControl(dependencies.maximumQueuedPackets, dependencies.clock, dependencies.timer);
     this.pacer = new SourceTimelinePacer(dependencies.clock, dependencies.timer);
     this.durableAttempts = dependencies.liveSttDurability === undefined ? undefined : new LiveSttAttemptController({
       durability: dependencies.liveSttDurability, onFailure: (error) => this.latchFailure(error),
@@ -153,13 +151,18 @@ export class SpeakerTranscriptionSession {
         return;
       }
       await this.admit(packet, deadline);
-      await this.untilCancelled(this.chain);
+      await (this.dependencies.liveSttDurability !== undefined && this.dependencies.isMeetingFinishing()
+        ? this.drainPending(this.chain) : this.untilCancelled(this.chain));
       // Do not let a failed send/ack or admission timeout advance the backlog.
       if (this.hasDeliveryFailed() || !this.dependencies.ledger.isDelivered(livePacketIdentity(packet))) {
         this.recoveryBlocked = true;
         return;
       }
     }
+  }
+
+  public drainPending(work = this.recovery ?? this.chain): Promise<void> {
+    return this.supervise(work, Math.max(this.deliveryBudgetMs, this.dependencies.packetBackpressureTimeoutMs), true);
   }
 
   public beginFinish(): void {
@@ -422,9 +425,7 @@ export class SpeakerTranscriptionSession {
     });
   }
 
-  private hasDurablePackets(): boolean {
-    return this.dependencies.liveSttDurability !== undefined || this.dependencies.markLivePacketDelivered !== undefined;
-  }
+  private hasDurablePackets(): boolean { return this.dependencies.liveSttDurability !== undefined || this.dependencies.markLivePacketDelivered !== undefined; }
 
   private failDurableAdmission(): void {
     if (this.hasDurablePackets() && !this.hasTerminalFence()) { this.latchFailure(new LiveTranscriptionTerminalFailure()); }

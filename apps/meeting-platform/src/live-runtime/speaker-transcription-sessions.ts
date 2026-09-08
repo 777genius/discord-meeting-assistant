@@ -111,6 +111,10 @@ export class SpeakerTranscriptionSessions {
     for (const rejection of this.lifecycleFences.values()) { rejection.abort(); }
   }
 
+  public async drainPending(): Promise<void> {
+    await Promise.all([...this.speakers.values()].map((speaker) => speaker.drainPending()));
+  }
+
   public beginFinish(): void {
     for (const speaker of this.speakers.values()) {
       speaker.beginFinish();
@@ -178,15 +182,13 @@ function isPacketRecoveryActive(state: ActiveLiveMeeting, initialization: Promis
 export function initializeLivePacketRecovery(dependencies: LiveMeetingRuntimeDependencies, state: ActiveLiveMeeting): Promise<void> {
   let initialization!: Promise<void>;
   initialization = (async () => {
+    await state.packetDrain;
     const durability = await dependencies.liveSttDurability?.recoverRecording(state.meetingId);
     if (durability !== undefined) { state.transcription.restoreDurability(durability); }
     if (durability !== undefined) {
-      let after = "";
-      while (isPacketRecoveryActive(state, initialization) && !durability.closed && !durability.legacy) {
-        const page = await dependencies.pendingLivePackets?.(state.meetingId, after);
-        if (page === undefined || page.length === 0 || !isPacketRecoveryActive(state, initialization)) { break; }
-        await state.transcription.recover(page);
-        after = livePacketIdentity(page[page.length - 1]!);
+      if (!durability.closed && !durability.legacy && state.packetRecovery === initialization) {
+        state.packetDrainReady = true;
+        await scheduleDurableLivePacketDrain(dependencies, state);
       }
       return;
     }
@@ -205,6 +207,42 @@ export function initializeLivePacketRecovery(dependencies: LiveMeetingRuntimeDep
     if (state.packetRecovery === initialization) { state.packetRecovery = null; }
   });
   return initialization;
+}
+
+/** Coalesces ingress notifications into one bounded outbox page, never a heap batch queue. */
+export function scheduleDurableLivePacketDrain(
+  dependencies: LiveMeetingRuntimeDependencies, state: ActiveLiveMeeting,
+): Promise<void> {
+  state.packetDrainRequested = true;
+  if (state.packetDrain !== null) { return state.packetDrain; }
+  const ownership = state.packetRecovery;
+  const active = (): boolean => state.packetRecovery === ownership && ownership !== null;
+  const drain = (async () => {
+    do {
+      state.packetDrainRequested = false;
+      let after = "";
+      while (active()) {
+        const page = await dependencies.pendingLivePackets?.(state.meetingId, after);
+        if (!active() || page === undefined || page.length === 0) { break; }
+        await state.transcription.recover(page);
+        after = state.packetDrainRequested ? "" : livePacketIdentity(page[page.length - 1]!);
+        state.packetDrainRequested = false;
+      }
+      // A notification during a read or drain may precede the cursor. Rescan
+      // durable eligibility; accepted receipts and speaker fences exclude replay.
+    } while (active() && state.packetDrainRequested);
+  })().finally(() => {
+    state.packetDrain = null;
+    // Cover a wakeup queued between the last empty read and this settlement.
+    if (active() && state.packetDrainRequested) { void scheduleDurableLivePacketDrain(dependencies, state); }
+  });
+  state.packetDrain = drain;
+  void drain.catch((error: unknown) => {
+    dependencies.logger.warn("Derived live outbox drain failed", {
+      meetingId: state.meetingId, errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+  });
+  return drain;
 }
 
 export async function waitForLivePacketRecovery(
