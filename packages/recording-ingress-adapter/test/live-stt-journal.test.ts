@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 
-import { liveSttJournal, initializeLiveStt } from "../src/live-delivery-outbox.js";
+import { liveSttJournal, initializeLiveStt, appendPendingLivePackets } from "../src/live-delivery-outbox.js";
 import { RecordingIngressRuntime } from "../src/recording-ingress-runtime.js";
 
 const roots: string[] = [];
@@ -81,4 +81,35 @@ it("rejects conflicting completion and cannot clear a durable fence with late su
   await journal.complete({ operation: grant.operation, outcome: "opened" });
   await expect(journal.complete({ operation: grant.operation, outcome: "not-accepted" })).rejects.toBeDefined();
   expect(await journal.beginOpen(owner, "a")).toEqual({ status: "fenced", reason: "provider-terminal" });
+});
+
+it("closed admission allows only the owned healthy drain and cold recovery fences unfinished drain", async () => {
+  const { root, ingress, journal } = await fixture();
+  const owner = (await journal.recoverRecording("r")).owner;
+  const opened = await journal.beginOpen(owner, "a");
+  const unfinished = await journal.beginOpen(owner, "b");
+  if (opened.status !== "granted" || opened.operation.kind !== "open" || unfinished.status !== "granted" || unfinished.operation.kind !== "open") { throw new Error("expected opens"); }
+  await journal.complete({ operation: opened.operation, outcome: "opened" });
+  await journal.complete({ operation: unfinished.operation, outcome: "opened" });
+  await appendPendingLivePackets(ingress, [{ recordingId: "r", speakerId: "a", guildId: "scope", channelId: "room",
+    receivedAtMs: 0, relativeTimeMs: 0, rtpTimestamp: 0, rtpSequence: 0, opus: Uint8Array.of(0xf8, 0xff, 0xfe) }]);
+  await journal.closeRecording(owner, 100);
+  const sending = await journal.beginSend(opened.operation.session, "r:a:0:0:0");
+  if (sending.status !== "granted" || sending.operation.kind !== "send") { throw new Error("expected owned packet drain"); }
+  await journal.complete({ operation: sending.operation, outcome: "accepted" });
+  const finalizing = await journal.beginFinalize(opened.operation.session);
+  if (finalizing.status !== "granted" || finalizing.operation.kind !== "finalize") { throw new Error("expected healthy drain"); }
+  await journal.complete({ operation: finalizing.operation, outcome: "finalized" });
+  expect((await journal.beginFinalize(opened.operation.session)).status).toBe("recording-closed");
+  expect((await journal.beginOpen(owner, "a")).status).toBe("recording-closed");
+  expect((await journal.beginOpen(owner, "c")).status).toBe("recording-closed");
+  await ingress.close();
+  const recovered = liveSttJournal(runtime(root));
+  const cold = await recovered.recoverRecording("r");
+  expect(cold.closed).toBe(true); expect(cold.endedAtMs).toBe(100);
+  expect(cold.fences).toEqual([{ speakerId: "b", reason: "acceptance-unknown" }]);
+  await expect(recovered.beginFinalize(unfinished.operation.session)).rejects.toBeDefined();
+  expect(await recovered.beginFinalize({ ...unfinished.operation.session, owner: cold.owner }))
+    .toEqual({ status: "fenced", reason: "acceptance-unknown" });
+  expect((await recovered.beginOpen(cold.owner, "c")).status).toBe("recording-closed");
 });

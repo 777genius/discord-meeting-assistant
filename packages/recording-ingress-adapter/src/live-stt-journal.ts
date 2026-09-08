@@ -38,8 +38,9 @@ function assertSession(access: SttJournalAccess, session: SttSession): SttSpeake
   if (state.generation !== session.generation || session.generation < 1) { conflict("session generation mismatch"); }
   return state;
 }
-function denied(state: SttRecordingState, current: SttSpeakerState): SttDenied | undefined {
-  if (state.endedAtMs !== undefined) { return { status: "recording-closed" }; }
+function denied(state: SttRecordingState, current: SttSpeakerState, kind: SttOperation["kind"] = "open"): SttDenied | undefined {
+  // Closure stops admission, not draining an already-open, still-owned generation.
+  if (state.endedAtMs !== undefined && (kind === "open" || !current.opened)) { return { status: "recording-closed" }; }
   const reason = current.fence ?? (state.initialized ? undefined : "legacy-unknown");
   return reason === undefined ? undefined : { status: "fenced", reason };
 }
@@ -105,7 +106,7 @@ export class LiveSttJournal implements SttJournalPort {
     return this.transaction(session.owner.recordingId, async (access) => {
       const state = this.assertCurrent(access, session.owner);
       const current = assertSession(access, session);
-      const rejection = denied(state, current);
+      const rejection = denied(state, current, "send");
       if (rejection !== undefined) { return rejection; }
       const row = access.db.get(access.index, packetId);
       if (row === undefined || row.length === 0 || !packetId.startsWith(`${session.owner.recordingId}:${session.speakerId}:`)) {
@@ -121,7 +122,7 @@ export class LiveSttJournal implements SttJournalPort {
     return this.transaction(session.owner.recordingId, async (access) => {
       const state = this.assertCurrent(access, session.owner);
       const current = assertSession(access, session);
-      const rejection = denied(state, current);
+      const rejection = denied(state, current, "finalize");
       if (rejection !== undefined) { return rejection; }
       if (!current.opened || current.pending !== undefined) { conflict("finalize has no idle opened session"); }
       return this.grant(access, { session, operation: state.operation + 1, kind: "finalize" });
@@ -233,7 +234,7 @@ function applyIntent(access: SttJournalAccess, state: SttRecordingState, operati
       !Number.isSafeInteger(session.generation) || !Number.isSafeInteger(operation.operation) ||
       operation.operation !== state.operation + 1) { conflict("invalid intent identity"); }
   const current = speaker(access, session.speakerId);
-  if (denied(state, current) !== undefined || current.pending !== undefined) { conflict("intent on unavailable session"); }
+  if (denied(state, current, operation.kind) !== undefined || current.pending !== undefined) { conflict("intent on unavailable session"); }
   if (operation.kind === "open") {
     if (current.opened || session.generation !== current.generation + 1) { conflict("invalid opening generation"); }
     current.generation = session.generation;

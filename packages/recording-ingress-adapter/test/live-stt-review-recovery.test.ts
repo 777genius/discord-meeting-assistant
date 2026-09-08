@@ -8,6 +8,18 @@ import { LiveDeliveryIndex } from "../src/live-delivery-index.js";
 import { RecordingIngressRuntime } from "../src/recording-ingress-runtime.js";
 import type { DecodedPacket } from "../src/recording-ingress-invariants.js";
 
+// Vitest timeout does not cancel async filesystem work. Keep the lock through
+// each body's finally block so a timed-out workload cannot consume another
+// test's process-global fault injection or overlap prototype restoration.
+let previousWork = Promise.resolve();
+function serialTest(name: string, run: () => Promise<void>, timeout = 5_000): void {
+  it(name, () => {
+    const work = previousWork.then(run);
+    previousWork = work.catch(() => {});
+    return work;
+  }, timeout);
+}
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "stt-review-storage-"));
   const makeRuntime = () => new RecordingIngressRuntime({ spoolRoot: root, artifactLocatorPrefix: "synthetic",
@@ -25,7 +37,7 @@ function packet(speakerId: string, sequence: number): DecodedPacket {
     relativeTimeMs: sequence * 20, rtpTimestamp: sequence * 960, rtpSequence: sequence, opus: Uint8Array.of(0xf8, 0xff, 0xfe) };
 }
 
-it("pages only eligible payloads through prolonged degradation and repeated reconnects without deleting evidence", async () => {
+serialTest("pages only eligible payloads through prolonged degradation and repeated reconnects without deleting evidence", async () => {
   const f = await fixture();
   try {
     const opening = await f.journal.beginOpen(f.owner, "a");
@@ -61,9 +73,9 @@ it("pages only eligible payloads through prolonged degradation and repeated reco
     assert.equal((await pendingLivePackets(f.runtime, "r")).length, 4696);
     assert.deepEqual(await readFile(join(f.root, "original.ogg")), f.original);
   } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
-});
+}, 30_000); // Real fsync workload: thousands of packets and repeated paged reads.
 
-it("reconstructs spool ownership after cache eviction with constant journal bookkeeping and many completed recordings", async () => {
+serialTest("reconstructs spool ownership after cache eviction with constant journal bookkeeping and many completed recordings", async () => {
   const f = await fixture();
   try {
     const opening = await f.journal.beginOpen(f.owner, "a");
@@ -91,11 +103,11 @@ it("reconstructs spool ownership after cache eviction with constant journal book
       assert.equal(cold.fences[0]?.reason, "acceptance-unknown");
     } finally { await restarted.close(); }
   } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
-});
+}, 30_000); // 300 recording journals require hundreds of real durable syncs.
 
 for (const stage of ["intent", "outcome", "fence"] as const) {
   for (const failure of ["torn", "sync", "cache"] as const) {
-    it(`preserves authoritative bytes and recovers new-format ${stage} after ${failure} failure`, async () => {
+    serialTest(`preserves authoritative bytes and recovers new-format ${stage} after ${failure} failure`, async () => {
       const f = await fixture();
       const probe = await open(join(f.root, "original.ogg"));
       const prototype = Object.getPrototypeOf(probe) as FileHandle;

@@ -301,3 +301,64 @@ it("durable lifecycle recovery rejects a terminal timestamp that conflicts with 
     assert.equal((await f.ingress.pendingLivePackets("r")).length, 1);
   } finally { await f.cleanup(); }
 });
+
+it("terminal before idle drains the owned generation and persists finalize-only speech before publication", async () => {
+  const f = await fixture();
+  const meetings = new MemoryLiveMeetingRepository();
+  const projector = new ProjectionStub();
+  const summarizer = new SummaryStub();
+  let callback!: Parameters<LiveTranscriptionPort["openSession"]>[0]["onTranscript"];
+  let sends = 0;
+  let finalizes = 0;
+  let publications = 0;
+  const runtime = new PlatformLiveMeetingRuntime({ appendTurn: new AppendLiveTranscriptTurn(meetings),
+    startMeeting: new StartLiveMeeting({ meetings }), finishMeeting: new FinishLiveMeeting(meetings),
+    refreshMeeting: new RefreshLiveMeeting({ meetings, projector, summarizer }),
+    transcriber: mapLiveAdmission({ openSession: async (input) => {
+      callback = input.onTranscript;
+      return { terminate: () => {}, sendPacket: async () => { sends += 1; return "accepted"; },
+        finalize: async () => {
+          const recovery = await f.storage.recoverRecording("r");
+          assert.equal(recovery.closed, true, "admission closes before provider finalization");
+          assert.equal((await f.storage.beginOpen(recovery.owner, "new-speaker")).status, "recording-closed");
+          finalizes += 1;
+          input.onTranscript({ meetingId: "r", speakerId, startMs: 0, endMs: 20, isFinal: true, text: "finalize-only tail" });
+        } };
+    } }), liveSttDurability: f.storage,
+    pendingLivePackets: (id, after) => f.ingress.pendingLivePackets(id, after),
+    speakerIdleFinalizeMs: 10_000,
+    logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+  });
+  let next: ReturnType<typeof f.makeIngress> | undefined;
+  try {
+    await runtime.acceptLifecycle(started("r", [speakerId]));
+    assert.equal(sends, 1); assert.equal(finalizes, 0);
+    assert.deepEqual(meetings.finalizedTurns, []);
+    await runtime.acceptLifecycle({ type: "meeting.ended", recordingId: "r", occurredAt: "2026-08-02T10:00:01.000Z" });
+    const publisher = new LiveFencedSummaryPublicationPort({ publish: async () => {
+      assert.equal(finalizes, 1);
+      assert.deepEqual(meetings.finalizedTurns.map((turn) => turn.text), ["finalize-only tail"]);
+      publications += 1; return { ok: true, value: { externalPublicationId: "synthetic-final" } };
+    } }, runtime, meetings);
+    await publisher.publish(publicationRequest);
+    assert.equal(publications, 1); assert.equal(finalizes, 1);
+    assert.equal(meetings.snapshot?.status, "ended");
+    const before = JSON.stringify({ turns: meetings.finalizedTurns, captions: projector.requests, summaries: summarizer.requests });
+    callback({ meetingId: "r", speakerId, startMs: 20, endMs: 40, isFinal: true, text: "late callback" });
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
+    assert.equal(JSON.stringify({ turns: meetings.finalizedTurns, captions: projector.requests, summaries: summarizer.requests }), before);
+    assert.deepEqual(await f.ingress.pendingLivePackets("r"), []);
+    const warm = await f.storage.recoverRecording("r");
+    assert.equal(warm.closed, true); assert.deepEqual(warm.fences, []);
+    assert.equal((await f.storage.beginOpen(warm.owner, speakerId)).status, "recording-closed");
+    await runtime.releaseForRestart(); await f.ingress.close(); next = f.makeIngress();
+    const coldStorage = mapLiveSttDurability(next.liveSttDurability);
+    const cold = await coldStorage.recoverRecording("r");
+    assert.equal(cold.closed, true); assert.equal(cold.endedAtMs, warm.endedAtMs);
+    assert.deepEqual(cold.fences, [], "clean terminal drain survives journal replay");
+    assert.equal((await coldStorage.beginOpen(cold.owner, speakerId)).status, "recording-closed");
+  } finally {
+    await Promise.allSettled([runtime.releaseForRestart()]);
+    await next?.close(); await f.cleanup();
+  }
+});
