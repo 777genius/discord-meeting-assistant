@@ -65,7 +65,7 @@ function manifestFixture(artifactRoot: string) {
     schemaVersion:"meeting_knowledge.real40_diagnostic.v1",
     authorityKind:"owner_authorized_nonqualifying_diagnostic",
     runId:"diagnostic:test", sourceRevision:"a".repeat(40), sdkVersion:"0.2.4",
-    model:"gpt-5.6-sol", reasoningEffort:"medium", serviceTier:"default",
+    model:"gpt-5.6-terra", reasoningEffort:"low", serviceTier:"default",
     frozen:{meetingId:"test-meeting", snapshotSha256:"a".repeat(64),
       transcriptSha256:"b".repeat(64), transcriptVersion:2, roster,
       scopeId:"diagnostic:scope", roomId:"diagnostic:room", releaseId:"diagnostic-release"},
@@ -84,6 +84,13 @@ function manifestFixture(artifactRoot: string) {
 }
 
 describe("diagnostic input preflight", () => {
+  it.each([{model: "gpt-5.6-sol", reasoningEffort: "medium"},
+    {model: "gpt-5.6-terra", reasoningEffort: "medium"},
+    {model: "gpt-5.6-terra", reasoningEffort: "low", serviceTier: "fast"}])(
+    "rejects stale or substituted memory profile before effects: %j", profile => {
+      expect(() => decodeDiagnosticManifest({...manifestFixture("/test-artifacts"),
+        ...profile})).toThrow();
+    });
   it.each([null, [], {}, {roster:null}, {roster:{humans:"human", automation:[]}},
     {roster:{humans:[1], automation:[]}}, {roster:{humans:["human"], automation:["human"]}},
     {transcriptVersion:"2"}, {snapshotSha256:null}, {scopeId:"production"}])(

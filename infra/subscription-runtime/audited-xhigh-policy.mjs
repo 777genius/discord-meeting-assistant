@@ -1,6 +1,7 @@
 const subscriptionRuntimeFinalCodexModel = "gpt-5.6-sol";
 const subscriptionRuntimeIncrementalCodexModel = "gpt-5.6-luna";
 const subscriptionRuntimeConversationCodexModel = "gpt-5.6-luna";
+const subscriptionRuntimeKnowledgeCodexModel = "gpt-5.6-terra";
 const subscriptionRuntimeDefaultServiceTier = "default";
 
 const profiles = Object.freeze({
@@ -17,37 +18,39 @@ const profiles = Object.freeze({
   }),
   "discord_meeting.knowledge.answer.v1": Object.freeze({
     maxOutputTokens: 2_048,
-    model: subscriptionRuntimeFinalCodexModel,
+    model: subscriptionRuntimeKnowledgeCodexModel,
     outputKind: "structured_output",
     outputSchemaName: "discord_meeting_knowledge_answer_v1",
-    policyVersion: "meeting-knowledge.answer.subscription-runtime.v3",
+    policyVersion: "meeting-knowledge.answer.subscription-runtime.v4",
     provider: "codex",
     purpose: "discord_meeting.knowledge.answer.v1",
-    reasoningEffort: "medium",
+    reasoningEffort: "low",
     responseFormat: "json",
     serviceTier: subscriptionRuntimeDefaultServiceTier,
   }),
   "discord_meeting.knowledge.coverage_extract.v1": Object.freeze({
     maxOutputTokens: 2_048,
-    model: subscriptionRuntimeFinalCodexModel,
+    model: subscriptionRuntimeKnowledgeCodexModel,
     outputKind: "structured_output",
     outputSchemaName: "discord_meeting_knowledge_coverage_extract_v1",
-    policyVersion: "meeting-knowledge.coverage.subscription-runtime.v1",
+    policyVersion: "meeting-knowledge.coverage.subscription-runtime.v2",
     provider: "codex",
     purpose: "discord_meeting.knowledge.coverage_extract.v1",
-    reasoningEffort: "medium",
+    reasoningEffort: "low",
     responseFormat: "json",
+    serviceTier: subscriptionRuntimeDefaultServiceTier,
   }),
   "discord_meeting.knowledge.evidence_select.v1": Object.freeze({
     maxOutputTokens: 1_024,
-    model: subscriptionRuntimeFinalCodexModel,
+    model: subscriptionRuntimeKnowledgeCodexModel,
     outputKind: "structured_output",
     outputSchemaName: "discord_meeting_knowledge_evidence_select_v1",
-    policyVersion: "meeting-knowledge.evidence-select.subscription-runtime.v1",
+    policyVersion: "meeting-knowledge.evidence-select.subscription-runtime.v2",
     provider: "codex",
     purpose: "discord_meeting.knowledge.evidence_select.v1",
-    reasoningEffort: "medium",
+    reasoningEffort: "low",
     responseFormat: "json",
+    serviceTier: subscriptionRuntimeDefaultServiceTier,
   }),
   "discord_meeting.summary.generate": Object.freeze({
     maxOutputTokens: 8_192,

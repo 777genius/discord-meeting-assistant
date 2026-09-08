@@ -68,6 +68,8 @@
 
 - [ADR-0070: Bound normalized historical embedding documents](0070-normalized-historical-embedding-budget.md)
 
+- [ADR-0071: Terra low as the memory default](0071-terra-low-memory-default.md)
+
 ## Superseded
 
 - [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)

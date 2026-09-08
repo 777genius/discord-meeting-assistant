@@ -63,6 +63,7 @@ class RuntimeFake implements SubscriptionRuntimeTransportPort {
         provider: "codex",
         purpose: request.context.purpose,
         reasoningEffort: request.task.controls.reasoningEffort,
+        serviceTier: "default",
         requestId: request.runId,
         runtimeEngine: subscriptionRuntimeCliEngine,
         runtimePackageVersion: auditedSubscriptionRuntimePackageVersion,
@@ -168,8 +169,9 @@ describe("Meeting Knowledge semantic every-block provider contract", () => {
     expect(runtime.request?.task.controls).toMatchObject({
       disableTools: true,
       maxTurns: 1,
-      model: "gpt-5.6-sol",
-      reasoningEffort: "medium",
+      model: "gpt-5.6-terra",
+      reasoningEffort: "low",
+      serviceTier: "default",
     });
     const prompt = runtime.request?.task.prompt ?? "";
     expect(prompt).toContain("The team agreed to launch Beta next week.");

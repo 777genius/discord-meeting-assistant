@@ -332,7 +332,9 @@ future canary must share its exact request snapshot. The full profile must be
 `locator-v2-full-<index digest>` with healthy, qualified `postgres_keyword` and
 `qdrant_dense` lanes; degraded, lexical-only, or drifted profiles fail closed.
 This candidate's execution binding is Infinity Context SDK `0.2.4` and
-`gpt-5.6-sol` with reasoning effort `medium` and service tier `default`. The
+`gpt-5.6-terra` with reasoning effort `low` and service tier `default`. Previous
+Sol/medium release, spend, and result evidence cannot qualify this profile; a
+fresh campaign with remeasured launcher and release bindings is required. The
 exact source, accepted snapshot, release, request, prompt, policy, tokenizer,
 corpus, rubric, question, reviewer, and adjudication identities must remain
 identical across all three repetitions; any drift requires new receipts and

@@ -326,6 +326,11 @@
       "id": "ADR-0070",
       "path": "docs/decisions/0070-normalized-historical-embedding-budget.md",
       "immutableDigest": "sha256:33c6de69fde9ec475468beeb1d52fb22b82710479b4dcb1adb9c734e874c89e7"
+    },
+    {
+      "id": "ADR-0071",
+      "path": "docs/decisions/0071-terra-low-memory-default.md",
+      "immutableDigest": "sha256:3a83017424c92059f9fd60590b402cf4c31800e1e5d00ba355aa67e58ab22128"
     }
   ]
 }

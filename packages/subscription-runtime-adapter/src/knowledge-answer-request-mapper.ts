@@ -13,9 +13,9 @@ import {
   subscriptionRuntimeKnowledgeAnswerMaxOutputTokens,
   subscriptionRuntimeKnowledgeAnswerPurpose,
   subscriptionRuntimeDefaultServiceTier,
-  subscriptionRuntimeModel,
+  subscriptionRuntimeKnowledgeModel,
   subscriptionRuntimeProtocolVersion,
-  subscriptionRuntimeReasoningEffort,
+  subscriptionRuntimeKnowledgeReasoningEffort,
   type SubscriptionRuntimeAgentTaskRequest,
 } from "./subscription-runtime-contract.js";
 
@@ -51,7 +51,7 @@ const exhaustiveKnowledgeAnswerSystemPrompt = [
 ].join(" ");
 
 export const knowledgeAnswerRuntimeProfile =
-  "meeting-knowledge.answer.sol-medium.bounded-grounding.v3" as const;
+  "meeting-knowledge.answer.terra-low.bounded-grounding.v4" as const;
 
 export interface KnowledgeAnswerRequestOptions {
   readonly isolatedCwd: string;
@@ -171,12 +171,12 @@ export function buildSubscriptionRuntimeKnowledgeAnswerRequest(
         interactive: false,
         maxOutputTokens: options.maxOutputTokens,
         maxTurns: 1,
-        model: subscriptionRuntimeModel,
+        model: subscriptionRuntimeKnowledgeModel,
         outputKind: "structured_output",
         outputSchema: providerKnowledgeAnswerJsonSchema,
         outputSchemaName: knowledgeAnswerOutputSchemaName,
         permissionMode: "read-only",
-        reasoningEffort: subscriptionRuntimeReasoningEffort,
+        reasoningEffort: subscriptionRuntimeKnowledgeReasoningEffort,
         serviceTier: subscriptionRuntimeDefaultServiceTier,
         responseFormat: "json",
         runtimeOutput: "structured_output",
@@ -185,9 +185,9 @@ export function buildSubscriptionRuntimeKnowledgeAnswerRequest(
       kind: "structured-prompt",
       metadata: {
         executionProfile: "stateless-completion",
-        model: subscriptionRuntimeModel,
+        model: subscriptionRuntimeKnowledgeModel,
         policyVersion: knowledgeAnswerPolicyVersion,
-        reasoningEffort: subscriptionRuntimeReasoningEffort,
+        reasoningEffort: subscriptionRuntimeKnowledgeReasoningEffort,
         runtimeOutput: "structured_output",
         serviceTier: subscriptionRuntimeDefaultServiceTier,
         toolsDisabled: "true",

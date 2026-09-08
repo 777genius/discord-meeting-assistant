@@ -187,7 +187,7 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     const generated = await generator.generate(generationRequest());
 
     expect(generated).toMatchObject({ status: "completed" });
-    expect(measurement.runtimeProfile).toContain("sol-medium.bounded-grounding.v3");
+    expect(measurement.runtimeProfile).toContain("terra-low.bounded-grounding.v4");
     expect(measurement.inputTokens).toBeGreaterThan(0);
     expect(measurement.requestBytes).toBeGreaterThan(0);
     expect(measurement.original.fullInputBytes).toBe(
@@ -202,8 +202,8 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     expect(runtime.request?.context.purpose).toBe(subscriptionRuntimeKnowledgeAnswerPurpose);
     expect(runtime.request?.task.controls).toMatchObject({
       disableTools: true,
-      model: "gpt-5.6-sol",
-      reasoningEffort: "medium",
+      model: "gpt-5.6-terra",
+      reasoningEffort: "low",
       serviceTier: "default",
     });
     const outputSchema = runtime.request?.task.controls.outputSchema as {
@@ -569,15 +569,15 @@ describe("Meeting Knowledge grounding runtime contract", () => {
 
   it("pins distinct strict answer and coverage profiles", () => {
     expect(knowledgeAnswerExecutionProfile).toMatchObject({
-      model: "gpt-5.6-sol",
+      model: "gpt-5.6-terra",
       purpose: "discord_meeting.knowledge.answer.v1",
-      reasoningEffort: "medium",
+      reasoningEffort: "low",
       serviceTier: "default",
     });
     expect(knowledgeCoverageExecutionProfile).toMatchObject({
-      model: "gpt-5.6-sol",
+      model: "gpt-5.6-terra",
       purpose: "discord_meeting.knowledge.coverage_extract.v1",
-      reasoningEffort: "medium",
+      reasoningEffort: "low",
     });
     expect(providerKnowledgeCoverageExtractSchema.safeParse({
       evidenceIds: ["evidence-000001"],

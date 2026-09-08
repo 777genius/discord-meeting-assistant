@@ -15,8 +15,8 @@ export interface DiagnosticManifest {
   readonly runId: string;
   readonly sourceRevision: string;
   readonly sdkVersion: "0.2.4";
-  readonly model: "gpt-5.6-sol";
-  readonly reasoningEffort: "medium";
+  readonly model: "gpt-5.6-terra";
+  readonly reasoningEffort: "low";
   readonly serviceTier: "default";
   readonly frozen: DiagnosticFinalEvidenceBinding;
   readonly rosterSha256: string;
@@ -59,7 +59,7 @@ export function decodeDiagnosticManifest(value: unknown): DiagnosticManifest {
     "model", "reasoningEffort", "serviceTier", "frozen", "rosterSha256", "providerBinding", "questions", "connections"], "diagnostic manifest");
   if (v.schemaVersion !== "meeting_knowledge.real40_diagnostic.v1" ||
     v.authorityKind !== "owner_authorized_nonqualifying_diagnostic" || v.sdkVersion !== "0.2.4" ||
-    v.model !== "gpt-5.6-sol" || v.reasoningEffort !== "medium" || v.serviceTier !== "default" ||
+    v.model !== "gpt-5.6-terra" || v.reasoningEffort !== "low" || v.serviceTier !== "default" ||
     typeof v.sourceRevision !== "string" || !/^[a-f0-9]{40}$/u.test(v.sourceRevision)) {
     throw new Error("invalid nonqualifying diagnostic binding");
   }

@@ -557,8 +557,8 @@ async function setsQualifiedKnowledgeServiceTier(): Promise<void> {
 
   expect(fixture.state.workers).toHaveLength(1);
   expect(requiredWorker(fixture.state, 0).options).toMatchObject({
-    model: "gpt-5.6-sol",
-    reasoningEffort: "medium",
+    model: "gpt-5.6-terra",
+    reasoningEffort: "low",
     serviceTier: "default",
   });
   expect(result.serviceTier).toBe("default");

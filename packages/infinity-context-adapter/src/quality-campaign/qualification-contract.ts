@@ -35,7 +35,7 @@ export interface QualificationExecutionBinding {
   readonly contractSha256: string;
   readonly maximumOutputBytes: number;
   readonly maximumOutputTokens: number;
-  readonly model: "gpt-5.6-sol";
+  readonly model: "gpt-5.6-terra";
   readonly promptSha256: string;
   readonly runtimeSha256: string;
   readonly tokenizerSha256: string;

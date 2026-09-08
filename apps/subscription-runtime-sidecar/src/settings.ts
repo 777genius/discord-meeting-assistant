@@ -20,6 +20,7 @@ import {
   subscriptionRuntimeConversationReasoningEffort,
   subscriptionRuntimeDefaultServiceTier,
   subscriptionRuntimeIncrementalMaxOutputTokens,
+  subscriptionRuntimeKnowledgeModel,
   subscriptionRuntimeModel,
   subscriptionRuntimeIncrementalModel,
   subscriptionRuntimeIncrementalReasoningEffort,
@@ -69,6 +70,7 @@ const deploymentPolicySchema = z
       z.object({
         provider: z.literal("codex"),
         model: z.union([
+          z.literal(subscriptionRuntimeKnowledgeModel),
           z.literal(subscriptionRuntimeModel),
           z.literal(subscriptionRuntimeIncrementalModel),
           z.literal(subscriptionRuntimeConversationModel),

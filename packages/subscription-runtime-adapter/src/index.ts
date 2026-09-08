@@ -152,6 +152,8 @@ export {
   subscriptionRuntimeKnowledgeCoveragePurpose,
   subscriptionRuntimeKnowledgeEvidenceSelectorMaxOutputTokens,
   subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
+  subscriptionRuntimeKnowledgeModel,
+  subscriptionRuntimeKnowledgeReasoningEffort,
   subscriptionRuntimeModel,
   subscriptionRuntimeProtocolVersion,
   subscriptionRuntimeProvider,
