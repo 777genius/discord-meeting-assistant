@@ -56,8 +56,9 @@ vi.mock("../src/quality-campaign/production-canonical-question-chain.js", () => 
 }));
 const require = createRequire(import.meta.url);
 const fixture = JSON.parse(readFileSync(require.resolve(
-  "@infinity-context/sdk/fixtures/context_retrieval_v2/capability.json"), "utf8"));
-const healthy = { ...fixture, profile_id: `locator-v2-full-${fixture.index_profile_digest}` };
+  "@infinity-context/sdk/fixtures/context_retrieval_v2/capability.json"), "utf8")) as Record<string, unknown> & {
+    index_profile_digest: string; provider_lanes: readonly Record<string, unknown>[] };
+const healthy: typeof fixture = { ...fixture, profile_id: `locator-v2-full-${fixture.index_profile_digest}` };
 healthy.capability_fingerprint = retrievalV2CapabilityFingerprint(healthy);
 function unready(overrides: Record<string, unknown> = {}) {
   const value = { ...healthy, provider_lanes: healthy.provider_lanes.map(
@@ -147,7 +148,7 @@ describe("installed diagnostic preparation barrier", () => {
           line => lines.push(line))).toBe(1);
         expect(send).toHaveBeenCalledTimes(1);
         expect(lines.join("")).not.toContain("private-");
-        expect(JSON.parse(lines[0]!).reason).toBe(failure === "timeout" ?
+        expect((JSON.parse(lines[0]!) as { reason: string }).reason).toBe(failure === "timeout" ?
           "diagnostic_index_readiness_timeout" : "diagnostic_index_readiness_failed");
         expect(state.questions).toBe(0); expect(state.modelCalls).toBe(0);
         const before = await readdir(manifest.connections.artifactRoot);
@@ -175,7 +176,7 @@ describe("installed diagnostic preparation barrier", () => {
     try {
       const send = vi.spyOn(FetchTransport.prototype, "send").mockImplementation(request =>
         new Promise((_resolve, reject) => {request.signal?.addEventListener("abort",
-          () => reject(request.signal?.reason), { once: true });}));
+          () => {reject(request.signal?.reason);}, { once: true });}));
       await expect(runDiagnostic(manifest)).rejects.toMatchObject({
         preparation: { status: "blocked", probes: 1, lastProbeCode: "request_timeout" } });
       expect(send).toHaveBeenCalledTimes(1);

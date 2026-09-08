@@ -100,7 +100,7 @@ class ReadinessTransport implements HttpTransport {
 
 function observe(value: unknown, binding: FocusedLocatorRetrievalV2ProviderBinding):
   ReadinessTransport["observation"] {
-  const capability = (value as { context?: { retrieval?: Record<string, unknown> } } | null)?.context?.retrieval;
+  const capability = (value as { context?: { retrieval?: Record<string, unknown> | null } } | null)?.context?.retrieval;
   if (capability === undefined || capability === null) {return "invalid_capability";}
   if (capability.profile_id !== binding.profileId ||
     capability.service_revision !== binding.serviceRevision ||
@@ -112,7 +112,7 @@ function observe(value: unknown, binding: FocusedLocatorRetrievalV2ProviderBindi
   }
   if (capability.capability_fingerprint !== retrievalV2CapabilityFingerprint(capability) ||
     !Array.isArray(capability.provider_lanes)) {return "invalid_capability";}
-  const lanes = capability.provider_lanes as Array<Record<string, unknown>>;
+  const lanes = capability.provider_lanes as Array<Record<string, unknown> | null>;
   // Only required-lane health may differ from the exact frozen capability.
   // Normalization is for retry classification only, never passed to the SDK or accepted as ready.
   const restoredHealth = { ...capability, provider_lanes: lanes.map(lane =>
