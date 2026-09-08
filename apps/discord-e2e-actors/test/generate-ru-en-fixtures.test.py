@@ -55,7 +55,7 @@ class GeneratorTest(unittest.TestCase):
                     if not k.startswith("DISCORD_E2E_")}
         self.env["PATH"] = str(self.bin) + os.pathsep + self.env["PATH"]
 
-    def run_generator(self, label, overrides=None, baseline=False, fresh=True):
+    def run_generator(self, label, overrides=None, baseline=False, fresh=True, shell=("sh",)):
         package = self.root / label
         (package / "scripts").mkdir(parents=True)
         fixtures = package / "test/fixtures"
@@ -74,7 +74,7 @@ class GeneratorTest(unittest.TestCase):
         if fresh:
             env["DISCORD_E2E_FIXTURE_OUTPUT_DIR"] = str(output)
         env.update(overrides or {})
-        result = subprocess.run(["sh", str(script)], env=env, capture_output=True,
+        result = subprocess.run([*shell, str(script)], env=env, capture_output=True,
                                 text=True, timeout=30)
         calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
         return result, calls, output if fresh else fixtures, fixtures, env, script
@@ -138,6 +138,32 @@ class GeneratorTest(unittest.TestCase):
         self.assertEqual(new[0].returncode, 0, new[0].stderr)
         self.assertEqual(old[1], new[1])
         self.assertEqual(old[0].stdout, new[0].stdout)
+
+    def test_reject_oversized_pipecat_rate_before_destination_or_synthesis(self):
+        for shell in (("sh",), ("bash", "--posix")):
+            with self.subTest(shell=shell):
+                run = self.run_generator(
+                    f"oversized-{shell[0]}",
+                    {"DISCORD_E2E_TTS_PIPECAT_RATE": "999999999999999999999999999999"},
+                    shell=shell)
+                self.assertEqual(run[0].returncode, 1, run[0].stderr)
+                self.assertEqual(
+                    run[0].stderr,
+                    "DISCORD_E2E_TTS_PIPECAT_RATE must be an integer from 100 to 250\n")
+                self.assertEqual(run[1], [])
+                self.assertFalse(run[2].exists())
+
+    def test_pipecat_rate_range_boundaries(self):
+        for shell in (("sh",), ("bash", "--posix")):
+            for rate in ("100", "199", "200", "249", "250"):
+                with self.subTest(shell=shell, rate=rate):
+                    run = self.run_generator(
+                        f"valid-{shell[0]}-{rate}",
+                        {"DISCORD_E2E_TTS_PIPECAT_RATE": rate}, shell=shell)
+                    self.assertEqual(run[0].returncode, 0, run[0].stderr)
+                    phrases = [call for call in run[1]
+                               if call[0] == "say" and call[3] == "Pipecat assistant."]
+                    self.assertEqual(phrases, [["say", "Daniel", rate, "Pipecat assistant."]] * 2)
 
     def test_reject_invalid_rates_and_existing_destination_before_synthesis(self):
         for i, rate in enumerate(("", "99", "251", "abc", "140.5")):

@@ -14,16 +14,14 @@ english_voice=${DISCORD_E2E_TTS_ENGLISH_VOICE:-Daniel}
 english_rate=${DISCORD_E2E_TTS_ENGLISH_RATE:-150}
 
 pipecat_rate=${DISCORD_E2E_TTS_PIPECAT_RATE-$english_rate}
+# Match the bounded range lexically so oversized integers never reach shell arithmetic.
 case "$pipecat_rate" in
-  ''|*[!0-9]*)
+  1[0-9][0-9]|2[0-4][0-9]|250) ;;
+  *)
     echo "DISCORD_E2E_TTS_PIPECAT_RATE must be an integer from 100 to 250" >&2
     exit 1
     ;;
 esac
-if [ "$pipecat_rate" -lt 100 ] || [ "$pipecat_rate" -gt 250 ]; then
-  echo "DISCORD_E2E_TTS_PIPECAT_RATE must be an integer from 100 to 250" >&2
-  exit 1
-fi
 if [ "${DISCORD_E2E_TTS_PIPECAT_RATE+x}" = x ] &&
    [ -z "${DISCORD_E2E_FIXTURE_OUTPUT_DIR:-}" ]; then
   echo "DISCORD_E2E_TTS_PIPECAT_RATE requires a fresh DISCORD_E2E_FIXTURE_OUTPUT_DIR" >&2
