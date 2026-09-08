@@ -332,6 +332,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-manifest.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-frozen-store.ts
+      - packages/infinity-context-adapter/src/quality-campaign/diagnostic-index-readiness.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-run.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-score-cli.ts
@@ -363,6 +364,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-manifest.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-frozen-store.ts
+      - packages/infinity-context-adapter/src/quality-campaign/diagnostic-index-readiness.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-run.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-score-cli.ts

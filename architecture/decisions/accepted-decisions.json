@@ -331,6 +331,11 @@
       "id": "ADR-0071",
       "path": "docs/decisions/0071-terra-low-memory-default.md",
       "immutableDigest": "sha256:3a83017424c92059f9fd60590b402cf4c31800e1e5d00ba355aa67e58ab22128"
+    },
+    {
+      "id": "ADR-0072",
+      "path": "docs/decisions/0072-diagnostic-index-readiness.md",
+      "immutableDigest": "sha256:c5fab835107ebfa49cc55f4f455f39ca2c42b39ac92a7b5becbc8d1d9e1bd249"
     }
   ]
 }

@@ -70,6 +70,8 @@
 
 - [ADR-0071: Terra low as the memory default](0071-terra-low-memory-default.md)
 
+- [ADR-0072: Diagnostic index readiness before question reservation](0072-diagnostic-index-readiness.md)
+
 ## Superseded
 
 - [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)
