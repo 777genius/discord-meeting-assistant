@@ -53,3 +53,50 @@ it("composition does not trust arbitrary retryable:false", async () => {
   const error = Object.assign(new Error("unclassified"), { retryable: false });
   await expect(mapLiveAdmission({ openSession: async () => { throw error; } }).openSession(request)).rejects.toBe(error);
 });
+
+it.each(["open", "send", "finalize"] as const)("translates deployed two-field gateway errors from %s through the real adapter", async (phase) => {
+  for (const [code, Expected] of [
+    ["PROVIDER_TERMINAL", LiveTranscriptionTerminalFailure],
+    ["PROVIDER_OUTCOME_UNKNOWN", LiveTranscriptionAcceptanceUnknown],
+  ] as const) {
+    type Frame = import("@discord-meeting/voicetext-adapter").VoicetextInboundFrame;
+    const frames: Frame[] = [];
+    let waiting: ((frame: Frame) => void) | undefined;
+    const enqueue = (message: object) => {
+      const frame: Frame = { type: "text", data: JSON.stringify(message) };
+      if (waiting === undefined) { frames.push(frame); }
+      else { const resolve = waiting; waiting = undefined; resolve(frame); }
+    };
+    const fail = () => enqueue({ type: "error", code, message: "synthetic" });
+    const socket: import("@discord-meeting/voicetext-adapter").VoicetextWebSocketConnection = {
+      sendText: async (raw) => {
+        const message = JSON.parse(raw) as { type: string };
+        if (message.type === "config") {
+          if (phase === "open") { fail(); }
+          else { enqueue({ type: "ready", provider: "elevenlabs", model: "scribe_v2_realtime", session_id: "00000000-0000-4000-8000-000000000001" }); }
+        } else if (message.type === "finalize") { fail(); }
+      },
+      sendBinary: async () => { fail(); },
+      receive: async (signal) => {
+        signal.throwIfAborted();
+        const frame = frames.shift();
+        if (frame !== undefined) { return frame; }
+        return new Promise<Frame>((resolve, reject) => {
+          const abort = () => { waiting = undefined; reject(signal.reason); };
+          signal.addEventListener("abort", abort, { once: true });
+          waiting = (value) => { signal.removeEventListener("abort", abort); resolve(value); };
+        });
+      },
+      close: async () => {}, terminate: () => {},
+    };
+    const port = mapLiveAdmission(new VoicetextLiveTranscriptionAdapter(options, { connect: async () => socket }));
+    if (phase === "open") { await expect(port.openSession(request)).rejects.toBeInstanceOf(Expected); }
+    else {
+      const session = await port.openSession(request);
+      await expect(phase === "finalize" ? session.finalize() : session.sendPacket({
+        packetId: "p", opus: new Uint8Array([0xf8, 0xff, 0xfe]), durationSamples48Khz: 960, relativeTimeMs: 0,
+      })).rejects.toBeInstanceOf(Expected);
+      session.terminate();
+    }
+  }
+});

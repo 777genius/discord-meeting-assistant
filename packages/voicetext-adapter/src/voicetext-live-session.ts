@@ -24,10 +24,6 @@ import { VoicetextLiveTimeline } from "./voicetext-live-timeline.js";
 import { VoicetextLiveTranscriptEmitter } from "./voicetext-live-transcript-emitter.js";
 import type { VoicetextWebSocketConnection } from "./websocket-connector.js";
 
-// The gateway accepts the next binary frame only after acknowledging the
-// previous one. Keep the transport window aligned with that wire invariant.
-const maximumOutstandingPacketAcks = 1;
-
 export class LiveSession implements VoicetextLiveSession {
   private readonly ackWaiters = new Map<number, LiveSessionDeferred<void>>();
   private readonly abortController = new AbortController();
@@ -110,9 +106,10 @@ export class LiveSession implements VoicetextLiveSession {
         false,
       );
     }
+    // One send owns the wire until its ACK; concurrent sends/finalize are rejected.
     this.sending = true;
     try {
-      await this.waitForAckCapacity();
+      await Promise.resolve(); // Let queued receive failures settle before binary delivery.
       if (this.terminalError !== undefined) { throw this.terminalError; }
       requireLiveSessionActive(this.state);
       const sequence = this.nextSequence + 1;
@@ -146,7 +143,9 @@ export class LiveSession implements VoicetextLiveSession {
         this.timeline.restore(timelineCheckpoint);
         // Once binary delivery starts, a missing ACK cannot establish nonacceptance.
         const failure = this.terminalError instanceof VoicetextAdapterError &&
-          this.terminalError.code === "live_provider_terminal" ? this.terminalError :
+          (this.terminalError.code === "live_provider_terminal" ||
+            this.terminalError.code === "live_acceptance_unknown" ||
+            this.terminalError.gatewayCode === "PROVIDER_UNAVAILABLE") ? this.terminalError :
           new VoicetextAdapterError("live_acceptance_unknown",
             error instanceof Error ? error.message : "Voicetext live packet acknowledgement outcome is unknown", false, { cause: error });
         this.terminalError = failure;
@@ -203,7 +202,7 @@ export class LiveSession implements VoicetextLiveSession {
   private async finalizeOnce(): Promise<void> {
     let failure: unknown;
     try {
-      await this.waitForOutstandingAcks();
+      await Promise.resolve(); // Preserve cancellation before sending finalize.
       await withLiveSessionTimeout(
         this.finalizeProviderAndClose(),
         this.options.finalizeTimeoutMs,
@@ -223,7 +222,10 @@ export class LiveSession implements VoicetextLiveSession {
       this.abortController.abort(failure);
       await this.pump?.catch(() => {});
     }
-    failure = this.terminalError ?? failure;
+    const classifiedFailure = this.terminalError instanceof VoicetextAdapterError &&
+      (this.terminalError.code === "live_provider_terminal" || this.terminalError.code === "live_acceptance_unknown");
+    failure = classifiedFailure ? this.terminalError : failure ?? this.terminalError;
+    this.terminalError = failure;
     this.evidence?.record({ type: failure === undefined ? "success" : "failure" });
     if (failure !== undefined) {
       throw asLiveSessionError(failure, "Voicetext live session finalization failed");
@@ -397,36 +399,6 @@ export class LiveSession implements VoicetextLiveSession {
     }
     finalizeWaiter?.reject(error);
     this.closeWaiter.reject(error);
-  }
-
-  private async waitForAckCapacity(): Promise<void> {
-    if (this.ackWaiters.size < maximumOutstandingPacketAcks) {
-      return;
-    }
-    const oldest = this.ackWaiters.values().next().value;
-    if (oldest !== undefined) {
-      try {
-        await withLiveSessionTimeout(
-          oldest.promise,
-          this.options.audioAckTimeoutMs,
-          "Voicetext live packet acknowledgement timed out",
-        );
-      } catch (error) {
-        this.closeAfterReceiveFailure(error);
-        throw error;
-      }
-    }
-  }
-
-  private async waitForOutstandingAcks(): Promise<void> {
-    if (this.ackWaiters.size === 0) {
-      return;
-    }
-    await withLiveSessionTimeout(
-      Promise.all([...this.ackWaiters.values()].map(({ promise }) => promise)),
-      this.options.audioAckTimeoutMs,
-      "Voicetext live packet acknowledgement timed out",
-    );
   }
 
 }

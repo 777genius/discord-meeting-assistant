@@ -216,18 +216,23 @@ it.each(["end", "disconnect", "shutdown", "restart"] as const)("%s cancels a sta
   let settled = false;
   const operation = (control === "end" ? runtime.acceptLifecycle(ended())
     : control === "disconnect" ? runtime.acceptLifecycle({ ...ended(), type: "meeting.connection_lost" })
-    : control === "restart" ? runtime.releaseForRestart() : runtime.close()).then(() => { settled = true; return settled; });
+    : control === "restart" ? runtime.releaseForRestart() : runtime.close()).then(
+      () => { settled = true; return; },
+      (error: unknown) => { settled = true; return error; },
+    );
   await vi.advanceTimersByTimeAsync(100);
   expect(settled).toBe(true);
-  await operation;
+  const outcome = await operation;
+  if (control === "disconnect") { expect(outcome).toBeUndefined(); }
+  else { expect(outcome).toBeInstanceOf(AggregateError); }
   expect(f.terminations()).toBe(1);
   expect(f.acknowledgements).toHaveLength(0);
   expect(f.durable.size).toBe(1025);
   release();
   await vi.advanceTimersByTimeAsync(30_000);
   expect(f.sends).toHaveLength(1);
-  expect(f.acknowledgements).toHaveLength(0);
-  await runtime.close();
+  expect(f.acknowledgements).toEqual([livePacketIdentity(pending[0]!)]);
+  await expect(runtime.close()).rejects.toThrow();
   if (control === "restart") {
     const restarted = f.makeRuntime();
     await restarted.acceptLifecycle(started());
@@ -303,7 +308,7 @@ it.each([1, 2])("preserves recovery progress and bounded live admission with %i 
   await runtime.close();
 });
 
-it("reconnect rereads a cancelled backlog without a duplicate drain or late acknowledgement", async () => {
+it("reconnect retains an in-flight cancellation unresolved without replaying audio", async () => {
   vi.useFakeTimers();
   vi.setSystemTime("2026-08-02T10:00:00.000Z");
   let release!: () => void;
@@ -321,9 +326,11 @@ it("reconnect rereads a cancelled backlog without a duplicate drain or late ackn
   release();
   await vi.advanceTimersByTimeAsync(20_000);
   expect(f.reads()).toBe(2);
-  expect(f.sends).toEqual([livePacketIdentity(pending[0]!), ...pending.map(livePacketIdentity)]);
-  expect(f.acknowledgements).toEqual(pending.map(livePacketIdentity));
-  await runtime.close();
+  expect(f.sends).toEqual([livePacketIdentity(pending[0]!)]);
+  // A late positive ACK can settle the accepted packet but cannot clear the fence.
+  expect(f.acknowledgements).toEqual([livePacketIdentity(pending[0]!)]);
+  expect(f.durable.size).toBe(512);
+  await expect(runtime.close()).rejects.toThrow();
 });
 
 it("bounds live admission during a stalled initialization and discards its late read after shutdown", async () => {

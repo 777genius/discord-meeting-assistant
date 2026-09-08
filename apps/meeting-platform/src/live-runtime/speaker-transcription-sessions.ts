@@ -1,3 +1,4 @@
+import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure } from "./contracts.js";
 import type {
   GlobalPacketFlowControl,
   LiveSessionAdmission,
@@ -91,8 +92,14 @@ export class SpeakerTranscriptionSessions {
     const results = await Promise.allSettled(
       [...this.speakers.values()].map((speaker) => speaker.finish()),
     );
-    const failures = results.filter((result) => result.status === "rejected");
-    if (failures.length > 0) { throw new AggregateError(failures.map((result) => result.reason as unknown), "Live speaker shutdown incomplete"); }
+    const failures: unknown[] = results.flatMap((result) => result.status === "rejected" ? [result.reason as unknown] : []);
+    // A cancelled recovery may have deleted the speaker while retaining its fence.
+    for (const fence of this.lifecycleFences.values()) {
+      const reason: unknown = fence.signal.reason;
+      if ((reason instanceof LiveTranscriptionTerminalFailure || reason instanceof LiveTranscriptionAcceptanceUnknown) &&
+          !failures.includes(reason)) { failures.push(reason); }
+    }
+    if (failures.length > 0) { throw new AggregateError(failures, "Live speaker shutdown incomplete"); }
   }
 
   private speaker(speakerId: string): SpeakerTranscriptionSession {

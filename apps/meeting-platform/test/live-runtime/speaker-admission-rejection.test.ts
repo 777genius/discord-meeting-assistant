@@ -70,7 +70,7 @@ it.each([true, false])("keeps unclassified retryable=%s failures visible and ret
 });
 
 // Keep the old provider promise alive across deletion and recreation.
-it.each((["waiting", "granted", "opening"] as const).flatMap(phase => [LiveTranscriptionAdmissionRejected, LiveTranscriptionTerminalFailure].map(Failure => ({ phase, Failure }))))("fences a recreated speaker during %j admission", async ({ phase, Failure }) => {
+it.each((["waiting", "granted", "opening"] as const).flatMap(phase => [LiveTranscriptionAdmissionRejected, LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown].map(Failure => ({ phase, Failure }))))("fences a recreated speaker during %j admission", async ({ phase, Failure }) => {
   vi.useFakeTimers();
   vi.setSystemTime(0);
   const oldOpening = Promise.withResolvers<never>();
@@ -115,7 +115,7 @@ it.each((["waiting", "granted", "opening"] as const).flatMap(phase => [LiveTrans
     occupied?.();
   }
   await vi.advanceTimersByTimeAsync(0);
-  expect(warn.mock.calls.filter(call => call[1]?.errorCode === (Failure === LiveTranscriptionAdmissionRejected ? "LIVE_TRANSCRIPTION_ADMISSION_REJECTED" : "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL"))).toHaveLength(1);
+  expect(warn.mock.calls.filter(call => call[1]?.errorCode === (Failure === LiveTranscriptionAdmissionRejected ? "LIVE_TRANSCRIPTION_ADMISSION_REJECTED" : Failure === LiveTranscriptionTerminalFailure ? "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL" : "LIVE_TRANSCRIPTION_ACCEPTANCE_UNKNOWN"))).toHaveLength(1);
   let completed = false;
   void replacement.then(() => { completed = true; return true; });
   await vi.advanceTimersByTimeAsync(0);
@@ -134,7 +134,7 @@ it.each((["waiting", "granted", "opening"] as const).flatMap(phase => [LiveTrans
   expect(sendPacket).not.toHaveBeenCalled();
   expect(delivered).not.toHaveBeenCalled();
   expect(terminate).toHaveBeenCalledTimes(phase === "opening" ? 1 : 0);
-  expect(warn.mock.calls.filter(call => call[1]?.errorCode === (Failure === LiveTranscriptionAdmissionRejected ? "LIVE_TRANSCRIPTION_ADMISSION_REJECTED" : "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL"))).toHaveLength(1);
+  expect(warn.mock.calls.filter(call => call[1]?.errorCode === (Failure === LiveTranscriptionAdmissionRejected ? "LIVE_TRANSCRIPTION_ADMISSION_REJECTED" : Failure === LiveTranscriptionTerminalFailure ? "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL" : "LIVE_TRANSCRIPTION_ACCEPTANCE_UNKNOWN"))).toHaveLength(1);
   expect(await packetAdmission.reserve(8, 100, new AbortController().signal)).toBe(true);
   packetAdmission.release(8);
   const lease = await sessionAdmission.acquire(new AbortController().signal);
@@ -147,9 +147,9 @@ it.each((["waiting", "granted", "opening"] as const).flatMap(phase => [LiveTrans
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("terminal send fences queued/duplicate/recovered audio while another speaker progresses", async () => {
+it.each([LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown])("%s send fences queued/duplicate/recovered audio while another speaker progresses", async (Failure) => {
   vi.useFakeTimers(); vi.setSystemTime(0);
-  const failure = new LiveTranscriptionTerminalFailure();
+  const failure = new Failure();
   const sendPacket = vi.fn(async () => { throw failure; });
   const otherSend = vi.fn(async () => "accepted" as const);
   const terminate = vi.fn();
@@ -177,7 +177,7 @@ it("terminal send fences queued/duplicate/recovered audio while another speaker 
   expect(otherSend).toHaveBeenCalledTimes(1); expect(delivered).toHaveBeenCalledTimes(1);
   await expect(registry.finish()).rejects.toBeInstanceOf(AggregateError);
   expect(terminate).toHaveBeenCalledTimes(1);
-  expect(warn.mock.calls.filter(call => call[1]?.errorCode === "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL")).toHaveLength(1);
+  expect(warn.mock.calls.filter(call => call[1]?.errorCode === (Failure === LiveTranscriptionTerminalFailure ? "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL" : "LIVE_TRANSCRIPTION_ACCEPTANCE_UNKNOWN"))).toHaveLength(1);
   expect(await packetAdmission.reserve(8, 100, new AbortController().signal)).toBe(true); packetAdmission.release(8);
   const lease = await sessionAdmission.acquire(new AbortController().signal); expect(lease).not.toBeNull(); lease?.();
   expect(vi.getTimerCount()).toBe(0);

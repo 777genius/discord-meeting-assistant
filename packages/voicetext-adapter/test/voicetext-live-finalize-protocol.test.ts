@@ -137,7 +137,8 @@ describe("VoiceText live finalize terminal evidence", () => {
 });
 
 type FinalizeBehavior =
-  | "quota"
+  | "PROVIDER_TERMINAL"
+  | "PROVIDER_OUTCOME_UNKNOWN"
   | "after-close"
   | "close-before-terminal"
   | "compliant"
@@ -182,7 +183,7 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
       return;
     }
     if (message.type === "finalize") {
-      if (this.behavior === "quota") { this.enqueue({ type: "error", code: "PROVIDER_QUOTA_EXCEEDED", message: "quota", failure_class: "known_accepted_terminal" }); return; }
+      if (this.behavior === "PROVIDER_TERMINAL" || this.behavior === "PROVIDER_OUTCOME_UNKNOWN") { this.enqueue({ type: "error", code: this.behavior, message: "synthetic" }); return; }
       if (this.behavior === "close-before-terminal") {
         this.enqueueClose();
         return;
@@ -279,18 +280,18 @@ async function finalize(socket: FinalizeSocket, timeoutMs = 1_000, evidence?: Os
   await session.finalize();
 }
 
-it.each(["idle", "finalizing"])("retains terminal quota through %s cleanup and repeated finalization", async (phase) => {
-  const socket = new FinalizeSocket("quota");
+it.each(["idle", "finalizing"].flatMap(phase => (["PROVIDER_TERMINAL", "PROVIDER_OUTCOME_UNKNOWN"] as const).map(code => ({ phase, code }))))("retains deployed failure through %j cleanup and repeated finalization", async ({ phase, code }) => {
+  const socket = new FinalizeSocket(code);
   const session = new LiveSession(socket, {
     idempotencyKey: "quota", meetingId: "meeting", speakerId: "speaker", onTranscript: () => {},
   }, validateVoicetextLiveTranscriptionOptions({ endpoint: "wss://voice.example.test/api/v1/transcribe/stream", token: "test-machine-token", finalizeTimeoutMs: 1000 }));
   await session.start();
   if (phase === "idle") {
-    socket.enqueue({ type: "error", code: "PROVIDER_QUOTA_EXCEEDED", message: "quota", failure_class: "known_accepted_terminal" });
+    socket.enqueue({ type: "error", code, message: "synthetic" });
     await nextTask();
   }
   const failure: unknown = await session.finalize().catch((error: unknown) => error);
-  expect(failure).toMatchObject({ code: "live_provider_terminal", gatewayCode: "PROVIDER_QUOTA_EXCEEDED", failureClass: "known_accepted_terminal", retryable: false });
+  expect(failure).toMatchObject({ code: code === "PROVIDER_TERMINAL" ? "live_provider_terminal" : "live_acceptance_unknown", gatewayCode: code, retryable: false });
   session.terminate();
   await expect(session.finalize()).rejects.toBe(failure);
   await expect(session.sendPacket({ packetId: "later", opus: new Uint8Array([1]), durationSamples48Khz: 960, relativeTimeMs: 0 })).rejects.toBe(failure);

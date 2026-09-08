@@ -224,6 +224,10 @@ function adapter(
   );
 }
 
+function liveRequest(idempotencyKey: string) {
+  return { idempotencyKey, meetingId: "meeting-1", speakerId: "speaker-a", onTranscript: () => {} };
+}
+
 describe("VoicetextLiveTranscriptionAdapter", () => {
   it("fails closed for an unsupported runtime live profile", () => {
     expect(() => validateVoicetextLiveTranscriptionOptions({
@@ -238,12 +242,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     ["elevenlabs-scribe-v2-realtime", "elevenlabs", "scribe_v2_realtime"],
   ] as const)("requires the exact ready identity for %s before raw Opus audio", async (profile, provider, model) => {
     const socket = new QueueSocket();
-    const session = await adapter(socket, profile).openSession({
-      idempotencyKey: "live-session-profile",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket, profile).openSession(liveRequest("live-session-profile"));
 
     expect(socket.text[0]).toMatchObject({
       encoding: "opus",
@@ -276,12 +275,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     }
     const socket = new InvalidReadySocket();
 
-    await expect(adapter(socket).openSession({
-      idempotencyKey: "live-session-invalid-ready",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    })).rejects.toMatchObject({ code: "protocol_error", retryable: false });
+    await expect(adapter(socket).openSession(liveRequest("live-session-invalid-ready"))).rejects.toMatchObject({ code: "protocol_error", retryable: false });
     expect(socket.binary).toEqual([]);
   });
 
@@ -350,12 +344,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
 
   it("rejects oversized packets before touching the transport", async () => {
     const socket = new QueueSocket();
-    const session = await adapter(socket).openSession({
-      idempotencyKey: "live-session-1",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest("live-session-1"));
 
     await expect(session.sendPacket({
       durationSamples48Khz: 960,
@@ -371,12 +360,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
   it("treats no_provider finalize as an empty success and gracefully closes the session", async () => {
     const socket = new QueueSocket();
     socket.finalizeStatus = "no_provider";
-    const session = await adapter(socket).openSession({
-      idempotencyKey: "live-session-no-provider",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest("live-session-no-provider"));
 
     await expect(session.finalize()).resolves.toBeUndefined();
     expect(socket.text.at(-2)).toEqual({ type: "finalize" });
@@ -388,12 +372,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
   it("rejects no_provider after acknowledged audio and still gracefully closes", async () => {
     const socket = new QueueSocket();
     socket.finalizeStatus = "no_provider";
-    const session = await adapter(socket).openSession({
-      idempotencyKey: "live-session-no-provider-after-audio",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest("live-session-no-provider-after-audio"));
     await session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
@@ -413,12 +392,7 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
   it("gracefully closes after a provider finalize timeout before surfacing the error", async () => {
     const socket = new QueueSocket();
     socket.finalizeStatus = "timeout";
-    const session = await adapter(socket).openSession({
-      idempotencyKey: "live-session-timeout",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest("live-session-timeout"));
 
     await expect(session.finalize()).rejects.toThrow("Voicetext live finalize completed with timeout");
     expect(socket.text.at(-2)).toEqual({ type: "finalize" });
@@ -433,12 +407,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
 
   it("allows only one unacknowledged packet and finalizes after the last ACK", async () => {
     const socket = new DelayedAckSocket();
-    const session = await adapter(socket).openSession({
-      idempotencyKey: "live-session-ack-paced",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest("live-session-ack-paced"));
 
     const first = session.sendPacket({
       durationSamples48Khz: 960,
@@ -473,12 +442,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
     vi.useFakeTimers();
     try {
       const socket = new DelayedAckSocket();
-      const session = await adapter(socket).openSession({
-        idempotencyKey: "live-session-ack-timeout",
-        meetingId: "meeting-1",
-        onTranscript: () => { },
-        speakerId: "speaker-a",
-      });
+      const session = await adapter(socket).openSession(liveRequest("live-session-ack-timeout"));
       const first = session.sendPacket({
         durationSamples48Khz: 960,
         opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
@@ -507,12 +471,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
     ["invalid", [{ seq: 0, type: "ack" }]],
   ] as const)("fails closed on a %s ACK", async (_label, acknowledgements) => {
     const socket = new DelayedAckSocket();
-    const session = await adapter(socket).openSession({
-      idempotencyKey: `live-session-${_label}-ack`,
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest(`live-session-${_label}-ack`));
     const packet = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
@@ -538,12 +497,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
 describe("VoicetextLiveTranscriptionAdapter finalization", () => {
   it("shares one finalization across concurrent callers", async () => {
     const socket = new DelayedAckSocket();
-    const session = await adapter(socket).openSession({
-      idempotencyKey: "live-session-single-finalize",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest("live-session-single-finalize"));
     const packet = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
@@ -567,12 +521,7 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
-    const session = await adapter(socket).openSession({
-      idempotencyKey: "live-session-disconnect-before-finalize",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest("live-session-disconnect-before-finalize"));
     const packet = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
@@ -602,12 +551,7 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
   it("force-terminates when graceful socket close fails", async () => {
     const socket = new QueueSocket();
     socket.closeError = new Error("close failed");
-    const session = await adapter(socket).openSession({
-      idempotencyKey: "live-session-close-failure",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest("live-session-close-failure"));
 
     await expect(session.finalize()).rejects.toThrow("close failed");
     expect(socket.terminated).toBe(true);
@@ -700,12 +644,7 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
 
   it("rejects a concurrent packet send before sequence reservation", async () => {
     const socket = new DeferredSendSocket();
-    const session = await adapter(socket).openSession({
-      idempotencyKey: "live-session-concurrent-send",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest("live-session-concurrent-send"));
     const first = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
@@ -730,12 +669,7 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
     vi.useFakeTimers();
     try {
       const socket = new NoFinalizeResponseSocket();
-      const session = await adapter(socket).openSession({
-        idempotencyKey: "live-session-local-timeout",
-        meetingId: "meeting-1",
-        onTranscript: () => { },
-        speakerId: "speaker-a",
-      });
+      const session = await adapter(socket).openSession(liveRequest("live-session-local-timeout"));
       const finalization = session.finalize();
       const rejected = expect(finalization).rejects.toThrow(
         "Voicetext live finalize timed out",
@@ -756,12 +690,7 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
     try {
       const socket = new NoFinalizeResponseSocket();
       socket.closeError = new Error("close failed");
-      const session = await adapter(socket).openSession({
-        idempotencyKey: "live-session-local-timeout-close-failure",
-        meetingId: "meeting-1",
-        onTranscript: () => { },
-        speakerId: "speaker-a",
-      });
+      const session = await adapter(socket).openSession(liveRequest("live-session-local-timeout-close-failure"));
       const finalization = session.finalize();
       const rejected = expect(finalization).rejects.toThrow(
         "Voicetext live finalize timed out",
@@ -777,12 +706,7 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
 
   it("cancels one in-flight finalization and force-closes transport on terminate", async () => {
     const socket = new DelayedAckSocket();
-    const session = await adapter(socket).openSession({
-      idempotencyKey: "live-session-terminate-finalize-race",
-      meetingId: "meeting-1",
-      onTranscript: () => { },
-      speakerId: "speaker-a",
-    });
+    const session = await adapter(socket).openSession(liveRequest("live-session-terminate-finalize-race"));
     const packet = session.sendPacket({
       durationSamples48Khz: 960,
       opus: Uint8Array.from([0xf8, 0xff, 0xfe]),
@@ -848,11 +772,11 @@ it("does not classify INVALID_CONFIG after ready as permanent admission", async 
   const admissionAdapter = new VoicetextLiveTranscriptionAdapter({ endpoint: "ws://localhost", token: "synthetic-token-123456" }, { connect: async () => socket });
   const session = await admissionAdapter.openSession({ meetingId: "m", speakerId: "s", idempotencyKey: "k", onTranscript: () => {} });
   await expect(session.sendPacket({ opus: new Uint8Array([0xf8, 0xff, 0xfe]), durationSamples48Khz: 960, packetId: "p", relativeTimeMs: 0 }))
-    .rejects.toMatchObject({ code: "provider_error", retryable: true });
+    .rejects.toMatchObject({ code: "live_acceptance_unknown", retryable: false });
   session.terminate();
 });
 
-const quota = { type: "error", code: "PROVIDER_QUOTA_EXCEEDED", message: "synthetic quota" };
+const quota = { type: "error", code: "PROVIDER_TERMINAL", message: "synthetic quota" };
 const terminalRequest = { idempotencyKey: "quota", meetingId: "meeting", speakerId: "speaker", onTranscript: () => {} };
 const terminalPacket = { packetId: "quota-packet", opus: new Uint8Array([0xf8, 0xff, 0xfe]), durationSamples48Khz: 960, relativeTimeMs: 0 };
 
@@ -866,17 +790,20 @@ it.each([undefined, "known_accepted_terminal"])("retains quota code and classifi
   expect(socket.terminated).toBe(true);
 });
 
-it.each(["awaiting-ack", "between-packets"])("preserves first terminal failure %s through send, finalize and cleanup", async (phase) => {
+it.each(["awaiting-ack", "between-packets"].flatMap(phase => [
+  ["PROVIDER_TERMINAL", "live_provider_terminal"],
+  ["PROVIDER_OUTCOME_UNKNOWN", "live_acceptance_unknown"],
+].map(([code, expected]) => ({ phase, code, expected }))))("preserves first gateway failure %j through send, finalize and cleanup", async ({ phase, code, expected }) => {
   const socket = new DelayedAckSocket();
   const session = await adapter(socket).openSession(terminalRequest);
   const sent = session.sendPacket(terminalPacket);
   const outcome = sent.catch((error: unknown) => error);
   await Promise.resolve();
   if (phase === "between-packets") { socket.acknowledge(1); await expect(sent).resolves.toBe("accepted"); }
-  socket.enqueue({ ...quota, failure_class: "known_accepted_terminal" });
+  socket.enqueue({ type: "error", code, message: "synthetic provider failure" });
   await vi.waitFor(() => expect(socket.terminated).toBe(true));
   const failure: unknown = await session.finalize().catch((error: unknown) => error);
-  expect(failure).toMatchObject({ code: "live_provider_terminal", gatewayCode: quota.code, failureClass: "known_accepted_terminal", retryable: false });
+  expect(failure).toMatchObject({ code: expected, gatewayCode: code, retryable: false });
   if (phase === "awaiting-ack") { expect(await outcome).toBe(failure); }
   session.terminate();
   await expect(session.sendPacket({ ...terminalPacket, packetId: "later" })).rejects.toBe(failure);
@@ -901,4 +828,26 @@ it("validates bounded terminal wire evidence without trusting arbitrary classifi
   await expect(adapter(socket).openSession(terminalRequest)).rejects.toMatchObject({
     code: "live_provider_terminal", gatewayCode: "OTHER", failureClass: "known_accepted_terminal",
   });
+});
+
+it("maps the deployed unknown outcome before ready without a failure_class", async () => {
+  const socket = new QueueSocket();
+  socket.enqueue({ type: "error", code: "PROVIDER_OUTCOME_UNKNOWN", message: "synthetic" });
+  await expect(adapter(socket).openSession(terminalRequest)).rejects.toMatchObject({
+    code: "live_acceptance_unknown", gatewayCode: "PROVIDER_OUTCOME_UNKNOWN", retryable: false,
+  });
+  expect(socket.terminated).toBe(true);
+});
+
+it("retains proven nonacceptance while awaiting an ACK", async () => {
+  const socket = new DelayedAckSocket();
+  const session = await adapter(socket).openSession(terminalRequest);
+  const sent = session.sendPacket(terminalPacket);
+  const assertion = expect(sent).rejects.toMatchObject({
+    code: "provider_error", gatewayCode: "PROVIDER_UNAVAILABLE", retryable: true,
+  });
+  await Promise.resolve();
+  socket.enqueue({ type: "error", code: "PROVIDER_UNAVAILABLE", message: "synthetic" });
+  await assertion;
+  session.terminate();
 });

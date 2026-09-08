@@ -4,7 +4,7 @@ import { SpeakerTranscriptionSession } from "../../src/live-runtime/speaker-tran
 import { GlobalPacketFlowControl, LiveSessionAdmission } from "../../src/live-runtime/live-packet-flow-control.js";
 import { livePacketIdentity, LivePacketDeliveryLedger } from "../../src/live-runtime/packet-delivery-ledger.js";
 import { systemLiveRuntimeClock, systemLiveRuntimeTimer } from "../../src/live-runtime/runtime-clock.js";
-import { LiveTranscriptionTerminalFailure, type LiveTranscriptionEvent, type LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
+import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure, type LiveTranscriptionEvent, type LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
 import { logger, packets } from "./live-runtime-fixtures.js";
 
 afterEach(() => vi.useRealTimers());
@@ -147,7 +147,7 @@ it.each(["healthy", "stalled ACK", "stalled receipt", "stalled finalize", "cance
     await vi.advanceTimersByTimeAsync(35_000);
     const outcomes = await finished;
     expect(outcomes.map((outcome) => outcome.status)).toEqual(
-      mode === "stalled receipt" ? ["rejected", "rejected"] : ["fulfilled", "fulfilled"],
+      mode === "stalled receipt" || mode === "stalled ACK" ? ["rejected", "rejected"] : ["fulfilled", "fulfilled"],
     );
     if (mode === "healthy" || mode === "stalled finalize" || mode === "cancelled finalize") {
       expect(sent).toEqual(batch.map(livePacketIdentity));
@@ -226,14 +226,14 @@ it("bounds a stalled drain to two relative seconds across a backward one-hour wa
   await f.speaker.accept([f.packet], 12_000);
   await vi.advanceTimersByTimeAsync(0);
   let finished = false;
-  const finish = f.speaker.finish().then(() => { finished = true; return null; });
+  const finish = f.speaker.finish().catch((error: unknown) => { finished = true; return error; });
   await vi.advanceTimersByTimeAsync(0);
   vi.setSystemTime(Date.now() - 3_600_000);
   await vi.advanceTimersByTimeAsync(1_999);
   expect(finished).toBe(false);
   await vi.advanceTimersByTimeAsync(1);
   expect(finished).toBe(true);
-  await finish;
+  expect(await finish).toBeInstanceOf(LiveTranscriptionAcceptanceUnknown);
   expect(f.sendPacket).toHaveBeenCalledTimes(1);
   expect(f.terminate).toHaveBeenCalledTimes(1);
   expect(f.finalize).not.toHaveBeenCalled();
@@ -366,10 +366,10 @@ it("retries failed settlement after a stalled receipt without repeating provider
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("idle terminal finalization fences queued new speech and repeated finish without losing accepted effects", async () => {
+it.each([LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown])("idle %s finalization fences queued new speech and repeated finish without losing accepted effects", async (Failure) => {
   vi.useFakeTimers(); vi.setSystemTime(0);
   const finalization = Promise.withResolvers<void>();
-  const failure = new LiveTranscriptionTerminalFailure();
+  const failure = new Failure();
   const finalize = vi.fn(() => finalization.promise); const terminate = vi.fn();
   const sendPacket = vi.fn(async () => "accepted" as const);
   const openSession = vi.fn(async () => ({ finalize, terminate, sendPacket }));
@@ -394,8 +394,31 @@ it("idle terminal finalization fences queued new speech and repeated finish with
   expect(delivered).toHaveBeenCalledExactlyOnceWith(livePacketIdentity(packet));
   expect(ledger.isDelivered(livePacketIdentity(packet))).toBe(true);
   expect(finalize).toHaveBeenCalledTimes(1); expect(terminate).toHaveBeenCalledTimes(1);
-  expect(warn.mock.calls.filter(call => call[1]?.errorCode === "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL")).toHaveLength(1);
+  expect(warn.mock.calls.filter(call => call[1]?.errorCode === (Failure === LiveTranscriptionTerminalFailure ? "LIVE_TRANSCRIPTION_PROVIDER_TERMINAL" : "LIVE_TRANSCRIPTION_ACCEPTANCE_UNKNOWN"))).toHaveLength(1);
   expect(await packetAdmission.reserve(8, 1100, new AbortController().signal)).toBe(true); packetAdmission.release(8);
   const lease = await sessionAdmission.acquire(new AbortController().signal); expect(lease).not.toBeNull(); lease?.();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("healthy idle finalization permits new speech with the same lifecycle identity", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const finalize = vi.fn(async () => {}); const terminate = vi.fn();
+  const sendPacket = vi.fn(async () => "accepted" as const);
+  const openSession = vi.fn(async () => ({ finalize, terminate, sendPacket }));
+  const speaker = new SpeakerTranscriptionSession({
+    clock: systemLiveRuntimeClock, timer: systemLiveRuntimeTimer, isMeetingFinishing: () => false,
+    logger, maximumQueuedPackets: 8, ledger: new LivePacketDeliveryLedger(),
+    meetingId: "meeting", speakerId: "speaker", onTranscript: () => {},
+    packetAdmission: new GlobalPacketFlowControl(8), packetBackpressureTimeoutMs: 100,
+    packetInspector: { durationSamples48Khz: () => 960 }, sessionAdmission: new LiveSessionAdmission(1),
+    speakerIdleFinalizeMs: 1000, startedAtMs: 0, transcriber: { openSession },
+  });
+  const packet = { ...packets().packets[0]!, relativeTimeMs: 0 };
+  await speaker.accept([packet], 100); await vi.advanceTimersByTimeAsync(1000);
+  expect(finalize).toHaveBeenCalledTimes(1);
+  await speaker.accept([{ ...packet, sequenceNumber: 2, relativeTimeMs: 1000 }], 1100);
+  await vi.advanceTimersByTimeAsync(0); await speaker.finish();
+  expect(openSession).toHaveBeenCalledTimes(2); expect(sendPacket).toHaveBeenCalledTimes(2);
+  expect(finalize).toHaveBeenCalledTimes(2); expect(terminate).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });

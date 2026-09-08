@@ -38,6 +38,7 @@ export class SpeakerTranscriptionSession {
   private providerFinalization: Promise<void> | null = null;
   private deliveryBudgetMs = 0;
   private pendingReceipt = false;
+  private providerSendPending = false;
   private renewDeliveryWatchdog: ((budgetMs: number) => void) | undefined;
   private readonly admissionCancellation = new AbortController();
   private readonly admissionRejection: AbortController;
@@ -55,9 +56,7 @@ export class SpeakerTranscriptionSession {
   public constructor(private readonly dependencies: SpeakerTranscriptionSessionDependencies) {
     this.admissionRejection = dependencies.admissionRejection ?? new AbortController();
     this.packetFlow = new SpeakerPacketFlowControl(
-      dependencies.maximumQueuedPackets,
-      dependencies.clock,
-      dependencies.timer,
+      dependencies.maximumQueuedPackets, dependencies.clock, dependencies.timer,
     );
     this.pacer = new SourceTimelinePacer(dependencies.clock, dependencies.timer);
     this.providerSession = new SpeakerTranscriptionProviderSession({
@@ -129,6 +128,10 @@ export class SpeakerTranscriptionSession {
   }
 
   private cancelDelivery(): void {
+    if (this.providerSendPending && !this.isAdmissionRejected()) {
+      this.providerSendPending = false;
+      this.latchFailure(new LiveTranscriptionAcceptanceUnknown());
+    }
     this.admissionClosed = true; this.admissionCancellation.abort();
     this.admissionRejection.signal.removeEventListener("abort", this.onAdmissionRejected);
     this.packetFlow.cancel();
@@ -260,21 +263,12 @@ export class SpeakerTranscriptionSession {
     const packetId = livePacketIdentity(packet);
     if (this.isAdmissionRejected() || this.isSuppressed(packet, packetId)) { return; }
     const opus = Buffer.from(packet.payloadBase64, "base64");
-    const durationSamples48Khz = this.dependencies.packetInspector
-      .durationSamples48Khz(opus);
+    const durationSamples48Khz = this.dependencies.packetInspector.durationSamples48Khz(opus);
     const earliestPacketAtMs = await this.pacer.waitForPacketTime(
-      this.dependencies.startedAtMs,
-      packet.relativeTimeMs,
-      this.packetFlow.signal,
+      this.dependencies.startedAtMs, packet.relativeTimeMs, this.packetFlow.signal,
     );
     if (earliestPacketAtMs === null) { return; }
-    await this.sendWithBoundedRetry({
-      durationSamples48Khz,
-      earliestPacketAtMs,
-      opus,
-      packet,
-      packetId,
-    });
+    await this.sendWithBoundedRetry({ durationSamples48Khz, earliestPacketAtMs, opus, packet, packetId });
   }
 
   private async sendWithBoundedRetry(input: {
@@ -288,6 +282,7 @@ export class SpeakerTranscriptionSession {
         const session = await this.providerSession.open(this.packetFlow.signal);
         if (session === null || this.isDeliveryCancelled() || this.isAdmissionRejected()) { return; }
         sendStartedAtMs = this.dependencies.clock.nowMilliseconds();
+        this.providerSendPending = true;
         await session.sendPacket({
           durationSamples48Khz: input.durationSamples48Khz,
           opus: input.opus,
@@ -295,14 +290,17 @@ export class SpeakerTranscriptionSession {
           relativeTimeMs: input.packet.relativeTimeMs,
         });
       } catch (error) {
-        this.providerSession.terminate();
+        this.providerSendPending = false;
         if (this.latchFailure(error)) { return; }
+        this.providerSession.terminate();
         if (this.isDeliveryCancelled()) { return; }
         if (attempt === maximumLivePacketDeliveryAttempts) {
           this.rememberRetryablePacket(input.packet, input.packetId);
           throw error;
         }
         continue;
+      } finally {
+        this.providerSendPending = false;
       }
       if (this.isDeliveryCancelled() && !this.hasTerminalFence()) { return; }
       // A durable acknowledgement failure must not repeat the provider send.
@@ -341,11 +339,7 @@ export class SpeakerTranscriptionSession {
     },
     sendStartedAtMs: number,
   ): Promise<void> {
-    this.pacer.recordPacketSent(
-      input.earliestPacketAtMs,
-      input.durationSamples48Khz,
-      sendStartedAtMs,
-    );
+    this.pacer.recordPacketSent(input.earliestPacketAtMs, input.durationSamples48Khz, sendStartedAtMs);
     const recovered = this.dependencies.ledger.markDelivered(input.packetId);
     this.lastRelativeTimeMs = Math.max(this.lastRelativeTimeMs ?? input.packet.relativeTimeMs, input.packet.relativeTimeMs);
     if (recovered) {
@@ -409,14 +403,11 @@ export class SpeakerTranscriptionSession {
 
   private rememberRetryablePacket(packet: LiveVoicePacket, packetId: string): void {
     if (!this.dependencies.ledger.markRetryable(packetId)) { return; }
-    this.dependencies.logger.warn(
-      "Derived live transcription packet exhausted bounded delivery retries",
-      {
-        ...this.logFields(),
-        errorCode: "LIVE_PACKET_DELIVERY_RETRY_EXHAUSTED",
-        relativeTimeMs: packet.relativeTimeMs,
-      },
-    );
+    this.dependencies.logger.warn("Derived live transcription packet exhausted bounded delivery retries", {
+      ...this.logFields(),
+      errorCode: "LIVE_PACKET_DELIVERY_RETRY_EXHAUSTED",
+      relativeTimeMs: packet.relativeTimeMs,
+    });
   }
 
   private noteDegradation(
@@ -427,20 +418,15 @@ export class SpeakerTranscriptionSession {
   ): void {
     if (this.backpressureDegraded) { return; }
     this.backpressureDegraded = true;
-    this.dependencies.logger.warn(
-      "Derived live transcription degraded after packet backpressure",
-      {
-        ...this.logFields(),
-        errorCode,
-        maximumQueuedPacketsPerSpeaker: this.packetFlow.maximumQueuedPackets,
-        maximumQueuedPacketsGlobally:
-          this.dependencies.packetAdmission.maximumPackets,
-        packetBackpressureTimeoutMs:
-          this.dependencies.packetBackpressureTimeoutMs,
-        pendingAdmissionPackets: this.packetFlow.pendingAdmissionPacketCount,
-        queuedPackets: this.packetFlow.queuedPacketCount,
-      },
-    );
+    this.dependencies.logger.warn("Derived live transcription degraded after packet backpressure", {
+      ...this.logFields(),
+      errorCode,
+      maximumQueuedPacketsPerSpeaker: this.packetFlow.maximumQueuedPackets,
+      maximumQueuedPacketsGlobally: this.dependencies.packetAdmission.maximumPackets,
+      packetBackpressureTimeoutMs: this.dependencies.packetBackpressureTimeoutMs,
+      pendingAdmissionPackets: this.packetFlow.pendingAdmissionPacketCount,
+      queuedPackets: this.packetFlow.queuedPacketCount,
+    });
   }
 
   private logAdmissionFailure(error: unknown): void {

@@ -109,10 +109,12 @@ export function liveProviderError(message: {
   readonly code: string; readonly message: string;
   readonly failureClass?: "known_accepted_terminal";
 }): VoicetextAdapterError {
-  const terminal = message.code === "PROVIDER_QUOTA_EXCEEDED" ||
+  const terminal = message.code === "PROVIDER_TERMINAL" ||
     message.failureClass === "known_accepted_terminal";
+  const unknown = message.code === "PROVIDER_OUTCOME_UNKNOWN";
   return new VoicetextAdapterError(
-    terminal ? "live_provider_terminal" : "provider_error", message.message, !terminal,
+    terminal ? "live_provider_terminal" : unknown ? "live_acceptance_unknown" : "provider_error",
+    message.message, !terminal && !unknown,
     { gatewayCode: message.code,
       ...(message.failureClass === undefined ? {} : { failureClass: message.failureClass }) },
   );
