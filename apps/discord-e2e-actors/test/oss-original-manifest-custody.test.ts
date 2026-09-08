@@ -2,6 +2,7 @@ import { link, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { z } from "zod";
 import { collectCraigOriginals, readCraigSource, verifyCraigManifestAuthority, verifyCraigManifestOriginalBytes } from "../src/oss-craig-original-collection.js";
 import { sha256 } from "../src/oss-campaign-artifacts.js";
 import { originalSchema } from "../src/oss-native-campaign-sources.js";
@@ -46,7 +47,9 @@ it("collects v2 after immediate acknowledged job/journal deletion, without openi
   const root = await mkdtemp(join(tmpdir(), "original-deleted-job-"));
   try {
     const f = fixture();
-    const pins = JSON.parse(await readFile(new URL("../../../infra/deployment/source-pins.json", import.meta.url), "utf8"));
+    const pins = z.object({
+      craigMeetingGateway: z.object({ revision: z.string(), gitRef: z.string() })
+    }).parse(JSON.parse(await readFile(new URL("../../../infra/deployment/source-pins.json", import.meta.url), "utf8")));
     expect(f.craigRevision).toBe(pins.craigMeetingGateway.revision);
     expect(f.craigRevision).toBe(pins.craigMeetingGateway.gitRef);
     for (const file of f.files) { await writeFile(join(root, file.path), file.bytes); }
@@ -71,7 +74,7 @@ it.each(["37b86a958b567cb7fcff75946e94fe5e7ee38f42", "a".repeat(40)])(
     expect(() => verifyCraigManifestOriginalBytes({ ...f, craigRevision: rejectedRevision })).toThrow("Unpinned");
     const completion = structuredClone(f.completion);
     completion.identityProvenance.producerRevision = rejectedRevision;
-    expect(() => verifyCraigManifestAuthority(f.manifestBytes, completion, f.database, f.object)).toThrow();
+    expect(() => { verifyCraigManifestAuthority(f.manifestBytes, completion, f.database, f.object); }).toThrow();
     f.manifest.identityProvenance.producerRevision = rejectedRevision;
     f.manifestBytes = Buffer.from(JSON.stringify(f.manifest));
     // Rebind every immutable commitment so failure proves revision admission,
@@ -83,7 +86,7 @@ it.each(["37b86a958b567cb7fcff75946e94fe5e7ee38f42", "a".repeat(40)])(
       recording.manifestChecksumSha256 = f.object.checksumSha256;
     }
     expect(() => verifyCraigManifestOriginalBytes(f)).toThrow();
-    expect(() => verifyCraigManifestAuthority(f.manifestBytes, f.completion, f.database, f.object)).toThrow();
+    expect(() => { verifyCraigManifestAuthority(f.manifestBytes, f.completion, f.database, f.object); }).toThrow();
     expect(() => verifyCraigManifestOriginalBytes({ ...f, craigRevision: rejectedRevision })).toThrow("Unpinned");
   });
 
