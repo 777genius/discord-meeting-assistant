@@ -94,7 +94,7 @@ reviewed Platform integration revision, not the previous baseline.
 | Actor A / B applications | `1533227577286852649` / `1533228054724346087` |
 | Craig revision | `7776b698f6bec26eff52cd383f4e5a7f3f429f42` |
 | OSS gateway revision | `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` |
-| Fixture manifest SHA-256 | `6ecf3ae9570937da48465bab1d87563c47c0e1b3c1ef46191c0143c3fad3ff79` |
+| Fixture manifest SHA-256 | `53e57343c1c3245a60cfde4df6b688ac997fd91133e6d3691ba056932c87362a` |
 
 Create an external `oss-discord-stt-plan-v1` JSON conforming to
 `src/oss-campaign-profile.ts`: `campaignId`, exact `collectorRevision`, `target`

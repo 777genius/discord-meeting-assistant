@@ -6,7 +6,7 @@ export const id = z.string().min(1).max(256);
 export const time = z.number().int().nonnegative();
 const scenario = z.enum(["sequential", "overlap", "reconnect"]);
 export const baseRevision = "8f49a06128307bfcd13d8cb7a95e00daa528f2ea";
-export const manifestDigest = "6ecf3ae9570937da48465bab1d87563c47c0e1b3c1ef46191c0143c3fad3ff79";
+export const manifestDigest = "53e57343c1c3245a60cfde4df6b688ac997fd91133e6d3691ba056932c87362a";
 export const targetSchema = z.object({
   project: z.literal("vtoss-test-oss-8f49a06-r1"),
   testOnly: z.literal(true),

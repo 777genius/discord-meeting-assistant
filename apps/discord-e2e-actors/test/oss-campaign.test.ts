@@ -28,6 +28,14 @@ async function setup() {
 }
 
 describe("OSS campaign retained evidence", () => {
+  it("rejects changed fixture manifest bytes before accepting custody", async () => {
+    const f = await setup(); await f.save();
+    const archive = await loadArchive(f.planPath, f.root);
+    const changed = JSON.parse(f.manifestBytes.toString("utf8"));
+    changed.fixtures[1].durationMs = 48919;
+    await expect(verifyOssCampaign(archive, Buffer.from(JSON.stringify(changed))))
+      .rejects.toThrow("Unpinned fixture manifest");
+  });
   it("checks synthetic consistency without claiming E2E and re-verifies a create-only report", async () => {
     const fixture = await setup();
     const receipt = await fixture.verify();
