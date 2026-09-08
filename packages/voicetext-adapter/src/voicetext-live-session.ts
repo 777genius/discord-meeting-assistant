@@ -383,6 +383,12 @@ export class LiveSession implements VoicetextLiveSession {
 
   private closeAfterReceiveFailure(error: unknown): void {
     this.evidence?.record({ type: "failure" });
+    // A received provider outcome survives local cancellation; cleanup stays one-shot.
+    if (error instanceof VoicetextAdapterError &&
+        (error.code === "live_provider_terminal" || error.code === "live_acceptance_unknown" ||
+          error.gatewayCode === "PROVIDER_UNAVAILABLE")) {
+      this.terminalError = error;
+    }
     if (this.state === "closed") {
       return;
     }
