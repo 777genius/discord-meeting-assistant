@@ -13,6 +13,8 @@ import { boundedRetrievalQuery, classifyRelativeTimeFilter,
   "./focused-locator-retrieval-v2-query.js";
 import type { FocusedHistoricalEvidenceV2Port,
   FocusedLocatorRetrievalV2ProviderBinding,
+  FocusedRetrievalScopeResolutionPort,
+  FocusedRetrievalScopeResolutionEffects,
   FocusedLocatorRetrievalV2Preparation,
   FocusedLocatorRetrievalV2RequestSnapshot } from
   "./ports/focused-locator-retrieval-v2.js";
@@ -54,6 +56,7 @@ export class PrepareFocusedLocatorRetrievalV2Request {
   public constructor(
     private readonly dependencies: {
       readonly ids: HistoricalOpaqueIdPort;
+      readonly scopeResolution?: FocusedRetrievalScopeResolutionPort;
       readonly identitySkeletons?: IdentitySkeletonPortV1;
       readonly providerBinding: FocusedLocatorRetrievalV2ProviderBinding;
       readonly actorReferences?: RetrievalActorReferenceAuthorityV1;
@@ -68,6 +71,7 @@ export class PrepareFocusedLocatorRetrievalV2Request {
   ) {}
 
   public async prepare(input: {
+    readonly scopeResolutionEffects?: FocusedRetrievalScopeResolutionEffects;
     readonly currentMeetingId: string;
     readonly question: string;
     readonly roomId: string;
@@ -134,6 +138,21 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       .toSorted(compareRetrievalV2Utf8));
     const relativeTimeInterval = timeFilter.status === "valid"
       ? timeFilter.interval : null;
+    let scope;
+    try { scope = await this.dependencies.scopeResolution?.resolve({
+      ...(input.scopeResolutionEffects === undefined ? {} : { effects: input.scopeResolutionEffects }),
+      spaceSlug: topology.spaceSlug,
+      roomScopeExternalRef: topology.roomScopeExternalRef,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    }); } catch {
+      input.signal?.throwIfAborted();
+      return unavailablePreparation("scope_resolution_unavailable");
+    }
+    input.signal?.throwIfAborted();
+    if (scope?.status !== "resolved" || !validResolvedId(scope.spaceId) ||
+      !validResolvedId(scope.memoryScopeId)) {
+      return unavailablePreparation("scope_resolution_unavailable");
+    }
     return preparedRequest({
       binding: Object.freeze({ ...this.dependencies.providerBinding,
         requiredProviderLanes: Object.freeze([
@@ -170,8 +189,8 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       })]),
       schemaVersion: 2 as const,
       scope: Object.freeze({
-        memoryScopeId: topology.roomScopeExternalRef,
-        spaceId: topology.spaceSlug,
+        memoryScopeId: scope.memoryScopeId,
+        spaceId: scope.spaceId,
         threadId: null,
       }),
       softPreferences: Object.freeze({
@@ -392,4 +411,8 @@ export function isPersistedRetrievalV2Binding(
 ): binding is Extract<RetrievalBindingSnapshot,
   { readonly retrievalPath: "infinity_locator_v2" }> {
   return binding.retrievalPath === "infinity_locator_v2";
+}
+
+function validResolvedId(value: string): boolean {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/u.test(value);
 }

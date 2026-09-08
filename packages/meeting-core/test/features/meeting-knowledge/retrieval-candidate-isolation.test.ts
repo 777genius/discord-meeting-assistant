@@ -1,3 +1,4 @@
+import { scopeResolution } from "./focused-locator-retrieval-v2.fixture.test.js";
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 
@@ -74,7 +75,7 @@ function authorization(): HistoricalAuthorizationPort {
 }
 
 async function requestFor(store: AppliedStore) {
-  const request = await new PrepareFocusedLocatorRetrievalV2Request({
+  const request = await new PrepareFocusedLocatorRetrievalV2Request({ scopeResolution,
     ids: new TestIds(), providerBinding, store,
   }).prepare({ currentMeetingId: "current-meeting", question: "What changed?",
     roomId: "room-1", scopeId: "scope-1" });
@@ -409,7 +410,7 @@ describe("focused retrieval candidate isolation edge cases", () => {
           missing, malformed, providerCandidate(locators[3]!, providerRequest, 7),
         ], status: "available" as const };
       } } as FocusedLocatorRetrievalV2Port;
-      const result = await new HistoricalFocusedLocatorRetrievalV2({
+      const result = await new HistoricalFocusedLocatorRetrievalV2({ scopeResolution,
         authority: { loadAcceptedFinalMeeting: async (binding) =>
           meetings.find((meeting) => meeting.binding.releaseId === binding.releaseId) ?? null },
         authorization: authorization(), ids: new TestIds(), retrieval, store,

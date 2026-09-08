@@ -77,7 +77,8 @@ export async function proveLegacyHistoricalComposition(pool: Pool): Promise<void
       spend: { reserve: async () => {} }, topology: { resolve: async () => ({ ...binding, currentMeetingId: "other-meeting" }) },
       evidenceAuthority: new PostgresHistoricalEvidenceAuthority(pool, undefined, verifier),
       store: new PostgresHistoricalMemoryStore(pool),
-      preparer: new PrepareFocusedLocatorRetrievalV2Request({ ids, providerBinding: DISPOSABLE_RETRIEVAL_V2_BINDING, snapshot: room }),
+      preparer: new PrepareFocusedLocatorRetrievalV2Request({ scopeResolution: new InfinityRetrievalScopeResolution({
+        baseUrl: infinity.baseUrl, token: "synthetic-token", operationTimeoutMs: 500, requestTimeoutMs: 500 }), ids, providerBinding: DISPOSABLE_RETRIEVAL_V2_BINDING, snapshot: room }),
       retrieval: new InfinityContextRetrievalV2Adapter({ baseUrl: infinity.baseUrl,
         operationTimeoutMs: 2_000, requestTimeoutMs: 1_000, token: "synthetic-token" }),
     });

@@ -1,3 +1,4 @@
+import type { FocusedRetrievalScopeResolutionPort } from "./ports/focused-locator-retrieval-v2.js";
 import {
   admitsHistoricalRetrieval,
   DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
@@ -79,6 +80,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     /** Maps one canonical actor to every retained opaque retrieval key. */
     readonly actorKeysForSpeaker?: (speakerId: string) => readonly string[];
     readonly ids: HistoricalOpaqueIdPort;
+    readonly scopeResolution?: FocusedRetrievalScopeResolutionPort;
     readonly retrieval: FocusedLocatorRetrievalV2Port;
     readonly servingAuthorized?: () => boolean;
     readonly snapshot?: HistoricalRoomAuthoritySnapshotPort;
@@ -124,8 +126,10 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     }
     const topology = buildHistoricalRoomTopology(input.scopeId, input.roomId,
       this.dependencies.ids);
-    if (input.request.scope.memoryScopeId !== topology.roomScopeExternalRef ||
-      input.request.scope.spaceId !== topology.spaceSlug) {
+    if (this.dependencies.scopeResolution?.matches({
+      spaceSlug: topology.spaceSlug, roomScopeExternalRef: topology.roomScopeExternalRef,
+      spaceId: input.request.scope.spaceId, memoryScopeId: input.request.scope.memoryScopeId,
+    }) !== true) {
       return rejected("scope_not_bound");
     }
     const authorizationRequest = {

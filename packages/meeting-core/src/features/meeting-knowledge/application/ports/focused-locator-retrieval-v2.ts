@@ -89,6 +89,34 @@ export type FocusedLocatorRetrievalV2Preparation =
 export type FocusedLocatorRetrievalV2PreparationUnavailableReason =
   | "historical_authority_overflow"
   | "historical_authority_unavailable"
+  | "scope_resolution_unavailable"
   | "query_not_admitted"
   | "retrieval_filter_denied"
   | "serving_not_authorized";
+
+/** Read-only resolution of external topology references before request identity exists.
+ * Implementations must prove complete bounded collections and unique parent-bound
+ * matches. No topology creation or external-reference fallback is permitted.
+ */
+export interface FocusedRetrievalScopeResolutionPort {
+  matches(input: { readonly spaceSlug: string; readonly roomScopeExternalRef: string;
+    readonly spaceId: string; readonly memoryScopeId: string }): boolean;
+  resolve(input: {
+    readonly effects?: FocusedRetrievalScopeResolutionEffects;
+    readonly spaceSlug: string;
+    readonly roomScopeExternalRef: string;
+    readonly signal?: AbortSignal;
+  }): Promise<
+    | { readonly status: "resolved"; readonly spaceId: string;
+        readonly memoryScopeId: string }
+    | { readonly status: "unavailable" }
+  >;
+}
+
+export interface FocusedRetrievalScopeResolutionEffects {
+  beforeRead(input: { readonly kind: "scope_spaces" | "scope_memory_scopes";
+    readonly requestSha256: string }): Promise<void>;
+  observe(input: { readonly kind: "scope_spaces" | "scope_memory_scopes";
+    readonly requestSha256: string; readonly responseSha256: string | null;
+    readonly responseBytes: number; readonly status: "received" | "failed" }): Promise<void>;
+}

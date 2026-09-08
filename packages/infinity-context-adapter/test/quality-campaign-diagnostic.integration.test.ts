@@ -1,3 +1,4 @@
+import { InfinityRetrievalScopeResolution } from "../src/infinity-retrieval-scope-resolution.js";
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildHistoricalIndexPlan, canonicalHistoricalPlannerJson, createHistoricalReleaseBinding,
@@ -68,7 +69,8 @@ describe("nonqualifying diagnostic concrete boundaries", () => {
         beforeProviderCall: async () => { answerCalls += 1; throw new Error("model calls forbidden in this test"); } });
       const auditKinds: string[] = [];
       const input = { answer, evidenceAuthority: authority, ids, store, retrieval,
-        preparer: new PrepareFocusedLocatorRetrievalV2Request({ ids, providerBinding: DISPOSABLE_RETRIEVAL_V2_BINDING, snapshot: store }),
+        preparer: new PrepareFocusedLocatorRetrievalV2Request({ scopeResolution: new InfinityRetrievalScopeResolution({
+          baseUrl: http.baseUrl, token: "synthetic-token", operationTimeoutMs: 500, requestTimeoutMs: 500 }), ids, providerBinding: DISPOSABLE_RETRIEVAL_V2_BINDING, snapshot: store }),
         audit: { seal: async (value: { kind: string }) => { auditKinds.push(value.kind); } },
         journal: { reserve: async () => {}, terminal: async () => {} }, spend: { reserve: async () => {} },
         topology: { resolve: async () => ({ currentMeetingId: snapshot.meetingId, roomId: release.roomId, scopeId: release.scopeId }) } };

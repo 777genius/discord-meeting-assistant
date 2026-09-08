@@ -60,7 +60,7 @@ export interface QualificationEncryptedAuditPort {
       "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
       "answer_repair_request" | "answer_repair_response" | "capability_request" |
       "capability_response" | "retrieval_request" | "retrieval_response" |
-      "retrieval_observation" | "selected_canonical_turns";
+      "retrieval_observation" | "scope_resolution_observation" | "selected_canonical_turns";
     readonly plaintext: Uint8Array }): Promise<void>;
 }
 
@@ -148,8 +148,27 @@ function createCanonicalQuestionEngine(input: CanonicalEngineInput) {
       options: QualificationQuestionExecutionContext) => {
       const topology = await input.topology.resolve(packet.scopeTopologyReference,
         packet.questionId);
-      const prepared = await input.preparer.prepare({ ...topology, question: packet.questionText,
-        signal: options.signal });
+      const scopeReads: { readonly kind: string; readonly requestSha256: string;
+        readonly responseSha256: string | null; readonly responseBytes: number;
+        readonly status: string }[] = [];
+      let prepared: Awaited<ReturnType<PrepareFocusedLocatorRetrievalV2Request["prepare"]>> | undefined;
+      try { prepared = await input.preparer.prepare({ ...topology, question: packet.questionText,
+        signal: options.signal, scopeResolutionEffects: {
+          beforeRead: async ({ kind, requestSha256 }) => {
+            await input.spend.reserve({ effectKind: kind, payloadSha256: requestSha256,
+              requestedEncryptedBytes: 1024, requestedTokens: 0 });
+            scopeReads.push({ kind, requestSha256, responseSha256: null,
+              responseBytes: 0, status: "outcome_unknown" });
+          },
+          observe: async (observation) => {
+            const index = scopeReads.findIndex(({ kind }) => kind === observation.kind);
+            if (index < 0) { throw new Error("Unreserved scope metadata effect"); }
+            scopeReads[index] = observation;
+          },
+        } });
+      } finally { await input.audit.seal({ attemptId: options.attemptId, kind: "scope_resolution_observation",
+        plaintext: utf8(canonicalJson({ schemaVersion: "meeting_knowledge.scope_resolution.v1",
+          status: prepared?.status ?? "interrupted", reads: scopeReads })) }); }
       if (prepared.status !== "prepared") {
         return { reason: `request_${prepared.status}`, status: "failed" as const };
       }

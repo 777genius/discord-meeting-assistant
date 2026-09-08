@@ -10,7 +10,7 @@ export type SemanticQualityV4ArtifactKind = "adjudication" | "answer" | "evidenc
   "original_model_input" | "original_provider_request" | "original_provider_response" |
   "repair_model_input" | "repair_provider_request" | "repair_provider_response" |
   "raw_outcome" | "response_runtime" | "retrieval_request" | "retrieval_response" |
-  "retrieval_observation" | "selected_canonical_turns";
+  "scope_resolution_observation" | "retrieval_observation" | "selected_canonical_turns";
 
 export interface CanonicalRetrievalObservationArtifact {
   readonly attemptId: string;
@@ -61,7 +61,7 @@ const artifactKinds = new Set<unknown>([
   "capability_response", "evidence", "original_model_input", "original_provider_request",
   "original_provider_response", "repair_model_input", "repair_provider_request",
   "repair_provider_response", "raw_outcome", "response_runtime", "retrieval_request",
-  "retrieval_response", "retrieval_observation", "selected_canonical_turns",
+  "retrieval_response", "scope_resolution_observation", "retrieval_observation", "selected_canonical_turns",
 ]);
 
 export function validateCanonicalRetrievalObservation(input: {

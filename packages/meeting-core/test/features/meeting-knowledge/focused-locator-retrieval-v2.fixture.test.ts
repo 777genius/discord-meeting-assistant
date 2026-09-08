@@ -64,7 +64,7 @@ export function fixture() {
   const plan = buildHistoricalIndexPlan(meeting, new TestIds());
   const store = new AppliedStore([{ binding: meeting.binding, plan, remoteDocumentIds: {} }],
     [meeting]);
-  const prepare = new PrepareFocusedLocatorRetrievalV2Request({ ids: new TestIds(),
+  const prepare = new PrepareFocusedLocatorRetrievalV2Request({ scopeResolution, ids: new TestIds(),
     identitySkeletons, providerBinding,
     speakerAliases: [{ actorKeys: ["opaque-vlad"], aliases: ["Влад", "Vlad"] }], store });
   return { meeting, plan, prepare, store };
@@ -88,4 +88,11 @@ describe("focused locator retrieval V2 fixture", () => {
     expect(providerBinding.requiredProviderLanes)
       .toEqual(["postgres_keyword", "qdrant_dense"]);
   });
+});
+
+export const scopeResolution = Object.freeze({
+  resolve: async () => ({ status: "resolved" as const,
+    spaceId: "internal-space-123", memoryScopeId: "internal-room-456" }),
+  matches: (input: { spaceId: string; memoryScopeId: string }) =>
+    input.spaceId === "internal-space-123" && input.memoryScopeId === "internal-room-456",
 });

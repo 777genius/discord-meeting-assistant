@@ -312,6 +312,8 @@ export type {
   FocusedLocatorRetrievalV2Preparation,
   FocusedLocatorRetrievalV2PreparationUnavailableReason,
   FocusedLocatorRetrievalV2Port,
+  FocusedRetrievalScopeResolutionPort,
+  FocusedRetrievalScopeResolutionEffects,
   FocusedLocatorRetrievalV2Result,
 } from "./application/ports/focused-locator-retrieval-v2.js";
 export { groundingPlanRetrievalAuditsBindInput, retrievalAuditsBindInput } from

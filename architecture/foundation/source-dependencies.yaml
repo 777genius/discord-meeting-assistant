@@ -412,6 +412,7 @@ boundaries:
       - packages/infinity-context-adapter/src/infinity-context-historical-memory.ts
       - packages/infinity-context-adapter/src/infinity-context-live-finalized-memory.ts
       - packages/infinity-context-adapter/src/infinity-context-retrieval-v2.ts
+      - packages/infinity-context-adapter/src/infinity-retrieval-scope-resolution.ts
       - packages/infinity-context-adapter/src/infinity-exact-document-compatibility.ts
       - packages/infinity-context-adapter/src/infinity-production-qualification.ts
       - packages/infinity-context-adapter/src/infinity-runtime-provenance.ts
