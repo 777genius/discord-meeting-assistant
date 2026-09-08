@@ -2,8 +2,10 @@
 
 This package is the internal server counterpart of
 `SubscriptionRuntimeTransportPort`. It admits exactly
-`discord_meeting.summary.generate`, `discord_meeting.summary.incremental`, and
-`discord_meeting.conversation.answer`,
+`discord_meeting.summary.generate`, `discord_meeting.summary.incremental`,
+`discord_meeting.conversation.answer`, `discord_meeting.knowledge.answer.v1`,
+`discord_meeting.knowledge.coverage_extract.v1`, and
+`discord_meeting.knowledge.evidence_select.v1`,
 and returns no credential, provider payload, account identity, raw stdout, or
 stderr.
 
