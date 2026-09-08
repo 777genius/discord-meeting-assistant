@@ -8,6 +8,10 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { it } from "vitest";
 
+const childDeadlineMs = 15_000;
+// Two sequential children plus filesystem setup, recovery cleanup, and teardown.
+const scenarioTimeoutMs = 2 * childDeadlineMs + 5_000;
+
 interface Message { id?: number; type: string; detail?: unknown }
 interface Effects { messages: Message[]; accepted: number; openings: number; finalizations: number }
 const worker = fileURLToPath(new URL("./fixtures/live-runtime-crash-worker.ts", import.meta.url));
@@ -40,7 +44,7 @@ async function child(root: string, phase: string, scenario: string, killAt: stri
     let killed = false;
     let failure = "";
     let stderr = "";
-    const timer = setTimeout(() => { failure = "synthetic worker deadline"; process.kill("SIGKILL"); }, 15_000);
+    const timer = setTimeout(() => { failure = "synthetic worker deadline"; process.kill("SIGKILL"); }, childDeadlineMs);
     process.stderr?.on("data", (bytes: Buffer) => { stderr += bytes.toString(); });
     process.on("error", reject);
     process.on("message", (message: Message) => {
@@ -122,5 +126,5 @@ for (const row of cases) {
       }
       assert.equal(createHash("sha256").update(await readFile(join(root, "original.ogg"))).digest("hex"), checksum);
     } finally { await rm(root, { recursive: true, force: true }); }
-  });
+  }, scenarioTimeoutMs);
 }
