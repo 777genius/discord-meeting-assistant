@@ -307,7 +307,8 @@ export class LiveSession implements VoicetextLiveSession {
         if (frame.type === "close") {
           this.evidence?.record({ type: "close", code: frame.code });
           this.transportClosed = true;
-          if (this.closeState !== "idle" && this.finalizeResultReceived) {
+          // Sending a normal close does not prove the peer closed normally.
+          if (frame.code === 1_000 && this.closeState !== "idle" && this.finalizeResultReceived) {
             this.state = "closed";
             this.closeWaiter.resolve();
             return;

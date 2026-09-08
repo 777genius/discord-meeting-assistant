@@ -1,7 +1,7 @@
 import type { OssSessionEvidence, OssSessionEvidenceEvent } from "../src/oss-native-evidence.js";
 import { setImmediate as nextTask } from "node:timers/promises";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { VoicetextAdapterError } from "../src/errors.js";
 import { validateLiveSessionFinalizeStatus } from
@@ -107,6 +107,70 @@ describe("VoiceText live finalize terminal evidence", () => {
     expect(socket.terminated).toBe(false);
   });
 
+  it.each(["gated-close", "application-close"] as const)(
+    "requires observed normal closure at %s after valid finalize evidence",
+    async (behavior) => {
+      for (const closeCode of [1000, 1005, 1006]) {
+        const socket = new FinalizeSocket(behavior, closeCode);
+        const events: OssSessionEvidenceEvent[] = [];
+        const session = await openSession(socket, 1000, { record: (event) => { events.push(event); } });
+        const finalization = session.finalize();
+        expect(session.finalize()).toBe(finalization);
+        const outcome = finalization.catch((error: unknown) => error);
+        if (behavior === "gated-close") {
+          await socket.closeStarted;
+          expect(events.some((event) => event.type === "success")).toBe(false);
+          socket.completeClose();
+        }
+        const failure: unknown = await outcome;
+        expect(events.filter((event) => event.type === "received" && event.message.type === "finalize_complete"))
+          .toHaveLength(1);
+        expect(events.filter((event) => event.type === "close"))
+          .toEqual([{ type: "close", code: closeCode }]);
+        if (closeCode === 1000) {
+          expect(failure).toBeUndefined();
+          await expect(session.finalize()).resolves.toBeUndefined();
+          expect(events.filter((event) => event.type === "success")).toHaveLength(1);
+        } else {
+          expect(failure).toMatchObject({
+            code: "transport_error", retryable: true,
+            message: "Voicetext closed live session with code " + closeCode,
+          });
+          await expect(session.finalize()).rejects.toBe(failure);
+          await expect(session.sendPacket({ packetId: "late", opus: new Uint8Array([1]),
+            durationSamples48Khz: 960, relativeTimeMs: 0 })).rejects.toBe(failure);
+          expect(events.some((event) => event.type === "success")).toBe(false);
+          expect(events.some((event) => event.type === "failure")).toBe(true);
+        }
+        expect(socket.finalizeCalls).toBe(1);
+        expect(socket.closeCalls).toBe(1);
+        expect(socket.terminated).toBe(closeCode !== 1000);
+      }
+    },
+  );
+
+  it.each([1005, 1006])("keeps timeout termination with observed %s unsuccessful", async (closeCode) => {
+    vi.useFakeTimers();
+    try {
+      const events: OssSessionEvidenceEvent[] = [];
+      const socket = new FinalizeSocket("never-close", closeCode);
+      const session = await openSession(socket, 1000, { record: (event) => { events.push(event); } });
+      const outcome = session.finalize().catch((error: unknown) => error);
+      await socket.closeStarted;
+      await vi.advanceTimersByTimeAsync(1000);
+      const failure: unknown = await outcome;
+      expect(failure).toMatchObject({ code: "timeout", retryable: true });
+      await expect(session.finalize()).rejects.toBe(failure);
+      expect(socket.terminated).toBe(true);
+      expect(socket.finalizeCalls).toBe(1);
+      expect(socket.closeCalls).toBe(1);
+      expect(events).toContainEqual({ type: "close", code: closeCode });
+      expect(events.some((event) => event.type === "success")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(["synchronous", "later-task", "after-close", "contradictory-after-close"] as const)(
     "fails closed for %s terminal evidence",
     async (behavior) => {
@@ -139,6 +203,7 @@ describe("VoiceText live finalize terminal evidence", () => {
 type FinalizeBehavior =
   | "PROVIDER_TERMINAL"
   | "PROVIDER_OUTCOME_UNKNOWN"
+  | "application-close"
   | "after-close"
   | "close-before-terminal"
   | "compliant"
@@ -150,6 +215,7 @@ type FinalizeBehavior =
 
 class FinalizeSocket implements VoicetextWebSocketConnection {
   public closeCalls = 0;
+  public finalizeCalls = 0;
   public readonly closeStarted: Promise<void>;
   public terminated = false;
   private readonly closeRelease: Promise<void>;
@@ -158,7 +224,7 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
   private readonly frames: VoicetextInboundFrame[] = [];
   private waiter: ((frame: VoicetextInboundFrame) => void) | undefined;
 
-  public constructor(private readonly behavior: FinalizeBehavior) {
+  public constructor(private readonly behavior: FinalizeBehavior, private readonly closeCode = 1000) {
     this.closeStarted = new Promise((resolve) => {
       this.resolveCloseStarted = resolve;
     });
@@ -183,6 +249,7 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
       return;
     }
     if (message.type === "finalize") {
+      this.finalizeCalls += 1;
       if (this.behavior === "PROVIDER_TERMINAL" || this.behavior === "PROVIDER_OUTCOME_UNKNOWN") { this.enqueue({ type: "error", code: this.behavior, message: "synthetic" }); return; }
       if (this.behavior === "close-before-terminal") {
         this.enqueueClose();
@@ -199,6 +266,9 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
       }
       return;
     }
+    if (message.type === "close" && this.behavior === "application-close") {
+      this.enqueueClose();
+    }
     if (message.type === "close" &&
         ["after-close", "contradictory-after-close"].includes(this.behavior)) {
       this.enqueue(this.behavior === "contradictory-after-close"
@@ -209,13 +279,13 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
 
   public async sendBinary(): Promise<void> {}
 
-  public async receive(signal: AbortSignal): Promise<VoicetextInboundFrame> {
+  public receive(signal: AbortSignal): Promise<VoicetextInboundFrame> {
     signal.throwIfAborted();
     const frame = this.frames.shift();
     if (frame !== undefined) {
-      return frame;
+      return Promise.resolve(frame);
     }
-    return await new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const abort = () => {
         reject(signal.reason);
       };
@@ -230,6 +300,7 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
   public async close(): Promise<void> {
     this.closeCalls += 1;
     this.resolveCloseStarted();
+    if (this.behavior === "application-close") { return; }
     if (this.behavior !== "never-close") {
       if (this.behavior === "gated-close") {
         await this.closeRelease;
@@ -244,6 +315,7 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
 
   public terminate(): void {
     this.terminated = true;
+    if (this.behavior === "never-close") { this.enqueueClose(); }
   }
 
   public enqueue(message: Readonly<Record<string, unknown>>): void {
@@ -251,7 +323,7 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
   }
 
   private enqueueClose(): void {
-    this.push({ code: 1_000, reason: "finalized", type: "close" });
+    this.push({ code: this.closeCode, reason: "finalized", type: "close" });
   }
 
   private push(frame: VoicetextInboundFrame): void {
@@ -266,6 +338,11 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
 }
 
 async function finalize(socket: FinalizeSocket, timeoutMs = 1_000, evidence?: OssSessionEvidence): Promise<void> {
+  const session = await openSession(socket, timeoutMs, evidence);
+  await session.finalize();
+}
+
+async function openSession(socket: FinalizeSocket, timeoutMs = 1000, evidence?: OssSessionEvidence): Promise<LiveSession> {
   const session = new LiveSession(socket, {
     idempotencyKey: "terminal-evidence",
     meetingId: "meeting-1",
@@ -277,7 +354,7 @@ async function finalize(socket: FinalizeSocket, timeoutMs = 1_000, evidence?: Os
     token: "test-machine-token",
   }), evidence);
   await session.start();
-  await session.finalize();
+  return session;
 }
 
 it.each(["idle", "finalizing"].flatMap(phase => (["PROVIDER_TERMINAL", "PROVIDER_OUTCOME_UNKNOWN"] as const).map(code => ({ phase, code }))))("retains deployed failure through %j cleanup and repeated finalization", async ({ phase, code }) => {
