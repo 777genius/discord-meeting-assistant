@@ -12,8 +12,8 @@ export interface SttJournalAccess {
   append(record: SttRecord): Promise<void>;
 }
 export type SttTransaction = <T>(recordingId: string, work: (access: SttJournalAccess) => Promise<T>) => Promise<T>;
-const speakerKey = (speakerId: string): string => "speaker:" + JSON.stringify(speakerId);
-const operationKey = (operation: number): string => "operation:" + operation;
+const speakerKey = (speakerId: string): `speaker:${string}` => `speaker:${JSON.stringify(speakerId)}`;
+const operationKey = (operation: number): `operation:${number}` => `operation:${operation}`;
 function conflict(message: string): never {
   throw new RecordingIngressError("conflicting-duplicate", "live STT " + message);
 }
@@ -240,7 +240,7 @@ function applyIntent(access: SttJournalAccess, state: SttRecordingState, operati
     current.generation = session.generation;
     current.accepted = false;
   } else {
-    if ((operation.kind !== "send" && operation.kind !== "finalize") ||
+    if (!isSessionIntentKind(operation.kind) ||
         !current.opened || session.generation !== current.generation) { conflict("invalid session intent"); }
     if (operation.kind === "send") {
       const row = access.db.get(access.index, operation.packetId);
@@ -270,4 +270,8 @@ function applyOutcome(access: SttJournalAccess, completion: SttCompletion): void
   delete current.pending;
   access.db.sttPut(access.index, speakerKey(operation.session.speakerId), current);
   access.db.sttPut(access.index, operationKey(operation.operation), completion);
+}
+
+function isSessionIntentKind(kind: unknown): boolean {
+  return kind === "send" || kind === "finalize";
 }

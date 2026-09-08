@@ -1,38 +1,19 @@
+import type { SpeakerTranscriptionSessionDependencies } from "./speaker-transcription-sessions.js";
+export type { SpeakerTranscriptionSessionDependencies } from "./speaker-transcription-sessions.js";
 import { LiveSttAttemptController, awaitLiveCancellation } from "./live-stt-attempt-controller.js";
-import { LiveTranscriptionNotAccepted } from "./contracts.js";
-import type { LiveSttDurabilityPort } from "./contracts.js";
-import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure, LiveTranscriptionAdmissionRejected } from "./contracts.js";
-import { superviseLiveWork, LiveSessionAdmission, GlobalPacketFlowControl, SourceTimelinePacer, SpeakerPacketFlowControl } from "./live-packet-flow-control.js";
-import type { LivePacketInspector, LiveRuntimeClock, LiveRuntimeLogger, LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent, LiveTranscriptionPort, LiveVoicePacket } from "./contracts.js";
-import { LivePacketDeliveryLedger, livePacketIdentity } from "./packet-delivery-ledger.js";
+import { superviseLiveWork, SourceTimelinePacer, SpeakerPacketFlowControl } from "./live-packet-flow-control.js";
+import {
+  LiveTranscriptionNotAccepted, LiveTranscriptionAcceptanceUnknown,
+  LiveTranscriptionTerminalFailure, LiveTranscriptionAdmissionRejected,
+  type LiveRuntimeTimerHandle, type LiveVoicePacket,
+} from "./contracts.js";
+import { livePacketIdentity } from "./packet-delivery-ledger.js";
 import { SpeakerTranscriptionProviderSession } from "./speaker-transcription-provider-session.js";
 
 const maximumLivePacketDeliveryAttempts = 2;
 // Independent from admission pressure; exceeds the current provider's 30s allowance.
 const providerFinalizeTimeoutMs = 35_000;
 const maximumDrainPacingWaitMs = 30_000;
-
-export interface SpeakerTranscriptionSessionDependencies {
-  readonly admissionRejection?: AbortController;
-  readonly clock: LiveRuntimeClock;
-  readonly isMeetingFinishing: () => boolean;
-  readonly ledger: LivePacketDeliveryLedger;
-  readonly logger: LiveRuntimeLogger;
-  readonly liveSttDurability?: LiveSttDurabilityPort;
-  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
-  readonly maximumQueuedPackets: number;
-  readonly meetingId: string;
-  readonly onTranscript: (event: LiveTranscriptionEvent) => void;
-  readonly packetAdmission: GlobalPacketFlowControl;
-  readonly packetBackpressureTimeoutMs: number;
-  readonly packetInspector: LivePacketInspector;
-  readonly sessionAdmission: LiveSessionAdmission;
-  readonly speakerId: string;
-  readonly speakerIdleFinalizeMs: number;
-  readonly startedAtMs: number;
-  readonly timer: LiveRuntimeTimer;
-  readonly transcriber: LiveTranscriptionPort;
-}
 
 /** Owns one speaker's provider session and its bounded packet delivery. */
 export class SpeakerTranscriptionSession {

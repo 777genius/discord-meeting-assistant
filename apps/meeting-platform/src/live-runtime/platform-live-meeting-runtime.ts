@@ -1,9 +1,10 @@
+import { initializeLivePacketRecovery, waitForLivePacketRecovery, acceptLivePackets, groupPacketsByMeeting } from "./speaker-transcription-sessions.js";
 import { GlobalPacketFlowControl, LiveSessionAdmission,
   resolveLivePacketFlowControl } from "./live-packet-flow-control.js";
 import type { LiveMeetingLifecycleEvent, LiveMeetingParticipantEvent,
   LiveMeetingRuntimeDependencies, LiveMeetingStartedEvent, LiveRuntimeClock,
   LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent,
-  LiveVoicePacket, LiveVoicePacketBatch } from "./contracts.js";
+  LiveVoicePacketBatch } from "./contracts.js";
 import { createActiveLiveMeeting, type ActiveLiveMeeting } from
   "./live-meeting-state.js";
 import { LiveMeetingFinalizer } from "./live-meeting-finalizer.js";
@@ -112,7 +113,7 @@ export class PlatformLiveMeetingRuntime {
       const resumed = await this.recordingOperations.enqueue(event.recordingId, async () => {
         const state = this.meetings.get(event.recordingId);
         return { recovery: state !== undefined && !state.finishing && state.packetRecovery === null
-          ? this.initializeRecovery(state) : state?.packetRecovery };
+          ? initializeLivePacketRecovery(this.dependencies, state) : state?.packetRecovery };
       });
       await resumed.recovery;
     }
@@ -129,21 +130,13 @@ export class PlatformLiveMeetingRuntime {
   public async acceptVoiceBatch(batch: LiveVoicePacketBatch): Promise<void> {
     if (this.closed) { return; }
     const deadlineMs = this.clock.nowMilliseconds() + this.packetFlow.packetBackpressureTimeoutMs;
-    const packetsByMeeting = new Map<string, LiveVoicePacket[]>();
-    for (const packet of batch.packets) {
-      const packets = packetsByMeeting.get(packet.recordingId);
-      if (packets === undefined) {
-        packetsByMeeting.set(packet.recordingId, [packet]);
-      } else {
-        packets.push(packet);
-      }
-    }
+    const packetsByMeeting = groupPacketsByMeeting(batch.packets);
     await Promise.all(
       [...packetsByMeeting].map(([recordingId, packets]) =>
         this.recordingOperations.enqueue(recordingId, async () => {
           const initialization = this.meetings.get(recordingId)?.packetRecovery;
-          if (await this.waitForPacketRecovery(initialization, deadlineMs)) {
-            await this.acceptPackets(recordingId, packets, deadlineMs);
+          if (await waitForLivePacketRecovery(initialization, deadlineMs, this.clock, this.timer)) {
+            await acceptLivePackets(this.meetings.get(recordingId), packets, deadlineMs, this.dependencies.logger);
           }
         })
       ),
@@ -216,7 +209,7 @@ export class PlatformLiveMeetingRuntime {
     const existing = this.meetings.get(event.recordingId);
     if (existing !== undefined) {
       const recovery = existing.packetRecovery === null && !existing.finishing
-        ? this.initializeRecovery(existing) : existing.packetRecovery;
+        ? initializeLivePacketRecovery(this.dependencies, existing) : existing.packetRecovery;
       return { recovery };
     }
     const publicationTargetId = await event.publicationTarget.resolve();
@@ -256,7 +249,7 @@ export class PlatformLiveMeetingRuntime {
     state.projection.restoreFinalCaptions(result.finalizedTurns);
     this.meetings.set(state.meetingId, state);
     if (this.shutdownSignal?.aborted === true) { state.transcriptionFenceClosed = true; state.transcription.cancel(); }
-    const recovery = this.initializeRecovery(state);
+    const recovery = initializeLivePacketRecovery(this.dependencies, state);
     this.dependencies.logger.info("Derived live meeting started", {
       meetingId: state.meetingId, reused: result.status === "reused",
     });
@@ -265,59 +258,6 @@ export class PlatformLiveMeetingRuntime {
       await this.finalizer.beginFinish(state, terminalEndTime);
     }
     return { recovery };
-  }
-
-  private initializeRecovery(state: ActiveLiveMeeting): Promise<void> {
-    let initialization!: Promise<void>;
-    initialization = (async () => {
-      const durability = await this.dependencies.liveSttDurability?.recoverRecording(state.meetingId);
-      if (durability !== undefined) { state.transcription.restoreDurability(durability); }
-      const pending = await this.dependencies.pendingLivePackets?.(state.meetingId);
-      if (state.packetRecovery === initialization && !state.finishing && pending !== undefined) {
-        void state.transcription.recover(pending).catch((error: unknown) => {
-          this.dependencies.logger.warn("Derived live packet recovery failed", {
-            meetingId: state.meetingId,
-            errorName: error instanceof Error ? error.name : "UnknownError",
-          });
-        });
-      }
-    })();
-    state.packetRecovery = initialization;
-    void initialization.catch(() => {
-      if (state.packetRecovery === initialization) { state.packetRecovery = null; }
-    });
-    return initialization;
-  }
-
-  private async waitForPacketRecovery(initialization: Promise<void> | null | undefined, deadlineMs: number): Promise<boolean> {
-    if (initialization === null || initialization === undefined) { return false; }
-    let timeout!: LiveRuntimeTimerHandle;
-    const expired = new Promise<boolean>((resolve) => {
-      timeout = this.timer.schedule(Math.max(0, deadlineMs - this.clock.nowMilliseconds()), () => { resolve(false); });
-    });
-    try { return await Promise.race([initialization.then(() => true), expired]); }
-    finally { this.timer.cancel(timeout); }
-  }
-
-  private async acceptPackets(
-    recordingId: string,
-    packets: readonly LiveVoicePacket[],
-    deadlineMs: number,
-  ): Promise<void> {
-    const state = this.meetings.get(recordingId);
-    if (state === undefined || state.finishing || state.packetRecovery === null) {
-      for (const packet of packets) {
-        this.dependencies.logger.debug("Live packet skipped without active derived meeting", {
-          meetingId: packet.recordingId,
-          speakerId: packet.speakerId,
-        });
-      }
-      return;
-    }
-    await state.transcription.accept({
-      format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 },
-      packets,
-    }, deadlineMs);
   }
 
   private async acceptParticipant(

@@ -15,7 +15,8 @@ import { ProcessMeetingSummary, type ProcessMeetingSummaryDependencies } from "@
 import { join } from "node:path";
 
 const [root, phase, scenario] = process.argv.slice(2);
-if (!root || !phase || !scenario || !process.send) { throw new Error("synthetic IPC worker arguments missing"); }
+if (root === undefined || root === "" || phase === undefined || phase === "" ||
+    scenario === undefined || scenario === "" || process.send === undefined) { throw new Error("synthetic IPC worker arguments missing"); }
 const deadline = setTimeout(() => { throw new Error("synthetic runtime worker deadline"); }, 14_000);
 let messageId = 0;
 let finalized!: () => void;
@@ -102,10 +103,13 @@ const runtime = new PlatformLiveMeetingRuntime({
   appendTurn: new AppendLiveTranscriptTurn(meetings), finishMeeting: new FinishLiveMeeting(meetings),
   startMeeting: new StartLiveMeeting({ meetings }),
   refreshMeeting: new RefreshLiveMeeting({ meetings, projector: new ProjectionStub(), summarizer: new SummaryStub() }),
-  clock: { nowMilliseconds: () => Date.parse("2026-08-02T10:00:01.000Z") },
+  clock: {
+    nowMilliseconds: () => Date.parse("2026-08-02T10:00:01.000Z"),
+    monotonicMilliseconds: () => performance.now(),
+  },
   speakerIdleFinalizeMs: 100, transcriber, liveSttDurability: durability,
   pendingLivePackets: (id) => ingress.pendingLivePackets(id),
-  logger: { info: () => {}, error: () => {}, warn: (message, fields) => { process.send!({ type: "degraded", detail: { message, fields } }); } },
+  logger: { debug: () => {}, info: () => {}, error: () => {}, warn: (message, fields) => { process.send!({ type: "degraded", detail: { message, fields } }); } },
 });
 try {
   if (phase === "first") {
@@ -156,10 +160,11 @@ async function recoverAuthoritative(): Promise<void> {
     occurredAt: "2026-08-02T10:00:03.000Z", endedAt: "2026-08-02T10:00:02.000Z", trackCount: 1,
     sourceFilesChecksumSha256: checksum });
   assert.equal(result.kind, "finalized");
-  if (result.kind !== "finalized") { throw new Error("authoritative recording not finalized"); }
   assert.equal(result.recording.speakerAudio[0]?.checksumSha256, checksum);
   const path = join(root!, "meeting.json");
-  await writeFile(path, JSON.stringify(Meeting.record({ actors: null, identityProvenance: null, lifecycleGeneration: 1,
+  await writeFile(path, JSON.stringify(Meeting.record({
+    actors: [{ actorId: "33333333333333333", kind: "unknown" }],
+    identityProvenance: null, lifecycleGeneration: 1,
     meetingId: "r", publicationTargetId: "synthetic-results", recording: result.recording,
     source: { scopeId: envelope.guildId, roomId: envelope.channelId } }).toSnapshot()));
   const repository: MeetingRepository = {

@@ -106,6 +106,8 @@ for (const row of cases) {
       }
       if (row.scenario === "legacy") { assert.equal(recovery.legacy, true); }
       if (row.scenario === "authoritative") {
+        const snapshot = JSON.parse(await readFile(join(root, "meeting.json"), "utf8")) as { actors: unknown };
+        assert.deepEqual(snapshot.actors, [{ actorId: "33333333333333333", kind: "unknown" }]);
         assert.equal(effects.messages.filter((message) => message.type === "batch-effect").length, 1);
         assert.equal(effects.messages.filter((message) => message.type === "publication-effect").length, 1);
         assert.equal((recovered.find((message) => message.type === "authoritative-recovered")!.detail as { checksum: string }).checksum, checksum);

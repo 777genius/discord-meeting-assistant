@@ -74,6 +74,10 @@ function parseRecord(line: string): OutboxRecord {
   if (record.type === "delivered") {
     return { packetId: record.packetId, schemaVersion: 1, type: "delivered" };
   }
+  return parsePendingRecord(record, record.packetId);
+}
+
+function parsePendingRecord(record: Record<string, unknown>, packetId: string): PendingRecord {
   if (
     record.type !== "pending" ||
     typeof record.payloadBase64 !== "string" ||
@@ -88,7 +92,7 @@ function parseRecord(line: string): OutboxRecord {
   }
   const packet = {
     mediaTimestamp: record.mediaTimestamp as number,
-    packetId: record.packetId,
+    packetId,
     payloadBase64: record.payloadBase64,
     receivedAtMs: record.receivedAtMs as number,
     recordingId: record.recordingId,

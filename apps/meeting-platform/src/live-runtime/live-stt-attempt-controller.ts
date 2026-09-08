@@ -32,7 +32,7 @@ function rejectionError(result: LiveDenied): Error {
 export class LiveSttAttemptController implements LiveTranscriptionPort {
   private current: OwnedSession | undefined;
   private readonly pending = new Set<Promise<unknown>>();
-  private persistenceFailure: unknown;
+  private persistenceFailure: Error | undefined;
   private fenced = false;
 
   public constructor(private readonly dependencies: AttemptDependencies) {}
@@ -170,7 +170,8 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
   private async persist<T>(work: () => Promise<T>): Promise<T> {
     try { return await work(); }
     catch (error) {
-      this.persistenceFailure = error;
+      this.persistenceFailure = error instanceof Error
+        ? error : new LiveSttDurabilityUnavailable({ cause: error });
       this.latch(new LiveTranscriptionAcceptanceUnknown());
       this.current?.provider?.terminate();
       throw error;

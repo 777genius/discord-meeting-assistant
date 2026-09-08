@@ -9,7 +9,7 @@ import { RecordingIngressRuntime } from "../src/recording-ingress-runtime.js";
 const roots: string[] = [];
 const runtimes: RecordingIngressRuntime[] = [];
 afterEach(async () => {
-  for (const runtime of runtimes.splice(0)) { await runtime.close(); }
+  for (const activeRuntime of runtimes.splice(0)) { await activeRuntime.close(); }
   for (const root of roots.splice(0)) { await rm(root, { recursive: true, force: true }); }
 });
 function runtime(root: string) {

@@ -1,22 +1,29 @@
-import type { LiveSttDurabilityPort } from "./contracts.js";
-import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionAdmissionRejected, LiveTranscriptionTerminalFailure, type LiveRecovery } from "./contracts.js";
+import type { ActiveLiveMeeting } from "./live-meeting-state.js";
 import type {
   GlobalPacketFlowControl,
   LiveSessionAdmission,
 } from "./live-packet-flow-control.js";
 
-import type {
-  LivePacketInspector,
-  LiveRuntimeClock,
-  LiveRuntimeLogger,
-  LiveRuntimeTimer,
-  LiveTranscriptionEvent,
-  LiveTranscriptionPort,
-  LiveVoicePacket,
-  LiveVoicePacketBatch,
+import {
+  LiveTranscriptionAcceptanceUnknown, LiveTranscriptionAdmissionRejected, LiveTranscriptionTerminalFailure,
+  type LiveMeetingRuntimeDependencies, type LiveRuntimeTimerHandle, type LiveRecovery, type LiveSttDurabilityPort,
+  type LivePacketInspector,
+  type LiveRuntimeClock,
+  type LiveRuntimeLogger,
+  type LiveRuntimeTimer,
+  type LiveTranscriptionEvent,
+  type LiveTranscriptionPort,
+  type LiveVoicePacket,
+  type LiveVoicePacketBatch,
 } from "./contracts.js";
 import { LivePacketDeliveryLedger } from "./packet-delivery-ledger.js";
 import { SpeakerTranscriptionSession } from "./speaker-transcription-session.js";
+
+export interface SpeakerTranscriptionSessionDependencies extends SpeakerTranscriptionSessionsDependencies {
+  readonly admissionRejection?: AbortController;
+  readonly ledger: LivePacketDeliveryLedger;
+  readonly speakerId: string;
+}
 
 export interface SpeakerTranscriptionSessionsDependencies {
   readonly clock: LiveRuntimeClock;
@@ -161,4 +168,73 @@ function groupPacketsBySpeaker(
     }
   }
   return grouped;
+}
+
+export function initializeLivePacketRecovery(dependencies: LiveMeetingRuntimeDependencies, state: ActiveLiveMeeting): Promise<void> {
+  let initialization!: Promise<void>;
+  initialization = (async () => {
+    const durability = await dependencies.liveSttDurability?.recoverRecording(state.meetingId);
+    if (durability !== undefined) { state.transcription.restoreDurability(durability); }
+    const pending = await dependencies.pendingLivePackets?.(state.meetingId);
+    if (state.packetRecovery === initialization && !state.finishing && pending !== undefined) {
+      void state.transcription.recover(pending).catch((error: unknown) => {
+        dependencies.logger.warn("Derived live packet recovery failed", {
+          meetingId: state.meetingId,
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+      });
+    }
+  })();
+  state.packetRecovery = initialization;
+  void initialization.catch(() => {
+    if (state.packetRecovery === initialization) { state.packetRecovery = null; }
+  });
+  return initialization;
+}
+
+export async function waitForLivePacketRecovery(
+  initialization: Promise<void> | null | undefined, deadlineMs: number,
+  clock: LiveRuntimeClock, timer: LiveRuntimeTimer,
+): Promise<boolean> {
+  if (initialization === null || initialization === undefined) { return false; }
+  let timeout!: LiveRuntimeTimerHandle;
+  const expired = new Promise<boolean>((resolve) => {
+    timeout = timer.schedule(Math.max(0, deadlineMs - clock.nowMilliseconds()), () => { resolve(false); });
+  });
+  try { return await Promise.race([initialization.then(() => true), expired]); }
+  finally { timer.cancel(timeout); }
+}
+
+export async function acceptLivePackets(
+  state: ActiveLiveMeeting | undefined,
+  packets: readonly LiveVoicePacket[],
+  deadlineMs: number,
+  logger: LiveRuntimeLogger,
+): Promise<void> {
+  if (state === undefined || state.finishing || state.packetRecovery === null) {
+    for (const packet of packets) {
+      logger.debug("Live packet skipped without active derived meeting", {
+        meetingId: packet.recordingId,
+        speakerId: packet.speakerId,
+      });
+    }
+    return;
+  }
+  await state.transcription.accept({
+    format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 },
+    packets,
+  }, deadlineMs);
+}
+
+export function groupPacketsByMeeting(packets: readonly LiveVoicePacket[]): ReadonlyMap<string, readonly LiveVoicePacket[]> {
+  const packetsByMeeting = new Map<string, LiveVoicePacket[]>();
+  for (const packet of packets) {
+    const meetingPackets = packetsByMeeting.get(packet.recordingId);
+    if (meetingPackets === undefined) {
+      packetsByMeeting.set(packet.recordingId, [packet]);
+    } else {
+      meetingPackets.push(packet);
+    }
+  }
+  return packetsByMeeting;
 }

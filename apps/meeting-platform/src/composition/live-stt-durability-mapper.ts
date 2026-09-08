@@ -5,16 +5,6 @@ import {
 
 /** Structural boundary data is copied by storage; failures belong to the consumer. */
 export function mapLiveSttDurability(storage: SttJournalPort): LiveSttDurabilityPort {
-  const invoke = async <T>(work: () => Promise<T>): Promise<T> => {
-    try { return await work(); }
-    catch (error) {
-      if (error instanceof RecordingIngressError &&
-          (error.failure === "conflicting-duplicate" || error.failure === "invalid-input")) {
-        throw new LiveSttDurabilityConflict({ cause: error });
-      }
-      throw new LiveSttDurabilityUnavailable({ cause: error });
-    }
-  };
   return {
     recoverRecording: (id) => invoke(() => storage.recoverRecording(id)),
     beginOpen: (owner, speaker) => invoke(() => storage.beginOpen(owner, speaker)),
@@ -24,4 +14,15 @@ export function mapLiveSttDurability(storage: SttJournalPort): LiveSttDurability
     fence: (session, reason) => invoke(() => storage.fence(session, reason)),
     closeRecording: (owner, endedAtMs) => invoke(() => storage.closeRecording(owner, endedAtMs)),
   };
+}
+
+async function invoke<T>(work: () => Promise<T>): Promise<T> {
+  try { return await work(); }
+  catch (error) {
+    if (error instanceof RecordingIngressError &&
+        (error.failure === "conflicting-duplicate" || error.failure === "invalid-input")) {
+      throw new LiveSttDurabilityConflict({ cause: error });
+    }
+    throw new LiveSttDurabilityUnavailable({ cause: error });
+  }
 }

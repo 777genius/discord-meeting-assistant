@@ -4,6 +4,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { RecordingIngressError } from "./errors.js";
+import type { SttCompletion, SttRecordingState, SttSpeakerState } from "./live-stt-journal-contracts.js";
+
+// Each disposable STT cache value belongs to its journal-defined key namespace.
+type SttCacheKey<T> = T extends SttRecordingState ? "recording"
+  : T extends SttSpeakerState ? `speaker:${string}`
+    : T extends SttCompletion ? `operation:${number}` : string;
 
 export interface LiveGeneration {
   readonly generation: number;
@@ -161,7 +167,7 @@ export class LiveDeliveryIndex {
     return rows.map((row) => ({ ...row, packet: JSON.parse(row.packet) as string }));
   }
 
-  public sttGet<T>(index: LiveGeneration, key: string): T | undefined {
+  public sttGet<T>(index: LiveGeneration, key: SttCacheKey<T>): T | undefined {
     this.#assertGeneration(index);
     const row = this.#access(() => this.#db.prepare("SELECT value FROM stt WHERE generation=? AND key=?")
       .get(index.generation, key) as { value: string } | undefined);
