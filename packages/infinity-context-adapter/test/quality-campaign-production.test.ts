@@ -1739,3 +1739,34 @@ describe("memory default profile authority", () => {
   });
 
 });
+
+describe("focused retrieval qualification budget binding", () => {
+  it("rejects a correctly signed stale 1000 ms receipt without replaying its effect", async () => {
+    const attempt = FINAL.outcomesByRepetition[0]![0]!.identity;
+    const request = Buffer.from("bounded");
+    const resultEnvelopeBytes = Buffer.from("provider-result");
+    const resultDigestSha256 = sha256(resultEnvelopeBytes);
+    const current = terminalPayload({ identity: attempt, release: FINAL.release.release,
+      request, resultDigestSha256, state: "terminal_success" });
+    // The response bytes and signing authority are identical in both cases.
+    for (const stale of [false, true]) {
+      const payload = stale ? { ...current, providerAccounting: {
+        ...current.providerAccounting,
+        contractSha256: "ca773c4516342ea2e034ba2714fddd5742a80e78761944ea20f5da7a43317bf3",
+      } } : current;
+      const port = { exchange: vi.fn(async () => ({ effect: "certain_success" as const,
+        resultDigestSha256, resultEnvelopeBytes,
+        signedResult: FINAL.authorities.signers.provider_result.signed(payload) })) };
+      const input = { campaignRootSha256: CAMPAIGN_ROOT, deadlineEpochMs: 1_500,
+        effectReservation: { requestedEncryptedBytes: 100, requestedTokens: 100 },
+        identity: attempt, journal: trackedJournal(
+          await mkdtemp(join(tmpdir(), "quality-budget-binding-")), FINAL.authorities.policy),
+        nowEpochMs: 1_000, port, provider: PROVIDER, release: FINAL.release.pinned,
+        request, signal: ACTIVE_SIGNAL, spendReservation: FINAL.spends[0] };
+      const expected = stale ? "blocked_evidence" : "terminal_success";
+      expect(await executeReservedExchange(input)).toBe(expected);
+      expect(await executeReservedExchange(input)).toBe(expected);
+      expect(port.exchange).toHaveBeenCalledTimes(1);
+    }
+  });
+});

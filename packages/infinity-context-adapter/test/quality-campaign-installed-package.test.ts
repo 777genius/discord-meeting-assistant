@@ -705,7 +705,7 @@ function sdkRetrievalResponse(locator: string,
     ({ ...value, query_id: "original-question" }));
   return structuredClone({ ...fixture, capability_fingerprint: capability.capability_fingerprint,
     profile_id: capability.profile_id, applied_bounds: { candidate_limit: 100,
-    deadline_ms: 1_000, neighbor_radius: 0, response_byte_limit: 16_384, result_limit: 10,
+    deadline_ms: 2_000, neighbor_radius: 0, response_byte_limit: 16_384, result_limit: 10,
     returned_neighbors: 0, returned_seeds: 1 }, candidates: [direct] });
 }
 
