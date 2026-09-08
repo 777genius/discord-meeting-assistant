@@ -78,6 +78,9 @@ class Gateway implements VoicetextWebSocketConnection {
   public acked = 0;
   public finalizeCount = 0;
   public closeCount = 0;
+  public readonly textTypes: string[] = [];
+  public holdServerClose = false;
+  public releaseServerClose: (() => void) | undefined;
   public terminated = 0;
   public hold = false;
   public release: (() => void) | undefined;
@@ -90,6 +93,7 @@ class Gateway implements VoicetextWebSocketConnection {
   private message(value: object): void { this.push({ type: "text", data: JSON.stringify(value) }); }
   public async sendText(data: string): Promise<void> {
     const value = JSON.parse(data) as { type: string; provider: string; model: string };
+    this.textTypes.push(value.type);
     if (value.type === "config") {
       this.message({ type: "ready", provider: value.provider, model: value.model,
         session_id: "00000000-0000-4000-8000-000000000001" });
@@ -98,6 +102,11 @@ class Gateway implements VoicetextWebSocketConnection {
       this.finalizeCount++;
       this.message({ type: "final", start_ms: 0, duration_ms: this.sent * 20, text: "Synthetic final turn." });
       this.message({ type: "finalize_complete", status: "flushed", saw_result: true });
+      const close = () => {
+        this.releaseServerClose = undefined;
+        this.push({ type: "close", code: 1000, reason: "finalized" });
+      };
+      if (this.holdServerClose) { this.releaseServerClose = close; } else { close(); }
     }
   }
   public async sendBinary(data: Uint8Array): Promise<void> {
@@ -120,7 +129,7 @@ class Gateway implements VoicetextWebSocketConnection {
       this.waiter = (next) => { signal.removeEventListener("abort", abort); resolve(next); };
     });
   }
-  public async close(): Promise<void> { this.closeCount++; this.push({ type: "close", code: 1000, reason: "finalized" }); }
+  public async close(): Promise<void> { this.closeCount++; }
   public terminate(): void { this.terminated++; }
 }
 
@@ -180,6 +189,48 @@ async function withCleanup(body: () => Promise<void>, steps: (() => Promise<unkn
 }
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+it("keeps finalization pending after finalize_complete until the same gateway sends server WS1000", async () => {
+  vi.useFakeTimers();
+  const socket = new Gateway(() => {}, (error) => { throw error; });
+  socket.holdServerClose = true;
+  const finalizeComplete = Promise.withResolvers<void>();
+  const receive = socket.receive.bind(socket);
+  vi.spyOn(socket, "receive").mockImplementation(async (signal) => {
+    const frame = await receive(signal);
+    if (frame.type === "text" && (JSON.parse(frame.data) as { type: string }).type === "finalize_complete") {
+      finalizeComplete.resolve();
+    }
+    return frame;
+  });
+  const transcriber = new VoicetextLiveTranscriptionAdapter({ endpoint: "ws://offline.invalid",
+    token: "synthetic-offline-token" }, { connect: async () => socket });
+  const session = await transcriber.openSession({ meetingId: "meeting-delayed-close",
+    speakerId: "speaker-1", idempotencyKey: "delayed-close", onTranscript: () => {} });
+  let settled = false;
+  const finish = session.finalize();
+  void finish.then(() => { settled = true; return; }, () => { settled = true; });
+  try {
+    await finalizeComplete.promise;
+    await vi.advanceTimersByTimeAsync(10);
+    expect(settled).toBe(false);
+    expect(socket.finalizeCount).toBe(1);
+    expect(socket.releaseServerClose).toBeTypeOf("function");
+    expect(socket.closeCount).toBe(0);
+    expect(socket.textTypes).toEqual(["config", "finalize"]);
+    expect(socket.terminated).toBe(0);
+    socket.releaseServerClose!();
+    await finish;
+    expect(settled).toBe(true);
+    expect(socket.closeCount).toBe(0);
+    expect(socket.textTypes).not.toContain("close");
+    expect(socket.terminated).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    socket.releaseServerClose?.();
+    await finish;
+  }
+});
 
 it("composes full two-speaker Opus load, nonblocking native capture and indexed durable healthy drain past 2s", async () => {
   const waits = synchronization();
@@ -375,7 +426,8 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     }
     expect(meetings.finalizedTurns.map((turn) => turn.speakerId).toSorted()).toEqual(streams.map((stream) => stream[0]!.speakerId).toSorted());
     expect(sockets.map((s) => [s.sent, s.acked, s.finalizeCount, s.closeCount, s.terminated]).toSorted((a, b) => a[0]! - b[0]!))
-      .toEqual([[1312, 1312, 1, 1, 0], [2419, 2419, 1, 1, 0]]);
+      .toEqual([[1312, 1312, 1, 0, 0], [2419, 2419, 1, 0, 0]]);
+    for (const socket of sockets) { expect(socket.textTypes).not.toContain("close"); }
     expect(await ingress.pendingLivePackets(recordingId)).toEqual([]);
     io.holdJournal = false;
     io.journal.splice(0).forEach((release) => { release(); });
