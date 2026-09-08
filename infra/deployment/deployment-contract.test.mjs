@@ -123,6 +123,7 @@ test("binds local and remote source revision claims to testable identities", asy
   assert.match(generator, /HEAD\^\{tree\}/u);
   assert.match(topology, /label alone is not proof of source identity/iu);
   assert.match(gateway, new RegExp(`ref=${gatewayRevision}&checksum=${gatewayRevision}`, "u"));
+  assert.match(gateway, new RegExp(`^  voicetext-gateway:\\n    build:\\n(?: {6}[^\\n]*\\n)*      args:\\n        SOURCE_SHA: ${gatewayRevision}\\n`, "mu"));
   assert.match(gateway, new RegExp(`image: discord-meeting/voicetext-gateway:${gatewayRevision}`, "u"));
   assert.match(gateway, new RegExp(`org\\.opencontainers\\.image\\.revision: ${gatewayRevision}`, "u"));
   assert.match(craig, new RegExp(`ref=${craigRevision}&checksum=${craigRevision}`, "u"));

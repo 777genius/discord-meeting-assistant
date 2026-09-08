@@ -27,6 +27,8 @@ services:
       # commit checksum before executing the remote Dockerfile.
       context: "https://github.com/777genius/voicetext-gateway.git?ref=3e0ede3ec9086a45bc026f43191a998f2682fd6e&checksum=3e0ede3ec9086a45bc026f43191a998f2682fd6e"
       dockerfile: Dockerfile
+      args:
+        SOURCE_SHA: 3e0ede3ec9086a45bc026f43191a998f2682fd6e
       labels:
         org.opencontainers.image.revision: 3e0ede3ec9086a45bc026f43191a998f2682fd6e
         org.opencontainers.image.source: https://github.com/777genius/voicetext-gateway

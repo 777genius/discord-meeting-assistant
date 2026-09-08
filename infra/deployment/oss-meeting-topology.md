@@ -38,7 +38,8 @@ and bundle SHA-256 is
 
 The current gateway pin fixes WebSocket close code 1000 handling; the Craig
 pin fixes RTP/SSRC and packet ownership. Craig uses this same revision in the
-`SOURCE_REVISION` build argument for its current producer identity. Any explicit
+`SOURCE_REVISION` build argument to set the image revision. Lifecycle producer
+identity is configured separately. Any explicit
 `lifecycleProducer.producerRevision` override for this deployment must also be
 `7776b698f6bec26eff52cd383f4e5a7f3f429f42`.
 
