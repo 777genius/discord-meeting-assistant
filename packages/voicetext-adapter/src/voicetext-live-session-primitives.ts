@@ -4,6 +4,8 @@ import { VoicetextAdapterError } from "./errors.js";
 import type { VoicetextLivePacket } from "./voicetext-live-transcription-configuration.js";
 import type { VoicetextFinalizeComplete } from "./protocol.js";
 
+import type { VoicetextInboundFrame, VoicetextWebSocketConnection } from "./websocket-connector.js";
+
 const maximumOpusPacketBytes = 65_536;
 const maximumRememberedPacketIds = 4_096;
 
@@ -128,4 +130,22 @@ export function stableLiveSessionUuid(...parts: readonly string[]): string {
     "8" + hex.slice(17, 20),
     hex.slice(20),
   ].join("-");
+}
+
+export async function receiveLiveSessionFrame(
+  socket: VoicetextWebSocketConnection,
+  signal: AbortSignal,
+): Promise<VoicetextInboundFrame> {
+  signal.throwIfAborted();
+  const cancelled = createLiveSessionDeferred<never>();
+  const abort = () => { cancelled.reject(signal.reason); };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    // A receive fulfilled before cancellation wins and is fully processed before
+    // the pump settles. Otherwise abort bounds the join even if the transport
+    // ignores it. Frames delivered after that boundary are not received evidence.
+    return await Promise.race([socket.receive(signal), cancelled.promise]);
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
 }

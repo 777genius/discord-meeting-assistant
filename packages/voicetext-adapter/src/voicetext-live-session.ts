@@ -4,7 +4,7 @@ import { ossReceivedEvidence, type OssSessionEvidence } from "./oss-native-evide
 import { liveProviderError, VoicetextAdapterError } from "./errors.js";
 import {
   asLiveSessionError, createLiveSessionDeferred, rememberLiveSessionPacketId,
-  requireLiveSessionActive, validateLiveSessionFinalizeStatus,
+  receiveLiveSessionFrame, requireLiveSessionActive, validateLiveSessionFinalizeStatus,
   validateLiveSessionPacket, withLiveSessionTimeout,
   type LiveSessionDeferred,
 } from "./voicetext-live-session-primitives.js";
@@ -22,7 +22,7 @@ import {
 } from "./protocol.js";
 import { VoicetextLiveTimeline } from "./voicetext-live-timeline.js";
 import { VoicetextLiveTranscriptEmitter } from "./voicetext-live-transcript-emitter.js";
-import type { VoicetextInboundFrame, VoicetextWebSocketConnection } from "./websocket-connector.js";
+import type { VoicetextWebSocketConnection } from "./websocket-connector.js";
 
 export class LiveSession implements VoicetextLiveSession {
   private readonly ackWaiters = new Map<number, LiveSessionDeferred<void>>();
@@ -209,22 +209,6 @@ export class LiveSession implements VoicetextLiveSession {
     if (this.terminalError !== undefined) { throw this.terminalError; }
   }
 
-  private async receiveFrame(): Promise<VoicetextInboundFrame> {
-    const signal = this.abortController.signal;
-    signal.throwIfAborted();
-    const cancelled = createLiveSessionDeferred<never>();
-    const abort = () => { cancelled.reject(signal.reason); };
-    signal.addEventListener("abort", abort, { once: true });
-    try {
-      // A receive fulfilled before cancellation wins and is fully processed before
-      // the pump settles. Otherwise abort bounds the join even if the transport
-      // ignores it. Frames delivered after that boundary are not received evidence.
-      return await Promise.race([this.socket.receive(signal), cancelled.promise]);
-    } finally {
-      signal.removeEventListener("abort", abort);
-    }
-  }
-
   private async finalizeOnce(): Promise<void> {
     let failure: unknown;
     try {
@@ -316,7 +300,7 @@ export class LiveSession implements VoicetextLiveSession {
   private async receiveLoop(): Promise<void> {
     try {
       while (this.state === "active" || this.state === "finalizing") {
-        const frame = await this.receiveFrame();
+        const frame = await receiveLiveSessionFrame(this.socket, this.abortController.signal);
         if (frame.type === "close") {
           this.evidence?.record({ type: "close", code: frame.code });
           this.transportClosed = true;
