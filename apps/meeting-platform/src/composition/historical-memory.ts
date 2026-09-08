@@ -36,10 +36,8 @@ import {
   requireHistoricalRuntimeSecrets,
 } from
   "./discord-infinity-actor-custody.js";
-import { createInfinityRetrievalV2Composition } from
-  "./infinity-retrieval-v2.js";
-import { semanticSearchQualified } from
-  "./historical-memory-qualification.js";
+import { createInfinityRetrievalV2Composition } from "./infinity-retrieval-v2.js";
+import { semanticSearchQualified } from "./historical-memory-qualification.js";
 
 const reconciliationIntervalMs = 5_000;
 const maximumOperationsPerPass = 25;
