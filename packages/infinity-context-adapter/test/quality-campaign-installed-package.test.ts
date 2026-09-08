@@ -9,17 +9,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-import { admitAcceptedFinalMeeting, buildHistoricalIndexPlan,
-  createHistoricalReleaseBinding } from "@discord-meeting/meeting-core/meeting-knowledge";
-import { Meeting } from "@discord-meeting/meeting-core/meeting-lifecycle";
-import { FinalTranscript } from "@discord-meeting/meeting-core/transcription";
 import { canonicalJsonSha256, stableSubscriptionRuntimeId } from
   "@discord-meeting/subscription-runtime-adapter";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { artifactAttemptIdentity, attemptIdentity,
   type QualityCampaignRelease } from "../src/quality-campaign/index.js";
-import { HmacHistoricalOpaqueIds } from "../src/hmac-historical-ids.js";
 import { retrievalV2CapabilityFingerprint } from "../src/infinity-context-retrieval-v2.js";
 import { recoverProductionCanonicalOutcome } from
   "../src/quality-campaign/production-canonical-execution-evidence.js";
@@ -27,6 +22,8 @@ import { assertInstalledManifest, assertInstalledTokenizer } from "./quality-cam
 import { qualificationProviderAccountingFixture } from
   "./quality-campaign-provider-accounting-fixture.js";
 
+import { ACTOR_KEY_PROFILE, canonicalMemoryFixture } from
+  "./quality-campaign-installed-memory-fixture.js";
 const execute = promisify(execFile);
 const servers: ReturnType<typeof createServer>[] = [];
 const require = createRequire(import.meta.url);
@@ -103,7 +100,7 @@ describe("packed production quality-campaign entrypoint", () => {
   it("binds release-only runtime metadata to each canonical attempt before answer bytes",
     async () => {
     const fixture = await createPackedPreflightFixture(await mkdtemp(join(tmpdir(),
-      "quality-canonical-attempts-")), installed.consumerRoot, true);
+      "quality-canonical-attempts-")), installed.consumerRoot, true, Infinity);
     const attempts = ([1, 2] as const).map((repetition) => attemptIdentity({ callKind: "answer",
       callOrdinal: 0, campaignRootSha256: fixture.mainRootSha256,
       questionDigestSha256: fixture.firstQuestion.questionDigestSha256,
@@ -121,6 +118,29 @@ describe("packed production quality-campaign entrypoint", () => {
     await expect(execute(process.execPath, ["--input-type=module", "--eval", script], {
       cwd: installed.consumerRoot, env: fixture.childEnvironment, timeout: 60_000,
     })).resolves.toMatchObject({ stderr: "", stdout: '["answered","answered"]' });
+    // Retrieval stays successful beyond the two controls, including both mismatched attempts.
+    // Even an authorized topology cannot rehydrate a plan built under another actor profile.
+    await fixture.replaceTopologyProfile("discord-infinity-actor-key.v1:other");
+    const mismatchedScript = script.replace(JSON.stringify(fixture.canonicalExecution),
+      JSON.stringify({ ...fixture.canonicalExecution,
+        actorKeyProfileId: "discord-infinity-actor-key.v1:other" }))
+       .replace(JSON.stringify(bindings), JSON.stringify(bindings.map((binding) => ({
+        ...binding, attemptId: `sqv4-${digest(`mismatched:${binding.attemptId}`)}`,
+      }))))
+      .replace('status!=="answered"', 'status!=="failed"')
+      .replace("outcomes.map(({status})=>status)", "outcomes");
+    const beforeMismatch = fixture.answerRequests().length;
+    const mismatch = await execute(process.execPath, ["--input-type=module", "--eval", mismatchedScript], {
+      cwd: installed.consumerRoot, env: fixture.childEnvironment, timeout: 60_000,
+    });
+    expect(mismatch.stderr).toBe("");
+    expect(JSON.parse(mismatch.stdout)).toEqual(bindings.map(() => ({
+      citations: [], claims: [], rawRetrievalResponseSha256: expect.stringMatching(/^[a-f0-9]{64}$/u) as unknown,
+      reason: "evidence_rehydration_failed", retrievalCandidates: [expect.objectContaining({
+        locatorId: fixture.selectedLocator })], selectedTurns: [], status: "failed",
+    })));
+    expect(fixture.retrievalRequests()).toBe(4);
+    expect(fixture.answerRequests()).toHaveLength(beforeMismatch);
     expect(attempts[0]!.attemptId).not.toBe(attempts[1]!.attemptId);
     const requests = fixture.answerRequests();
     expect(requests).toHaveLength(4); expect(new Set(requests.map(({ runId }) => runId)).size).toBe(4);
@@ -132,6 +152,31 @@ describe("packed production quality-campaign entrypoint", () => {
         "knowledge-answer-provider-output-repair", original.runId));
     }
   }, 120_000);
+
+  it("rejects missing, invalid, unsigned and substituted actor profile bindings before bytes", async () => {
+    const fixture = await createPackedPreflightFixture(await mkdtemp(join(tmpdir(),
+      "quality-actor-binding-")), installed.consumerRoot);
+    const module = await installedCanonicalFactoryModule();
+    for (const actorKeyProfileId of [undefined, "", " profile ", "x".repeat(129),
+      "discord-infinity-actor-key.v1:wrong"]) {
+      await expect(module.createProductionCanonicalExecutorFactory({
+        ...fixture.canonicalExecution, actorKeyProfileId: actorKeyProfileId as string,
+      })).rejects.toThrow(/actor key profile/u);
+    }
+    await fixture.replaceTopologyProfile(ACTOR_KEY_PROFILE, "meeting_knowledge.quality_scope_topology.v1");
+    await expect(module.createProductionCanonicalExecutorFactory(fixture.canonicalExecution))
+      .rejects.toThrow(/scope topology is invalid/u);
+    await fixture.replaceTopologyProfile(ACTOR_KEY_PROFILE);
+    const topology = JSON.parse(await readFile(fixture.canonicalExecution.topologyPath, "utf8")) as
+      { payload: Record<string, unknown> };
+    topology.payload.actorKeyProfileId = "discord-infinity-actor-key.v1:wrong";
+    await writeFile(fixture.canonicalExecution.topologyPath, canonicalJson(topology));
+    await expect(module.createProductionCanonicalExecutorFactory({ ...fixture.canonicalExecution,
+      actorKeyProfileId: "discord-infinity-actor-key.v1:wrong" })).rejects.toThrow(/signature/u);
+    expect(fixture.answerRequests()).toEqual([]);
+    expect(fixture.retrievalRequests()).toBe(0);
+    expect(fixture.providerRequests()).toBe(0);
+  });
 
   it("rejects stale or swapped caller attempt metadata before provider bytes", async () => {
     const fixture = await createPackedPreflightFixture(await mkdtemp(join(tmpdir(),
@@ -327,7 +372,8 @@ async function createPackedAdmittedExecutionCorpus(input: PackedAdmittedExecutio
   return executionCorpusPath;
 }
 
-async function createPackedPreflightFixture(root: string, consumerRoot: string, forceAnswerRepair = false) {
+async function createPackedPreflightFixture(root: string, consumerRoot: string,
+  forceAnswerRepair = false, successfulRetrievalLimit = 2) {
   let observedProviderRequests = 0; let observedReleaseRequests = 0;
   let observedRetrievalRequests = 0;
   let release: unknown; let reviewEvidence: unknown = {};
@@ -351,7 +397,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string, 
     if (request.url === "/v1/context/retrieve") {
       observedRetrievalRequests += 1; request.resume();
       request.on("end", () => {
-        if (observedRetrievalRequests > 2) {response.destroy(); return;}
+        if (observedRetrievalRequests > successfulRetrievalLimit) {response.destroy(); return;}
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(retrievalSuccess));
       }); return;
@@ -480,11 +526,11 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string, 
   const topologyKeyPath = join(root, "topology.key");
   await writeFile(topologyKeyPath, Buffer.alloc(32, 7));
   const topologyPath = join(root, "topology.json");
-  await writeFile(topologyPath, canonicalJson(authorities["main-result"]!.signed({ entries:
+  await writeFile(topologyPath, canonicalJson(authorities["main-result"]!.signed({ actorKeyProfileId: ACTOR_KEY_PROFILE, entries:
     questions.map(({ questionId }) => ({ currentMeetingId: memory.binding.meetingId, questionId,
       reference: `scope:${questionId}`, roomId: memory.binding.roomId,
       scopeId: memory.binding.scopeId })),
-  schemaVersion: "meeting_knowledge.quality_scope_topology.v1" })));
+  schemaVersion: "meeting_knowledge.quality_scope_topology.v2" })));
   const postgresAuditPath = join(root, "postgres-selected-locators.json");
   await writeFile(postgresAuditPath, "[]");
   const postgresFixturePath = join(root, "postgres-fixture.json");
@@ -495,7 +541,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string, 
   const runtime = await startPackedGroundedAnswerRuntime(
     (release as QualityCampaignRelease).answerProcessIdentitySha256, forceAnswerRepair);
   const endpoint = `${base}/unused`;
-  const canonicalExecution = { answerExecutionBindingPath,
+  const canonicalExecution = { actorKeyProfileId: ACTOR_KEY_PROFILE, answerExecutionBindingPath,
     answerJournalRoot: join(root, "canonical-answer-journal"), artifactKeyId: "retention-key",
     artifactKeyPath: evidenceKeyPath, artifactRoot: join(root, "canonical-artifacts"),
     expectedRuntimeLauncherSha256: (release as QualityCampaignRelease).answerProcessIdentitySha256,
@@ -552,7 +598,13 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string, 
     campaignRootSha256: mainRootSha256, questionDigestSha256: firstQuestion.questionDigestSha256,
     questionId: firstQuestion.questionId, releaseRootSha256, repetition: 1,
     spendReservationSha256: sha256(spendDocuments[0]!) });
-  return { answerExecutionBindingPath, answerPrompts: runtime.prompts, answerRequests: runtime.requests, canonicalExecution, childEnvironment, connectionsPath,
+  return { async replaceTopologyProfile(actorKeyProfileId: string,
+    schemaVersion = "meeting_knowledge.quality_scope_topology.v2") {
+    const document = JSON.parse(await readFile(topologyPath, "utf8")) as
+      { payload: Record<string, unknown> };
+    await writeFile(topologyPath, canonicalJson(authorities["main-result"]!.signed({
+      ...document.payload, actorKeyProfileId, schemaVersion })));
+  }, answerExecutionBindingPath, answerPrompts: runtime.prompts, answerRequests: runtime.requests, canonicalExecution, childEnvironment, connectionsPath,
     firstPacket: packedExecutionPacket(firstQuestion.questionId, firstQuestion.locale, firstQuestion.source), firstQuestion, mainRootSha256, phasePath, postgresAuditPath,
     recovery: { answerJournalRoot: canonicalExecution.answerJournalRoot, artifactKey:
       new Uint8Array(32).fill(1), artifactKeyId: canonicalExecution.artifactKeyId, artifactRoot: canonicalExecution.artifactRoot,
@@ -623,60 +675,6 @@ function roleSeparatedAuxiliaryPaths(root: string) {return {
   cleanup: join(root, "cleanup-plan.json"), holdoutCleanup: join(root, "holdout-cleanup-plan.json"),
   holdoutInput: join(root, "holdout-input.json") } as const;}
 
-function canonicalMemoryFixture() {
-  const selectedText = "The launch proposal was approved by the review group.";
-  const unselectedText = "UNSELECTED-OMEGA must never enter the grounded answer prompt.";
-  const meeting = Meeting.record({ actors: [{ actorId: "speaker-a", kind: "human" },
-    { actorId: "speaker-b", kind: "human" }], identityProvenance: {
-    actorObservationState: "consistent", actorSemanticsVersion: 1,
-    producerCapabilityId: "meeting.lifecycle.sealed-actor-roster.v1",
-    producerRevision: "0123456789abcdef0123456789abcdef01234567", rosterState: "sealed" },
-  lifecycleGeneration: 3, meetingId: "packed-historical-meeting",
-  publicationTargetId: "packed-publication", recording: { manifestLocator:
-    "s3://synthetic/packed-historical-meeting/manifest.json",
-  recordingId: "packed-recording", speakerAudio: [{ audioLocator: "s3://synthetic/a.flac",
-    speakerId: "speaker-a", timelineOffsetMs: 0 }, { audioLocator: "s3://synthetic/b.flac",
-    speakerId: "speaker-b", timelineOffsetMs: 0 }] }, source: { roomId: "packed-room",
-    scopeId: "packed-scope" } });
-  meeting.beginTranscription();
-  const turns = Array.from({ length: 100 }, (_, index) => ({ endMs: index * 10_000 + 2_000,
-    speakerId: index % 2 === 0 ? "speaker-a" : "speaker-b", startMs: index * 10_000,
-    text: index === 0 ? selectedText : index === 99 ? unselectedText :
-      `Synthetic canonical planning turn ${index}.`, turnId: `packed-turn-${index}` }));
-  const transcript = FinalTranscript.create({ recordingId: meeting.recording.recordingId,
-    transcriptId: "packed-transcript", turns, version: 1 });
-  meeting.completeTranscription(transcript);
-  const snapshot = meeting.toSnapshot();
-  const binding = createHistoricalReleaseBinding({ acceptedMeetingRevision: snapshot.revision,
-    desiredGeneration: 1, meetingId: snapshot.meetingId, roomId: snapshot.source!.roomId,
-    scopeId: snapshot.source!.scopeId, transcriptId: transcript.transcriptId,
-    transcriptVersion: transcript.version });
-  const accepted = admitAcceptedFinalMeeting({ actors: snapshot.actors,
-    authoritativeDurationMs: snapshot.recording.authoritativeDurationMs ?? null, binding,
-    identityProvenance: snapshot.identityProvenance,
-    lifecycleGeneration: snapshot.lifecycleGeneration, meetingRevision: snapshot.revision,
-    roomId: snapshot.source!.roomId, scopeId: snapshot.source!.scopeId,
-    transcriptId: transcript.transcriptId, transcriptVersion: transcript.version, turns });
-  if (accepted === null) {throw new Error("packed historical meeting admission failed");}
-  const plan = buildHistoricalIndexPlan(accepted,
-    new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(7)));
-  if (plan.documents.length < 2 || plan.documents[0]!.manifest.turnSources.some(
-    ({ turnId }) => turnId === "packed-turn-99")) {
-    throw new Error("packed historical fixture did not create selected and unselected blocks");
-  }
-  const selectedTurnId = "packed-turn-0";
-  return { binding, plan, row: { accepted_meeting_revision: binding.acceptedMeetingRevision,
-    applied_index_profile_id: "packed-profile", attempt_count: 1,
-    desired_generation: binding.desiredGeneration,
-    evidence_policy_version: binding.evidencePolicyVersion, lease_fence: 1,
-    meeting_id: binding.meetingId, operation: "index", plan,
-    profile_rebuild_requested: false, release_id: binding.releaseId,
-    remote_document_ids: {}, room_id: binding.roomId, schema_version: binding.schemaVersion,
-    scope_id: binding.scopeId, transcript_id: binding.transcriptId,
-    transcript_version: binding.transcriptVersion }, selectedLocator:
-    plan.documents[0]!.manifest.candidateLocator, selectedText, selectedTurnId, snapshot,
-  unselectedText };
-}
 
 function sdkFixture(name: "capability" | "success"): Record<string, unknown> {
   return JSON.parse(readFileSync(require.resolve(

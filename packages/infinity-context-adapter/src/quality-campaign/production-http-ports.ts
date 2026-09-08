@@ -262,13 +262,14 @@ async function load(path: string): Promise<HttpConnectionConfiguration> {
 
 function decodeCanonicalExecutionConfiguration(value:
   ProductionCanonicalExecutionConnectionConfiguration): void {
-  const keys = ["answerExecutionBindingPath", "answerJournalRoot", "artifactKeyId",
+  const keys = ["actorKeyProfileId", "answerExecutionBindingPath", "answerJournalRoot", "artifactKeyId",
     "artifactKeyPath", "artifactRoot", "expectedRuntimeLauncherSha256", "infinityBaseUrl",
     "infinityCapabilityPath", "infinityTokenPath", "postgresUrlPath", "requestTimeoutMs",
     "retrievalJournalRoot", "runtimeAddress", "runtimeTokenPath", "topologyAuthority",
     "topologyKeyPath", "topologyPath"];
   if (value.legacyHistoricalPublicTrust !== undefined) { keys.push("legacyHistoricalPublicTrust"); }
   const record = exactRecord(value, keys, "canonical execution connection configuration");
+  safeId(record.actorKeyProfileId, "canonical actor key profile");
   validateLegacyHistoricalPublicTrust(value.legacyHistoricalPublicTrust);
   const topologyAuthority = exactRecord(record.topologyAuthority, ["keyId", "publicKeyPath"],
     "scope topology authority");

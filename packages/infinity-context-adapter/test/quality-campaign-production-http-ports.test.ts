@@ -41,6 +41,23 @@ describe("concrete HTTP production review evidence", () => {
         `Bearer ${fixture.providerCredential}`)).toBe(true);
   });
 
+  it("requires a closed actor profile configuration before network access", async () => {
+    const fixture = await httpFixture();
+    for (const actorKeyProfileId of [undefined, null, 42, "", " profile ", "x".repeat(129)]) {
+      await fixture.writeInvalidEndpoint((config) => {
+        if (actorKeyProfileId === undefined) {
+          Reflect.deleteProperty(config.canonicalExecution as object, "actorKeyProfileId");
+        } else {
+          (config.canonicalExecution as Record<string, unknown>).actorKeyProfileId = actorKeyProfileId;
+        }
+      });
+      await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath)).rejects.toThrow(
+        actorKeyProfileId === undefined ? "canonical execution connection configuration has an invalid shape" :
+          "canonical actor key profile is invalid");
+      expect(fixture.fetchCalls()).toHaveLength(0);
+    }
+  });
+
   it("accepts independently configured legacy public trust and rejects open trust entries", async () => {
     const fixture = await httpFixture();
     const trustedConfig = JSON.parse(await readFile(fixture.connectionsPath, "utf8")) as Record<string, unknown>;
@@ -207,6 +224,7 @@ async function httpFixture() {
     infinityCapabilityPath: keyPath, infinityTokenPath: tokenPath, postgresUrlPath: tokenPath,
     requestTimeoutMs: 100, retrievalJournalRoot: join(root, "retrieval-journal"),
     runtimeAddress: "127.0.0.1:1", runtimeTokenPath: tokenPath,
+    actorKeyProfileId: "discord-infinity-actor-key.v1:synthetic-active",
     topologyAuthority: authority("provider"), topologyKeyPath: keyPath, topologyPath: keyPath };
   const connectionsPath = join(root, "connections.json");
   const configuration: Record<string, unknown> = { absenceAuthority: authority("absence"),

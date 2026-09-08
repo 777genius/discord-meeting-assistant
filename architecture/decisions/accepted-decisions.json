@@ -346,6 +346,11 @@
       "id": "ADR-0074",
       "path": "docs/decisions/0074-focused-retrieval-budget-alignment.md",
       "immutableDigest": "sha256:6ee3a29d2cf9cc73bb321abd041b14e802443d68fe9e628d3ed924d159347e40"
+    },
+    {
+      "id": "ADR-0075",
+      "path": "docs/decisions/0075-canonical-memory-actor-profile.md",
+      "immutableDigest": "sha256:775f57e03fdacafc2904c76c4cc9a23b8236ad4a44352199a2f4a899865f76b9"
     }
   ]
 }
