@@ -111,3 +111,12 @@ unresolved effects and opened sessions lacking clean final output. Accepted
 receipts and close tombstones survive drained payloads and active cleanup. SQLite
 is disposable, bounded metadata only. Missing format markers disable legacy live
 admission while preserving authoritative recording and post-call recovery.
+
+Durable admission recovery reuses the journal's close timestamp for publication
+barriers while retaining strict validation of terminal lifecycle evidence. Epoch
+records carry one opaque spool-lifetime token, so recreating disposable metadata
+does not transfer ownership and the journal keeps no recording-ID owner map.
+Platform's durable recovery supplies a keyset cursor to the existing ingress
+pending-packet boundary: each read returns at most 256 eligible payloads, ordered
+by source time, and excludes closed recordings and fenced speakers before reading
+audio. These changes retain the existing source ownership/classifications.

@@ -166,7 +166,7 @@ export class PlatformLiveMeetingRuntime {
     recordingId: string,
   ): Promise<void> {
     await this.recordingOperations.enqueue(recordingId, () =>
-      this.finalizer.finishRecording(recordingId, this.clock.nowMilliseconds())
+      this.finalizer.finishRecording(recordingId, this.clock.nowMilliseconds(), true)
     );
   }
 

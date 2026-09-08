@@ -25,6 +25,7 @@ export type LiveGrant = { readonly status: "granted"; readonly operation: LiveOp
 export interface LiveRecovery {
   readonly owner: LiveOwner;
   readonly closed: boolean;
+  readonly endedAtMs?: number;
   readonly legacy: boolean;
   readonly fences: readonly { readonly speakerId: string; readonly reason: LiveFenceReason }[];
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { RecordingIngressError } from "./errors.js";
 import type { LiveDeliveryIndex, LiveGeneration } from "./live-delivery-index.js";
 import { isSttFence } from "./live-stt-journal-contracts.js";
@@ -45,24 +46,14 @@ function denied(state: SttRecordingState, current: SttSpeakerState): SttDenied |
 
 /** No process-local payload/receipt history: the existing disposable index owns it. */
 export class LiveSttJournal implements SttJournalPort {
-  readonly #owners = new Map<string, number>();
-  private readonly transaction: SttTransaction;
-  public constructor(transaction: SttTransaction) {
-    this.transaction = async (recordingId, work) => {
-      try { return await transaction(recordingId, work); }
-      catch (error) {
-        if (!(error instanceof RecordingIngressError) || error.failure !== "conflicting-duplicate") {
-          this.#owners.delete(recordingId);
-        }
-        throw error;
-      }
-    };
-  }
+  // One durable spool-lifetime identity, independent of recording/cache cardinality.
+  readonly #lifetime = randomUUID();
+  public constructor(private readonly transaction: SttTransaction) {}
 
   public recoverRecording(recordingId: string): Promise<SttRecovery> {
     return this.transaction(recordingId, async (access) => {
       let state = recording(access);
-      if (this.#owners.get(recordingId) !== state.epoch) {
+      if (state.lifetime !== this.#lifetime) {
         let after = "";
         for (;;) {
           const rows = access.db.sttSpeakers(access.index, after);
@@ -76,9 +67,8 @@ export class LiveSttJournal implements SttJournalPort {
             after = row.key;
           }
         }
-        await access.append({ schemaVersion: 2, type: "stt-epoch", recordingId, epoch: state.epoch + 1 });
+        await access.append({ schemaVersion: 2, type: "stt-epoch", recordingId, epoch: state.epoch + 1, lifetime: this.#lifetime });
         state = recording(access);
-        this.#owners.set(recordingId, state.epoch);
       }
       const fences: { speakerId: string; reason: SttFenceReason }[] = [];
       let after = "";
@@ -93,7 +83,8 @@ export class LiveSttJournal implements SttJournalPort {
           after = row.key;
         }
       }
-      return { owner: { recordingId, epoch: state.epoch }, closed: state.endedAtMs !== undefined, legacy: !state.initialized, fences };
+      return { owner: { recordingId, epoch: state.epoch }, closed: state.endedAtMs !== undefined,
+        ...(state.endedAtMs === undefined ? {} : { endedAtMs: state.endedAtMs }), legacy: !state.initialized, fences };
     });
   }
 
@@ -171,7 +162,7 @@ export class LiveSttJournal implements SttJournalPort {
   }
 
   private assertCurrent(access: SttJournalAccess, owner: SttOwner): SttRecordingState {
-    if (this.#owners.get(owner.recordingId) !== owner.epoch) { conflict("owner not recovered in this spool lifetime"); }
+    if (recording(access).lifetime !== this.#lifetime) { conflict("owner not recovered in this spool lifetime"); }
     if (access.index.conflicting !== 0) { conflict("payload identity conflict"); }
     return assertOwner(access, owner);
   }
@@ -206,6 +197,10 @@ export function applySttRecord(access: SttJournalAccess, record: SttRecord): voi
       break;
     case "stt-epoch":
       if (record.epoch !== state.epoch + 1 || !Number.isSafeInteger(record.epoch)) { conflict("invalid epoch"); }
+      if (record.lifetime !== undefined && (typeof record.lifetime !== "string" || record.lifetime.length === 0)) {
+        conflict("invalid spool lifetime");
+      }
+      state.lifetime = record.lifetime;
       state.epoch = record.epoch;
       break;
     case "stt-close":

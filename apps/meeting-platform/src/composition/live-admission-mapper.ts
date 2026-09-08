@@ -8,7 +8,7 @@ import {
   type LiveTranscriptionPort,
 } from "../live-runtime/contracts.js";
 
-function translate(error: unknown): never {
+function translate(error: unknown, opening = false): never {
   if (error instanceof VoicetextAdapterError) {
     if (error.code === "live_admission_rejected") {
       throw new LiveTranscriptionAdmissionRejected();
@@ -20,6 +20,7 @@ function translate(error: unknown): never {
       throw new LiveTranscriptionAcceptanceUnknown();
     }
     if (error.code === "provider_error" && error.gatewayCode === "PROVIDER_UNAVAILABLE") {
+      if (!opening) { throw new LiveTranscriptionAcceptanceUnknown(); }
       throw new LiveTranscriptionNotAccepted();
     }
   }
@@ -49,7 +50,7 @@ export function mapLiveAdmission(adapter: LiveTranscriptionPort): LiveTranscript
           terminate: () => { session.terminate(); },
         };
       } catch (error) {
-        return translate(error);
+        return translate(error, true);
       }
     },
   };

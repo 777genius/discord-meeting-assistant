@@ -205,7 +205,7 @@ export class SpeakerTranscriptionSession {
     if (!this.isDeliveryCancelled()) { await this.finalize("Derived live speaker finalize failed"); }
     await this.durableAttempts?.settle();
     if (this.pendingReceipt) { throw new Error("Live packet durable receipt is still pending"); }
-    if (this.providerSendPending) { throw new LiveTranscriptionAcceptanceUnknown(); }
+    if (this.providerSendPending && this.durableAttempts === undefined) { throw new LiveTranscriptionAcceptanceUnknown(); }
   }
 
   private supervise(work: Promise<void>, budgetMs: number, renewOnDelivery = false): Promise<void> {

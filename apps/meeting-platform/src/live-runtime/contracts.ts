@@ -353,7 +353,7 @@ export interface LiveMeetingRuntimeDependencies {
   readonly logger: LiveRuntimeLogger;
   readonly liveSttDurability?: LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
-  readonly pendingLivePackets?: (recordingId: string) => Promise<readonly LiveVoicePacket[]>;
+  readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly LiveVoicePacket[]>;
   readonly packetFlowControl?: LivePacketFlowControl;
   readonly packetInspector?: LivePacketInspector;
   readonly refreshMeeting: LiveMeetingRefresher;

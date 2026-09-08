@@ -55,8 +55,11 @@ export class LiveDeliveryIndex {
       CREATE TABLE packets (
         generation INTEGER NOT NULL, packet TEXT NOT NULL COLLATE BINARY,
         offset INTEGER NOT NULL, length INTEGER NOT NULL, delivered INTEGER NOT NULL,
+        speaker TEXT, time INTEGER, media INTEGER, sequence INTEGER,
         PRIMARY KEY(generation, packet)
       ) WITHOUT ROWID;
+      CREATE INDEX eligible_packet_order ON packets(generation,time,speaker,media,sequence,packet)
+        WHERE length>0 AND delivered=0;
     `);
       this.#stamp = this.#fileStamp();
     } catch (error) {
@@ -154,7 +157,7 @@ export class LiveDeliveryIndex {
 
   public put(index: LiveGeneration, row: LiveOffset): void {
     this.#assertGeneration(index);
-    this.#access(() => this.#db.prepare(`INSERT INTO packets VALUES (?,?,?,?,?) ON CONFLICT(generation,packet)
+    this.#access(() => this.#db.prepare(`INSERT INTO packets (generation,packet,offset,length,delivered) VALUES (?,?,?,?,?) ON CONFLICT(generation,packet)
       DO UPDATE SET offset=excluded.offset,length=excluded.length,delivered=excluded.delivered`)
       .run(index.generation, JSON.stringify(row.packet), row.offset, row.length, row.delivered));
   }
@@ -164,6 +167,25 @@ export class LiveDeliveryIndex {
     const rows = this.#access(() => this.#db.prepare(`SELECT packet,offset,length,delivered FROM packets
       WHERE generation=? AND packet>? AND length>0 AND delivered=0 ORDER BY packet LIMIT 256`)
       .all(index.generation, after === "" ? "" : JSON.stringify(after)) as unknown as LiveOffset[]);
+    return rows.map((row) => ({ ...row, packet: JSON.parse(row.packet) as string }));
+  }
+
+  public packetOrder(index: LiveGeneration, packet: string, speaker: string, time: number, media: number, sequence: number): void {
+    this.#assertGeneration(index);
+    this.#access(() => this.#db.prepare(`UPDATE packets SET speaker=?,time=?,media=?,sequence=?
+      WHERE generation=? AND packet=?`).run(`speaker:${JSON.stringify(speaker)}`, time, media, sequence,
+      index.generation, JSON.stringify(packet)));
+  }
+
+  public eligible(index: LiveGeneration, after: string): LiveOffset[] {
+    this.#assertGeneration(index);
+    const rows = this.#access(() => this.#db.prepare(`SELECT p.packet,p.offset,p.length,p.delivered FROM packets p
+      LEFT JOIN stt s ON s.generation=p.generation AND s.key=p.speaker
+      WHERE p.generation=? AND p.length>0 AND p.delivered=0 AND json_extract(s.value,'$.fence') IS NULL
+      AND (?='' OR (p.time,p.speaker,p.media,p.sequence,p.packet) >
+        (SELECT time,speaker,media,sequence,packet FROM packets WHERE generation=p.generation AND packet=?))
+      ORDER BY p.time,p.speaker,p.media,p.sequence,p.packet LIMIT 256`)
+      .all(index.generation, after, JSON.stringify(after)) as unknown as LiveOffset[]);
     return rows.map((row) => ({ ...row, packet: JSON.parse(row.packet) as string }));
   }
 

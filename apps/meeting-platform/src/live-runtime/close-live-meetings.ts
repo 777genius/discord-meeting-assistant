@@ -10,7 +10,7 @@ export async function closeLiveMeetings(input: {
   const results = await Promise.allSettled(
     [...input.recordingIds].map((recordingId) =>
       input.recordingOperations.enqueue(recordingId, () =>
-        input.finalizer.finishRecording(recordingId, input.endedAtMs)
+        input.finalizer.finishRecording(recordingId, input.endedAtMs, true)
       )
     ),
   );

@@ -100,7 +100,7 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly logger: Logger;
   readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
-  readonly pendingLivePackets?: (recordingId: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
+  readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly pool: Pool;
@@ -338,7 +338,7 @@ function createLiveRuntime(input: {
   readonly logger: Logger;
   readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
-  readonly pendingLivePackets?: (recordingId: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
+  readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly oneShotReceipts: PostgresConversationOneShotReceiptStore;

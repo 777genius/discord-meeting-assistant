@@ -25,6 +25,7 @@ export type SttGrant = { readonly status: "granted"; readonly operation: SttOper
 export interface SttRecovery {
   readonly owner: SttOwner;
   readonly closed: boolean;
+  readonly endedAtMs?: number;
   readonly legacy: boolean;
   readonly fences: readonly { readonly speakerId: string; readonly reason: SttFenceReason }[];
 }
@@ -40,7 +41,7 @@ export interface SttJournalPort {
 
 export type SttRecord = { readonly schemaVersion: 2; readonly recordingId: string } & (
   | { readonly type: "stt-init" }
-  | { readonly type: "stt-epoch"; readonly epoch: number }
+  | { readonly type: "stt-epoch"; readonly epoch: number; readonly lifetime?: string }
   | { readonly type: "stt-intent"; readonly operation: SttOperation }
   | { readonly type: "stt-outcome"; readonly completion: SttCompletion }
   | { readonly type: "stt-fence"; readonly speakerId: string; readonly reason: SttFenceReason }
@@ -49,6 +50,7 @@ export type SttRecord = { readonly schemaVersion: 2; readonly recordingId: strin
 export interface SttRecordingState {
   initialized: boolean;
   epoch: number;
+  lifetime?: string | undefined;
   operation: number;
   endedAtMs?: number;
 }

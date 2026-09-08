@@ -61,6 +61,7 @@ async function child(root: string, phase: string, scenario: string, killAt: stri
   });
 }
 const cases = [
+  { scenario: "closed-before-finish", barrier: "durable-close", accepted: 1, opens: 1 },
   { scenario: "authoritative", barrier: "before-accepted", accepted: 1, opens: 1 },
   { scenario: "pending", barrier: "pending", accepted: 1, opens: 1 },
   { scenario: "open-before", barrier: "open-intent", accepted: 0, opens: 0 },
@@ -97,7 +98,7 @@ for (const row of cases) {
       const recovery = recovered.find((message) => message.type === "recovery")!.detail as {
         fences: { reason: string }[]; legacy: boolean;
       };
-      const eligible = ["pending", "not-accepted", "finalized"].includes(row.scenario);
+      const eligible = ["pending", "not-accepted", "finalized", "closed-before-finish"].includes(row.scenario);
       if (!eligible && row.scenario !== "legacy") {
         assert.deepEqual(recovery.fences, [{ speakerId: "33333333333333333", reason: "acceptance-unknown" }]);
         assert.ok(recovered.some((message) => message.type === "degraded"));
@@ -105,7 +106,7 @@ for (const row of cases) {
         assert.ok(recovered.some((message) => message.type === "release-degraded"));
       }
       if (row.scenario === "legacy") { assert.equal(recovery.legacy, true); }
-      if (row.scenario === "authoritative") {
+      if (row.scenario === "authoritative" || row.scenario === "closed-before-finish") {
         const snapshot = JSON.parse(await readFile(join(root, "meeting.json"), "utf8")) as { actors: unknown };
         assert.deepEqual(snapshot.actors, [{ actorId: "33333333333333333", kind: "unknown" }]);
         assert.equal(effects.messages.filter((message) => message.type === "batch-effect").length, 1);

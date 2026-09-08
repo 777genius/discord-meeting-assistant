@@ -16,7 +16,7 @@ import {
   type LiveVoicePacket,
   type LiveVoicePacketBatch,
 } from "./contracts.js";
-import { LivePacketDeliveryLedger } from "./packet-delivery-ledger.js";
+import { livePacketIdentity, LivePacketDeliveryLedger } from "./packet-delivery-ledger.js";
 import { SpeakerTranscriptionSession } from "./speaker-transcription-session.js";
 
 export interface SpeakerTranscriptionSessionDependencies extends SpeakerTranscriptionSessionsDependencies {
@@ -175,6 +175,16 @@ export function initializeLivePacketRecovery(dependencies: LiveMeetingRuntimeDep
   initialization = (async () => {
     const durability = await dependencies.liveSttDurability?.recoverRecording(state.meetingId);
     if (durability !== undefined) { state.transcription.restoreDurability(durability); }
+    if (durability !== undefined) {
+      let after = "";
+      while (state.packetRecovery === initialization && !state.finishing && !durability.closed && !durability.legacy) {
+        const page = await dependencies.pendingLivePackets?.(state.meetingId, after);
+        if (page === undefined || page.length === 0 || state.packetRecovery !== initialization || state.finishing) { break; }
+        await state.transcription.recover(page);
+        after = livePacketIdentity(page[page.length - 1]!);
+      }
+      return;
+    }
     const pending = await dependencies.pendingLivePackets?.(state.meetingId);
     if (state.packetRecovery === initialization && !state.finishing && pending !== undefined) {
       void state.transcription.recover(pending).catch((error: unknown) => {

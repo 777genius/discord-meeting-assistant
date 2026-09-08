@@ -43,6 +43,7 @@ async function applyRecord(
       if (prior.type !== "pending" || !samePacket(prior, record)) { index.conflicting = 1; }
     } else if (previous?.delivered !== 1) { index.remaining += 1; }
     db.put(index, { packet: record.packetId, ...location, delivered: previous?.delivered ?? 0 });
+    db.packetOrder(index, record.packetId, record.speakerId, record.relativeTimeMs, record.mediaTimestamp, record.sequenceNumber);
   }
 }
 
@@ -123,8 +124,11 @@ export async function appendPendingLivePackets(
   await appendRecords(runtime, recordingId, records);
 }
 
+/** A cursor (including "" for the first page) selects bounded eligible recovery.
+ * Omitted cursors retain the legacy evidence-inspection API.
+ */
 export async function pendingLivePackets(
-  runtime: RecordingIngressRuntime, recordingId: string,
+  runtime: RecordingIngressRuntime, recordingId: string, afterPacket?: string,
 ): Promise<readonly DurableLiveVoicePacket[]> {
   return runtime.withExclusiveSpoolOwnership(() => runtime.exclusive(recordingId, async () => {
     const index = await readIndex(runtime, recordingId);
@@ -133,6 +137,8 @@ export async function pendingLivePackets(
     }
     if (index.stamp === "missing") { return []; }
     const db = await runtime.liveDeliveryIndex();
+    const state = db.sttGet<SttRecordingState>(index, "recording");
+    if (afterPacket !== undefined && (state?.initialized !== true || state.endedAtMs !== undefined)) { return []; }
     const path = outboxPath(runtime, recordingId);
     const handle = await openEvidence(path);
     const packets: DurableLiveVoicePacket[] = [];
@@ -140,9 +146,9 @@ export async function pendingLivePackets(
       if (await verifiedStamp(handle, path) !== index.stamp) {
         throw new RecordingIngressError("corrupt-spool", "live outbox changed before pending read");
       }
-      let after = "";
+      let after = afterPacket ?? "";
       for (;;) {
-        const rows = db.pending(index, after);
+        const rows = afterPacket === undefined ? db.pending(index, after) : db.eligible(index, after);
         if (rows.length === 0) { break; }
         for (const row of rows) {
           const record = await readOffset(handle, row.offset, row.length);
@@ -152,13 +158,14 @@ export async function pendingLivePackets(
           packets.push(record);
           after = row.packet;
         }
+        if (afterPacket !== undefined) { break; }
       }
       if (await verifiedStamp(handle, path) !== index.stamp) {
         throw new RecordingIngressError("corrupt-spool", "live outbox changed during pending read");
       }
     } catch (error) { db.invalidate(index); throw error; }
     finally { await handle.close(); }
-    return packets.toSorted(comparePackets);
+    return afterPacket === undefined ? packets.toSorted(comparePackets) : packets;
   }));
 }
 
@@ -283,9 +290,15 @@ export function liveSttJournal(runtime: RecordingIngressRuntime): LiveSttJournal
           ? await runtime.spool.readCompleted(recordingId) ?? await runtime.spool.readAborted(recordingId)
           : active.status === "active" ? undefined : active;
         const endedAt = terminal?.events.find((event) => event.type === "meeting.ended" || event.type === "meeting.aborted")?.occurredAt;
-        if (endedAt !== undefined && db.sttGet<SttRecordingState>(index, "recording")?.endedAtMs === undefined) {
-          await appendRecords(runtime, recordingId, [{ schemaVersion: 2, type: "stt-close", recordingId,
-            endedAtMs: Date.parse(endedAt) }], index);
+        if (endedAt !== undefined) {
+          const persisted = db.sttGet<SttRecordingState>(index, "recording")?.endedAtMs;
+          if (persisted !== undefined && persisted !== Date.parse(endedAt)) {
+            throw new RecordingIngressError("conflicting-duplicate", "live STT terminal lifecycle identity changed");
+          }
+          if (persisted === undefined) {
+            await appendRecords(runtime, recordingId, [{ schemaVersion: 2, type: "stt-close", recordingId,
+              endedAtMs: Date.parse(endedAt) }], index);
+          }
         }
         return work({ db, index, append: (record) => appendRecords(runtime, recordingId, [record], index) });
       })));

@@ -47,8 +47,16 @@ export class LiveMeetingFinalizer {
   public async finishRecording(
     recordingId: string,
     proposedEndedAtMs: number,
+    reuseTerminalTime = false,
   ): Promise<void> {
-    const endedAtMs = this.terminalEndTime(recordingId, proposedEndedAtMs);
+    const durability = this.dependencies.runtime.liveSttDurability;
+    const recovered = await durability?.recoverRecording(recordingId);
+    const terminalTime = reuseTerminalTime ? recovered?.endedAtMs ?? proposedEndedAtMs : proposedEndedAtMs;
+    if (durability !== undefined && recovered !== undefined) {
+      // Validate lifecycle evidence, and publish the time to memory only after sync.
+      await durability.closeRecording(recovered.owner, terminalTime);
+    }
+    const endedAtMs = this.terminalEndTime(recordingId, terminalTime);
     const state = this.dependencies.meetings.get(recordingId);
     if (state !== undefined) {
       await this.beginFinish(state, endedAtMs);
@@ -116,7 +124,7 @@ export class LiveMeetingFinalizer {
   }
 
   public startTerminalFinish(recordingId: string, endedAtMs: number): void {
-    void this.finishRecording(recordingId, endedAtMs).catch((error: unknown) => {
+    void this.finishRecording(recordingId, endedAtMs, true).catch((error: unknown) => {
       this.dependencies.runtime.logger.error(
         "Derived live meeting finalization failed",
         {

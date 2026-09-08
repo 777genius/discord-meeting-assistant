@@ -16,6 +16,7 @@ interface OwnedSession {
   provider?: LiveTranscriptionSession;
   clean: boolean;
   abandoned: boolean;
+  fencedDurably?: boolean;
 }
 function failureReason(error: unknown): LiveFenceReason {
   if (error instanceof LiveTranscriptionAdmissionRejected) { return "admission-rejected"; }
@@ -32,13 +33,14 @@ function rejectionError(result: LiveDenied): Error {
 export class LiveSttAttemptController implements LiveTranscriptionPort {
   private current: OwnedSession | undefined;
   private readonly pending = new Set<Promise<unknown>>();
+  private durabilityPending = 0;
   private persistenceFailure: Error | undefined;
   private fenced = false;
 
   public constructor(private readonly dependencies: AttemptDependencies) {}
 
   public async settle(): Promise<void> {
-    if (this.pending.size > 0) { throw new LiveTranscriptionAcceptanceUnknown(); }
+    if (this.durabilityPending > 0 || (this.pending.size > 0 && this.current?.fencedDurably !== true)) { throw new LiveTranscriptionAcceptanceUnknown(); }
     if (this.persistenceFailure !== undefined) { throw this.persistenceFailure; }
   }
 
@@ -58,12 +60,15 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
       owned.clean = true;
       throw new LiveTranscriptionNotAccepted();
     }
+    const abort = (): void => { this.abandon(owned); };
+    request.signal?.addEventListener("abort", abort, { once: true });
+    this.dependencies.signal.addEventListener("abort", abort, { once: true });
     try {
       owned.provider = await this.dependencies.transcriber.openSession({
         ...request,
         idempotencyKey: JSON.stringify(["live-transcription:v4", request.meetingId, request.speakerId, operation.session.generation]),
         onTranscript: (event) => {
-          if (this.current === owned && !owned.abandoned && !this.cancelled()) { request.onTranscript(event); }
+          if (this.current === owned && !owned.clean && !owned.abandoned && !this.cancelled() && !this.openingCancelled(request.signal)) { request.onTranscript(event); }
         },
       });
       if (this.cancelled() || this.openingCancelled(request.signal) || owned.abandoned) {
@@ -76,6 +81,9 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
     } catch (error) {
       await this.failed(owned, operation, error);
       throw error;
+    } finally {
+      request.signal?.removeEventListener("abort", abort);
+      this.dependencies.signal.removeEventListener("abort", abort);
     }
   }
 
@@ -83,15 +91,18 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
     return {
       sendPacket: (packet) => this.supervise(this.send(owned, packet)),
       finalize: () => this.supervise(this.finalize(owned)),
-      terminate: () => {
-        owned.provider?.terminate();
-        if (owned.clean || owned.abandoned) { return; }
-        owned.abandoned = true;
-        this.latch(new LiveTranscriptionAcceptanceUnknown());
-        void this.supervise(this.persist(() => this.dependencies.durability.fence(owned.identity, "acceptance-unknown")))
-          .catch(() => {});
-      },
+      terminate: () => { this.abandon(owned); },
     };
+  }
+
+  private abandon(owned: OwnedSession): void {
+    if (owned.clean || owned.abandoned) { owned.provider?.terminate(); return; }
+    owned.abandoned = true;
+    this.latch(new LiveTranscriptionAcceptanceUnknown());
+    void this.persist(() => this.dependencies.durability.fence(owned.identity, "acceptance-unknown"))
+      .then(() => { owned.fencedDurably = true; })
+      .catch(() => {});
+    owned.provider?.terminate();
   }
 
   private async send(owned: OwnedSession, packet: Parameters<LiveTranscriptionSession["sendPacket"]>[0]): Promise<"accepted" | "reused"> {
@@ -99,7 +110,8 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
     const grant = await this.persist(() => this.dependencies.durability.beginSend(owned.identity, packet.packetId));
     if (grant.status === "already-accepted") { return "reused"; }
     const operation = this.requireGrant(grant, "send");
-    if (this.cancelled() || owned.abandoned) {
+    if (owned.abandoned) { throw new LiveTranscriptionAcceptanceUnknown(); }
+    if (this.cancelled()) {
       await this.persist(() => this.dependencies.durability.complete({ operation, outcome: "not-accepted" }));
       throw new LiveTranscriptionNotAccepted();
     }
@@ -109,7 +121,8 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
       await this.failed(owned, operation, error);
       throw error instanceof LiveTranscriptionNotAccepted ? error : this.classify(error);
     }
-    // Acceptance remains evidence even if a terminal callback raced the receipt.
+    this.assertOwned(owned);
+    // Only the still-owned generation can publish an outcome.
     await this.persist(() => this.dependencies.durability.complete({ operation, outcome: "accepted" }));
     this.assertOwned(owned);
     return "accepted";
@@ -118,7 +131,8 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
   private async finalize(owned: OwnedSession): Promise<void> {
     this.assertOwned(owned);
     const operation = this.requireGrant(await this.persist(() => this.dependencies.durability.beginFinalize(owned.identity)), "finalize");
-    if (this.cancelled() || owned.abandoned) {
+    if (owned.abandoned) { throw new LiveTranscriptionAcceptanceUnknown(); }
+    if (this.cancelled()) {
       await this.persist(() => this.dependencies.durability.complete({ operation, outcome: "not-accepted" }));
       throw new LiveTranscriptionAcceptanceUnknown();
     }
@@ -127,12 +141,13 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
       await this.failed(owned, operation, error);
       throw this.classify(error);
     }
-    await this.persist(() => this.dependencies.durability.complete({ operation, outcome: "finalized" }));
     this.assertOwned(owned);
     owned.clean = true;
+    await this.persist(() => this.dependencies.durability.complete({ operation, outcome: "finalized" }));
   }
 
   private async failed(owned: OwnedSession, operation: LiveOperation, error: unknown): Promise<void> {
+    if (owned.abandoned) { return; }
     owned.abandoned = true;
     owned.provider?.terminate();
     if (this.persistenceFailure !== undefined || error instanceof LiveSttDurabilityUnavailable || error instanceof LiveSttDurabilityConflict) { return; }
@@ -143,6 +158,7 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
     }
     this.latch(this.classify(error));
     await this.persist(() => this.dependencies.durability.complete({ operation, outcome: failureReason(error) }));
+    owned.fencedDurably = true;
   }
 
   private requireGrant<K extends LiveOperation["kind"]>(result: LiveGrant | LiveDenied, kind: K): Extract<LiveOperation, { kind: K }> {
@@ -168,6 +184,7 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
     return work;
   }
   private async persist<T>(work: () => Promise<T>): Promise<T> {
+    this.durabilityPending += 1;
     try { return await work(); }
     catch (error) {
       this.persistenceFailure = error instanceof Error
@@ -175,7 +192,7 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
       this.latch(new LiveTranscriptionAcceptanceUnknown());
       this.current?.provider?.terminate();
       throw error;
-    }
+    } finally { this.durabilityPending -= 1; }
   }
 }
 

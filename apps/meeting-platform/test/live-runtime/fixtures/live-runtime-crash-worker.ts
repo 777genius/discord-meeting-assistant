@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { Meeting, type MeetingRepository, type MeetingSnapshot } from "@discord-meeting/meeting-core/meeting-lifecycle";
 import { ProcessMeetingSummary, type ProcessMeetingSummaryDependencies } from "@discord-meeting/meeting-core/post-call-workflow";
 import { join } from "node:path";
+import { LiveFencedSummaryPublicationPort } from "../../../src/application/live-fenced-summary-publication.js";
 
 const [root, phase, scenario] = process.argv.slice(2);
 if (root === undefined || root === "" || phase === undefined || phase === "" ||
@@ -52,6 +53,10 @@ const ingress = new DurableCraigRecordingIngress({ spoolRoot: root, artifactLoca
 const storage = mapLiveSttDurability(ingress.liveSttDurability);
 const durability: LiveSttDurabilityPort = {
   ...storage,
+  closeRecording: async (owner, endedAtMs) => {
+    await storage.closeRecording(owner, endedAtMs);
+    await parent("durable-close");
+  },
   beginOpen: async (owner, speaker) => {
     const result = await storage.beginOpen(owner, speaker);
     if (result.status === "granted") { await parent("open-intent", result.operation.session); }
@@ -108,7 +113,7 @@ const runtime = new PlatformLiveMeetingRuntime({
     monotonicMilliseconds: () => performance.now(),
   },
   speakerIdleFinalizeMs: 100, transcriber, liveSttDurability: durability,
-  pendingLivePackets: (id) => ingress.pendingLivePackets(id),
+  pendingLivePackets: (id, after) => ingress.pendingLivePackets(id, after),
   logger: { debug: () => {}, info: () => {}, error: () => {}, warn: (message, fields) => { process.send!({ type: "degraded", detail: { message, fields } }); } },
 });
 try {
@@ -123,6 +128,10 @@ try {
     await append(1);
   }
   await runtime.acceptLifecycle(started("r", ["33333333333333333"]));
+  if (phase === "first" && scenario === "closed-before-finish") {
+    await cleanFinalization;
+    await runtime.acceptLifecycle({ type: "meeting.ended", recordingId: "r", occurredAt: "2026-08-02T10:00:02.000Z" });
+  }
   if (phase === "first") {
     // The parent kills at the selected exact intent/effect/receipt barrier.
     await new Promise<void>(() => {});
@@ -134,7 +143,7 @@ try {
     catch { await parent("release-degraded"); }
     await parent("recovery", await storage.recoverRecording("r"));
     await parent("pending-after", (await ingress.pendingLivePackets("r")).map((packet) => packet.packetId));
-    if (scenario === "authoritative") { await recoverAuthoritative(); }
+    if (scenario === "authoritative" || scenario === "closed-before-finish") { await recoverAuthoritative(); }
     await ingress.close();
   }
   process.send({ type: "done" });
@@ -193,12 +202,12 @@ async function recoverAuthoritative(): Promise<void> {
       decisions: [{ decisionId: "decision-1", text: "Keep the original.", evidenceTurnIds: ["turn-1"] }],
       actionItems: [], openQuestions: [],
     } }) },
-    publisher: { publish: async (request) => {
+    publisher: new LiveFencedSummaryPublicationPort({ publish: async (request) => {
       if (refusePublication) { refusePublication = false; throw new Error("synthetic publication unavailable before acceptance"); }
       assert.equal(request.transcript.transcriptId, "authoritative-transcript");
       await parent("publication-effect", request);
       return { ok: true, value: { externalPublicationId: "synthetic-publication" } };
-    } },
+    } }, runtime, meetings),
   };
   const failed = await new ProcessMeetingSummary(dependencies).execute("r");
   assert.equal(failed.status, "failed");

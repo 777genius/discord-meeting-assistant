@@ -70,8 +70,8 @@ export class DurableCraigRecordingIngress {
     return liveSttJournal(this.#runtime);
   }
 
-  public pendingLivePackets(recordingId: string): Promise<readonly DurableLiveVoicePacket[]> {
-    return pendingLivePackets(this.#runtime, recordingId);
+  public pendingLivePackets(recordingId: string, afterPacket?: string): Promise<readonly DurableLiveVoicePacket[]> {
+    return pendingLivePackets(this.#runtime, recordingId, afterPacket);
   }
 
   public markLivePacketDelivered(packetId: string): Promise<"marked" | "reused"> {

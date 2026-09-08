@@ -107,7 +107,7 @@ export function createPlatformLiveMeetingRuntime(input: {
   readonly logger: LiveRuntimeLogger;
   readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
-  readonly pendingLivePackets?: (recordingId: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
+  readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly packetFlowControl: LivePacketFlowControl;
   readonly packetInspector?: LivePacketInspector;
