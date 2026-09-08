@@ -1,4 +1,3 @@
-import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure, LiveTranscriptionAdmissionRejected, type LiveTranscriptionPort } from "../live-runtime/contracts.js";
 import { hasLiveTranscriptionConfiguration, createOssNativeEvidence, type OssPlatformEvidence } from "./oss-native-evidence.js";
 import type { OssNativeEvidenceSink } from "@discord-meeting/voicetext-adapter";
 import { randomUUID } from "node:crypto";
@@ -33,7 +32,7 @@ import {
 import type { Pool } from "pg";
 import { GrpcPipecatConversationRuntime } from "@discord-meeting/pipecat-runtime-adapter";
 import type { SubscriptionRuntimeTransportPort } from "@discord-meeting/subscription-runtime-adapter";
-import { VoicetextAdapterError, VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-adapter";
+import { VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-adapter";
 import { Client, GatewayIntentBits, Partials } from "discord.js";
 
 import { FileConversationFarewellCueRegistry } from "../adapters/outbound/file-conversation-farewell-cue-registry.js";
@@ -69,6 +68,8 @@ export {
 export { createConversationCoordinator } from "./conversation-coordinator.js";
 import { createLiveConversationResources } from "./conversation-coordinator.js";
 import { createVoiceGroundedAnswers } from "./voice-grounded-answers.js";
+import { mapLiveAdmission } from "./live-admission-mapper.js";
+export { mapLiveAdmission } from "./live-admission-mapper.js";
 
 // Keep wall-clock-shaped timestamps compatible with STT while preventing clock
 // adjustments from corrupting playback deadlines and the four-second guard.
@@ -402,29 +403,4 @@ function createDiscordClient(config: PlatformConfig): Client {
     intents: [GatewayIntentBits.Guilds, ...knowledgeIntents],
     partials: knowledgePartials,
   });
-}
-
-export function mapLiveAdmission(adapter: LiveTranscriptionPort): LiveTranscriptionPort {
-  const translate = (error: unknown): never => {
-    if (error instanceof VoicetextAdapterError) {
-      if (error.code === "live_admission_rejected") { throw new LiveTranscriptionAdmissionRejected(); }
-      if (error.code === "live_provider_terminal") { throw new LiveTranscriptionTerminalFailure(); }
-      if (error.code === "live_acceptance_unknown") { throw new LiveTranscriptionAcceptanceUnknown(); }
-    }
-    throw error;
-  };
-  return { openSession: async (request) => {
-    try {
-      const session = await adapter.openSession(request);
-      return {
-        sendPacket: async (packet) => {
-          try { return await session.sendPacket(packet); } catch (error) { return translate(error); }
-        },
-        finalize: async () => {
-          try { await session.finalize(); } catch (error) { translate(error); }
-        },
-        terminate: () => { session.terminate(); },
-      };
-    } catch (error) { return translate(error); }
-  } };
 }
