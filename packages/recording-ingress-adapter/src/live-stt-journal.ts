@@ -186,6 +186,13 @@ function validateCompletion(access: SttJournalAccess, completion: SttCompletion)
   if (outcome !== success && outcome !== "not-accepted" && !isSttFence(outcome)) { conflict("illegal operation outcome"); }
 }
 
+function validateEpoch(state: SttRecordingState, record: Extract<SttRecord, { type: "stt-epoch" }>): void {
+  if (record.epoch !== state.epoch + 1 || !Number.isSafeInteger(record.epoch)) { conflict("invalid epoch"); }
+  if (record.lifetime !== undefined && (typeof record.lifetime !== "string" || record.lifetime.length === 0)) {
+    conflict("invalid spool lifetime");
+  }
+}
+
 /** The same transition validation runs during streaming replay and after append sync. */
 export function applySttRecord(access: SttJournalAccess, record: SttRecord): void {
   if (record.recordingId !== access.index.recording) { conflict("recording identity mismatch"); }
@@ -196,10 +203,7 @@ export function applySttRecord(access: SttJournalAccess, record: SttRecord): voi
       state.initialized = true;
       break;
     case "stt-epoch":
-      if (record.epoch !== state.epoch + 1 || !Number.isSafeInteger(record.epoch)) { conflict("invalid epoch"); }
-      if (record.lifetime !== undefined && (typeof record.lifetime !== "string" || record.lifetime.length === 0)) {
-        conflict("invalid spool lifetime");
-      }
+      validateEpoch(state, record);
       state.lifetime = record.lifetime;
       state.epoch = record.epoch;
       break;

@@ -170,6 +170,11 @@ function groupPacketsBySpeaker(
   return grouped;
 }
 
+// Read mutable ownership again after I/O; finishing can change while a page is pending.
+function isPacketRecoveryActive(state: ActiveLiveMeeting, initialization: Promise<void>): boolean {
+  return state.packetRecovery === initialization && !state.finishing;
+}
+
 export function initializeLivePacketRecovery(dependencies: LiveMeetingRuntimeDependencies, state: ActiveLiveMeeting): Promise<void> {
   let initialization!: Promise<void>;
   initialization = (async () => {
@@ -177,16 +182,16 @@ export function initializeLivePacketRecovery(dependencies: LiveMeetingRuntimeDep
     if (durability !== undefined) { state.transcription.restoreDurability(durability); }
     if (durability !== undefined) {
       let after = "";
-      while (state.packetRecovery === initialization && !state.finishing && !durability.closed && !durability.legacy) {
+      while (isPacketRecoveryActive(state, initialization) && !durability.closed && !durability.legacy) {
         const page = await dependencies.pendingLivePackets?.(state.meetingId, after);
-        if (page === undefined || page.length === 0 || state.packetRecovery !== initialization || state.finishing) { break; }
+        if (page === undefined || page.length === 0 || !isPacketRecoveryActive(state, initialization)) { break; }
         await state.transcription.recover(page);
         after = livePacketIdentity(page[page.length - 1]!);
       }
       return;
     }
     const pending = await dependencies.pendingLivePackets?.(state.meetingId);
-    if (state.packetRecovery === initialization && !state.finishing && pending !== undefined) {
+    if (isPacketRecoveryActive(state, initialization) && pending !== undefined) {
       void state.transcription.recover(pending).catch((error: unknown) => {
         dependencies.logger.warn("Derived live packet recovery failed", {
           meetingId: state.meetingId,

@@ -30,15 +30,14 @@ it("pages only eligible payloads through prolonged degradation and repeated reco
   try {
     const opening = await f.journal.beginOpen(f.owner, "a");
     assert.equal(opening.status, "granted");
-    if (opening.status !== "granted") { throw new Error("missing intent"); }
     await f.journal.fence(opening.operation.session, "acceptance-unknown");
     await appendPendingLivePackets(f.runtime, Array.from({ length: 4096 }, (_, index) => packet("a", index)));
     await appendPendingLivePackets(f.runtime, Array.from({ length: 600 }, (_, index) => packet("b", 599 - index)));
     const probe = await open(join(f.root, "original.ogg"));
     const prototype = Object.getPrototypeOf(probe) as FileHandle;
-    const read = prototype.read;
+    const { value: read } = Object.getOwnPropertyDescriptor(prototype, "read") as { value: FileHandle["read"] };
     let reads = 0;
-    prototype.read = function (...args: Parameters<FileHandle["read"]>) { reads += 1; return read.apply(this, args); } as FileHandle["read"];
+    prototype.read = function (this: FileHandle, ...args: Parameters<FileHandle["read"]>) { reads += 1; return read.apply(this, args); };
     try {
       for (let reconnect = 0; reconnect < 8; reconnect += 1) {
         const recovered = await f.journal.recoverRecording("r");
@@ -100,9 +99,9 @@ for (const stage of ["intent", "outcome", "fence"] as const) {
       const f = await fixture();
       const probe = await open(join(f.root, "original.ogg"));
       const prototype = Object.getPrototypeOf(probe) as FileHandle;
-      const write = prototype.writeFile;
-      const sync = prototype.sync;
-      const publish = LiveDeliveryIndex.prototype.publish;
+      const { value: write } = Object.getOwnPropertyDescriptor(prototype, "writeFile") as { value: FileHandle["writeFile"] };
+      const { value: sync } = Object.getOwnPropertyDescriptor(prototype, "sync") as { value: FileHandle["sync"] };
+      const { value: publish } = Object.getOwnPropertyDescriptor(LiveDeliveryIndex.prototype, "publish") as { value: LiveDeliveryIndex["publish"] };
       let fired = false;
       let next: RecordingIngressRuntime | undefined;
       try {
@@ -112,7 +111,7 @@ for (const stage of ["intent", "outcome", "fence"] as const) {
         await appendPendingLivePackets(f.runtime, [packet("a", 0)]);
         const send = stage === "outcome" ? await f.journal.beginSend(opening.operation.session, "r:a:0:0:0") : undefined;
         if (failure === "torn") {
-          prototype.writeFile = async function (data, options) {
+          prototype.writeFile = async function (this: FileHandle, data, options) {
             if (!fired && typeof data === "string" && data.includes(`"type":"stt-${stage}"`)) {
               fired = true; await write.call(this, data.slice(0, Math.floor(data.length / 2)), options);
               throw new Error("synthetic torn write");
@@ -120,9 +119,9 @@ for (const stage of ["intent", "outcome", "fence"] as const) {
             return write.call(this, data, options);
           };
         } else if (failure === "sync") {
-          prototype.sync = async function () { await sync.call(this); if (!fired) { fired = true; throw new Error("synthetic thrown sync after surviving bytes"); } };
+          prototype.sync = async function (this: FileHandle) { await sync.call(this); if (!fired) { fired = true; throw new Error("synthetic thrown sync after surviving bytes"); } };
         } else {
-          LiveDeliveryIndex.prototype.publish = function (index) { if (!fired) { fired = true; throw new Error("synthetic cache publication failure"); } return publish.call(this, index); };
+          LiveDeliveryIndex.prototype.publish = function (this: LiveDeliveryIndex, index) { if (!fired) { fired = true; throw new Error("synthetic cache publication failure"); } publish.call(this, index); };
         }
         await assert.rejects(stage === "intent" ? f.journal.beginSend(opening.operation.session, "r:a:0:0:0")
           : stage === "fence" ? f.journal.fence(opening.operation.session, "acceptance-unknown")

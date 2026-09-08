@@ -170,10 +170,10 @@ export class LiveDeliveryIndex {
     return rows.map((row) => ({ ...row, packet: JSON.parse(row.packet) as string }));
   }
 
-  public packetOrder(index: LiveGeneration, packet: string, speaker: string, time: number, media: number, sequence: number): void {
+  public packetOrder(index: LiveGeneration, packet: string, speaker: string, order: { time: number; media: number; sequence: number }): void {
     this.#assertGeneration(index);
     this.#access(() => this.#db.prepare(`UPDATE packets SET speaker=?,time=?,media=?,sequence=?
-      WHERE generation=? AND packet=?`).run(`speaker:${JSON.stringify(speaker)}`, time, media, sequence,
+      WHERE generation=? AND packet=?`).run(`speaker:${JSON.stringify(speaker)}`, order.time, order.media, order.sequence,
       index.generation, JSON.stringify(packet)));
   }
 

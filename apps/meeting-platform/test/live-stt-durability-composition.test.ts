@@ -25,9 +25,9 @@ const publicationRequest = {
 };
 const unavailable = () => new VoicetextAdapterError("provider_error", "synthetic", true, { gatewayCode: "PROVIDER_UNAVAILABLE" });
 function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((release) => { resolve = release; });
-  return { promise, resolve };
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => { release = resolve; });
+  return { promise, resolve: release };
 }
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "stt-review-composition-"));
@@ -175,7 +175,7 @@ it("runtime isolates a stalled speaker, publishes after durable abandonment, and
   const sending = deferred();
   const healthy = deferred();
   const late = deferred();
-  let callback: Parameters<LiveTranscriptionPort["openSession"]>[0]["onTranscript"] = () => {};
+  let callback!: Parameters<LiveTranscriptionPort["openSession"]>[0]["onTranscript"];
   const warnings: unknown[] = [];
   const transcriber: LiveTranscriptionPort = { openSession: async (input) => {
     if (input.speakerId === speakerId) { callback = input.onTranscript; }
@@ -248,7 +248,8 @@ it("healthy connection loss/recovery and same-process idle finalization admit ne
   try {
     await runtime.acceptLifecycle(started("r", [speakerId]));
     for (let segment = 1; segment <= 3; segment += 1) {
-      for (let tries = 0; finalizations < segment && tries < 50; tries += 1) {
+      for (let tries = 0; tries < 50; tries += 1) {
+        if (finalizations >= segment) { break; }
         await new Promise<void>((resolve) => { setTimeout(resolve, 10); });
       }
       assert.equal(finalizations, segment);

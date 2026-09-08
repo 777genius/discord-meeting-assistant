@@ -43,7 +43,9 @@ async function applyRecord(
       if (prior.type !== "pending" || !samePacket(prior, record)) { index.conflicting = 1; }
     } else if (previous?.delivered !== 1) { index.remaining += 1; }
     db.put(index, { packet: record.packetId, ...location, delivered: previous?.delivered ?? 0 });
-    db.packetOrder(index, record.packetId, record.speakerId, record.relativeTimeMs, record.mediaTimestamp, record.sequenceNumber);
+    db.packetOrder(index, record.packetId, record.speakerId, {
+      time: record.relativeTimeMs, media: record.mediaTimestamp, sequence: record.sequenceNumber,
+    });
   }
 }
 

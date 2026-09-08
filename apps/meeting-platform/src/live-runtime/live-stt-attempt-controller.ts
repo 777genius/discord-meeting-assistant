@@ -100,7 +100,7 @@ export class LiveSttAttemptController implements LiveTranscriptionPort {
     owned.abandoned = true;
     this.latch(new LiveTranscriptionAcceptanceUnknown());
     void this.persist(() => this.dependencies.durability.fence(owned.identity, "acceptance-unknown"))
-      .then(() => { owned.fencedDurably = true; })
+      .then(() => { owned.fencedDurably = true; return undefined; })
       .catch(() => {});
     owned.provider?.terminate();
   }
