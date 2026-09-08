@@ -6,10 +6,11 @@ import { setImmediate as nextTask } from "node:timers/promises";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { parseCraigLifecycleEvent, parseVoicePacketBatch } from "@discord-meeting/craig-gateway-contracts";
-import { DurableCraigRecordingIngress, opusPacketDurationSamples } from "@discord-meeting/recording-ingress-adapter";
+import { DurableCraigRecordingIngress, opusPacketDurationSamples, type SttCompletion } from "@discord-meeting/recording-ingress-adapter";
 import { OssNativeEvidenceJournal, VoicetextLiveTranscriptionAdapter,
   type VoicetextInboundFrame, type VoicetextWebSocketConnection,
   type OssSessionEvidenceEvent } from "@discord-meeting/voicetext-adapter";
+import { mapLiveSttDurability } from "../../src/composition/live-stt-durability-mapper.js";
 import { PlatformLiveMeetingRuntime } from "../../src/live-meeting-runtime.js";
 import { AppendLiveTranscriptTurn, FinishLiveMeeting, RefreshLiveMeeting, StartLiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
 import { livePacketIdentity } from "../../src/live-runtime/packet-delivery-ledger.js";
@@ -47,8 +48,9 @@ vi.mock("node:fs/promises", async (original) => {
           await writeFile(...writeArgs);
           if (typeof writeArgs[0] !== "string") { throw new Error("expected textual delivery receipt"); }
           for (const line of writeArgs[0].trimEnd().split("\n")) {
-            const row = JSON.parse(line) as { type: string; packetId: string };
-            if (row.type === "delivered") { pendingRows.push(row.packetId); }
+            const row = JSON.parse(line) as { type: string; completion?: SttCompletion };
+            if (row.type === "stt-outcome" && row.completion?.outcome === "accepted" &&
+                row.completion.operation.kind === "send") { pendingRows.push(row.completion.operation.packetId); }
           }
         };
         handle.read = new Proxy(handle.read.bind(handle), {
@@ -61,9 +63,9 @@ vi.mock("node:fs/promises", async (original) => {
         handle.sync = async () => {
           const rows = pendingRows.splice(0);
           await sync(); io.syncs++;
-          if (io.holdReceipt) { await new Promise<void>((resolve) => { io.receipts.push(resolve); io.receiptArrived(); }); }
+          if (io.holdReceipt && rows.length > 0) { await new Promise<void>((resolve) => { io.receipts.push(resolve); io.receiptArrived(); }); }
           io.durableRows.push(...rows);
-          await io.afterReceiptSync();
+          if (rows.length > 0) { await io.afterReceiptSync(); }
         };
       }
       return handle;
@@ -238,6 +240,9 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     const bySpeaker = new Map(progress.map((state) => [state.stream[0]!.speakerId, state]));
     const meetings = new MemoryLiveMeetingRepository();
     const projector = new ProjectionStub();
+    const durability = mapLiveSttDurability(ingress.liveSttDurability);
+    // Establish the real spool owner before measuring per-operation journal I/O.
+    await durability.recoverRecording(recordingId);
     runtime = new PlatformLiveMeetingRuntime({
       logger, appendTurn: new AppendLiveTranscriptTurn(meetings),
       finishMeeting: new FinishLiveMeeting(meetings),
@@ -246,18 +251,25 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
       packetFlowControl: { maximumQueuedPacketsPerSpeaker: 512, maximumQueuedPacketsGlobally: 1024,
         maximumConcurrentSessions: 2, packetBackpressureTimeoutMs: 2000 },
       packetInspector: { durationSamples48Khz: opusPacketDurationSamples }, transcriber,
-      markLivePacketDelivered: (id) => {
-        const operation = (async () => {
-          expect(await ingress.markLivePacketDelivered(id)).toBe("marked");
-          delivered.push(id);
-          bySpeaker.get(id.split(":")[1]!)!.delivered++;
-          completions.arrive();
-        })();
-        outstanding.add(operation);
-        waits.observe(operation);
-        void operation.then(() => outstanding.delete(operation),
-          () => outstanding.delete(operation));
-        return operation;
+      // Observe real production completions; accepted outcomes are the delivery receipts.
+      liveSttDurability: {
+        ...durability,
+        complete: (completion) => {
+          const operation = (async () => {
+            await durability.complete(completion);
+            if (completion.outcome === "accepted" && completion.operation.kind === "send") {
+              const id = completion.operation.packetId;
+              delivered.push(id);
+              bySpeaker.get(id.split(":")[1]!)!.delivered++;
+              completions.arrive();
+            }
+          })();
+          outstanding.add(operation);
+          waits.observe(operation);
+          void operation.then(() => outstanding.delete(operation),
+            () => outstanding.delete(operation));
+          return operation;
+        },
       },
     });
     await runtime.acceptLifecycle({ ...started(), occurredAt: new Date(0).toISOString() });
@@ -319,7 +331,7 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
         try {
           await waits.wait(postSyncArrived.promise);
           const frozenAt = Date.now();
-          // A released real fsync is not markLivePacketDelivered completion.
+          // A released real fsync is not durable operation completion.
           // Arbitrary host turns must neither acknowledge it nor consume budget.
           for (let turn = 0; turn < 37; turn++) { await nextTask(); }
           expect(Date.now()).toBe(frozenAt);
@@ -339,7 +351,8 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     await waits.wait(finish.then(() => void 0));
     await runtime.settleBeforeFinalPublication(recordingId);
     expect(Date.now() - finishAt).toBe(4000);
-    expect(io.syncs - syncs).toBe(3731);
+    // Each send, open and finalize has a fsynced intent and outcome; close is one tombstone.
+    expect(io.syncs - syncs).toBe(3731 * 2 + 2 * 2 * 2 + 1);
     expect(io.reads - reads).toBeLessThanOrEqual(1);
     expect(io.durableRows).toEqual(delivered);
     expect(new Set(delivered).size).toBe(3731);

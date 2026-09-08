@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { SpeakerTranscriptionSessions } from "../../src/live-runtime/speaker-transcription-sessions.js";
-import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure, LiveTranscriptionAdmissionRejected } from "../../src/live-runtime/contracts.js";
+import { LiveTranscriptionNotAccepted, LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure, LiveTranscriptionAdmissionRejected } from "../../src/live-runtime/contracts.js";
 import { GlobalPacketFlowControl, LiveSessionAdmission } from "../../src/live-runtime/live-packet-flow-control.js";
 import { systemLiveRuntimeClock, systemLiveRuntimeTimer } from "../../src/live-runtime/runtime-clock.js";
 import { logger, packets } from "./live-runtime-fixtures.js";
@@ -49,24 +49,52 @@ it.each([false, true].flatMap(cancel => [LiveTranscriptionAdmissionRejected, Liv
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it.each([true, false])("keeps unclassified retryable=%s failures visible and retryable", async (retryable) => {
-  const error = Object.assign(new Error("synthetic uncertain provider outcome"), { retryable });
+it.each([true, false, "proven-not-accepted"] as const)("classifies opening failure %s by acceptance evidence", async (classification) => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const provenNotAccepted = classification === "proven-not-accepted";
+  const error = provenNotAccepted ? new LiveTranscriptionNotAccepted() :
+    Object.assign(new Error("synthetic uncertain provider outcome"), { retryable: classification });
   const openSession = vi.fn(async () => { throw error; });
   const warn = vi.fn<typeof logger.warn>();
+  const delivered = vi.fn(async () => {});
+  const packetAdmission = new GlobalPacketFlowControl(8);
+  const sessionAdmission = new LiveSessionAdmission(1);
   const registry = new SpeakerTranscriptionSessions({
     clock: systemLiveRuntimeClock, timer: systemLiveRuntimeTimer, isMeetingFinishing: () => false,
-    logger: { ...logger, warn }, maximumQueuedPackets: 8, meetingId: "meeting", onTranscript: () => {},
-    packetAdmission: new GlobalPacketFlowControl(8), packetBackpressureTimeoutMs: 100,
-    packetInspector: { durationSamples48Khz: () => 960 }, sessionAdmission: new LiveSessionAdmission(1),
+    logger: { ...logger, warn }, markLivePacketDelivered: delivered,
+    maximumQueuedPackets: 8, meetingId: "meeting", onTranscript: () => {},
+    packetAdmission, packetBackpressureTimeoutMs: 100,
+    packetInspector: { durationSamples48Khz: () => 960 }, sessionAdmission,
     speakerIdleFinalizeMs: 1000, startedAtMs: 0, transcriber: { openSession },
   });
-  await registry.recover([packets().packets[0]!]);
-  await registry.recover([packets().packets[0]!]);
-  expect(openSession).toHaveBeenCalledTimes(4);
+  const packet = { ...packets().packets[0]!, relativeTimeMs: 0 };
+  await registry.recover([packet]);
+  expect(openSession).toHaveBeenCalledTimes(provenNotAccepted ? 2 : 1);
+  await registry.recover([packet]);
+  expect(openSession).toHaveBeenCalledTimes(provenNotAccepted ? 4 : 1);
+  if (!provenNotAccepted) {
+    await registry.accept({ ...packets(), packets: [packet, { ...packet, sequenceNumber: 2 }] });
+    await registry.recover([packet]);
+    await vi.advanceTimersByTimeAsync(2000);
+  }
   expect(warn.mock.calls.some(call => call[1]?.errorCode === "LIVE_TRANSCRIPTION_ADMISSION_REJECTED")).toBe(false);
-  expect(warn.mock.calls.some(call => call[0] === "Derived live transcription packet failed")).toBe(true);
+  expect(warn.mock.calls.filter(call => call[1]?.errorCode === "LIVE_TRANSCRIPTION_ACCEPTANCE_UNKNOWN"))
+    .toHaveLength(provenNotAccepted ? 0 : 1);
+  expect(warn.mock.calls.some(call => call[0] === "Derived live transcription packet failed")).toBe(provenNotAccepted);
   registry.beginFinish();
-  await registry.finish();
+  if (provenNotAccepted) { await registry.finish(); }
+  else { await expect(registry.finish()).rejects.toBeInstanceOf(AggregateError); }
+  // Settled local ownership does not claim successful transcription of fenced audio.
+  await expect(registry.settle()).resolves.toBeUndefined();
+  await expect(registry.settle()).resolves.toBeUndefined();
+  if (!provenNotAccepted) { await expect(registry.finish()).rejects.toBeInstanceOf(AggregateError); }
+  expect(openSession).toHaveBeenCalledTimes(provenNotAccepted ? 4 : 1);
+  expect(delivered).not.toHaveBeenCalled();
+  expect(await packetAdmission.reserve(8, 3000, new AbortController().signal)).toBe(true);
+  packetAdmission.release(8);
+  const release = await sessionAdmission.acquire(new AbortController().signal);
+  expect(release).not.toBeNull(); release?.();
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 // Keep the old provider promise alive across deletion and recreation.
