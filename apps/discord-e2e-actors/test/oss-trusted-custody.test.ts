@@ -7,7 +7,7 @@ import { campaignFixture } from "./oss-campaign-fixture.js";
 import { sha256 } from "../src/oss-campaign-artifacts.js";
 
 const mocks = vi.hoisted(() => ({
-  deployment: vi.fn(), snapshot: vi.fn(), docker: vi.fn(), publication: vi.fn(),
+  deployment: vi.fn<(input: { phase: string }) => Promise<{ config: object }>>(), snapshot: vi.fn(), docker: vi.fn(), publication: vi.fn(),
   open: vi.fn(), originals: vi.fn(), assemble: vi.fn(), load: vi.fn(), verify: vi.fn()
 }));
 vi.mock("node:fs/promises", async original => {
@@ -110,16 +110,16 @@ const session = writer.open();
   mocks.verify.mockResolvedValue({ consistency: "complete", artifacts: [{ path: "complete-inventory" }], missingSourceCapabilities: [] });
   vi.stubEnv("OSS_STT_PUBLICATION_SECRET_DIRECTORY", "/test-only-official-identity");
   Object.defineProperty(process, "stdin", { configurable: true, value: Readable.from([control.join("\n") + "\nsealed\n"]) });
-  vi.spyOn(process.stdout, "write").mockReturnValue(true);
+  const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
   const receipt = join(root, "pass.json");
   const args = [f.planPath, new URL("./fixtures/manifest.v1.json", import.meta.url).pathname,
   join(root, "retained"), join(root, "archive"), receipt];
-  return { args, receipt, journals, craig, writer };
+  return { args, receipt, journals, craig, writer, stdout };
 }
 it("independently collects all runtime sources before binding retained bytes and creating a distinct PASS", async () => {
   const { args, receipt } = await setup();
   expect(await runOssTrustedCollection(args)).toMatchObject({ kind: "oss-discord-stt-trusted-pass-v1", status: "passed" });
-  expect(mocks.deployment.mock.calls.map(([input]) => (input as { phase: string }).phase)).toEqual(["before", "after"]);
+  expect(mocks.deployment.mock.calls.map(([input]) => input.phase)).toEqual(["before", "after"]);
   expect(mocks.snapshot).toHaveBeenCalledTimes(6);
   expect(mocks.publication).toHaveBeenCalledTimes(6);
   expect(mocks.originals).toHaveBeenCalledTimes(3);
@@ -170,7 +170,7 @@ it.each(["substitution", "extra-hardlink", "final-symlink", "staging-symlink", "
     const { args, receipt, journals } = await setup();
     const publish = mocks.deployment.getMockImplementation()!;
     mocks.deployment.mockImplementation(async (input: { phase: string }) => {
-      const result: unknown = await publish(input);
+      const result = await publish(input);
       if (input.phase === "after") {
         const final = join(journals, "live-native.jsonl");
         const staging = join(journals, "live-native.staging.jsonl");
@@ -283,13 +283,13 @@ it.each(["growth", "truncation", "oversize", "hardlink", "symlink"])(
 
 it.each(["deployment", "custody", "mount", "retention"] as const)(
   "classifies post-third-settled %s failure without secrets or PASS", async (check) => {
-    const { args, receipt } = await setup();
+    const { args, receipt, stdout: stdoutSpy } = await setup();
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const deployment = mocks.deployment.getMockImplementation()!;
     mocks.deployment.mockImplementation(async (input: { phase: string }) => {
       if (input.phase !== "after") { return deployment(input); }
       if (check === "deployment") { throw new Error("Bearer synthetic-secret"); }
-      const after = await deployment(input) as { config: object };
+      const after = await deployment(input);
       if (check === "custody") { after.config = { injected: "synthetic-secret" }; }
       if (check === "mount") { mocks.docker.mockRejectedValue(new Error("mount synthetic-secret")); }
       if (check === "retention") {
@@ -301,7 +301,7 @@ it.each(["deployment", "custody", "mount", "retention"] as const)(
       "OSS native read-only collection failed; retain source artifacts");
     expect(stderr.mock.calls).toEqual([[JSON.stringify({ event: "oss-trusted-collection-failed",
       stage: "post-third-settled", check }) + "\n"]]);
-    const stdout = vi.mocked(process.stdout.write).mock.calls.map(([value]) => String(value)).join("");
+    const stdout = stdoutSpy.mock.calls.map(([value]) => String(value)).join("");
     expect(stdout.match(/"status":"settled"/gu)).toHaveLength(3);
     expect(stdout).not.toContain("awaiting-seal");
     expect(JSON.stringify(stderr.mock.calls) + stdout).not.toContain("synthetic-secret");

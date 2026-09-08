@@ -217,6 +217,8 @@ export function scheduleDurableLivePacketDrain(
   if (state.packetDrain !== null) { return state.packetDrain; }
   const ownership = state.packetRecovery;
   const active = (): boolean => state.packetRecovery === ownership && ownership !== null;
+  // Notifications can mutate this flag while page reads or recovery are awaited.
+  const drainRequested = (): boolean => state.packetDrainRequested;
   const drain = (async () => {
     do {
       state.packetDrainRequested = false;
@@ -225,16 +227,16 @@ export function scheduleDurableLivePacketDrain(
         const page = await dependencies.pendingLivePackets?.(state.meetingId, after);
         if (!active() || page === undefined || page.length === 0) { break; }
         await state.transcription.recover(page);
-        after = state.packetDrainRequested ? "" : livePacketIdentity(page[page.length - 1]!);
+        after = drainRequested() ? "" : livePacketIdentity(page[page.length - 1]!);
         state.packetDrainRequested = false;
       }
       // A notification during a read or drain may precede the cursor. Rescan
       // durable eligibility; accepted receipts and speaker fences exclude replay.
-    } while (active() && state.packetDrainRequested);
+    } while (active() && drainRequested());
   })().finally(() => {
     state.packetDrain = null;
     // Cover a wakeup queued between the last empty read and this settlement.
-    if (active() && state.packetDrainRequested) { void scheduleDurableLivePacketDrain(dependencies, state); }
+    if (active() && drainRequested()) { void scheduleDurableLivePacketDrain(dependencies, state); }
   });
   state.packetDrain = drain;
   void drain.catch((error: unknown) => {
