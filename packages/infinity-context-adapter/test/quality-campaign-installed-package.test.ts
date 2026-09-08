@@ -100,7 +100,7 @@ describe("packed production quality-campaign entrypoint", () => {
   it("binds release-only runtime metadata to each canonical attempt before answer bytes",
     async () => {
     const fixture = await createPackedPreflightFixture(await mkdtemp(join(tmpdir(),
-      "quality-canonical-attempts-")), installed.consumerRoot, true);
+      "quality-canonical-attempts-")), installed.consumerRoot, true, Infinity);
     const attempts = ([1, 2] as const).map((repetition) => attemptIdentity({ callKind: "answer",
       callOrdinal: 0, campaignRootSha256: fixture.mainRootSha256,
       questionDigestSha256: fixture.firstQuestion.questionDigestSha256,
@@ -118,6 +118,7 @@ describe("packed production quality-campaign entrypoint", () => {
     await expect(execute(process.execPath, ["--input-type=module", "--eval", script], {
       cwd: installed.consumerRoot, env: fixture.childEnvironment, timeout: 60_000,
     })).resolves.toMatchObject({ stderr: "", stdout: '["answered","answered"]' });
+    // Retrieval stays successful beyond the two controls, including both mismatched attempts.
     // Even an authorized topology cannot rehydrate a plan built under another actor profile.
     await fixture.replaceTopologyProfile("discord-infinity-actor-key.v1:other");
     const mismatchedScript = script.replace(JSON.stringify(fixture.canonicalExecution),
@@ -126,12 +127,19 @@ describe("packed production quality-campaign entrypoint", () => {
        .replace(JSON.stringify(bindings), JSON.stringify(bindings.map((binding) => ({
         ...binding, attemptId: `sqv4-${digest(`mismatched:${binding.attemptId}`)}`,
       }))))
-      .replace('status!=="answered"', 'status==="answered"');
+      .replace('status!=="answered"', 'status!=="failed"')
+      .replace("outcomes.map(({status})=>status)", "outcomes");
     const beforeMismatch = fixture.answerRequests().length;
-    await expect(execute(process.execPath, ["--input-type=module", "--eval", mismatchedScript], {
+    const mismatch = await execute(process.execPath, ["--input-type=module", "--eval", mismatchedScript], {
       cwd: installed.consumerRoot, env: fixture.childEnvironment, timeout: 60_000,
-    })).rejects.toMatchObject({ stderr: expect.stringContaining(
-      "retrieval external effect is unknown and terminal") });
+    });
+    expect(mismatch.stderr).toBe("");
+    expect(JSON.parse(mismatch.stdout)).toEqual(bindings.map(() => ({
+      citations: [], claims: [], rawRetrievalResponseSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      reason: "evidence_rehydration_failed", retrievalCandidates: [expect.objectContaining({
+        locatorId: fixture.selectedLocator })], selectedTurns: [], status: "failed",
+    })));
+    expect(fixture.retrievalRequests()).toBe(4);
     expect(fixture.answerRequests()).toHaveLength(beforeMismatch);
     expect(attempts[0]!.attemptId).not.toBe(attempts[1]!.attemptId);
     const requests = fixture.answerRequests();
@@ -363,7 +371,8 @@ async function createPackedAdmittedExecutionCorpus(input: PackedAdmittedExecutio
   return executionCorpusPath;
 }
 
-async function createPackedPreflightFixture(root: string, consumerRoot: string, forceAnswerRepair = false) {
+async function createPackedPreflightFixture(root: string, consumerRoot: string,
+  forceAnswerRepair = false, successfulRetrievalLimit = 2) {
   let observedProviderRequests = 0; let observedReleaseRequests = 0;
   let observedRetrievalRequests = 0;
   let release: unknown; let reviewEvidence: unknown = {};
@@ -387,7 +396,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string, 
     if (request.url === "/v1/context/retrieve") {
       observedRetrievalRequests += 1; request.resume();
       request.on("end", () => {
-        if (observedRetrievalRequests > 2) {response.destroy(); return;}
+        if (observedRetrievalRequests > successfulRetrievalLimit) {response.destroy(); return;}
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(retrievalSuccess));
       }); return;

@@ -51,7 +51,9 @@ describe("concrete HTTP production review evidence", () => {
           (config.canonicalExecution as Record<string, unknown>).actorKeyProfileId = actorKeyProfileId;
         }
       });
-      await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath)).rejects.toThrow();
+      await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath)).rejects.toThrow(
+        actorKeyProfileId === undefined ? "canonical execution connection configuration has an invalid shape" :
+          "canonical actor key profile is invalid");
       expect(fixture.fetchCalls()).toHaveLength(0);
     }
   });
