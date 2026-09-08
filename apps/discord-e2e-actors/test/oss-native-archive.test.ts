@@ -22,7 +22,7 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
       const database = f.files.get(run.databasePath)!.value as { snapshot: { transcript: object } };
       Object.assign(database.snapshot.transcript, { version: 1, recordingId: run.recordingId });
     }
-    f.plan.target.craigRevision = "37b86a958b567cb7fcff75946e94fe5e7ee38f42";
+    f.plan.target.craigRevision = "7776b698f6bec26eff52cd383f4e5a7f3f429f42";
     f.deployment.targetAfter.craigRevision = f.plan.target.craigRevision;
     await f.save();
     const write = async (path: string, value: unknown) => {

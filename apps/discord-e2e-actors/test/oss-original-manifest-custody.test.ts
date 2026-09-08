@@ -10,7 +10,7 @@ import { originalSchema } from "../src/oss-native-campaign-sources.js";
 // a62f880010cc14a76972309ba61b710eec96d49cb46f7cd8064bba029e989f2a.
 // Literal vector independently computed with UTF-8 JSON serialization.
 function fixture() {
-  const craigRevision = "37b86a958b567cb7fcff75946e94fe5e7ee38f42";
+  const craigRevision = "7776b698f6bec26eff52cd383f4e5a7f3f429f42";
   const files = ["data", "header1", "header2", "users", "info", "log"].map(kind => ({
     path: `recording.ogg.${kind}`, bytes: Buffer.from(kind === "log" ? "" : `Ж😀-${kind}`)
   }));
@@ -46,6 +46,9 @@ it("collects v2 after immediate acknowledged job/journal deletion, without openi
   const root = await mkdtemp(join(tmpdir(), "original-deleted-job-"));
   try {
     const f = fixture();
+    const pins = JSON.parse(await readFile(new URL("../../../infra/deployment/source-pins.json", import.meta.url), "utf8"));
+    expect(f.craigRevision).toBe(pins.craigMeetingGateway.revision);
+    expect(f.craigRevision).toBe(pins.craigMeetingGateway.gitRef);
     for (const file of f.files) { await writeFile(join(root, file.path), file.bytes); }
     for (const name of ["prepared-job.json", "lifecycle-journal.json"]) {
       await writeFile(join(root, name), "ephemeral"); await rm(join(root, name));
@@ -53,12 +56,36 @@ it("collects v2 after immediate acknowledged job/journal deletion, without openi
     verifyCraigManifestAuthority(f.manifestBytes, f.completion, f.database, f.object);
     const proof = originalSchema.parse(await collectCraigOriginals({ ...f, originalDirectory: root }));
     expect(proof.kind).toBe("oss-native-craig-originals-v2");
+    expect(proof.craigRevision).toBe("7776b698f6bec26eff52cd383f4e5a7f3f429f42");
+    expect(proof.files).toHaveLength(6);
     expect(proof.aggregateRecomputation).not.toHaveProperty("jobBase64");
     expect(proof.files.find(file => file.path.endsWith(".log"))?.size).toBe(0);
     await expect(readFile(join(root, "prepared-job.json"))).rejects.toThrow();
     expect(originalSchema.safeParse({ ...proof, kind: "oss-native-craig-originals-v1" }).success).toBe(false);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+it.each(["37b86a958b567cb7fcff75946e94fe5e7ee38f42", "a".repeat(40)])(
+  "rejects stale or arbitrary producer %s even with consistent manifest commitments", rejectedRevision => {
+    const f = fixture();
+    expect(() => verifyCraigManifestOriginalBytes({ ...f, craigRevision: rejectedRevision })).toThrow("Unpinned");
+    const completion = structuredClone(f.completion);
+    completion.identityProvenance.producerRevision = rejectedRevision;
+    expect(() => verifyCraigManifestAuthority(f.manifestBytes, completion, f.database, f.object)).toThrow();
+    f.manifest.identityProvenance.producerRevision = rejectedRevision;
+    f.manifestBytes = Buffer.from(JSON.stringify(f.manifest));
+    // Rebind every immutable commitment so failure proves revision admission,
+    // rather than a stale hash or byte size hiding a producer mismatch.
+    f.object.sizeBytes = f.manifestBytes.length;
+    f.object.checksumSha256 = sha256(f.manifestBytes);
+    for (const recording of [f.completion.recording, f.database.snapshot.recording]) {
+      recording.manifestSizeBytes = f.object.sizeBytes;
+      recording.manifestChecksumSha256 = f.object.checksumSha256;
+    }
+    expect(() => verifyCraigManifestOriginalBytes(f)).toThrow();
+    expect(() => verifyCraigManifestAuthority(f.manifestBytes, f.completion, f.database, f.object)).toThrow();
+    expect(() => verifyCraigManifestOriginalBytes({ ...f, craigRevision: rejectedRevision })).toThrow("Unpinned");
+  });
 
 it.each(["missing", "extra", "duplicate", "alias", "bytes", "revision", "producer-revision", "legacy", "unsealed", "capability", "inconsistent", "roster"])(
   "rejects original/provenance mutation %s", mutation => {

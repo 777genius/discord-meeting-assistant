@@ -5,16 +5,18 @@ import { z } from "zod";
 import { same, requireEvidence as check, sha256 } from "./oss-campaign-artifacts.js";
 import { digest, id, revision } from "./oss-campaign-profile.js";
 
+// Historical source-proof location; never used to select or admit a runtime producer.
 export const requiredCraigSourceRoot =
   "/mnt/volume_ams3_1784742570542/vtoss-astra-y-20260905/readonly/craig-37b86a958b567cb7fcff75946e94fe5e7ee38f42";
-const pinnedCraigRevision = "37b86a958b567cb7fcff75946e94fe5e7ee38f42";
+// Keep aligned with infra/deployment/source-pins.json (covered by custody regression).
+const pinnedCraigRevision = "7776b698f6bec26eff52cd383f4e5a7f3f429f42";
 const recordingId = z.string().regex(/^[0-9A-Za-z_-]{1,128}$/u);
 const manifestSource = z.object({
   recordingId,
   source: z.object({ kind: z.literal("craig-original-multitrack"), checksumSha256: digest }).strict(),
 });
 
-// Craig meetingIntegration.ts at the pinned revision, SHA-256
+// Historical Craig meetingIntegration.ts at 37b86a958b567cb7fcff75946e94fe5e7ee38f42, SHA-256
 // a62f880010cc14a76972309ba61b710eec96d49cb46f7cd8064bba029e989f2a.
 // create/parseOriginalRecordingJob requires all six files. Optional integrity
 // metadata before preparation is mandatory after authoritativeReady; no file is optional.

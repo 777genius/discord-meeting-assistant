@@ -14,7 +14,7 @@ function fixture() {
   }));
   const checksumSha256 = sha256(JSON.stringify(sourceFiles));
   return {
-    files, craigRevision: "37b86a958b567cb7fcff75946e94fe5e7ee38f42",
+    files, craigRevision: "7776b698f6bec26eff52cd383f4e5a7f3f429f42",
     manifestBytes: Buffer.from(JSON.stringify({ recordingId: "recording", source: { kind: "craig-original-multitrack", checksumSha256 } })),
     job: {
       recordingId: "recording", sourceFiles, lifecycleV3Snapshot: {
@@ -31,6 +31,10 @@ it("recomputes producer insertion-key order and normalizes job ordering (synthet
   f.job.sourceFiles.reverse(); f.files.reverse();
   expect(verifyCraigOriginalBytes(f).checksumSha256).toBe(expected);
 });
+it.each(["37b86a958b567cb7fcff75946e94fe5e7ee38f42", "a".repeat(40)])(
+  "rejects stale or arbitrary prepared-job producer %s", craigRevision => {
+    expect(() => verifyCraigOriginalBytes({ ...fixture(), craigRevision })).toThrow("Unpinned");
+  });
 for (const mutation of ["missing", "duplicate", "alias", "bytes", "size", "digest", "ready", "manifest", "identity", "unprepared", "revision"] as const) {
   it(`fails closed for ${mutation}`, () => {
     const f = fixture();

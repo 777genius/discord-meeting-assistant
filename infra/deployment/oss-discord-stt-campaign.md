@@ -39,11 +39,15 @@ visible text with URLs removed are retained: playback capabilities and signed CD
 URLs never enter the evidence. Two observations establish stability, not replay
 idempotency. **Never run `collect:e2e`: it invokes BullMQ replay.**
 
-The original aggregate is recomputed from the root-verified Craig producer
+The original aggregate algorithm was traced in the historical root-verified Craig producer
 `37b86a958b567cb7fcff75946e94fe5e7ee38f42`,
 `apps/bot/src/modules/recorder/meetingIntegration.ts`, source SHA-256
 `a62f880010cc14a76972309ba61b710eec96d49cb46f7cd8064bba029e989f2a`.
 Source context (`.craig-context`) is read-only and must never be staged.
+That historical source-proof location is not a runtime producer pin. Original
+collection and sealed manifest/completion provenance require exactly
+`7776b698f6bec26eff52cd383f4e5a7f3f429f42`, matching the current Craig pin in
+`source-pins.json`; old or arbitrary producer revisions remain rejected.
 Preparation and outbox parsing require exactly `data,header1,header2,users,info,log`;
 none is optional (the tolerant info clientId reader does not change preparation).
 Present zero-byte sidecars are retained and hashed; empty does not mean missing.
@@ -88,7 +92,7 @@ reviewed Platform integration revision, not the previous baseline.
 | Recorder | `1533877611258708230` |
 | Publication application | `1533224474609057793` |
 | Actor A / B applications | `1533227577286852649` / `1533228054724346087` |
-| Craig revision | `37b86a958b567cb7fcff75946e94fe5e7ee38f42` |
+| Craig revision | `7776b698f6bec26eff52cd383f4e5a7f3f429f42` |
 | OSS gateway revision | `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` |
 | Fixture manifest SHA-256 | `6ecf3ae9570937da48465bab1d87563c47c0e1b3c1ef46191c0143c3fad3ff79` |
 
@@ -153,7 +157,7 @@ services:
           "schemaVersion":3,
           "actorSemanticsVersion":1,
           "producerCapabilityId":"meeting.lifecycle.sealed-actor-roster.v1",
-          "producerRevision":"37b86a958b567cb7fcff75946e94fe5e7ee38f42",
+          "producerRevision":"7776b698f6bec26eff52cd383f4e5a7f3f429f42",
           "e2eTestOnly":true,
           "e2eSyntheticHumanActorIds":["1533227577286852649","1533228054724346087"]
         }}}}}
