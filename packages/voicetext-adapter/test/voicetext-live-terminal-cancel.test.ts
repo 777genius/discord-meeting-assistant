@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { setImmediate as nextTask } from "node:timers/promises";
 import { it } from "vitest";
 
 import { VoicetextAdapterError } from "../src/errors.js";
@@ -14,6 +13,7 @@ const packet = {
 };
 
 class CancellationSocket implements VoicetextWebSocketConnection {
+  public ignoreAbort = false;
   public readonly text: string[] = [];
   public binaryCalls = 0;
   public closeCalls = 0;
@@ -49,7 +49,7 @@ class CancellationSocket implements VoicetextWebSocketConnection {
     if (frame !== undefined) { return Promise.resolve(frame); }
     return new Promise((resolve, reject) => {
       const abort = () => { this.waiter = undefined; reject(signal.reason); };
-      signal.addEventListener("abort", abort, { once: true });
+      if (!this.ignoreAbort) { signal.addEventListener("abort", abort, { once: true }); }
       this.waiter = (received) => {
         signal.removeEventListener("abort", abort);
         resolve(received);
@@ -94,11 +94,14 @@ for (const code of ["PROVIDER_TERMINAL", "PROVIDER_OUTCOME_UNKNOWN", "PROVIDER_U
         socket.enqueue({ type: "error", code, message: "synthetic provider failure" });
         if (cancellation === "terminate") { session.terminate(); } else { controller.abort(); }
         assert.equal(events.some((event) => event.type === "received" && event.message.type === "error"), false);
-        await nextTask();
+        const immediate = session.finalize().catch((error: unknown) => error);
+        const concurrent = session.finalize().catch((error: unknown) => error);
+        const failure: unknown = await immediate;
+        assert.equal(await concurrent, failure);
         assert.equal(events.some((event) => event.type === "received" && event.message.type === "error"), true);
         socket.sendRelease.resolve();
         socket.enqueue({ type: "ack", seq: 1 }); // Late ACK cannot rescue the cancelled send.
-        const failure: unknown = await session.finalize().catch((error: unknown) => error);
+        await assert.rejects(session.finalize(), (error: unknown) => error === failure);
         assert.ok(failure instanceof VoicetextAdapterError);
         assert.equal(failure.code, code === "PROVIDER_TERMINAL" ? "live_provider_terminal" :
           code === "PROVIDER_OUTCOME_UNKNOWN" ? "live_acceptance_unknown" : "provider_error");
@@ -128,9 +131,56 @@ it("keeps ordinary idle cancellation successful without inventing provider evide
   const socket = new CancellationSocket();
   const session = await open(socket, []);
   session.terminate();
-  await nextTask();
   await session.finalize();
   await session.finalize();
   assert.equal(socket.terminateCalls, 1);
   assert.equal(socket.binaryCalls, 0);
 });
+
+for (const ignoreAbort of [false, true]) {
+  for (const phase of ["idle", "acknowledged", "pending-binary"] as const) {
+    it(`bounds clean ${phase} cancellation when receive ignores abort: ${ignoreAbort}`, async () => {
+      const socket = new CancellationSocket();
+      socket.ignoreAbort = ignoreAbort;
+      const events: OssSessionEvidenceEvent[] = [];
+      const session = await open(socket, events);
+      let outcome: Promise<unknown> | undefined;
+      if (phase !== "idle") {
+        const sent = session.sendPacket(packet);
+        outcome = sent.catch((error: unknown) => error);
+        await socket.sendStarted.promise;
+        if (phase === "acknowledged") {
+          socket.sendRelease.resolve();
+          socket.enqueue({ type: "ack", seq: 1 });
+          assert.equal(await sent, "accepted");
+        }
+      }
+      session.terminate();
+      const immediate = session.finalize();
+      const repeated = session.finalize();
+      // Neither a receive nor a binary send that ignores abort may hold this join.
+      await immediate;
+      await repeated;
+      await session.finalize();
+      if (phase === "pending-binary") {
+        socket.sendRelease.resolve();
+        socket.enqueue({ type: "ack", seq: 1 });
+        const failure = await outcome;
+        assert.ok(failure instanceof VoicetextAdapterError);
+        assert.equal(failure.code, "live_acceptance_unknown");
+        assert.equal(failure.gatewayCode, undefined);
+        await assert.rejects(session.finalize(), (error: unknown) => error === failure);
+      }
+      // A transport ignoring abort may resolve later; that is beyond cancellation.
+      socket.enqueue({ type: "error", code: "PROVIDER_TERMINAL", message: "too late" });
+      if (phase !== "pending-binary") { await session.finalize(); }
+      assert.equal(events.some((event) => event.type === "received" && event.message.type === "error"), false);
+      assert.equal(events.filter((event) => event.type === "audio_accepted").length,
+        phase === "acknowledged" ? 1 : 0);
+      assert.equal(socket.binaryCalls, phase === "idle" ? 0 : 1);
+      assert.equal(socket.text.length, 1);
+      assert.equal(socket.closeCalls, 0);
+      assert.equal(socket.terminateCalls, 1);
+    });
+  }
+}

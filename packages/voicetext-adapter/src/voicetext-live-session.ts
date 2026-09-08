@@ -22,7 +22,7 @@ import {
 } from "./protocol.js";
 import { VoicetextLiveTimeline } from "./voicetext-live-timeline.js";
 import { VoicetextLiveTranscriptEmitter } from "./voicetext-live-transcript-emitter.js";
-import type { VoicetextWebSocketConnection } from "./websocket-connector.js";
+import type { VoicetextInboundFrame, VoicetextWebSocketConnection } from "./websocket-connector.js";
 
 export class LiveSession implements VoicetextLiveSession {
   private readonly ackWaiters = new Map<number, LiveSessionDeferred<void>>();
@@ -169,9 +169,7 @@ export class LiveSession implements VoicetextLiveSession {
       return this.finalizePromise;
     }
     if (this.state === "closed") {
-      return this.terminalError === undefined
-        ? Promise.resolve()
-        : Promise.reject(this.terminalError);
+      return this.joinClosedReceive();
     }
     requireLiveSessionActive(this.state);
     if (this.sending) {
@@ -202,6 +200,28 @@ export class LiveSession implements VoicetextLiveSession {
     if (!this.transportClosed) {
       this.socket.terminate();
       this.transportClosed = true;
+    }
+  }
+
+  private async joinClosedReceive(): Promise<void> {
+    // Only callers join the pump; receive failure cleanup must never await itself.
+    await this.pump;
+    if (this.terminalError !== undefined) { throw this.terminalError; }
+  }
+
+  private async receiveFrame(): Promise<VoicetextInboundFrame> {
+    const signal = this.abortController.signal;
+    signal.throwIfAborted();
+    const cancelled = createLiveSessionDeferred<never>();
+    const abort = () => { cancelled.reject(signal.reason); };
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      // A receive fulfilled before cancellation wins and is fully processed before
+      // the pump settles. Otherwise abort bounds the join even if the transport
+      // ignores it. Frames delivered after that boundary are not received evidence.
+      return await Promise.race([this.socket.receive(signal), cancelled.promise]);
+    } finally {
+      signal.removeEventListener("abort", abort);
     }
   }
 
@@ -294,7 +314,7 @@ export class LiveSession implements VoicetextLiveSession {
   private async receiveLoop(): Promise<void> {
     try {
       while (this.state === "active" || this.state === "finalizing") {
-        const frame = await this.socket.receive(this.abortController.signal);
+        const frame = await this.receiveFrame();
         if (frame.type === "close") {
           this.evidence?.record({ type: "close", code: frame.code });
           this.transportClosed = true;
