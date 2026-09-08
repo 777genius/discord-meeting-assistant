@@ -121,10 +121,23 @@ export async function runOssTrustedCollection(args: readonly string[]) {
       });
       process.stdout.write(`${JSON.stringify({ status: "settled", runId: run.runId })}\n`);
     }
-    const after = await collectOssDeployment({ plan, phase: "after" });
-    check(same(before.services, after.services) && same(before.config, after.config), "Deployment changed during custody");
-    check(same(platformMounts, await mounts(platform)) && same(craigMounts, await mounts(craig)), "Runtime source mounts changed");
-    await put("deployment-after.json", after);
+    let afterCheck: "deployment" | "custody" | "mount" | "retention" = "deployment";
+    try {
+      const after = await collectOssDeployment({ plan, phase: "after" });
+      afterCheck = "custody";
+      check(same(before.services, after.services) && same(before.config, after.config), "Deployment changed during custody");
+      afterCheck = "mount";
+      check(same(platformMounts, await mounts(platform)) && same(craigMounts, await mounts(craig)), "Runtime source mounts changed");
+      afterCheck = "retention";
+      await put("deployment-after.json", after);
+    } catch {
+      // Closed identifiers only: command errors may contain credentials or paths.
+      try {
+        process.stderr.write(`${JSON.stringify({ event: "oss-trusted-collection-failed",
+          stage: "post-third-settled", check: afterCheck })}\n`);
+      } catch { /* Preserve the generic failure even if diagnostics are unavailable. */ }
+      throw new Error("OSS native read-only collection failed; retain source artifacts");
+    }
     process.stdout.write(`${JSON.stringify({ status: "awaiting-seal", campaignId: plan.campaignId })}\n`);
     const seal = await control.next();
     check(seal.done !== true && seal.value === "sealed", "Root must finish graceful journal sealing");

@@ -280,3 +280,32 @@ it.each(["growth", "truncation", "oversize", "hardlink", "symlink"])(
     expect(mocks.assemble).not.toHaveBeenCalled();
     await expect(readFile(receipt)).rejects.toThrow();
   });
+
+it.each(["deployment", "custody", "mount", "retention"] as const)(
+  "classifies post-third-settled %s failure without secrets or PASS", async (check) => {
+    const { args, receipt } = await setup();
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const deployment = mocks.deployment.getMockImplementation()!;
+    mocks.deployment.mockImplementation(async (input: { phase: string }) => {
+      if (input.phase !== "after") { return deployment(input); }
+      if (check === "deployment") { throw new Error("Bearer synthetic-secret"); }
+      const after = await deployment(input) as { config: object };
+      if (check === "custody") { after.config = { injected: "synthetic-secret" }; }
+      if (check === "mount") { mocks.docker.mockRejectedValue(new Error("mount synthetic-secret")); }
+      if (check === "retention") {
+        await writeFile(join(args[2]!, "deployment-after.json"), "synthetic-secret", { flag: "wx" });
+      }
+      return after;
+    });
+    await expect(runOssTrustedCollection(args)).rejects.toThrow(
+      "OSS native read-only collection failed; retain source artifacts");
+    expect(stderr.mock.calls).toEqual([[JSON.stringify({ event: "oss-trusted-collection-failed",
+      stage: "post-third-settled", check }) + "\n"]]);
+    const stdout = vi.mocked(process.stdout.write).mock.calls.map(([value]) => String(value)).join("");
+    expect(stdout.match(/"status":"settled"/gu)).toHaveLength(3);
+    expect(stdout).not.toContain("awaiting-seal");
+    expect(JSON.stringify(stderr.mock.calls) + stdout).not.toContain("synthetic-secret");
+    expect(mocks.assemble).not.toHaveBeenCalled();
+    expect(mocks.verify).not.toHaveBeenCalled();
+    await expect(readFile(receipt)).rejects.toThrow();
+  });

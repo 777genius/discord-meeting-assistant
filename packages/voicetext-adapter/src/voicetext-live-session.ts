@@ -24,6 +24,8 @@ import { VoicetextLiveTimeline } from "./voicetext-live-timeline.js";
 import { VoicetextLiveTranscriptEmitter } from "./voicetext-live-transcript-emitter.js";
 import type { VoicetextWebSocketConnection } from "./websocket-connector.js";
 
+type FailureStage = "finalize-send" | "finalize-wait" | "close-send" | "close-wait" | "receive" | "protocol-boundary";
+
 export class LiveSession implements VoicetextLiveSession {
   private readonly ackWaiters = new Map<number, LiveSessionDeferred<void>>();
   private readonly abortController = new AbortController();
@@ -32,6 +34,8 @@ export class LiveSession implements VoicetextLiveSession {
   private finalizeWaiter: LiveSessionDeferred<VoicetextFinalizeComplete> | undefined;
   private finalizePromise: Promise<void> | undefined;
   private finalizeResultReceived = false;
+  private finalizeStage: FailureStage = "finalize-send";
+  private failureStage: FailureStage | undefined;
   private closeState: "failed" | "idle" | "initiated" = "idle";
   private readonly closeWaiter = createLiveSessionDeferred<void>();
   private nextSequence = 0;
@@ -225,6 +229,7 @@ export class LiveSession implements VoicetextLiveSession {
       );
     } catch (error) {
       failure = error;
+      this.failureStage ??= this.finalizeStage;
     } finally {
       if (this.closeState === "idle" && !this.transportClosed) {
         await this.closeAfterFailure();
@@ -243,6 +248,12 @@ export class LiveSession implements VoicetextLiveSession {
     this.terminalError = failure;
     this.evidence?.record({ type: failure === undefined ? "success" : "failure" });
     if (failure !== undefined) {
+      // Separate operational diagnostics keep the strict native v1 journal unchanged.
+      // Never inspect or serialize an external error, identity, URL, or configuration.
+      try {
+        process.stderr.write(`${JSON.stringify({ event: "voicetext-live-finalization-failed",
+          stage: this.failureStage ?? this.finalizeStage, code: "terminal-boundary-unproven" })}\n`);
+      } catch { /* Diagnostics cannot alter terminal acceptance or cleanup. */ }
       throw asLiveSessionError(failure, "Voicetext live session finalization failed");
     }
   }
@@ -259,12 +270,14 @@ export class LiveSession implements VoicetextLiveSession {
     this.evidence?.record({ type: "finalize_send" });
     await this.socket.sendText(JSON.stringify({ type: "finalize" }), this.abortController.signal);
     this.evidence?.record({ type: "finalize_sent" });
+    this.finalizeStage = "finalize-wait";
     const result = await this.finalizeWaiter.promise;
     let terminalFailure: unknown;
     try {
       validateLiveSessionFinalizeStatus(result, this.nextSequence);
     } catch (error) {
       terminalFailure = error;
+      this.failureStage ??= "protocol-boundary";
     }
     await this.closeTransport();
     this.throwIfTerminalError();
@@ -276,7 +289,9 @@ export class LiveSession implements VoicetextLiveSession {
   private async closeTransport(): Promise<void> {
     // The ordered transport close proves terminal quiescence.
     this.closeState = "initiated";
+    this.finalizeStage = "close-send";
     await this.socket.sendText(JSON.stringify({ type: "close" }), this.abortController.signal);
+    this.finalizeStage = "close-wait";
     try {
       await Promise.all([
         this.socket.close(1_000, "finalized"),
@@ -301,9 +316,12 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   private async receiveLoop(): Promise<void> {
+    let stage: FailureStage = "receive";
     try {
       while (this.state === "active" || this.state === "finalizing") {
+        stage = "receive";
         const frame = await receiveLiveSessionFrame(this.socket, this.abortController.signal);
+        stage = "protocol-boundary";
         if (frame.type === "close") {
           this.evidence?.record({ type: "close", code: frame.code });
           this.transportClosed = true;
@@ -333,6 +351,7 @@ export class LiveSession implements VoicetextLiveSession {
         ));
       }
     } catch (error) {
+      if (this.state !== "closed") { this.failureStage ??= stage; }
       this.closeAfterReceiveFailure(error);
     }
   }

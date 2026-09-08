@@ -39,6 +39,32 @@ describe("VoiceText live finalize terminal evidence", () => {
     expect(events.some((event) => event.type === "success")).toBe(false);
   });
 
+  it.each(["close-send-failure", "receive-failure", "synchronous"] as const)(
+    "classifies flush then %s without leaking external diagnostics or retrying",
+    async (behavior) => {
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        const events: OssSessionEvidenceEvent[] = [];
+        const socket = new FinalizeSocket(behavior);
+        const session = await openSession(socket, 1000, { record: event => { events.push(event); } });
+        const failure: unknown = await session.finalize().catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(Error);
+        await expect(session.finalize()).rejects.toBe(failure);
+        await expect(session.sendPacket({ packetId: "pending", opus: new Uint8Array([1]),
+          durationSamples48Khz: 960, relativeTimeMs: 0 })).rejects.toBe(failure);
+        expect(socket.finalizeCalls).toBe(1);
+        expect(socket.terminated).toBe(true);
+        expect(events.some(event => event.type === "received" && event.message.type === "finalize_complete")).toBe(true);
+        expect(events.some(event => event.type === "success")).toBe(false);
+        expect(events.filter(event => event.type === "failure").length).toBeGreaterThan(0);
+        expect(stderr.mock.calls).toEqual([[JSON.stringify({ event: "voicetext-live-finalization-failed",
+          stage: behavior === "close-send-failure" ? "close-send" : behavior === "receive-failure" ? "receive" : "protocol-boundary",
+          code: "terminal-boundary-unproven" }) + "\n"]]);
+        expect(JSON.stringify([stderr.mock.calls, events])).not.toContain("synthetic-secret");
+      } finally { stderr.mockRestore(); }
+    },
+  );
+
   it("preserves saw_result beside every terminal status", () => {
     expect(parseServerMessage(
       '{"type":"finalize_complete","status":"flushed","saw_result":true}',
@@ -201,6 +227,8 @@ describe("VoiceText live finalize terminal evidence", () => {
 });
 
 type FinalizeBehavior =
+  | "close-send-failure"
+  | "receive-failure"
   | "PROVIDER_TERMINAL"
   | "PROVIDER_OUTCOME_UNKNOWN"
   | "application-close"
@@ -266,6 +294,9 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
       }
       return;
     }
+    if (message.type === "close" && this.behavior === "close-send-failure") {
+      throw new Error("wss://synthetic-secret@example.test?token=synthetic-secret");
+    }
     if (message.type === "close" && this.behavior === "application-close") {
       this.enqueueClose();
     }
@@ -281,6 +312,9 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
 
   public receive(signal: AbortSignal): Promise<VoicetextInboundFrame> {
     signal.throwIfAborted();
+    if (this.behavior === "receive-failure" && this.finalizeCalls > 0 && this.frames.length === 0) {
+      return Promise.reject(new Error("Bearer synthetic-secret"));
+    }
     const frame = this.frames.shift();
     if (frame !== undefined) {
       return Promise.resolve(frame);
