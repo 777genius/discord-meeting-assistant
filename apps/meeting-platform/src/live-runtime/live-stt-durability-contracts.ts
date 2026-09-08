@@ -1,7 +1,7 @@
 /** Consumer-owned boundary for durable admission of derived STT effects. */
 export type LiveFenceReason =
   | "admission-rejected" | "provider-terminal" | "acceptance-unknown" | "legacy-unknown";
-export interface LiveOwner { readonly recordingId: string; readonly epoch: number }
+interface LiveOwner { readonly recordingId: string; readonly epoch: number }
 export interface LiveSessionOwner {
   readonly owner: LiveOwner;
   readonly speakerId: string;
@@ -13,7 +13,7 @@ export type LiveOperation = OperationIdentity & (
   | { readonly kind: "finalize" }
   | { readonly kind: "send"; readonly packetId: string }
 );
-export type LiveCompletion =
+type LiveCompletion =
   | { readonly operation: LiveOperation; readonly outcome: "not-accepted" | LiveFenceReason }
   | { readonly operation: OperationIdentity & { readonly kind: "open" }; readonly outcome: "opened" }
   | { readonly operation: OperationIdentity & { readonly kind: "send"; readonly packetId: string }; readonly outcome: "accepted" }
