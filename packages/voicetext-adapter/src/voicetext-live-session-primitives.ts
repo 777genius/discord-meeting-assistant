@@ -66,6 +66,27 @@ export function requireLiveSessionActive(state: string): void {
   }
 }
 
+export function validateLiveSessionFinalizeBoundary(
+  state: string,
+  waiter: LiveSessionDeferred<VoicetextFinalizeComplete> | undefined,
+  resultReceived: boolean,
+): asserts waiter is LiveSessionDeferred<VoicetextFinalizeComplete> {
+  if (state !== "finalizing" || waiter === undefined) {
+    throw new VoicetextAdapterError(
+      "protocol_error",
+      "Voicetext sent finalize_complete outside live finalization",
+      false,
+    );
+  }
+  if (resultReceived) {
+    throw new VoicetextAdapterError(
+      "protocol_error",
+      "Voicetext sent duplicate live finalize terminal evidence",
+      false,
+    );
+  }
+}
+
 export function validateLiveSessionFinalizeStatus(
   result: VoicetextFinalizeComplete,
   nextSequence: number,

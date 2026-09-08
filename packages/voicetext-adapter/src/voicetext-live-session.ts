@@ -5,7 +5,7 @@ import { liveProviderError, VoicetextAdapterError } from "./errors.js";
 import {
   asLiveSessionError, createLiveSessionDeferred, rememberLiveSessionPacketId,
   receiveLiveSessionFrame, requireLiveSessionActive, validateLiveSessionFinalizeStatus,
-  validateLiveSessionPacket, withLiveSessionTimeout,
+  validateLiveSessionPacket, validateLiveSessionFinalizeBoundary, withLiveSessionTimeout,
   type LiveSessionDeferred,
 } from "./voicetext-live-session-primitives.js";
 import {
@@ -16,10 +16,7 @@ import {
   type VoicetextLivePacket,
   type VoicetextLiveSession,
 } from "./voicetext-live-transcription-configuration.js";
-import {
-  parseServerMessage,
-  type VoicetextFinalizeComplete,
-} from "./protocol.js";
+import { parseServerMessage, type VoicetextFinalizeComplete } from "./protocol.js";
 import { VoicetextLiveTimeline } from "./voicetext-live-timeline.js";
 import { VoicetextLiveTranscriptEmitter } from "./voicetext-live-transcript-emitter.js";
 import type { VoicetextWebSocketConnection } from "./websocket-connector.js";
@@ -380,20 +377,7 @@ export class LiveSession implements VoicetextLiveSession {
       return;
     }
     if (message.type === "finalize_complete") {
-      if (this.state !== "finalizing" || this.finalizeWaiter === undefined) {
-        throw new VoicetextAdapterError(
-          "protocol_error",
-          "Voicetext sent finalize_complete outside live finalization",
-          false,
-        );
-      }
-      if (this.finalizeResultReceived) {
-        throw new VoicetextAdapterError(
-          "protocol_error",
-          "Voicetext sent duplicate live finalize terminal evidence",
-          false,
-        );
-      }
+      validateLiveSessionFinalizeBoundary(this.state, this.finalizeWaiter, this.finalizeResultReceived);
       this.finalizeResultReceived = true;
       this.finalizeWaiter.resolve(message);
       return;
