@@ -15,6 +15,7 @@ import { ingestAuthoritativeTrack } from "./recording-ingress-authoritative.js";
 import { ingestLifecycleEvent } from "./recording-ingress-lifecycle.js";
 import { ingestPacketBatch } from "./recording-ingress-packet-ingest.js";
 import {
+  liveSttJournal,
   markLivePacketDelivered,
   pendingLivePackets,
   type DurableLiveVoicePacket,
@@ -63,6 +64,10 @@ export class DurableCraigRecordingIngress {
       throw new Error("completion receipt recording identity mismatch");
     }
     return receipt?.recording;
+  }
+
+  public get liveSttDurability(): import("./live-stt-journal-contracts.js").SttJournalPort {
+    return liveSttJournal(this.#runtime);
   }
 
   public pendingLivePackets(recordingId: string): Promise<readonly DurableLiveVoicePacket[]> {

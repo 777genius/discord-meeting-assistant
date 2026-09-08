@@ -4,6 +4,7 @@ import {
   LiveTranscriptionAcceptanceUnknown,
   LiveTranscriptionAdmissionRejected,
   LiveTranscriptionTerminalFailure,
+  LiveTranscriptionNotAccepted,
   type LiveTranscriptionPort,
 } from "../live-runtime/contracts.js";
 
@@ -17,6 +18,9 @@ function translate(error: unknown): never {
     }
     if (error.code === "live_acceptance_unknown") {
       throw new LiveTranscriptionAcceptanceUnknown();
+    }
+    if (error.code === "provider_error" && error.gatewayCode === "PROVIDER_UNAVAILABLE") {
+      throw new LiveTranscriptionNotAccepted();
     }
   }
   throw error;

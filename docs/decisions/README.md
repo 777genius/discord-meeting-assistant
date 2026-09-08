@@ -99,3 +99,15 @@ for disposable payload-free identity/offset metadata, recreated under runtime
 spool ownership. JSONL remains the sole durable receipt authority. Recovery
 streams records; short synchronous cache transactions never span filesystem
 I/O. SQLite closes before spool ownership is released.
+
+Durable live STT admission is owned by recording ingress in its existing delivery
+JSONL journal (`live-stt-journal.ts` and `live-stt-journal-contracts.ts`). Platform
+consumes a narrow port in `live-runtime/live-stt-durability-contracts.ts`; its
+attempt controller and composition mapper own provider ordering and translation.
+These files use the existing fail-closed adapter/live-runtime/composition roots,
+without a new package or dependency. Exclusive spool ownership serializes journal
+transitions. Fsynced intent precedes open, send and finalize; cold recovery fences
+unresolved effects and opened sessions lacking clean final output. Accepted
+receipts and close tombstones survive drained payloads and active cleanup. SQLite
+is disposable, bounded metadata only. Missing format markers disable legacy live
+admission while preserving authoritative recording and post-call recovery.

@@ -270,6 +270,8 @@ export class PlatformLiveMeetingRuntime {
   private initializeRecovery(state: ActiveLiveMeeting): Promise<void> {
     let initialization!: Promise<void>;
     initialization = (async () => {
+      const durability = await this.dependencies.liveSttDurability?.recoverRecording(state.meetingId);
+      if (durability !== undefined) { state.transcription.restoreDurability(durability); }
       const pending = await this.dependencies.pendingLivePackets?.(state.meetingId);
       if (state.packetRecovery === initialization && !state.finishing && pending !== undefined) {
         void state.transcription.recover(pending).catch((error: unknown) => {

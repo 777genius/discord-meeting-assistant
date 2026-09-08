@@ -44,6 +44,8 @@ export class LiveDeliveryIndex {
         generation INTEGER PRIMARY KEY, recording TEXT UNIQUE NOT NULL,
         stamp TEXT NOT NULL, remaining INTEGER NOT NULL, conflicting INTEGER NOT NULL
       );
+      CREATE TABLE stt (generation INTEGER NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+        PRIMARY KEY(generation,key)) WITHOUT ROWID;
       CREATE TABLE packets (
         generation INTEGER NOT NULL, packet TEXT NOT NULL COLLATE BINARY,
         offset INTEGER NOT NULL, length INTEGER NOT NULL, delivered INTEGER NOT NULL,
@@ -159,9 +161,29 @@ export class LiveDeliveryIndex {
     return rows.map((row) => ({ ...row, packet: JSON.parse(row.packet) as string }));
   }
 
+  public sttGet<T>(index: LiveGeneration, key: string): T | undefined {
+    this.#assertGeneration(index);
+    const row = this.#access(() => this.#db.prepare("SELECT value FROM stt WHERE generation=? AND key=?")
+      .get(index.generation, key) as { value: string } | undefined);
+    return row === undefined ? undefined : JSON.parse(row.value) as T;
+  }
+
+  public sttPut(index: LiveGeneration, key: string, value: unknown): void {
+    this.#assertGeneration(index);
+    this.#access(() => this.#db.prepare("INSERT INTO stt VALUES (?,?,?) ON CONFLICT(generation,key) DO UPDATE SET value=excluded.value")
+      .run(index.generation, key, JSON.stringify(value)));
+  }
+
+  public sttSpeakers(index: LiveGeneration, after: string): { key: string; value: string }[] {
+    this.#assertGeneration(index);
+    return this.#access(() => this.#db.prepare("SELECT key,value FROM stt WHERE generation=? AND key LIKE 'speaker:%' AND key>? ORDER BY key LIMIT 256")
+      .all(index.generation, after) as { key: string; value: string }[]);
+  }
+
   public async forget(index: LiveGeneration): Promise<void> {
     this.#assertGeneration(index);
     this.invalidate(index);
+    this.#access(() => this.#db.prepare("DELETE FROM stt WHERE generation=?").run(index.generation));
     let removed: number | bigint;
     do {
       removed = this.#access(() => this.#db.prepare(`DELETE FROM packets WHERE generation=? AND packet IN

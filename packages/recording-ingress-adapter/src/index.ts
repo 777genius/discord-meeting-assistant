@@ -34,3 +34,5 @@ export {
   type RecordingIdentityProvenance,
   type RecordingSourceIdentity,
 } from "./contracts.js";
+
+export type { SttJournalPort, SttCompletion, SttOperation, SttOwner, SttSession, SttFenceReason } from "./live-stt-journal-contracts.js";

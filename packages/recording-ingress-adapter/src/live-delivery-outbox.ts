@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, rm, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import { RecordingIngressError } from "./errors.js";
@@ -11,6 +11,8 @@ import {
 } from "./live-delivery-jsonl.js";
 import type { DecodedPacket } from "./recording-ingress-invariants.js";
 import type { RecordingIngressRuntime } from "./recording-ingress-runtime.js";
+import { applySttRecord, LiveSttJournal } from "./live-stt-journal.js";
+import type { SttRecordingState } from "./live-stt-journal-contracts.js";
 import { spoolToken } from "./spool.js";
 
 export type { DurableLiveVoicePacket } from "./live-delivery-jsonl.js";
@@ -20,6 +22,14 @@ async function applyRecord(
   db: LiveDeliveryIndex, index: LiveGeneration, handle: FileHandle,
   record: OutboxRecord, location: { offset: number; length: number },
 ): Promise<void> {
+  if (record.schemaVersion === 2) {
+    applySttRecord({ db, index, append: () => { throw new Error("replay cannot append"); } }, record);
+    if (record.type === "stt-outcome" && record.completion.outcome === "accepted") {
+      await applyRecord(db, index, handle, { schemaVersion: 1, type: "delivered",
+        packetId: record.completion.operation.packetId }, location);
+    }
+    return;
+  }
   const previous = db.get(index, record.packetId);
   if (record.type === "delivered") {
     if (previous !== undefined && previous.length > 0 && previous.delivered === 0) {
@@ -162,17 +172,15 @@ export async function markLivePacketDelivered(
   return runtime.withExclusiveSpoolOwnership(() => runtime.exclusive(recordingId, async () => {
     const index = await readIndex(runtime, recordingId);
     const db = await runtime.liveDeliveryIndex();
+    if (db.sttGet<SttRecordingState>(index, "recording")?.initialized === true) {
+      throw new RecordingIngressError("invalid-state", "new-format live delivery requires an accepted operation outcome");
+    }
     const row = db.get(index, packetId);
     if (row?.delivered === 1) { return "reused"; }
     if (row === undefined || row.length === 0) {
       throw new RecordingIngressError("invalid-input", "live packet identity is unknown");
     }
     await appendRecords(runtime, recordingId, [{ packetId, schemaVersion: 1, type: "delivered" }], index);
-    if (index.remaining === 0) {
-      db.invalidate(index);
-      await rm(outboxPath(runtime, recordingId), { force: true });
-      await db.forget(index);
-    }
     return "marked";
   }));
 }
@@ -251,4 +259,37 @@ function comparePackets(left: DurableLiveVoicePacket, right: DurableLiveVoicePac
     left.speakerId.localeCompare(right.speakerId) ||
     left.mediaTimestamp - right.mediaTimestamp ||
     left.sequenceNumber - right.sequenceNumber;
+}
+
+/** Called only in the verified new-recording creation critical section. */
+export async function initializeLiveStt(runtime: RecordingIngressRuntime, recordingId: string): Promise<void> {
+  const index = await readIndex(runtime, recordingId);
+  if (index.stamp !== "missing") {
+    throw new RecordingIngressError("conflicting-duplicate", "new recording already has live evidence");
+  }
+  await appendRecords(runtime, recordingId, [{ schemaVersion: 2, type: "stt-init", recordingId }], index);
+}
+
+const journals = new WeakMap<RecordingIngressRuntime, LiveSttJournal>();
+export function liveSttJournal(runtime: RecordingIngressRuntime): LiveSttJournal {
+  let journal = journals.get(runtime);
+  if (journal === undefined) {
+    journal = new LiveSttJournal((recordingId, work) => runtime.withExclusiveSpoolOwnership(() =>
+      runtime.exclusive(recordingId, async () => {
+        const index = await readIndex(runtime, recordingId);
+        const db = await runtime.liveDeliveryIndex();
+        const active = await runtime.spool.readRecording(recordingId);
+        const terminal = active === undefined
+          ? await runtime.spool.readCompleted(recordingId) ?? await runtime.spool.readAborted(recordingId)
+          : active.status === "active" ? undefined : active;
+        const endedAt = terminal?.events.find((event) => event.type === "meeting.ended" || event.type === "meeting.aborted")?.occurredAt;
+        if (endedAt !== undefined && db.sttGet<SttRecordingState>(index, "recording")?.endedAtMs === undefined) {
+          await appendRecords(runtime, recordingId, [{ schemaVersion: 2, type: "stt-close", recordingId,
+            endedAtMs: Date.parse(endedAt) }], index);
+        }
+        return work({ db, index, append: (record) => appendRecords(runtime, recordingId, [record], index) });
+      })));
+    journals.set(runtime, journal);
+  }
+  return journal;
 }

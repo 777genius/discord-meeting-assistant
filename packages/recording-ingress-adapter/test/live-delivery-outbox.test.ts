@@ -101,7 +101,7 @@ it("drains 1612 packets without historical parses, retaining each durable receip
   expect(vi.mocked(fs.readFile).mock.calls.length - reads).toBe(0);
   expect(parse).not.toHaveBeenCalled();
   expect(effects.syncs - syncs).toBe(1612);
-  await expect(fs.stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await fs.stat(path)).size).toBeGreaterThan(0);
 }, 30_000);
 
 it("updates interleaved speaker appends and duplicate receipts without rescanning", async () => {
@@ -167,18 +167,17 @@ it("retains acceleration beyond the former byte budget", async () => {
 });
 
 
-it("replays a retained uncertain receipt and preserves failed-compaction semantics", async () => {
+it("retains all receipts after draining without attempting evidence compaction", async () => {
   const { runtime, path } = await fixture();
   await appendPendingLivePackets(runtime, [packet(0), packet(1)]);
   await markLivePacketDelivered(runtime, identity(0));
-  vi.mocked(fs.rm).mockRejectedValueOnce(new Error("synthetic cleanup failure"));
-  await expect(markLivePacketDelivered(runtime, identity(1))).rejects.toThrow("synthetic cleanup failure");
+  expect(await markLivePacketDelivered(runtime, identity(1))).toBe("marked");
   expect(await markLivePacketDelivered(runtime, identity(1))).toBe("reused");
   expect(await pendingLivePackets(runtime, "r")).toEqual([]);
   expect((await fs.readFile(path, "utf8")).trim().split("\n")).toHaveLength(4);
   await appendPendingLivePackets(runtime, [packet(2)]);
   expect(await markLivePacketDelivered(runtime, identity(2))).toBe("marked");
-  await expect(fs.stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await fs.stat(path)).size).toBeGreaterThan(0);
 });
 
 it("retains acceleration beyond the former identity budget", async () => {
@@ -260,9 +259,9 @@ it("recovers delivered-before-pending, exact duplicates, isolation and readmissi
   expect((await pendingLivePackets(runtime, "r"))[0]?.payloadBase64).toBe("AQ==");
   await expect(markLivePacketDelivered(runtime, "r:absent")).rejects.toMatchObject({ failure: "invalid-input" });
   expect(await markLivePacketDelivered(runtime, identity(1))).toBe("marked");
-  await expect(markLivePacketDelivered(runtime, identity(1))).rejects.toMatchObject({ failure: "invalid-input" });
+  expect(await markLivePacketDelivered(runtime, identity(1))).toBe("reused");
   await appendPendingLivePackets(runtime, [packet(1)]);
-  expect(await markLivePacketDelivered(runtime, identity(1))).toBe("marked");
+  expect(await markLivePacketDelivered(runtime, identity(1))).toBe("reused");
 });
 
 it.each(["delete", "corrupt"])("recreates a %s cache from durable evidence", async (fault) => {
@@ -578,5 +577,5 @@ it.each([
   expect(await markLivePacketDelivered(runtime, identity(1))).toBe("marked");
   expect((await pendingLivePackets(runtime, "r")).map((row) => row.packetId)).toEqual([identity(2)]);
   expect(await markLivePacketDelivered(runtime, identity(2))).toBe("marked");
-  await expect(fs.stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await fs.stat(path)).size).toBeGreaterThan(0);
 });

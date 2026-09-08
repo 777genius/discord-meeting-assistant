@@ -1,3 +1,5 @@
+import type { LiveSttDurabilityPort } from "./live-stt-durability-contracts.js";
+export * from "./live-stt-durability-contracts.js";
 import type { LiveConversationConfiguration } from "./conversation-contracts.js";
 
 export type {
@@ -349,6 +351,7 @@ export interface LiveMeetingRuntimeDependencies {
     synchronizeMeeting(meetingId: string): Promise<void>;
   };
   readonly logger: LiveRuntimeLogger;
+  readonly liveSttDurability?: LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
   readonly pendingLivePackets?: (recordingId: string) => Promise<readonly LiveVoicePacket[]>;
   readonly packetFlowControl?: LivePacketFlowControl;

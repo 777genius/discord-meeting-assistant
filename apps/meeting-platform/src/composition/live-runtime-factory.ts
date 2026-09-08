@@ -105,6 +105,7 @@ export function createPlatformLiveMeetingRuntime(input: {
   readonly conversation?: LiveConversationConfiguration;
   readonly finalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly logger: LiveRuntimeLogger;
+  readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
   readonly pendingLivePackets?: (recordingId: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly meetings: PostgresLiveMeetingRepository;
@@ -130,6 +131,7 @@ export function createPlatformLiveMeetingRuntime(input: {
       ? {}
       : { finalizedMemory: input.finalizedMemory }),
     logger: input.logger,
+    ...(input.liveSttDurability === undefined ? {} : { liveSttDurability: input.liveSttDurability }),
     ...(input.markLivePacketDelivered === undefined ? {} : { markLivePacketDelivered: input.markLivePacketDelivered }),
     ...(input.pendingLivePackets === undefined ? {} : { pendingLivePackets: input.pendingLivePackets }),
     packetFlowControl: input.packetFlowControl,

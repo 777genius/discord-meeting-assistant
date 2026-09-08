@@ -104,6 +104,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     clock: input.clock,
     isMeetingFinishing: () => state.finishing,
     logger: input.dependencies.logger,
+    ...(input.dependencies.liveSttDurability === undefined ? {} : { liveSttDurability: input.dependencies.liveSttDurability }),
     ...(input.dependencies.markLivePacketDelivered === undefined ? {} : {
       markLivePacketDelivered: input.dependencies.markLivePacketDelivered,
     }),

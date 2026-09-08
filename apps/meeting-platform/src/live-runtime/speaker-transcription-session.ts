@@ -1,3 +1,6 @@
+import { LiveSttAttemptController, awaitLiveCancellation } from "./live-stt-attempt-controller.js";
+import { LiveTranscriptionNotAccepted } from "./contracts.js";
+import type { LiveSttDurabilityPort } from "./contracts.js";
 import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure, LiveTranscriptionAdmissionRejected } from "./contracts.js";
 import { superviseLiveWork, LiveSessionAdmission, GlobalPacketFlowControl, SourceTimelinePacer, SpeakerPacketFlowControl } from "./live-packet-flow-control.js";
 import type { LivePacketInspector, LiveRuntimeClock, LiveRuntimeLogger, LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent, LiveTranscriptionPort, LiveVoicePacket } from "./contracts.js";
@@ -15,6 +18,7 @@ export interface SpeakerTranscriptionSessionDependencies {
   readonly isMeetingFinishing: () => boolean;
   readonly ledger: LivePacketDeliveryLedger;
   readonly logger: LiveRuntimeLogger;
+  readonly liveSttDurability?: LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
   readonly maximumQueuedPackets: number;
   readonly meetingId: string;
@@ -54,6 +58,7 @@ export class SpeakerTranscriptionSession {
   private lastRelativeTimeMs: number | null = null;
   private readonly packetFlow: SpeakerPacketFlowControl;
   private readonly pacer: SourceTimelinePacer;
+  private readonly durableAttempts: LiveSttAttemptController | undefined;
   private readonly providerSession: SpeakerTranscriptionProviderSession;
 
   public constructor(private readonly dependencies: SpeakerTranscriptionSessionDependencies) {
@@ -62,12 +67,16 @@ export class SpeakerTranscriptionSession {
       dependencies.maximumQueuedPackets, dependencies.clock, dependencies.timer,
     );
     this.pacer = new SourceTimelinePacer(dependencies.clock, dependencies.timer);
+    this.durableAttempts = dependencies.liveSttDurability === undefined ? undefined : new LiveSttAttemptController({
+      durability: dependencies.liveSttDurability, onFailure: (error) => this.latchFailure(error),
+      signal: this.packetFlow.signal, transcriber: dependencies.transcriber,
+    });
     this.providerSession = new SpeakerTranscriptionProviderSession({
       logger: dependencies.logger, meetingId: dependencies.meetingId,
       onFailure: (error) => this.latchFailure(error),
       onTranscript: (event) => { if (!this.isDeliveryCancelled()) { dependencies.onTranscript(event); } },
       sessionAdmission: dependencies.sessionAdmission,
-      speakerId: dependencies.speakerId, transcriber: dependencies.transcriber,
+      speakerId: dependencies.speakerId, transcriber: this.durableAttempts ?? dependencies.transcriber,
     });
     // One permanent fence cancels reservations and openings in every generation.
     this.admissionRejection.signal.addEventListener("abort", this.onAdmissionRejected, { once: true });
@@ -140,16 +149,8 @@ export class SpeakerTranscriptionSession {
     this.providerSession.abortOpening(); this.providerSession.terminate();
   }
 
-  private async untilCancelled(work: Promise<void>): Promise<void> {
-    const signal = this.packetFlow.signal;
-    let onAbort!: () => void;
-    const cancelled = new Promise<void>((resolve) => {
-      onAbort = resolve;
-      signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) { resolve(); }
-    });
-    try { await Promise.race([work, cancelled]); }
-    finally { signal.removeEventListener("abort", onAbort); }
+  private untilCancelled(work: Promise<void>): Promise<void> {
+    return awaitLiveCancellation(work, this.packetFlow.signal);
   }
 
   private isAdmissionClosed(): boolean { return this.admissionClosed || this.isAdmissionRejected(); }
@@ -221,6 +222,7 @@ export class SpeakerTranscriptionSession {
     if (this.providerFinalization !== null) { await this.providerFinalization; }
     await this.supervise(this.chain, Math.max(this.deliveryBudgetMs, this.dependencies.packetBackpressureTimeoutMs), true);
     if (!this.isDeliveryCancelled()) { await this.finalize("Derived live speaker finalize failed"); }
+    await this.durableAttempts?.settle();
     if (this.pendingReceipt) { throw new Error("Live packet durable receipt is still pending"); }
     if (this.providerSendPending) { throw new LiveTranscriptionAcceptanceUnknown(); }
   }
@@ -307,6 +309,10 @@ export class SpeakerTranscriptionSession {
       } catch (error) {
         this.providerSendPending = false;
         if (this.latchFailure(error)) { return; }
+        if (!(error instanceof LiveTranscriptionNotAccepted)) {
+          this.latchFailure(new LiveTranscriptionAcceptanceUnknown());
+          return;
+        }
         this.providerSession.terminate();
         if (this.isDeliveryCancelled()) { return; }
         if (attempt === maximumLivePacketDeliveryAttempts) {
@@ -357,6 +363,10 @@ export class SpeakerTranscriptionSession {
     sendStartedAtMs: number,
   ): Promise<void> {
     this.pacer.recordPacketSent(input.earliestPacketAtMs, input.durationSamples48Khz, sendStartedAtMs);
+    this.pendingReceipt = true;
+    try { await this.dependencies.markLivePacketDelivered?.(input.packetId); }
+    catch (error) { this.latchFailure(new LiveTranscriptionAcceptanceUnknown()); throw error; }
+    finally { this.pendingReceipt = false; }
     const recovered = this.dependencies.ledger.markDelivered(input.packetId);
     this.lastRelativeTimeMs = Math.max(this.lastRelativeTimeMs ?? input.packet.relativeTimeMs, input.packet.relativeTimeMs);
     if (recovered) {
@@ -366,8 +376,6 @@ export class SpeakerTranscriptionSession {
       this.backpressureDegraded = false;
       this.dependencies.logger.info("Derived live transcription recovered from backpressure", this.logFields());
     }
-    this.pendingReceipt = true;
-    try { await this.dependencies.markLivePacketDelivered?.(input.packetId); } finally { this.pendingReceipt = false; }
   }
 
   private isSuppressed(packet: LiveVoicePacket, packetId?: string): boolean {

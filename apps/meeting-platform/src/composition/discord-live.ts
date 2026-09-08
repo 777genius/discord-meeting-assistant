@@ -98,6 +98,7 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly groundedAnswerUseCase?: GroundedMeetingAnswer;
   readonly historicalMemory?: PlatformHistoricalMemoryRuntime;
   readonly logger: Logger;
+  readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
   readonly pendingLivePackets?: (recordingId: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
@@ -169,6 +170,7 @@ export async function createPlatformDiscordLiveComposition(input: {
       : { greetingCues: conversation.greetingCues }),
     isPlaybackReady: (recordingId) => craigPlaybackGateway.hasSession(recordingId),
     logger: input.logger,
+    ...(input.liveSttDurability === undefined ? {} : { liveSttDurability: input.liveSttDurability }),
     ...(input.markLivePacketDelivered === undefined ? {} : { markLivePacketDelivered: input.markLivePacketDelivered }),
     ...(input.pendingLivePackets === undefined ? {} : { pendingLivePackets: input.pendingLivePackets }),
     ...(input.liveFinalizedMemory === undefined
@@ -334,6 +336,7 @@ function createLiveRuntime(input: {
   readonly greetingCues?: FileParticipantGreetingCueRegistry;
   readonly isPlaybackReady: (recordingId: string) => boolean;
   readonly logger: Logger;
+  readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
   readonly pendingLivePackets?: (recordingId: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
@@ -369,6 +372,7 @@ function createLiveRuntime(input: {
       ? {}
       : { finalizedMemory: input.liveFinalizedMemory }),
     logger: input.logger,
+    ...(input.liveSttDurability === undefined ? {} : { liveSttDurability: input.liveSttDurability }),
     ...(input.markLivePacketDelivered === undefined ? {} : { markLivePacketDelivered: input.markLivePacketDelivered }),
     ...(input.pendingLivePackets === undefined ? {} : { pendingLivePackets: input.pendingLivePackets }),
     meetings: input.meetings,

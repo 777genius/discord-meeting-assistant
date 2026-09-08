@@ -1,6 +1,8 @@
 import { constants } from "node:fs";
 import { lstat, open, type FileHandle } from "node:fs/promises";
 
+import type { SttRecord } from "./live-stt-journal-contracts.js";
+
 import { RecordingIngressError } from "./errors.js";
 
 export interface DurableLiveVoicePacket {
@@ -25,7 +27,7 @@ interface DeliveredRecord {
   readonly type: "delivered";
 }
 
-export type OutboxRecord = PendingRecord | DeliveredRecord;
+export type OutboxRecord = PendingRecord | DeliveredRecord | SttRecord;
 
 export function durableLivePacketIdentity(packet: {
   readonly mediaTimestamp: number;
@@ -56,6 +58,11 @@ function parseRecord(line: string): OutboxRecord {
     throw new RecordingIngressError("corrupt-spool", "live outbox record is invalid");
   }
   const record = value as Record<string, unknown>;
+  if (record.schemaVersion === 2 && typeof record.recordingId === "string" &&
+      ["stt-init", "stt-epoch", "stt-intent", "stt-outcome", "stt-fence", "stt-close"].includes(String(record.type))) {
+    // Transition replay validates every identity and outcome before publishing cache state.
+    return record as unknown as SttRecord;
+  }
   if (
     record.schemaVersion !== 1 ||
     typeof record.packetId !== "string" ||

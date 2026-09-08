@@ -1,7 +1,7 @@
 import { AppendLiveTranscriptTurn, FinishLiveMeeting, RefreshLiveMeeting, StartLiveMeeting } from "@discord-meeting/meeting-core/live-meeting";
 import { afterEach, expect, it, vi } from "vitest";
 import { PlatformLiveMeetingRuntime } from "../../src/live-meeting-runtime.js";
-import { LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown, type LivePacketFlowControl, type LiveVoicePacket, type LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
+import { LiveTranscriptionNotAccepted, LiveTranscriptionTerminalFailure, LiveTranscriptionAcceptanceUnknown, type LivePacketFlowControl, type LiveVoicePacket, type LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
 import { livePacketIdentity } from "../../src/live-runtime/packet-delivery-ledger.js";
 import { ended, logger, MemoryLiveMeetingRepository, packets, ProjectionStub, started, SummaryStub } from "./live-runtime-fixtures.js";
 
@@ -24,7 +24,7 @@ function fixture(
       sendPacket: async (packet) => {
         sends.push(packet.packetId);
         if (sends.length === 1) { await firstSend; }
-        if (packet.packetId === failingPacketId) { throw new Error("synthetic send failure"); }
+        if (packet.packetId === failingPacketId) { throw new LiveTranscriptionNotAccepted(); }
         return "accepted";
       },
     }),

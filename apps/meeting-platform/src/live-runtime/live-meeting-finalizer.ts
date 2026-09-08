@@ -61,6 +61,7 @@ export class LiveMeetingFinalizer {
     }
     let finishPromise!: Promise<void>;
     finishPromise = (async () => {
+      await this.closeAdmission(recordingId, endedAtMs);
       const result = await this.dependencies.runtime.finishMeeting.execute(
         recordingId,
         endedAtMs,
@@ -81,7 +82,8 @@ export class LiveMeetingFinalizer {
     await finishPromise;
   }
 
-  public beginFinish(state: ActiveLiveMeeting, endedAtMs: number): Promise<void> {
+  public async beginFinish(state: ActiveLiveMeeting, endedAtMs: number): Promise<void> {
+    await this.closeAdmission(state.meetingId, endedAtMs);
     if (state.terminalCommitted) {
       return Promise.resolve();
     }
@@ -148,6 +150,13 @@ export class LiveMeetingFinalizer {
       await this.dependencies.refreshProjection(state, endedAtMs);
     });
     await state.domainChain;
+  }
+
+  private async closeAdmission(recordingId: string, endedAtMs: number): Promise<void> {
+    const durability = this.dependencies.runtime.liveSttDurability;
+    if (durability === undefined) { return; }
+    const recovered = await durability.recoverRecording(recordingId);
+    await durability.closeRecording(recovered.owner, endedAtMs);
   }
 
   private terminalEndTime(recordingId: string, proposedEndedAtMs: number): number {

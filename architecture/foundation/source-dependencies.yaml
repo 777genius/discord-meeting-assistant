@@ -446,6 +446,7 @@ boundaries:
         - node:crypto
         - node:url
       runtimeReferences: []
+  # Durable STT journal/contracts are private recording-ingress-owned source.
   - id: adapters.recording-ingress
     roots:
       - packages/recording-ingress-adapter/src
@@ -730,6 +731,7 @@ boundaries:
         - node:http
         - node:net
       runtimeReferences: []
+  # Consumer STT durability contracts and attempt orchestration stay in this root.
   - id: apps.meeting-platform.live-runtime
     roots:
       - apps/meeting-platform/src/live-runtime

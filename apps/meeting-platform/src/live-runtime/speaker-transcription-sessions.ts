@@ -1,4 +1,5 @@
-import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure } from "./contracts.js";
+import type { LiveSttDurabilityPort } from "./contracts.js";
+import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionAdmissionRejected, LiveTranscriptionTerminalFailure, type LiveRecovery } from "./contracts.js";
 import type {
   GlobalPacketFlowControl,
   LiveSessionAdmission,
@@ -21,6 +22,7 @@ export interface SpeakerTranscriptionSessionsDependencies {
   readonly clock: LiveRuntimeClock;
   readonly isMeetingFinishing: () => boolean;
   readonly logger: LiveRuntimeLogger;
+  readonly liveSttDurability?: LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
   readonly maximumQueuedPackets: number;
   readonly meetingId: string;
@@ -65,6 +67,24 @@ export class SpeakerTranscriptionSessions {
     await Promise.all([...groupPacketsBySpeaker(packets)].map(([speakerId, speakerPackets]) =>
       this.speaker(speakerId).recover(speakerPackets),
     ));
+  }
+
+  public restoreDurability(recovery: LiveRecovery): void {
+    for (const fence of recovery.fences) {
+      if (this.lifecycleFences.get(fence.speakerId)?.signal.aborted === true) { continue; }
+      const cancellation = this.lifecycleFences.get(fence.speakerId) ?? new AbortController();
+      this.lifecycleFences.set(fence.speakerId, cancellation);
+      cancellation.abort(fence.reason === "admission-rejected" ? new LiveTranscriptionAdmissionRejected() :
+        fence.reason === "provider-terminal" ? new LiveTranscriptionTerminalFailure() : new LiveTranscriptionAcceptanceUnknown());
+      this.dependencies.logger.warn("Derived live transcription degraded after durable recovery", {
+        meetingId: this.dependencies.meetingId, speakerId: fence.speakerId, reason: fence.reason,
+      });
+    }
+    if (recovery.legacy) {
+      this.dependencies.logger.warn("Derived live transcription degraded: legacy ownership is unknown", {
+        meetingId: this.dependencies.meetingId,
+      });
+    }
   }
 
   public cancelRecovery(): boolean {

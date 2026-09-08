@@ -1,3 +1,4 @@
+import { mapLiveSttDurability } from "./live-stt-durability-mapper.js";
 import {
   createJsonLogger,
   flushLoggers,
@@ -248,9 +249,7 @@ async function createPlatformKnowledgeComposition(input: {
     ...(groundedAnswerUseCase === undefined ? {} : { groundedAnswerUseCase }),
     ...(historicalMemory === undefined ? {} : { historicalMemory }),
     logger,
-    markLivePacketDelivered: async (packetId) => {
-      await core.recordings.markLivePacketDelivered(packetId);
-    },
+    liveSttDurability: mapLiveSttDurability(core.recordings.liveSttDurability),
     pendingLivePackets: async (recordingId) => {
       const packets = await core.recordings.pendingLivePackets(recordingId);
       return packets.map((packet) => ({
