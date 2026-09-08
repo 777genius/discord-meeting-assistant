@@ -4,7 +4,7 @@ import { SpeakerTranscriptionSession } from "../../src/live-runtime/speaker-tran
 import { GlobalPacketFlowControl, LiveSessionAdmission } from "../../src/live-runtime/live-packet-flow-control.js";
 import { livePacketIdentity, LivePacketDeliveryLedger } from "../../src/live-runtime/packet-delivery-ledger.js";
 import { systemLiveRuntimeClock, systemLiveRuntimeTimer } from "../../src/live-runtime/runtime-clock.js";
-import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure, type LiveTranscriptionEvent, type LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
+import { LiveTranscriptionAcceptanceUnknown, LiveTranscriptionTerminalFailure, type LiveOperation, type LiveSttDurabilityPort, type LiveTranscriptionEvent, type LiveTranscriptionPort } from "../../src/live-runtime/contracts.js";
 import { logger, packets } from "./live-runtime-fixtures.js";
 
 afterEach(() => vi.useRealTimers());
@@ -475,5 +475,92 @@ it.each([false, true])("durable reserved admission survives finish and stalled=%
   }
   expect(await packetAdmission.reserve(2, 500, new AbortController().signal)).toBe(true);
   packetAdmission.release(2);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(["healthy", "cancelled", "timed out"] as const)("owns overlapping watchdogs for 512 queued + 398 reserved packets when %s", async (mode) => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const rejection = new AbortController();
+  const ack = Promise.withResolvers<void>();
+  const finalize = vi.fn(async () => {}); const terminate = vi.fn();
+  const sent: string[] = []; const accepted: string[] = []; const pending = new Set<string>();
+  const sendPacket = vi.fn(async (packet: { packetId: string }) => {
+    sent.push(packet.packetId);
+    if (sent.length === 1) { await ack.promise; }
+    return "accepted" as const;
+  });
+  let operation = 0;
+  const grant = (effect: Omit<LiveOperation, "operation">) =>
+    ({ status: "granted" as const, operation: { ...effect, operation: ++operation } as LiveOperation });
+  const fence = vi.fn(async () => {});
+  const durability: LiveSttDurabilityPort = {
+    recoverRecording: async (recordingId) => ({ owner: { recordingId, epoch: 1 }, closed: false, legacy: false, fences: [] }),
+    beginOpen: async (owner, speakerId) => grant({ session: { owner, speakerId, generation: 1 }, kind: "open" }),
+    beginSend: async (session, packetId) => grant({ session, packetId, kind: "send" } as LiveOperation),
+    beginFinalize: async (session) => grant({ session, kind: "finalize" }),
+    complete: async (completion) => { if (completion.outcome === "accepted") { accepted.push(completion.operation.packetId); pending.delete(completion.operation.packetId); } },
+    fence, closeRecording: async () => {},
+  };
+  const delivered = vi.fn(async (_id: string) => {});
+  const packetAdmission = new GlobalPacketFlowControl(1024);
+  const sessionAdmission = new LiveSessionAdmission(1);
+  const speaker = new SpeakerTranscriptionSession({
+    admissionRejection: rejection, clock: systemLiveRuntimeClock, timer: systemLiveRuntimeTimer,
+    isMeetingFinishing: () => false, ledger: new LivePacketDeliveryLedger(), logger,
+    maximumQueuedPackets: 512, meetingId: "meeting", onTranscript: () => {},
+    packetAdmission, packetBackpressureTimeoutMs: 100,
+    packetInspector: { durationSamples48Khz: () => 960 }, sessionAdmission,
+    speakerId: "speaker", speakerIdleFinalizeMs: 1000, startedAtMs: 0,
+    liveSttDurability: durability, markLivePacketDelivered: delivered,
+    transcriber: { openSession: async () => ({ finalize, terminate, sendPacket }) },
+  });
+  const batch = Array.from({ length: 910 }, (_, index) => ({
+    ...packets().packets[0]!, relativeTimeMs: index * 20, sequenceNumber: index, mediaTimestamp: index * 960,
+  }));
+  for (const packet of batch) { pending.add(livePacketIdentity(packet)); }
+  await speaker.accept(batch.slice(0, 512), 100);
+  const admission = speaker.accept(batch.slice(512), 100);
+  await vi.advanceTimersByTimeAsync(100);
+  const finished = speaker.finish().catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(sendPacket).toHaveBeenCalledTimes(1);
+  // Both supervisors own a timer until either cancellation or the progress deadline.
+  expect(vi.getTimerCount()).toBe(2);
+  if (mode === "healthy") { ack.resolve(); await vi.advanceTimersByTimeAsync(20_000); }
+  else if (mode === "cancelled") { rejection.abort(); }
+  else { await vi.advanceTimersByTimeAsync(100); }
+  await admission;
+  if (mode === "healthy") {
+    expect(await finished).toBeUndefined();
+    expect(sent).toEqual(batch.map(livePacketIdentity));
+    expect(accepted).toEqual(sent);
+    expect(pending.size).toBe(0);
+    expect(delivered.mock.calls.map(([id]) => id)).toEqual(sent);
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(terminate).not.toHaveBeenCalled();
+    expect(fence).not.toHaveBeenCalled();
+    await speaker.finish();
+    expect(finalize).toHaveBeenCalledTimes(1);
+  } else {
+    expect(await finished).toBeInstanceOf(LiveTranscriptionAcceptanceUnknown);
+    expect(finalize).not.toHaveBeenCalled();
+    expect(terminate).toHaveBeenCalledTimes(1);
+    expect(delivered).not.toHaveBeenCalled();
+    expect(accepted).toEqual([]);
+    expect(pending.size).toBe(910);
+    expect(fence).toHaveBeenCalledTimes(1);
+  }
+  expect(vi.getTimerCount()).toBe(0);
+  expect(await packetAdmission.reserve(1024, 500, new AbortController().signal)).toBe(true);
+  packetAdmission.release(1024);
+  const lease = await sessionAdmission.acquire(new AbortController().signal);
+  expect(lease).not.toBeNull(); lease?.();
+  if (mode === "healthy") { return; }
+  // A late ACK cannot restart delivery or resurrect either cleaned-up watchdog.
+  ack.resolve();
+  await vi.advanceTimersByTimeAsync(1000);
+  await expect(speaker.finish()).rejects.toBeInstanceOf(LiveTranscriptionAcceptanceUnknown);
+  expect(sendPacket).toHaveBeenCalledTimes(1);
+  expect(finalize).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });

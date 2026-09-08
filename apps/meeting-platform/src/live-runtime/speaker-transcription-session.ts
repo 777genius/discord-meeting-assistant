@@ -27,7 +27,7 @@ export class SpeakerTranscriptionSession {
   private deliveryBudgetMs = 0;
   private pendingReceipt = false;
   private providerSendPending = false;
-  private renewDeliveryWatchdog: ((budgetMs: number) => void) | undefined;
+  private readonly deliveryWatchdogs = new Set<(budgetMs: number) => void>();
   private readonly admissionCancellation = new AbortController();
   private readonly admissionRejection: AbortController;
   private deliveryFailed = false;
@@ -210,9 +210,20 @@ export class SpeakerTranscriptionSession {
   }
 
   private supervise(work: Promise<void>, budgetMs: number, renewOnDelivery = false): Promise<void> {
+    // Admission and finish may watch different snapshots of the delivery chain.
+    // Each supervisor owns its renewal registration and removes only that entry.
+    let ownedRenewal: ((budgetMs: number) => void) | undefined;
     return superviseLiveWork(this.untilCancelled(work), budgetMs, this.dependencies.timer,
       { cancel: () => { this.cancelDelivery(); },
-        ...(renewOnDelivery ? { setRenewal: (renew: ((budgetMs: number) => void) | undefined) => { this.renewDeliveryWatchdog = renew; } } : {}) });
+        ...(renewOnDelivery ? { setRenewal: (renew: ((budgetMs: number) => void) | undefined) => {
+          if (ownedRenewal !== undefined) { this.deliveryWatchdogs.delete(ownedRenewal); }
+          ownedRenewal = renew;
+          if (renew !== undefined) { this.deliveryWatchdogs.add(renew); }
+        } } : {}) });
+  }
+
+  private renewDeliveryWatchdogs(budgetMs: number): void {
+    for (const renew of this.deliveryWatchdogs) { renew(budgetMs); }
   }
 
   private async admit(packet: LiveVoicePacket, deadlineMs: number): Promise<void> {
@@ -252,7 +263,7 @@ export class SpeakerTranscriptionSession {
       try {
         const pacingMs = this.pacer.packetWaitMs(this.dependencies.startedAtMs, packet.relativeTimeMs);
         this.deliveryBudgetMs = Math.min(pacingMs, maximumDrainPacingWaitMs) + this.dependencies.packetBackpressureTimeoutMs;
-        this.renewDeliveryWatchdog?.(this.deliveryBudgetMs);
+        this.renewDeliveryWatchdogs(this.deliveryBudgetMs);
         await this.untilCancelled(this.send(packet));
       } catch (error) {
         this.deliveryFailed = true;
@@ -380,7 +391,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private finalize(failureMessage: string): Promise<void> {
-    this.renewDeliveryWatchdog?.(providerFinalizeTimeoutMs);
+    this.renewDeliveryWatchdogs(providerFinalizeTimeoutMs);
     this.providerFinalization ??= this.supervise(this.providerSession.finalize(failureMessage), providerFinalizeTimeoutMs)
       .finally(() => { this.providerFinalization = null; });
     return this.providerFinalization;
