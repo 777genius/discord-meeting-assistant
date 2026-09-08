@@ -431,7 +431,8 @@ it("composes full two-speaker Opus load, nonblocking native capture and indexed 
     async () => { await ingress.close(); },
     async () => { await fs.rm(root, { recursive: true, force: true }); },
   ], cleanupFailures);
-}, 60_000);
+// Outer host-I/O budget for 7,471 real fsyncs; the 4,000ms virtual drain assertion stays exact.
+}, 120_000);
 
 it("retains the primary failure while draining receipt work and collecting cleanup failures", async () => {
   const primary = new Error("primary assertion");
