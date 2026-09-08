@@ -28,13 +28,29 @@ image tag and OCI image/build label.
 
 | Component | Repository | Exact ref and checksum |
 | --- | --- | --- |
-| Craig Meeting Gateway (ISC) | `https://github.com/777genius/craig-meeting-gateway.git` | `37b86a958b567cb7fcff75946e94fe5e7ee38f42` |
-| OSS VoiceText gateway (Apache-2.0) | `https://github.com/777genius/voicetext-gateway.git` | `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` |
+| Craig Meeting Gateway (ISC) | `https://github.com/777genius/craig-meeting-gateway.git` | `7776b698f6bec26eff52cd383f4e5a7f3f429f42` |
+| OSS VoiceText gateway (Apache-2.0) | `https://github.com/777genius/voicetext-gateway.git` | `3e0ede3ec9086a45bc026f43191a998f2682fd6e` |
 
 The Craig pin implements `craig-lifecycle-v3`; its retained contract manifest
 SHA-256 is `43b58c2661b22039fa432199227318b0d91fbbe1faa669bc0e62a68ddff8f940`
 and bundle SHA-256 is
 `9ecdba8ebe3dd7e5ca4d67be0d540a66d07c3a66e0536dcd9c929099249f72a9`.
+
+The current gateway pin fixes WebSocket close code 1000 handling; the Craig
+pin fixes RTP/SSRC and packet ownership. Craig uses this same revision in the
+`SOURCE_REVISION` build argument for its current producer identity. Any explicit
+`lifecycleProducer.producerRevision` override for this deployment must also be
+`7776b698f6bec26eff52cd383f4e5a7f3f429f42`.
+
+Root reports gateway PR #1 exact CI, production composition, full Rust tests, and
+image checks PASS. For [Craig PR #7](https://github.com/777genius/craig-meeting-gateway/pull/7),
+root reports B0/H0 review, the pinned production build, and 141 bot tests PASS;
+exact CI remains pending root verification. These are upstream review/build
+results, not new live acceptance. The historical provider qualification at
+gateway `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` and the frozen identities
+and producer override in [the campaign runbook](oss-discord-stt-campaign.md)
+remain historical evidence; do not reuse that campaign configuration as current
+deployment provenance. Root owns final review, full gates, CI, and deployment.
 
 Do not replace either remote context with a mutable branch, an unversioned image, a
 local source directory, or the public Craig service. BuildKit must be 0.28.0 or

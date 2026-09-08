@@ -25,14 +25,14 @@ services:
     build:
       # BuildKit resolves the immutable ref and independently verifies the same
       # commit checksum before executing the remote Dockerfile.
-      context: "https://github.com/777genius/voicetext-gateway.git?ref=550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b&checksum=550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b"
+      context: "https://github.com/777genius/voicetext-gateway.git?ref=3e0ede3ec9086a45bc026f43191a998f2682fd6e&checksum=3e0ede3ec9086a45bc026f43191a998f2682fd6e"
       dockerfile: Dockerfile
       labels:
-        org.opencontainers.image.revision: 550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b
+        org.opencontainers.image.revision: 3e0ede3ec9086a45bc026f43191a998f2682fd6e
         org.opencontainers.image.source: https://github.com/777genius/voicetext-gateway
-    image: discord-meeting/voicetext-gateway:550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b
+    image: discord-meeting/voicetext-gateway:3e0ede3ec9086a45bc026f43191a998f2682fd6e
     labels:
-      org.opencontainers.image.revision: 550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b
+      org.opencontainers.image.revision: 3e0ede3ec9086a45bc026f43191a998f2682fd6e
       org.opencontainers.image.source: https://github.com/777genius/voicetext-gateway
     init: true
     restart: unless-stopped

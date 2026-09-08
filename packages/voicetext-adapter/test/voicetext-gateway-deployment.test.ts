@@ -64,7 +64,7 @@ describe("VoiceText gateway deployment overlay", () => {
   it("binds the build checkout, local image identity and OCI label to one verified commit", async () => {
     const compose = await readDeploymentFile("compose.voicetext-gateway.yaml");
 
-    const revision = "550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b";
+    const revision = "3e0ede3ec9086a45bc026f43191a998f2682fd6e";
     expect(compose).toContain(`https://github.com/777genius/voicetext-gateway.git?ref=${revision}&checksum=${revision}`);
     expect(compose).toContain(`image: discord-meeting/voicetext-gateway:${revision}`);
     expect(compose).toContain(`org.opencontainers.image.revision: ${revision}`);
@@ -162,7 +162,7 @@ describe("VoiceText gateway deployment overlay", () => {
 
   it("renders pinned Craig custody, health, and dependency fences", async () => {
     const craig = await readDeploymentFile("compose.craig.yaml");
-    const revision = "37b86a958b567cb7fcff75946e94fe5e7ee38f42";
+    const revision = "7776b698f6bec26eff52cd383f4e5a7f3f429f42";
     expect(craig).toContain(`https://github.com/777genius/craig-meeting-gateway.git?ref=${revision}&checksum=${revision}`);
     expect(craig).toContain(`image: discord-meeting/craig-meeting-gateway:${revision}`);
     expect(composeService("craig-bot").build.labels["org.opencontainers.image.revision"]).toBe(revision);

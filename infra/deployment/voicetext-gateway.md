@@ -17,18 +17,20 @@ The first three rows below are immutable checked-in Compose constants, not deplo
 | Setting | Checked value |
 | --- | --- |
 | `VOICETEXT_GATEWAY_GIT_URL` | `https://github.com/777genius/voicetext-gateway.git` |
-| `VOICETEXT_GATEWAY_GIT_REF` | `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` |
-| `VOICETEXT_GATEWAY_SOURCE_REVISION` | `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` |
+| `VOICETEXT_GATEWAY_GIT_REF` | `3e0ede3ec9086a45bc026f43191a998f2682fd6e` |
+| `VOICETEXT_GATEWAY_SOURCE_REVISION` | `3e0ede3ec9086a45bc026f43191a998f2682fd6e` |
 | `VOICETEXT_PUBLIC_HOST` | operator-supplied DNS name |
 
 BuildKit resolves that exact ref and verifies it with the identical `checksum`
 Git-context query before executing the gateway Dockerfile. This requires Docker
 Buildx 0.28.0 or newer and Dockerfile syntax 1.18 or newer.
 
-The approved source tree is `fdb2e59f79beb40623ce831b494ba3ca193c0e05`.
-The gateway adds configurable database pooling with its default of 10 unchanged.
-The isolated native harness selects 1 in its gateway configuration; this source
-pin update does not change Compose defaults. Native fixture results are recorded below.
+The current pin fixes WebSocket close code 1000 handling. Root reports gateway
+PR #1 exact CI, production composition, full Rust tests, and image checks PASS.
+This pin update adds no live qualification; the retained native fixture results
+below belong only to the historical gateway revision. Its approved source tree
+was `fdb2e59f79beb40623ce831b494ba3ca193c0e05`. Database pooling remains at
+the Compose default of 10; the historical isolated harness selected 1.
 
 Point public DNS for `VOICETEXT_PUBLIC_HOST` to the host and allow inbound TCP
 80/443 and UDP 443. The overlay derives Meeting Platform's sole VoiceText URL

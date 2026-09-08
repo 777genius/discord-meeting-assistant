@@ -49,17 +49,17 @@ services:
 
   craig-migrations:
     build: &craig-build
-      context: "https://github.com/777genius/craig-meeting-gateway.git?ref=37b86a958b567cb7fcff75946e94fe5e7ee38f42&checksum=37b86a958b567cb7fcff75946e94fe5e7ee38f42"
+      context: "https://github.com/777genius/craig-meeting-gateway.git?ref=7776b698f6bec26eff52cd383f4e5a7f3f429f42&checksum=7776b698f6bec26eff52cd383f4e5a7f3f429f42"
       dockerfile: deploy/meeting/Dockerfile
       args:
         BUILDKIT_SYNTAX: docker/dockerfile:1.18@sha256:dabfc0969b935b2080555ace70ee69a5261af8a8f1b4df97b9e7fbcf6722eddf
-        SOURCE_REVISION: 37b86a958b567cb7fcff75946e94fe5e7ee38f42
+        SOURCE_REVISION: 7776b698f6bec26eff52cd383f4e5a7f3f429f42
       labels:
-        org.opencontainers.image.revision: 37b86a958b567cb7fcff75946e94fe5e7ee38f42
+        org.opencontainers.image.revision: 7776b698f6bec26eff52cd383f4e5a7f3f429f42
         org.opencontainers.image.source: https://github.com/777genius/craig-meeting-gateway
-    image: discord-meeting/craig-meeting-gateway:37b86a958b567cb7fcff75946e94fe5e7ee38f42
+    image: discord-meeting/craig-meeting-gateway:7776b698f6bec26eff52cd383f4e5a7f3f429f42
     labels:
-      org.opencontainers.image.revision: 37b86a958b567cb7fcff75946e94fe5e7ee38f42
+      org.opencontainers.image.revision: 7776b698f6bec26eff52cd383f4e5a7f3f429f42
       org.opencontainers.image.source: https://github.com/777genius/craig-meeting-gateway
     init: true
     restart: "no"
@@ -80,9 +80,9 @@ services:
 
   craig-bot:
     build: *craig-build
-    image: discord-meeting/craig-meeting-gateway:37b86a958b567cb7fcff75946e94fe5e7ee38f42
+    image: discord-meeting/craig-meeting-gateway:7776b698f6bec26eff52cd383f4e5a7f3f429f42
     labels:
-      org.opencontainers.image.revision: 37b86a958b567cb7fcff75946e94fe5e7ee38f42
+      org.opencontainers.image.revision: 7776b698f6bec26eff52cd383f4e5a7f3f429f42
       org.opencontainers.image.source: https://github.com/777genius/craig-meeting-gateway
     init: true
     restart: unless-stopped
