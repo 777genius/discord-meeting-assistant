@@ -21,7 +21,7 @@ import { VoicetextLiveTimeline } from "./voicetext-live-timeline.js";
 import { VoicetextLiveTranscriptEmitter } from "./voicetext-live-transcript-emitter.js";
 import type { VoicetextWebSocketConnection } from "./websocket-connector.js";
 
-type FailureStage = "finalize-send" | "finalize-wait" | "close-send" | "close-wait" | "receive" | "protocol-boundary";
+type FailureStage = "finalize-send" | "finalize-wait" | "close-wait" | "receive" | "protocol-boundary";
 
 export class LiveSession implements VoicetextLiveSession {
   private readonly ackWaiters = new Map<number, LiveSessionDeferred<void>>();
@@ -33,7 +33,6 @@ export class LiveSession implements VoicetextLiveSession {
   private finalizeResultReceived = false;
   private finalizeStage: FailureStage = "finalize-send";
   private failureStage: FailureStage | undefined;
-  private closeState: "failed" | "idle" | "initiated" = "idle";
   private readonly closeWaiter = createLiveSessionDeferred<void>();
   private nextSequence = 0;
   private pump: Promise<void> | undefined;
@@ -228,10 +227,7 @@ export class LiveSession implements VoicetextLiveSession {
       failure = error;
       this.failureStage ??= this.finalizeStage;
     } finally {
-      if (this.closeState === "idle" && !this.transportClosed) {
-        await this.closeAfterFailure();
-      }
-      if (this.closeState === "failed" || !this.transportClosed) {
+      if (!this.transportClosed) {
         this.socket.terminate();
         this.transportClosed = true;
       }
@@ -276,39 +272,13 @@ export class LiveSession implements VoicetextLiveSession {
       terminalFailure = error;
       this.failureStage ??= "protocol-boundary";
     }
-    await this.closeTransport();
+    // The gateway owns closure after finalize_complete. Keep receiving until its
+    // ordered normal close proves quiescence, within the same finalize deadline.
+    this.finalizeStage = "close-wait";
+    await this.closeWaiter.promise;
     this.throwIfTerminalError();
     if (terminalFailure !== undefined) {
       throw asLiveSessionError(terminalFailure, "Voicetext live finalize validation failed");
-    }
-  }
-
-  private async closeTransport(): Promise<void> {
-    // The ordered transport close proves terminal quiescence.
-    this.closeState = "initiated";
-    this.finalizeStage = "close-send";
-    await this.socket.sendText(JSON.stringify({ type: "close" }), this.abortController.signal);
-    this.finalizeStage = "close-wait";
-    try {
-      await Promise.all([
-        this.socket.close(1_000, "finalized"),
-        this.closeWaiter.promise,
-      ]);
-    } catch (error) {
-      this.closeState = "failed";
-      throw error;
-    }
-  }
-
-  private async closeAfterFailure(): Promise<void> {
-    this.closeState = "initiated";
-    try {
-      await this.socket.sendText(JSON.stringify({ type: "close" }), this.abortController.signal);
-      await this.socket.close(1_000, "finalized");
-      // Graceful cleanup completed even if the receive continuation is still queued.
-      this.transportClosed = true;
-    } catch {
-      this.closeState = "failed";
     }
   }
 
@@ -323,7 +293,7 @@ export class LiveSession implements VoicetextLiveSession {
           this.evidence?.record({ type: "close", code: frame.code });
           this.transportClosed = true;
           // Sending a normal close does not prove the peer closed normally.
-          if (frame.code === 1_000 && this.closeState !== "idle" && this.finalizeResultReceived) {
+          if (frame.code === 1_000 && this.finalizeResultReceived) {
             this.state = "closed";
             this.closeWaiter.resolve();
             return;

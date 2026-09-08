@@ -54,6 +54,8 @@ class QueueSocket implements VoicetextWebSocketConnection {
         status: this.finalizeStatus,
         type: "finalize_complete",
       });
+      this.closed = true;
+      this.enqueueFrame({ type: "close", code: 1000, reason: "finalized" });
     }
   }
 
@@ -336,8 +338,8 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     ]);
 
     await session.finalize();
-    expect(socket.text.at(-2)).toEqual({ type: "finalize" });
-    expect(socket.text.at(-1)).toEqual({ type: "close" });
+    expect(socket.text.at(-1)).toEqual({ type: "finalize" });
+    expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(0);
     expect(socket.closed).toBe(true);
     expect(socket.terminated).toBe(false);
   });
@@ -363,8 +365,8 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     const session = await adapter(socket).openSession(liveRequest("live-session-no-provider"));
 
     await expect(session.finalize()).resolves.toBeUndefined();
-    expect(socket.text.at(-2)).toEqual({ type: "finalize" });
-    expect(socket.text.at(-1)).toEqual({ type: "close" });
+    expect(socket.text.at(-1)).toEqual({ type: "finalize" });
+    expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(0);
     expect(socket.closed).toBe(true);
     expect(socket.terminated).toBe(false);
   });
@@ -383,8 +385,8 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     await expect(session.finalize()).rejects.toThrow(
       "Voicetext did not create a provider session for acknowledged audio",
     );
-    expect(socket.text.at(-2)).toEqual({ type: "finalize" });
-    expect(socket.text.at(-1)).toEqual({ type: "close" });
+    expect(socket.text.at(-1)).toEqual({ type: "finalize" });
+    expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(0);
     expect(socket.closed).toBe(true);
     expect(socket.terminated).toBe(false);
   });
@@ -395,8 +397,8 @@ describe("VoicetextLiveTranscriptionAdapter", () => {
     const session = await adapter(socket).openSession(liveRequest("live-session-timeout"));
 
     await expect(session.finalize()).rejects.toThrow("Voicetext live finalize completed with timeout");
-    expect(socket.text.at(-2)).toEqual({ type: "finalize" });
-    expect(socket.text.at(-1)).toEqual({ type: "close" });
+    expect(socket.text.at(-1)).toEqual({ type: "finalize" });
+    expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(0);
     expect(socket.closed).toBe(true);
     expect(socket.terminated).toBe(false);
   });
@@ -435,7 +437,7 @@ describe("VoicetextLiveTranscriptionAdapter ACK pacing", () => {
     const finalization = session.finalize();
     await finalization;
     expect(socket.text.some(({ type }) => type === "finalize")).toBe(true);
-    expect(socket.text.at(-1)).toEqual({ type: "close" });
+    expect(socket.text.at(-1)).toEqual({ type: "finalize" });
   });
 
   it("fails the session boundedly when ACK pacing times out", async () => {
@@ -513,7 +515,7 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
     await Promise.all([first, second]);
     expect(session.finalize()).toBe(first);
     expect(socket.text.filter(({ type }) => type === "finalize")).toHaveLength(1);
-    expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(1);
+    expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(0);
   });
 
   it("surfaces a transport failure that rejected an outstanding ACK before finalize", async () => {
@@ -548,13 +550,15 @@ describe("VoicetextLiveTranscriptionAdapter finalization", () => {
     }
   });
 
-  it("force-terminates when graceful socket close fails", async () => {
+  it("accepts server closure without invoking local socket close", async () => {
     const socket = new QueueSocket();
     socket.closeError = new Error("close failed");
     const session = await adapter(socket).openSession(liveRequest("live-session-close-failure"));
 
-    await expect(session.finalize()).rejects.toThrow("close failed");
-    expect(socket.terminated).toBe(true);
+    const close = vi.spyOn(socket, "close");
+    await expect(session.finalize()).resolves.toBeUndefined();
+    expect(close).not.toHaveBeenCalled();
+    expect(socket.terminated).toBe(false);
   });
 
   it("maps a provider-contiguous packet across a source timeline gap", async () => {
@@ -665,7 +669,7 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
     await session.finalize();
   });
 
-  it("gracefully closes after a client-side finalize timeout", async () => {
+  it("force-terminates after a client-side finalize timeout without more controls", async () => {
     vi.useFakeTimers();
     try {
       const socket = new NoFinalizeResponseSocket();
@@ -680,22 +684,22 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
       await vi.advanceTimersByTimeAsync(1_001);
 
       await rejected;
-      expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(1);
-      expect(socket.closed).toBe(true);
-      expect(socket.terminated).toBe(false);
+      expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(0);
+      expect(socket.closed).toBe(false);
+      expect(socket.terminated).toBe(true);
       const failure: unknown = await finalization.catch((error: unknown) => error);
       expect(failure).toMatchObject({ code: "timeout", retryable: true });
       await expect(session.finalize()).rejects.toBe(failure);
       session.terminate();
       await expect(session.finalize()).rejects.toBe(failure);
-      expect(close).toHaveBeenCalledTimes(1);
-      expect(terminate).not.toHaveBeenCalled();
+      expect(close).not.toHaveBeenCalled();
+      expect(terminate).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("preserves a client-side finalize timeout when socket close also fails", async () => {
+  it("preserves a client-side finalize timeout without invoking failing socket close", async () => {
     vi.useFakeTimers();
     try {
       const socket = new NoFinalizeResponseSocket();
@@ -716,8 +720,8 @@ describe("VoicetextLiveTranscriptionAdapter timeline and termination", () => {
       await expect(session.finalize()).rejects.toBe(failure);
       session.terminate();
       await expect(session.finalize()).rejects.toBe(failure);
-      expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(1);
-      expect(close).toHaveBeenCalledTimes(1);
+      expect(socket.text.filter(({ type }) => type === "close")).toHaveLength(0);
+      expect(close).not.toHaveBeenCalled();
       expect(terminate).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();

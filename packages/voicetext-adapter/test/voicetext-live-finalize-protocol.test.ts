@@ -39,7 +39,7 @@ describe("VoiceText live finalize terminal evidence", () => {
     expect(events.some((event) => event.type === "success")).toBe(false);
   });
 
-  it.each(["close-send-failure", "receive-failure", "synchronous"] as const)(
+  it.each(["receive-failure", "synchronous"] as const)(
     "classifies flush then %s without leaking external diagnostics or retrying",
     async (behavior) => {
       const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
@@ -58,7 +58,7 @@ describe("VoiceText live finalize terminal evidence", () => {
         expect(events.some(event => event.type === "success")).toBe(false);
         expect(events.filter(event => event.type === "failure").length).toBeGreaterThan(0);
         expect(stderr.mock.calls).toEqual([[JSON.stringify({ event: "voicetext-live-finalization-failed",
-          stage: behavior === "close-send-failure" ? "close-send" : behavior === "receive-failure" ? "receive" : "protocol-boundary",
+          stage: behavior === "receive-failure" ? "receive" : "protocol-boundary",
           code: "terminal-boundary-unproven" }) + "\n"]]);
         expect(JSON.stringify([stderr.mock.calls, events])).not.toContain("synthetic-secret");
       } finally { stderr.mockRestore(); }
@@ -129,11 +129,11 @@ describe("VoiceText live finalize terminal evidence", () => {
     expect(settled).toBe(false);
     socket.completeClose();
     await expect(finalization).resolves.toBeUndefined();
-    expect(socket.closeCalls).toBe(1);
+    expect(socket.closeCalls).toBe(0);
     expect(socket.terminated).toBe(false);
   });
 
-  it.each(["gated-close", "application-close"] as const)(
+  it.each(["gated-close", "immediate-server-close"] as const)(
     "requires observed normal closure at %s after valid finalize evidence",
     async (behavior) => {
       for (const closeCode of [1000, 1005, 1006]) {
@@ -169,13 +169,13 @@ describe("VoiceText live finalize terminal evidence", () => {
           expect(events.some((event) => event.type === "failure")).toBe(true);
         }
         expect(socket.finalizeCalls).toBe(1);
-        expect(socket.closeCalls).toBe(1);
-        expect(socket.terminated).toBe(closeCode !== 1000);
+        expect(socket.closeCalls).toBe(0);
+        expect(socket.terminated).toBe(false);
       }
     },
   );
 
-  it.each([1005, 1006])("keeps timeout termination with observed %s unsuccessful", async (closeCode) => {
+  it.each([1005, 1006])("keeps timeout termination without peer closure unsuccessful (%s)", async (closeCode) => {
     vi.useFakeTimers();
     try {
       const events: OssSessionEvidenceEvent[] = [];
@@ -189,15 +189,15 @@ describe("VoiceText live finalize terminal evidence", () => {
       await expect(session.finalize()).rejects.toBe(failure);
       expect(socket.terminated).toBe(true);
       expect(socket.finalizeCalls).toBe(1);
-      expect(socket.closeCalls).toBe(1);
-      expect(events).toContainEqual({ type: "close", code: closeCode });
+      expect(socket.closeCalls).toBe(0);
+      expect(events.some((event) => event.type === "close")).toBe(false);
       expect(events.some((event) => event.type === "success")).toBe(false);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it.each(["synchronous", "later-task", "after-close", "contradictory-after-close"] as const)(
+  it.each(["synchronous", "later-task", "duplicate-before-close", "contradictory-before-close"] as const)(
     "fails closed for %s terminal evidence",
     async (behavior) => {
       const socket = new FinalizeSocket(behavior);
@@ -227,15 +227,14 @@ describe("VoiceText live finalize terminal evidence", () => {
 });
 
 type FinalizeBehavior =
-  | "close-send-failure"
   | "receive-failure"
   | "PROVIDER_TERMINAL"
   | "PROVIDER_OUTCOME_UNKNOWN"
-  | "application-close"
-  | "after-close"
+  | "immediate-server-close"
+  | "duplicate-before-close"
   | "close-before-terminal"
   | "compliant"
-  | "contradictory-after-close"
+  | "contradictory-before-close"
   | "gated-close"
   | "later-task"
   | "never-close"
@@ -292,19 +291,20 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
           this.enqueue(terminal);
         })();
       }
+      if (["duplicate-before-close", "contradictory-before-close"].includes(this.behavior)) {
+        this.enqueue(this.behavior === "contradictory-before-close"
+          ? { saw_result: false, status: "timeout", type: "finalize_complete" } : terminal);
+      }
+      this.resolveCloseStarted();
+      if (this.behavior === "immediate-server-close") { this.enqueueClose(); }
+      else if (this.behavior !== "never-close") {
+        void (async () => {
+          if (this.behavior === "gated-close") { await this.closeRelease; }
+          else { await nextTask(); }
+          this.enqueueClose();
+        })();
+      }
       return;
-    }
-    if (message.type === "close" && this.behavior === "close-send-failure") {
-      throw new Error("wss://synthetic-secret@example.test?token=synthetic-secret");
-    }
-    if (message.type === "close" && this.behavior === "application-close") {
-      this.enqueueClose();
-    }
-    if (message.type === "close" &&
-        ["after-close", "contradictory-after-close"].includes(this.behavior)) {
-      this.enqueue(this.behavior === "contradictory-after-close"
-        ? { saw_result: false, status: "timeout", type: "finalize_complete" }
-        : terminal);
     }
   }
 
@@ -333,23 +333,10 @@ class FinalizeSocket implements VoicetextWebSocketConnection {
 
   public async close(): Promise<void> {
     this.closeCalls += 1;
-    this.resolveCloseStarted();
-    if (this.behavior === "application-close") { return; }
-    if (this.behavior !== "never-close") {
-      if (this.behavior === "gated-close") {
-        await this.closeRelease;
-      } else {
-        await nextTask();
-      }
-      this.enqueueClose();
-    } else {
-      await new Promise<void>(() => {});
-    }
   }
 
   public terminate(): void {
     this.terminated = true;
-    if (this.behavior === "never-close") { this.enqueueClose(); }
   }
 
   public enqueue(message: Readonly<Record<string, unknown>>): void {

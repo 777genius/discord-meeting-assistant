@@ -98,6 +98,7 @@ export async function startLoopbackGateway(): Promise<LoopbackGateway> {
         }));
       } else if (message.type === "finalize") {
         socket.send(JSON.stringify({ type: "finalize_complete", status: "flushed", saw_result: true }));
+        socket.close(1000, "finalized");
       }
     });
   });
