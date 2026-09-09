@@ -5,6 +5,8 @@ import { fixtureManifestV1Schema } from "../src/e2e-fixture-manifest-schema.js";
 import { sha256, canonical, type Artifact } from "../src/oss-campaign-artifacts.js";
 import { baseRevision, planSchema, runSchema, wireSchema } from "../src/oss-campaign-profile.js";
 
+const identityPart = (value: string) => `${value.length}:${value}`;
+
 export async function campaignFixture(root: string, generatedAuthoritativeIds = false) {
   const manifestBytes = await readFile(new URL("./fixtures/manifest.v1.json", import.meta.url));
   const manifest = fixtureManifestV1Schema.parse(JSON.parse(manifestBytes.toString()));
@@ -58,7 +60,6 @@ export async function campaignFixture(root: string, generatedAuthoritativeIds = 
     const original = put(`recording-${i}.original`, "craig", Buffer.from(`offline-original-${i}`));
     // Mirror operationIdentity and stableVoicetextBatchId using synthetic immutable
     // artifact locators/revisions. No provider access or producer deep import.
-    const identityPart = (value: string) => `${value.length}:${value}`;
     const operationKey = ["final-transcription:v2", ...[
       `meeting-${i}`, `recording-${i}`,
       ...turns.flatMap((turn, j) => [

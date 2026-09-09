@@ -179,16 +179,7 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
     const archive = await loadArchive(f.planPath, output);
     const report = await verifyOssCampaign(archive, f.manifestBytes);
     expect(report.status).toBe("sources-unverified");
-    for (const [position, entry] of archive.index.runs.entries()) {
-      const assembledRun = archive.json(entry.evidencePath) as typeof f.runs[number];
-      expect(assembledRun.transcript).toEqual(f.runs[position]!.transcript);
-      expect(assembledRun.transcript.transcriptId).toHaveLength(598);
-      expect(assembledRun.transcript.turns.map(turn => turn.turnId.length)).toEqual([601, 601]);
-      expect(assembledRun.summary.transcriptId).toBe(assembledRun.transcript.transcriptId);
-      expect(assembledRun.settled.map(value => value.transcriptIds)).toEqual([
-        [assembledRun.transcript.transcriptId], [assembledRun.transcript.transcriptId],
-      ]);
-    }
+    verifyAuthoritativeIds(archive, f);
     expect(report.consistency).toBe(withProof ? "complete" : "incomplete");
     if (withProof) { expect(report.missingSourceCapabilities).toEqual([]); }
     else { expect(report.missingSourceCapabilities.join()).toContain("Prepared Craig job"); }
@@ -271,6 +262,22 @@ for (const path of source.snapshots) {
     await rm(versionOutput, { recursive: true, force: true });
   }
 }, 60000);
+
+function verifyAuthoritativeIds(
+  archive: Awaited<ReturnType<typeof loadArchive>>,
+  f: Awaited<ReturnType<typeof campaignFixture>>,
+): void {
+  for (const [position, entry] of archive.index.runs.entries()) {
+    const assembledRun = archive.json(entry.evidencePath) as typeof f.runs[number];
+    expect(assembledRun.transcript).toEqual(f.runs[position]!.transcript);
+    expect(assembledRun.transcript.transcriptId).toHaveLength(598);
+    expect(assembledRun.transcript.turns.map(turn => turn.turnId.length)).toEqual([601, 601]);
+    expect(assembledRun.summary.transcriptId).toBe(assembledRun.transcript.transcriptId);
+    expect(assembledRun.settled.map(value => value.transcriptIds)).toEqual([
+      [assembledRun.transcript.transcriptId], [assembledRun.transcript.transcriptId],
+    ]);
+  }
+}
 
 async function verifyIndependentPacketCoverage(input: Parameters<typeof assembleOssNativeArchive>[0], manifestBytes: Buffer) {
   const path = join(input.sourceRoot, "live.jsonl");
