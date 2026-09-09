@@ -159,7 +159,7 @@ describe("official SDK read-only scope resolution", () => {
     const secondRequest = Object.freeze({ ...preparedRequest(), scope: Object.freeze({
       spaceId: second.spaceId, memoryScopeId: second.memoryScopeId, threadId: null,
     }) });
-    expect(() => second.bind(firstRequest)).toThrow();
+    expect(() => { second.bind(firstRequest); }).toThrow();
     second.bind(secondRequest);
     expect(match(resolver, firstRequest)).toBe(true);
     expect(match(resolver, secondRequest)).toBe(true);
@@ -171,11 +171,11 @@ describe("official SDK read-only scope resolution", () => {
     if (admitted.status !== "resolved") { throw new Error("Missing resolution"); }
     const request = preparedRequest();
     expect(match(resolver, request)).toBe(false);
-    expect(() => admitted.bind(Object.freeze({ ...request,
-      scope: Object.freeze({ ...request.scope, spaceId: "foreign" }) }))).toThrow();
-    expect(() => admitted.bind({ ...request })).toThrow();
+    expect(() => { admitted.bind(Object.freeze({ ...request,
+      scope: Object.freeze({ ...request.scope, spaceId: "foreign" }) })); }).toThrow();
+    expect(() => { admitted.bind({ ...request }); }).toThrow();
     admitted.bind(request);
-    expect(() => admitted.bind(preparedRequest())).toThrow();
+    expect(() => { admitted.bind(preparedRequest()); }).toThrow();
     expect(match(resolver, Object.freeze({ ...request }))).toBe(false);
     expect(match(resolver, Object.create(request) as FocusedLocatorRetrievalV2RequestSnapshot)).toBe(false);
     expect(match(resolver, JSON.parse(JSON.stringify(request)) as FocusedLocatorRetrievalV2RequestSnapshot)).toBe(false);
@@ -199,7 +199,7 @@ describe("official SDK read-only scope resolution", () => {
   ])("fails closed on %s", async (_name, spaces, scopes, count) => {
     const { resolver, requests } = fixture(spaces, scopes);
     expect(await resolver.resolve(input)).toEqual({ status: "unavailable" });
-    expect(requests).toHaveLength(count as number);
+    expect(requests).toHaveLength(count);
     expect(match(resolver, preparedRequest())).toBe(false);
   });
 

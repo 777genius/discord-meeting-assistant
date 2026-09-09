@@ -162,5 +162,5 @@ export function matchesRetrievalScope(
   return document.processed && document.status === "active" &&
     space?.id === string(scope.space_id) &&
     memoryScope?.space_id === string(scope.space_id) &&
-    memoryScope?.id === string(scope.memory_scope_id);
+    memoryScope.id === string(scope.memory_scope_id);
 }

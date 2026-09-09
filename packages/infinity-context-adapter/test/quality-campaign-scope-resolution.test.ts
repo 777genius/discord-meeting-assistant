@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import type { HttpTransport } from "@infinity-context/sdk";
+import type { HttpTransport, JsonValue } from "@infinity-context/sdk";
 import { buildHistoricalIndexPlan, PrepareFocusedLocatorRetrievalV2Request } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore } from
@@ -17,6 +17,13 @@ import { createProductionCanonicalQuestionChain } from
 import { canonicalJson } from "../src/quality-campaign/canonical.js";
 import { finalMeeting } from "./historical-e2e-test-kit.js";
 import { DisposableInfinityEndpoint, DISPOSABLE_RETRIEVAL_V2_BINDING } from "./test-support.js";
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") { return true; }
+  if (typeof value === "number") { return Number.isFinite(value); }
+  if (Array.isArray(value)) { return value.every((item: unknown) => isJsonValue(item)); }
+  return typeof value === "object" && Object.values(value).every((item: unknown) => isJsonValue(item));
+}
 
 const digest = (value: unknown) => createHash("sha256").update(canonicalJson(value)).digest("hex");
 
@@ -40,26 +47,38 @@ describe("canonical scope preparation before retrieval identity", () => {
       const result = await endpoint.send(request);
       if (request.url.pathname !== "/v1/context/retrieve") { return result; }
       // SDK 0.2.4 represents healthy lanes with zero candidates as unqualified.
-      const response = JSON.parse(typeof result.body === "string"
+      const response: unknown = JSON.parse(typeof result.body === "string"
         ? result.body : new TextDecoder().decode(result.body));
+      if (typeof response !== "object" || response === null || Array.isArray(response)) {
+        throw new Error("Expected a retrieval response object");
+      }
       return { ...result, body: JSON.stringify({ ...response, status: "unqualified" }) };
     } };
     let retrievalWireBytes = "";
-    const server = createServer(async (request, response) => {
-      try {
-        if (request.method !== "GET" && request.method !== "POST") {
-          response.writeHead(405).end(); return;
+    const handleRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+      if (request.method !== "GET" && request.method !== "POST") {
+        response.writeHead(405).end(); return;
+      }
+      const chunks: Buffer[] = [];
+      const incoming: AsyncIterable<unknown> = request;
+      for await (const chunk of incoming) {
+        if (typeof chunk !== "string" && !(chunk instanceof Uint8Array)) {
+          throw new Error("Invalid HTTP request chunk");
         }
-        const chunks: Buffer[] = [];
-        for await (const chunk of request) { chunks.push(Buffer.from(chunk)); }
-        const body = Buffer.concat(chunks).toString("utf8");
-        if (request.url === "/v1/context/retrieve") { retrievalWireBytes = body; }
-        const result = await transport.send({ method: request.method,
-          url: new URL(request.url ?? "/", "http://127.0.0.1"),
-          headers: new Headers(), ...(body.length === 0 ? {} : { body: { kind: "json", value: JSON.parse(body) } }) });
-        response.writeHead(result.status, Object.fromEntries(result.headers));
-        response.end(result.body);
-      } catch { response.writeHead(500).end(); }
+        chunks.push(typeof chunk === "string" ? Buffer.from(chunk, "utf8") : Buffer.from(chunk));
+      }
+      const body = Buffer.concat(chunks).toString("utf8");
+      if (request.url === "/v1/context/retrieve") { retrievalWireBytes = body; }
+      const value: unknown = body.length === 0 ? null : JSON.parse(body);
+      if (!isJsonValue(value)) { throw new Error("Invalid JSON request body"); }
+      const result = await transport.send({ method: request.method,
+        url: new URL(request.url ?? "/", "http://127.0.0.1"),
+        headers: new Headers(), ...(body.length === 0 ? {} : { body: { kind: "json", value } }) });
+      response.writeHead(result.status, Object.fromEntries(result.headers));
+      response.end(result.body);
+    };
+    const server = createServer((request, response) => {
+      void handleRequest(request, response).catch(() => { response.writeHead(500).end(); });
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject); server.listen(0, "127.0.0.1", resolve);

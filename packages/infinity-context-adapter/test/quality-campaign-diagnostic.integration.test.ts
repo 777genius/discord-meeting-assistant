@@ -86,10 +86,14 @@ describe("nonqualifying diagnostic concrete boundaries", () => {
       expect(retrievalRequests.filter(({ path }) => path === "/v1/spaces" || path === "/v1/memory-scopes"))
         .toEqual([expect.objectContaining({ method: "GET", path: "/v1/spaces", query: "?limit=100" }),
           expect.objectContaining({ method: "GET", path: "/v1/memory-scopes", query: "?space_id=space-1&limit=100" })]);
-      expect(retrievalRequests.filter(({ path }) => path === "/v1/context/retrieve"))
-        .toEqual([expect.objectContaining({ method: "POST", body: expect.objectContaining({
-          scope: { space_id: "space-1", memory_scope_id: "scope-1", thread_id: null },
-        }) })]);
+      const contextRequests = retrievalRequests.filter(({ path }) => path === "/v1/context/retrieve");
+      expect(contextRequests).toHaveLength(1);
+      expect(contextRequests[0]?.method).toBe("POST");
+      const requestBody = contextRequests[0]?.body;
+      if (typeof requestBody !== "object" || requestBody === null || !("scope" in requestBody)) {
+        throw new Error("Expected a retrieval request object");
+      }
+      expect(requestBody.scope).toEqual({ space_id: "space-1", memory_scope_id: "scope-1", thread_id: null });
       expect(plan.topology.spaceSlug).not.toBe("space-1");
       expect(plan.topology.roomScopeExternalRef).not.toBe("scope-1");
       if (result.status !== "completed") { throw new Error(`synthetic retrieval failed: ${result.reason}`); }

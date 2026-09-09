@@ -603,7 +603,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string,
     campaignRootSha256: mainRootSha256, questionDigestSha256: firstQuestion.questionDigestSha256,
     questionId: firstQuestion.questionId, releaseRootSha256, repetition: 1,
     spendReservationSha256: sha256(spendDocuments[0]!) });
-  return { scopeRequests: scopes.assertReads, async replaceTopologyProfile(actorKeyProfileId: string,
+  return { scopeRequests: (resolutions: number) => { scopes.assertReads(resolutions); }, async replaceTopologyProfile(actorKeyProfileId: string,
     schemaVersion = "meeting_knowledge.quality_scope_topology.v2") {
     const document = JSON.parse(await readFile(topologyPath, "utf8")) as
       { payload: Record<string, unknown> };

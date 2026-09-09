@@ -27,7 +27,11 @@ describe("resolved scope preparation", () => {
       roomId: "room-1", scopeId: "scope-1" });
     expectPrepared(request);
     expect(request.scope).toEqual({ spaceId: "internal-space-123", memoryScopeId: "internal-room-456", threadId: null });
-    expect(JSON.parse(JSON.stringify(request)).scope).toEqual(request.scope);
+    const serialized: unknown = JSON.parse(JSON.stringify(request));
+    if (typeof serialized !== "object" || serialized === null || !("scope" in serialized)) {
+      throw new Error("Expected a serialized request with scope");
+    }
+    expect(serialized.scope).toEqual(request.scope);
   });
   it("rejects copied prepared requests before provider or authorization I/O", async () => {
     const { prepare, store } = fixture();
@@ -37,7 +41,8 @@ describe("resolved scope preparation", () => {
     const retrieve = vi.fn<FocusedLocatorRetrievalV2Port["retrieve"]>(async () => ({
       status: "available", candidates: [],
     }));
-    const authorize = vi.fn(authorization().authorize);
+    const authority = authorization();
+    const authorize = vi.fn((...args: Parameters<typeof authority.authorize>) => authority.authorize(...args));
     const rehydrate = new HistoricalFocusedLocatorRetrievalV2({ scopeResolution,
       ids: new TestIds(), store, authorization: { authorize }, retrieval: { retrieve },
       turnHashes: { hash: () => "unused" },
