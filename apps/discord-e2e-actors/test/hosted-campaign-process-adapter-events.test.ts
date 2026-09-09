@@ -220,8 +220,8 @@ describe("hosted campaign process adapter events", () => {
     const root = await mkdtemp(join(tmpdir(), "hosted-process-tree-"));
     const markerPath = join(root, "grandchild-term.txt");
     const childSource = [
-      'require("node:fs").writeFileSync(process.argv[1], "ready")',
       'process.on("SIGTERM", () => { require("node:fs").writeFileSync(process.argv[1], "term"); process.exit(0); })',
+      'require("node:fs").writeFileSync(process.argv[1], "ready")',
       "setInterval(() => {}, 1000)",
     ].join(";");
     const source = `
@@ -248,8 +248,8 @@ describe("hosted campaign process adapter events", () => {
     const root = await mkdtemp(join(tmpdir(), "hosted-finite-process-tree-"));
     const markerPath = join(root, "grandchild-state.txt");
     const childSource = [
-      'require("node:fs").writeFileSync(process.argv[1], "ready")',
       'process.on("SIGTERM", () => { require("node:fs").writeFileSync(process.argv[1], "term"); process.exit(0); })',
+      'require("node:fs").writeFileSync(process.argv[1], "ready")',
       "setInterval(() => {}, 1000)",
     ].join(";");
     const output = JSON.stringify({ failures: [], metrics: [], passed: true });
@@ -288,8 +288,8 @@ describe("hosted campaign process adapter events", () => {
     const root = await mkdtemp(join(tmpdir(), "hosted-cancelled-process-tree-"));
     const markerPath = join(root, "grandchild-state.txt");
     const childSource = [
-      'require("node:fs").writeFileSync(process.argv[1], "ready")',
       'process.on("SIGTERM", () => { require("node:fs").writeFileSync(process.argv[1], "term"); process.exit(0); })',
+      'require("node:fs").writeFileSync(process.argv[1], "ready")',
       "setInterval(() => {}, 1000)",
     ].join(";");
     const source = `
@@ -342,8 +342,8 @@ describe("hosted campaign process adapter events", () => {
     const releasePath = join(root, "release-invalid-output.txt");
     const markerPath = join(root, "grandchild-state.txt");
     const childSource = [
-      'require("node:fs").writeFileSync(process.argv[1], "ready")',
       'process.on("SIGTERM", () => { require("node:fs").writeFileSync(process.argv[2], "term"); process.exit(0); })',
+      'require("node:fs").writeFileSync(process.argv[1], "ready")',
       "setInterval(() => {}, 1000)",
     ].join(";");
     const source = `
