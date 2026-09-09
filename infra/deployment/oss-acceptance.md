@@ -37,7 +37,9 @@ The actual Platform image was built from
 `9060193065e83503cab938773bf4e3f009b0924f`. Reviewed intervening changes preserve
 its runtime; image labels were not changed to claim a newer build. Every merge
 tree matched its checked PR head. Exact Discord CI run `34316822435` and Gateway
-CI `34206637815` passed, alongside independent reviews with no blocker/high findings.
+CI `34206637815` passed. Craig Build Apps `34213272480` and ESLint
+`34213272398` passed at its qualified head, alongside independent reviews
+with no blocker/high findings.
 
 Public change and CI references:
 [Discord #63](https://github.com/777genius/discord-meeting-assistant/pull/63),

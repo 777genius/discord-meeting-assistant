@@ -67,7 +67,10 @@ captions during the call. Select them independently:
 | Live | `deepgram-nova-3` | `elevenlabs-scribe-v2-realtime` |
 
 Set `VOICETEXT_BATCH_PROFILE` and `VOICETEXT_LIVE_PROFILE` in your deployment
-configuration. Both default to Deepgram.
+configuration. Both default to Deepgram, so the default setup needs a Deepgram key.
+If you only have an ElevenLabs key, set the batch profile to
+`elevenlabs-scribe-v2` and the live profile to `elevenlabs-scribe-v2-realtime`
+before starting the services.
 
 Recognition languages and quality depend on the provider and model. Tests cover
 synthetic Russian/English audio and Discord sequential speech, overlap and
