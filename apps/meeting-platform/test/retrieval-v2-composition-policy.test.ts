@@ -188,6 +188,7 @@ describe("bounded meeting retrieval composition policy", () => {
 
   it("keeps the mixed-lane qualification question free of an actor hard filter",
     async () => {
+      const scopeResolution = syntheticScopeResolution();
       const custody = createDiscordInfinityActorCustody(
         platformConfig("http://127.0.0.1:1", false, false, "test"),
         "t".repeat(32),
@@ -205,6 +206,7 @@ describe("bounded meeting retrieval composition policy", () => {
           requiredProviderLanes: ["postgres_keyword", "qdrant_dense"],
           serviceRevision: "c".repeat(40),
         },
+        scopeResolution,
         snapshot: {
           loadRoomAuthoritySnapshot: async () => ({
             entries: [{ plan: { topology: {
@@ -227,6 +229,14 @@ describe("bounded meeting retrieval composition policy", () => {
       if (request.status !== "prepared") {
         throw new Error("expected prepared Retrieval V2 request");
       }
+      expect(request.scope).toEqual({
+        memoryScopeId: "internal-room-456", spaceId: "internal-space-123", threadId: null,
+      });
+      expect(scopeResolution.matches({
+        ...meetingKnowledge.buildHistoricalRoomTopology(scopeId, roomId, custody.historicalIds),
+        ...request.scope,
+        request,
+      })).toBe(true);
       expect(request.filters.actorKeys).toEqual([]);
     });
 
@@ -308,3 +318,28 @@ describe("bounded meeting retrieval composition policy", () => {
         .not.toContain("987654321098765432");
     });
 });
+
+function syntheticScopeResolution(): meetingKnowledge.FocusedRetrievalScopeResolutionPort {
+  const scopeBindings = new WeakMap<object, string>();
+  return {
+    resolve: async (input) => {
+      const authority = JSON.stringify([input.spaceSlug, input.roomScopeExternalRef]);
+      let bound = false;
+      return Object.freeze({
+        status: "resolved" as const,
+        spaceId: "internal-space-123",
+        memoryScopeId: "internal-room-456",
+        bind: (request: meetingKnowledge.FocusedLocatorRetrievalV2RequestSnapshot) => {
+          if (bound || !Object.isFrozen(request)) {
+            throw new Error("Invalid fixture binding");
+          }
+          bound = true;
+          scopeBindings.set(request, authority);
+        },
+      });
+    },
+    matches: (input) => scopeBindings.get(input.request) ===
+      JSON.stringify([input.spaceSlug, input.roomScopeExternalRef]) &&
+      input.spaceId === "internal-space-123" && input.memoryScopeId === "internal-room-456",
+  };
+}

@@ -451,8 +451,8 @@ async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
   const directQuery = vi.spyOn(input.pool, "query");
   const clientQuery = vi.spyOn(PgClient.prototype, "query");
   const authorization = vi.spyOn(input.authorization, "authorize");
-  const allParsedBefore = input.infinity.endpoint.requests.length;
-  const allRawBefore = input.infinity.endpoint.exactHttpRequests.length;
+  let allParsedBefore = input.infinity.endpoint.requests.length;
+  let allRawBefore = input.infinity.endpoint.exactHttpRequests.length;
   const parsedBefore = input.infinity.endpoint.requests.filter(
     ({ path }) => path === "/v1/context/retrieve",
   ).length;
@@ -475,6 +475,9 @@ async function proveConfusableIdentityAdmissionFailsBeforeInfinity(input: {
     expect(clientQuery).toHaveBeenCalled();
     expect(authorization).not.toHaveBeenCalled();
 
+    // The admitted positive control performs scope metadata reads.
+    allParsedBefore = input.infinity.endpoint.requests.length;
+    allRawBefore = input.infinity.endpoint.exactHttpRequests.length;
     const connectBeforeUnsafe = connect.mock.calls.length;
     const directQueriesBeforeUnsafe = directQuery.mock.calls.length;
     const clientQueriesBeforeUnsafe = clientQuery.mock.calls.length;
