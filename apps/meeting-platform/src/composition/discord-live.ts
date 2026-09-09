@@ -16,8 +16,7 @@ import {
 } from "@discord-meeting/discord-adapter";
 import { ConfigureMeetingSource } from "@discord-meeting/meeting-routing-core";
 import { CraigPlaybackGateway } from "@discord-meeting/craig-playback-adapter";
-import type { ConversationCoordinator } from
-  "@discord-meeting/meeting-core/conversation";
+import type { ConversationCoordinator } from "@discord-meeting/meeting-core/conversation";
 import type { GroundedMeetingAnswer } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   type SummaryPublicationPort,
