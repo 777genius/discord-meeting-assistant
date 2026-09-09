@@ -1,5 +1,5 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -39,6 +39,39 @@ describe("concrete HTTP production review evidence", () => {
     expect(fixture.fetchCalls().every((call) => call.init.redirect === "error" &&
       (call.init.headers as Record<string, string>).authorization ===
         `Bearer ${fixture.providerCredential}`)).toBe(true);
+  });
+
+  it("requires a closed actor profile configuration before network access", async () => {
+    const fixture = await httpFixture();
+    for (const actorKeyProfileId of [undefined, null, 42, "", " profile ", "x".repeat(129)]) {
+      await fixture.writeInvalidEndpoint((config) => {
+        if (actorKeyProfileId === undefined) {
+          Reflect.deleteProperty(config.canonicalExecution as object, "actorKeyProfileId");
+        } else {
+          (config.canonicalExecution as Record<string, unknown>).actorKeyProfileId = actorKeyProfileId;
+        }
+      });
+      await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath)).rejects.toThrow(
+        actorKeyProfileId === undefined ? "canonical execution connection configuration has an invalid shape" :
+          "canonical actor key profile is invalid");
+      expect(fixture.fetchCalls()).toHaveLength(0);
+    }
+  });
+
+  it("accepts independently configured legacy public trust and rejects open trust entries", async () => {
+    const fixture = await httpFixture();
+    const trustedConfig = JSON.parse(await readFile(fixture.connectionsPath, "utf8")) as Record<string, unknown>;
+    (trustedConfig.canonicalExecution as Record<string, unknown>).legacyHistoricalPublicTrust = [
+      { policyId: "synthetic-policy", signerId: "synthetic-signer", publicKeyPem: fixture.providerPublicKeyPem }];
+    await writeFile(fixture.connectionsPath, canonicalJson(trustedConfig));
+    await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath)).resolves.toBeDefined();
+    expect(fixture.fetchCalls()).toHaveLength(0);
+    await fixture.writeInvalidEndpoint((config) => {
+      (config.canonicalExecution as Record<string, unknown>).legacyHistoricalPublicTrust = [
+        { policyId: "synthetic-policy", signerId: "synthetic-signer", publicKeyPem: fixture.providerPublicKeyPem, extra: true }];
+    });
+    await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath)).rejects.toThrow();
+    expect(fixture.fetchCalls()).toHaveLength(0);
   });
 
   it("rejects every plaintext endpoint before credential reads or network access", async () => {
@@ -191,6 +224,7 @@ async function httpFixture() {
     infinityCapabilityPath: keyPath, infinityTokenPath: tokenPath, postgresUrlPath: tokenPath,
     requestTimeoutMs: 100, retrievalJournalRoot: join(root, "retrieval-journal"),
     runtimeAddress: "127.0.0.1:1", runtimeTokenPath: tokenPath,
+    actorKeyProfileId: "discord-infinity-actor-key.v1:synthetic-active",
     topologyAuthority: authority("provider"), topologyKeyPath: keyPath, topologyPath: keyPath };
   const connectionsPath = join(root, "connections.json");
   const configuration: Record<string, unknown> = { absenceAuthority: authority("absence"),

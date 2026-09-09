@@ -71,3 +71,8 @@ export {
   assertConstructedPostgresDiagnosticFinalEvidence,
   type DiagnosticFinalEvidenceBinding,
 } from "./postgres-diagnostic-final-evidence.js";
+
+export { acceptLegacyHistoricalAdmission, PostgresLegacyHistoricalAdmissionStore }
+  from "./postgres-legacy-historical-admission.js";
+export { PinnedLegacyHistoricalReceiptVerifier, type LegacyHistoricalPublicTrustV1 }
+  from "./postgres-legacy-historical-verifier.js";

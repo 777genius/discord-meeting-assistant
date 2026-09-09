@@ -11,9 +11,10 @@ import {
   knowledgeCoveragePolicyVersion,
   subscriptionRuntimeKnowledgeCoverageMaxOutputTokens,
   subscriptionRuntimeKnowledgeCoveragePurpose,
-  subscriptionRuntimeModel,
+  subscriptionRuntimeDefaultServiceTier,
+  subscriptionRuntimeKnowledgeModel,
   subscriptionRuntimeProtocolVersion,
-  subscriptionRuntimeReasoningEffort,
+  subscriptionRuntimeKnowledgeReasoningEffort,
   type SubscriptionRuntimeAgentTaskRequest,
 } from "./subscription-runtime-contract.js";
 
@@ -31,7 +32,7 @@ const coverageSystemPrompt = [
 ].join(" ");
 
 export const knowledgeCoverageRuntimeProfile =
-  "meeting-knowledge.coverage.sol-medium.semantic-every-block.v1" as const;
+  "meeting-knowledge.coverage.terra-low.semantic-every-block.v2" as const;
 
 export interface KnowledgeCoverageRequestOptions {
   readonly isolatedCwd: string;
@@ -106,12 +107,13 @@ export function buildSubscriptionRuntimeKnowledgeCoverageRequest(
         interactive: false,
         maxOutputTokens: options.maxOutputTokens,
         maxTurns: 1,
-        model: subscriptionRuntimeModel,
+        model: subscriptionRuntimeKnowledgeModel,
         outputKind: "structured_output",
         outputSchema: providerKnowledgeCoverageExtractJsonSchema,
         outputSchemaName: knowledgeCoverageOutputSchemaName,
         permissionMode: "read-only",
-        reasoningEffort: subscriptionRuntimeReasoningEffort,
+        reasoningEffort: subscriptionRuntimeKnowledgeReasoningEffort,
+        serviceTier: subscriptionRuntimeDefaultServiceTier,
         responseFormat: "json",
         runtimeOutput: "structured_output",
         selectedOutputKind: "structured_output",
@@ -119,9 +121,10 @@ export function buildSubscriptionRuntimeKnowledgeCoverageRequest(
       kind: "structured-prompt",
       metadata: {
         executionProfile: "stateless-completion",
-        model: subscriptionRuntimeModel,
+        model: subscriptionRuntimeKnowledgeModel,
         policyVersion: knowledgeCoveragePolicyVersion,
-        reasoningEffort: subscriptionRuntimeReasoningEffort,
+        reasoningEffort: subscriptionRuntimeKnowledgeReasoningEffort,
+        serviceTier: subscriptionRuntimeDefaultServiceTier,
         runtimeOutput: "structured_output",
         toolsDisabled: "true",
       },

@@ -336,6 +336,31 @@
       "id": "ADR-0070",
       "path": "docs/decisions/0070-normalized-historical-embedding-budget.md",
       "immutableDigest": "sha256:33c6de69fde9ec475468beeb1d52fb22b82710479b4dcb1adb9c734e874c89e7"
+    },
+    {
+      "id": "ADR-0071",
+      "path": "docs/decisions/0071-terra-low-memory-default.md",
+      "immutableDigest": "sha256:3a83017424c92059f9fd60590b402cf4c31800e1e5d00ba355aa67e58ab22128"
+    },
+    {
+      "id": "ADR-0072",
+      "path": "docs/decisions/0072-diagnostic-index-readiness.md",
+      "immutableDigest": "sha256:c5fab835107ebfa49cc55f4f455f39ca2c42b39ac92a7b5becbc8d1d9e1bd249"
+    },
+    {
+      "id": "ADR-0073",
+      "path": "docs/decisions/0073-signed-legacy-historical-admission.md",
+      "immutableDigest": "sha256:3d4560f9027f8db2a45f87e7436b639e556030a26927b03c29d1a469878f598e"
+    },
+    {
+      "id": "ADR-0074",
+      "path": "docs/decisions/0074-focused-retrieval-budget-alignment.md",
+      "immutableDigest": "sha256:6ee3a29d2cf9cc73bb321abd041b14e802443d68fe9e628d3ed924d159347e40"
+    },
+    {
+      "id": "ADR-0075",
+      "path": "docs/decisions/0075-canonical-memory-actor-profile.md",
+      "immutableDigest": "sha256:775f57e03fdacafc2904c76c4cc9a23b8236ad4a44352199a2f4a899865f76b9"
     }
   ]
 }

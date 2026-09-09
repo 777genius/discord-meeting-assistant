@@ -9,6 +9,7 @@ import { InfinityContextHistoricalMemoryAdapter } from "../infinity-context-hist
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
 import { PinnedMultilingualMiniLmTokenizer } from "../pinned-multilingual-minilm-tokenizer.js";
 import { canonicalJson, sha256 } from "./canonical.js";
+import { awaitDiagnosticIndexReadiness, DiagnosticIndexReadinessError } from "./diagnostic-index-readiness.js";
 import { DiagnosticCustody } from "./diagnostic-custody.js";
 import { DiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
 import { decodeDiagnosticManifest, decodeDiagnosticQuestions, type DiagnosticManifest, type DiagnosticQuestion } from "./diagnostic-manifest.js";
@@ -61,7 +62,12 @@ export async function runDiagnosticCli(argv: readonly string[], writeSafeLine?: 
       await reportFile.close();
     }
   }
-  catch {
+  catch (error) {
+    if (error instanceof DiagnosticIndexReadinessError) {
+      writeSafeLine?.(canonicalJson({ status: "blocked", qualifying: false,
+        reason: error.message, indexPreparation: error.preparation }));
+      return 1;
+    }
     writeSafeLine?.('{"status":"blocked","qualifying":false,"reason":"diagnostic_execution_blocked"}');
     return 1;
   }
@@ -130,7 +136,7 @@ export async function runDiagnostic(manifest: DiagnosticManifest, reconcileIndex
       throw new Error("frozen diagnostic plan differs");
     }
     const memory = new InfinityContextHistoricalMemoryAdapter({
-      baseUrl: c.infinityBaseUrl, token: infinityToken, requestTimeoutMs: 2000, operationTimeoutMs: 60000,
+      baseUrl: c.infinityBaseUrl, token: infinityToken, requestTimeoutMs: 30_000, operationTimeoutMs: 600_000,
       schemaVersion: 1, embeddingTokenProfile: () => historicalEmbeddingTokenProfile(tokenizer),
       actorKeys: { activeActorKey: actor => `dactor1.diagnostic.${ids.keyedId("diagnostic-actor", [actor])}` },
     });
@@ -159,13 +165,15 @@ export async function runDiagnostic(manifest: DiagnosticManifest, reconcileIndex
     if (applied.planSha256 !== sha256(plan)) {
       throw new Error("diagnostic applied receipt is foreign");
     }
+    const indexPreparation = await awaitDiagnosticIndexReadiness({ baseUrl: c.infinityBaseUrl,
+      token: infinityToken, binding: m.providerBinding, custody });
     const store = new DiagnosticFrozenStore(authority, plan, applied.remoteDocumentIds);
     const outcomes = await runDiagnosticSchedule(custody, m.questions, question => executeQuestion({ m, question, root, key, custody, authority, store, ids,
       transport, infinityToken }));
     const report = { schemaVersion: "meeting_knowledge.real40_diagnostic_report.v1", qualifying: false,
       rootBindingSha256: root, declaredSourceRevision: m.sourceRevision, sourceRevisionAuthority: "owner_declared_unverified", loadedModuleSha256, loadedSdkSha256,
       snapshotSha256: m.frozen.snapshotSha256, transcriptSha256: m.frozen.transcriptSha256,
-      rosterSha256: m.rosterSha256, planSha256: sha256(plan), questionDenominator: 40,
+      rosterSha256: m.rosterSha256, planSha256: sha256(plan), questionDenominator: 40, indexPreparation,
       counts: { answered: outcomes.filter(o => o.status === "answered").length,
         abstained: outcomes.filter(o => o.status === "abstained").length,
         failed: outcomes.filter(o => o.status === "failed").length,

@@ -5,6 +5,7 @@ import { HistoricalFocusedLocatorRetrievalV2,
   DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
   type FocusedLocatorRetrievalV2ProviderBinding,
   type HistoricalAuthorizationPort, type HistoricalOpaqueIdPort,
+  type LegacyHistoricalReceiptVerifierPort,
   type IdentitySkeletonPortV1,
   type RetrievalActorAliasOwnerV1,
   type RetrievalActorReferenceAuthorityV1,
@@ -24,6 +25,7 @@ export class InfinityRetrievalV2Composition {
     readonly operationTimeoutMs: number;
     readonly actorKeysForSpeaker: (speakerId: string) => readonly string[];
     readonly actorReferences: RetrievalActorReferenceAuthorityV1;
+    readonly legacyVerifier?: LegacyHistoricalReceiptVerifierPort;
     readonly pool: Pool;
     readonly requestTimeoutMs: number;
     readonly servingAuthorized: () => boolean;
@@ -50,7 +52,7 @@ export class InfinityRetrievalV2Composition {
       providerBinding: binding,
       servingAuthorized: this.input.servingAuthorized,
       speakerAliases: this.input.speakerAliases,
-      snapshot: new PostgresHistoricalRoomAuthoritySnapshot(this.input.pool),
+      snapshot: new PostgresHistoricalRoomAuthoritySnapshot(this.input.pool, undefined, this.input.legacyVerifier),
     });
   }
 
@@ -61,7 +63,7 @@ export class InfinityRetrievalV2Composition {
       ids: this.#ids,
       retrieval: this.#retrieval,
       servingAuthorized: this.input.servingAuthorized,
-      snapshot: new PostgresHistoricalRoomAuthoritySnapshot(this.input.pool),
+      snapshot: new PostgresHistoricalRoomAuthoritySnapshot(this.input.pool, undefined, this.input.legacyVerifier),
       turnHashes: { hash: canonicalFinalReplyTurnHash },
     }, this.input.twoHourProfile);
   }
@@ -74,6 +76,7 @@ export function createInfinityRetrievalV2Composition(
   ids: HistoricalOpaqueIdPort,
   authority: {
     readonly actorReferences: RetrievalActorReferenceAuthorityV1;
+    readonly legacyVerifier?: LegacyHistoricalReceiptVerifierPort;
     readonly actorKeysForSpeaker: (speakerId: string) => readonly string[];
     readonly identitySkeletons: IdentitySkeletonPortV1;
     readonly servingAuthorized: () => boolean;
@@ -92,6 +95,7 @@ export function createInfinityRetrievalV2Composition(
     retrievalV2: new InfinityRetrievalV2Composition({
       baseUrl: infinity.baseUrl,
       actorReferences: authority.actorReferences,
+      ...(authority.legacyVerifier === undefined ? {} : { legacyVerifier: authority.legacyVerifier }),
       actorKeysForSpeaker: authority.actorKeysForSpeaker,
       operationTimeoutMs: infinity.operationTimeoutMs,
       ids,
@@ -110,14 +114,6 @@ export function createInfinityRetrievalV2Composition(
 export function createActorKeyBoundHistoricalIds(
   topologyKey: string,
   actorKeyProfileId: string,
-): HistoricalOpaqueIdPort {
-  const ids = new HmacHistoricalOpaqueIds(topologyKey);
-  return Object.freeze({
-    keyedId: (namespace: string, parts: readonly string[]) => ids.keyedId(
-      namespace,
-      namespace === "historical-index-generation"
-        ? [...parts, actorKeyProfileId]
-        : parts,
-    ),
-  });
+): HmacHistoricalOpaqueIds {
+  return new HmacHistoricalOpaqueIds(topologyKey, actorKeyProfileId);
 }

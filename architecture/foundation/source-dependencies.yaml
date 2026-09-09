@@ -109,6 +109,8 @@ boundaries:
       packages: []
       builtins: []
       runtimeReferences: []
+  # ADR-0073: domain/legacy-historical-admission.ts and its consumer-owned ports
+  # remain in the closed Meeting Knowledge feature root.
   - id: core.meeting.knowledge
     roots:
       - packages/meeting-core/src/features/meeting-knowledge
@@ -226,6 +228,8 @@ boundaries:
       builtins:
         - node:crypto
       runtimeReferences: []
+  # ADR-0073: postgres-legacy-historical-{admission,verifier}.ts and
+  # postgres-accepted-historical-meeting.ts implement Knowledge ports here.
   - id: adapters.postgres
     roots:
       - packages/postgres-adapter/src
@@ -332,6 +336,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-manifest.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-frozen-store.ts
+      - packages/infinity-context-adapter/src/quality-campaign/diagnostic-index-readiness.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-run.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-score-cli.ts
@@ -363,6 +368,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-scheduler.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-manifest.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-frozen-store.ts
+      - packages/infinity-context-adapter/src/quality-campaign/diagnostic-index-readiness.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-run.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-score-cli.ts

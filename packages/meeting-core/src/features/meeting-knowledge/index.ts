@@ -358,3 +358,10 @@ export {
   decodeFocusedMemoryRetrievalResult,
   focusedMemoryContractVersion,
 } from "./application/ports/focused-memory-contract.js";
+
+export { LEGACY_HISTORICAL_SIGNING_CONTEXT, admitLegacyAcceptedFinalMeeting,
+  decodeSignedLegacyHistoricalReceipt, legacyHistoricalCanonicalJson,
+  type LegacyHistoricalPayloadV1, type SignedLegacyHistoricalReceiptV1,
+} from "./domain/legacy-historical-admission.js";
+export type { LegacyHistoricalAdmissionStorePort, LegacyHistoricalReceiptVerifierPort }
+  from "./application/ports/legacy-historical-admission.js";

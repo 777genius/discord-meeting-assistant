@@ -9,9 +9,10 @@ These limits implement ADR-0034's bounded-only answer-model grounding.
 
 | Field | Pinned value | Source and rationale |
 | --- | ---: | --- |
+| Focused locator retrieval deadline | 2,000 ms | Production and qualification provider-input budget; [ADR-0074](../decisions/0074-focused-retrieval-budget-alignment.md). Retrieval p95 acceptance remains <= 3,000,000 us |
 | Runtime package | `@vioxen/subscription-runtime@0.1.0-main.27` | Audited launcher/runtime contract |
-| Answer model | `gpt-5.6-sol`, medium | Dedicated answer profile; summary/conversation profiles forbidden |
-| Coverage model | `gpt-5.6-sol`, medium | Dedicated semantic every-block evidence-selection schema; no lexical completeness claim |
+| Answer model | `gpt-5.6-terra`, low, default tier | Dedicated answer profile; summary/conversation profiles forbidden |
+| Coverage model | `gpt-5.6-terra`, low, default tier | Dedicated semantic every-block evidence-selection schema; no lexical completeness claim |
 | Coverage request bytes | 131,072 per block | Strict serialized runtime request ceiling; oversize blocks fail unsupported before transport |
 | Coverage safe input | 65,536 UTF-8 byte upper-bound units per block | Conservative token ceiling bound to the extractor profile and checkpoint identity |
 | Coverage output reservation | 2,048 tokens per block | Exact runtime profile maximum |

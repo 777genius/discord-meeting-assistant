@@ -6,7 +6,7 @@ import type { QualityCampaignRelease } from "./release.js";
 export const QUALIFICATION_PROVIDER_INPUT_CONTRACT = Object.freeze({
   answer: Object.freeze({ maximumInputUtf8Bytes: 16_000, maximumOutputBytes: 16_384,
     maximumOutputTokens: 2_048, repairCalls: Object.freeze({ maximum: 1, minimum: 0 }) }),
-  retrieval: Object.freeze({ candidateLimit: 100, deadlineMs: 1_000,
+  retrieval: Object.freeze({ candidateLimit: 100, deadlineMs: 2_000,
     evidenceByteLimit: 16_000, maximumQueries: 4, neighborRadius: 0,
     responseByteLimit: 16_384, resultLimit: 10 }),
   schemaVersion: "meeting_knowledge.semantic_quality_provider_input_contract.v1",
@@ -35,7 +35,7 @@ export interface QualificationExecutionBinding {
   readonly contractSha256: string;
   readonly maximumOutputBytes: number;
   readonly maximumOutputTokens: number;
-  readonly model: "gpt-5.6-sol";
+  readonly model: "gpt-5.6-terra";
   readonly promptSha256: string;
   readonly runtimeSha256: string;
   readonly tokenizerSha256: string;

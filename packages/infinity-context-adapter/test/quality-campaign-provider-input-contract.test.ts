@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 
 import { QUALIFICATION_PROVIDER_INPUT_CONTRACT,
+  QUALIFICATION_PROVIDER_INPUT_CONTRACT_SHA256, QUALIFICATION_THRESHOLDS,
   assertQualificationProviderAccounting, measureQualificationModelInput,
   sha256, type QualityCampaignRelease } from
   "@discord-meeting/infinity-context-adapter/quality-campaign";
@@ -15,12 +18,42 @@ const RELEASE = Object.freeze({ answerImageSha256: d("answer-image"),
   discordReleaseSha256: d("discord-release"), infinityCapabilitySha256: d("capability"),
   infinityCommitSha256: d("infinity-commit"), infinityImageSha256: d("infinity-image"),
   infinityProfileSha256: d("profile"), infinityReleaseSha256: d("infinity-release"),
-  mapperSha256: d("mapper"), model: "gpt-5.6-sol", policySha256: d("policy"),
-  promptSha256: d("prompt"), reasoning: "medium", sdkArchiveSha256: d("sdk"),
+  mapperSha256: d("mapper"), model: "gpt-5.6-terra", policySha256: d("policy"),
+  promptSha256: d("prompt"), reasoning: "low", sdkArchiveSha256: d("sdk"),
   serviceTier: "default", targetInventoryAuthorityKeySha256: d("inventory"),
   tokenizerSha256: d("tokenizer") } satisfies QualityCampaignRelease);
 
 describe("canonical production provider-input contract", () => {
+  it("aligns the focused production budget with evaluation without relaxing other limits", () => {
+    const policy = DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY;
+    expect(policy).toEqual({ candidateLimit: 100, deadlineMs: 2_000,
+      evidenceByteLimit: 16_000, maximumSources: 100, responseByteLimit: 16_384,
+      resultLimit: 10, version: "meeting-knowledge.locator-retrieval.v2" });
+    expect(QUALIFICATION_PROVIDER_INPUT_CONTRACT).toEqual({
+      answer: { maximumInputUtf8Bytes: 16_000, maximumOutputBytes: 16_384,
+        maximumOutputTokens: 2_048, repairCalls: { maximum: 1, minimum: 0 } },
+      retrieval: { candidateLimit: policy.candidateLimit, deadlineMs: policy.deadlineMs,
+        evidenceByteLimit: policy.evidenceByteLimit, maximumQueries: 4, neighborRadius: 0,
+        responseByteLimit: policy.responseByteLimit, resultLimit: policy.resultLimit },
+      schemaVersion: "meeting_knowledge.semantic_quality_provider_input_contract.v1",
+    });
+    expect(QUALIFICATION_THRESHOLDS.maximumRetrievalLatencyP95Us).toBe(3_000_000);
+  });
+
+  it("rejects the unchanged-schema 1000 ms accounting identity", () => {
+    const staleContractSha256 = "ca773c4516342ea2e034ba2714fddd5742a80e78761944ea20f5da7a43317bf3";
+    expect(sha256({ ...QUALIFICATION_PROVIDER_INPUT_CONTRACT,
+      retrieval: { ...QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval, deadlineMs: 1_000 },
+    })).toBe(staleContractSha256);
+    expect(QUALIFICATION_PROVIDER_INPUT_CONTRACT_SHA256).not.toBe(staleContractSha256);
+    const current = qualificationProviderAccountingFixture(RELEASE, "retrieval");
+    expect(assertQualificationProviderAccounting(current,
+      { callKind: "retrieval", release: RELEASE })).toEqual(current);
+    expect(() => assertQualificationProviderAccounting({ ...current,
+      contractSha256: staleContractSha256 },
+    { callKind: "retrieval", release: RELEASE })).toThrow(/frozen production bindings/u);
+  });
+
   it("measures UTF-8 bytes at the exact 16000-byte boundary", () => {
     for (const unit of ["a", "Ж", "😀", "e\u0301"]) {
       const fixedBytes = 2; // the two canonical LF separators

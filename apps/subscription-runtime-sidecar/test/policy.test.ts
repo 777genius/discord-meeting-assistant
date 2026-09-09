@@ -109,7 +109,7 @@ describe("subscription runtime request policy", () => {
     );
   });
 
-  it("reconstructs only the two dedicated Sol/medium knowledge profiles", () => {
+  it("reconstructs only the dedicated Terra/low knowledge profiles", () => {
     const answer = reconstructCanonicalRequest(
       grpcRequest(knowledgeAnswerCanonicalRequest),
       options,
@@ -126,8 +126,8 @@ describe("subscription runtime request policy", () => {
     });
     expect(answer.task.controls).toMatchObject({
       maxOutputTokens: 2_048,
-      model: "gpt-5.6-sol",
-      reasoningEffort: "medium",
+      model: "gpt-5.6-terra",
+      reasoningEffort: "low",
       serviceTier: "default",
     });
     expect(answer.task.controls.outputSchema).toEqual(
@@ -140,7 +140,8 @@ describe("subscription runtime request policy", () => {
     expect(coverage.task.controls.outputSchema).toEqual(
       providerKnowledgeCoverageExtractJsonSchema,
     );
-    expect(coverage.task.controls.serviceTier).toBeUndefined();
+    expect(coverage.task.controls).toMatchObject({ model: "gpt-5.6-terra",
+      reasoningEffort: "low", serviceTier: "default" });
   });
 
   it("admits the exact dedicated bounded evidence selector profile", () => {
@@ -169,6 +170,8 @@ describe("subscription runtime request policy", () => {
     );
     expect(reconstructed.context.purpose)
       .toBe("discord_meeting.knowledge.evidence_select.v1");
+    expect(reconstructed.task.controls).toMatchObject({ model: "gpt-5.6-terra",
+      reasoningEffort: "low", serviceTier: "default" });
   });
 });
 
@@ -310,15 +313,27 @@ describe("subscription runtime request rejection policy", () => {
     },
   );
 
-  it("does not apply the qualified tier to another knowledge purpose", () => {
+  it("rejects an unqualified tier on coverage", () => {
     const request = grpcRequest(knowledgeCoverageCanonicalRequest);
     const controls = JSON.parse(String(request.controlsJson)) as Record<string, unknown>;
-    controls.serviceTier = "default";
+    controls.serviceTier = "fast";
     expect(() => reconstructCanonicalRequest({
       ...request,
       controlsJson: JSON.stringify(controls),
-    }, options)).toThrow("profile");
+    }, options)).toThrow("policy");
   });
+
+  it.each([knowledgeAnswerCanonicalRequest, knowledgeCoverageCanonicalRequest])(
+    "rejects the previous Sol/medium memory binding before execution", (canonical) => {
+      const request = grpcRequest(canonical);
+      const controls = { ...canonical.task.controls, model: "gpt-5.6-sol",
+        reasoningEffort: "medium" };
+      const metadata = { ...(request.metadata as Record<string, unknown>),
+        model: "gpt-5.6-sol", reasoningEffort: "medium" };
+      expect(() => reconstructCanonicalRequest({ ...request,
+        controlsJson: JSON.stringify(controls), metadata }, options)).toThrow("policy");
+    },
+  );
 
   it("fails closed for stale incremental policy and output-budget profiles", () => {
     const request = grpcRequest(incrementalCanonicalRequest);

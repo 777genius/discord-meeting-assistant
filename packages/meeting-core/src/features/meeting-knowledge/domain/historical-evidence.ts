@@ -97,6 +97,7 @@ export interface AcceptedFinalMeetingInputV1 {
 }
 
 export interface AcceptedFinalMeetingV1 {
+  readonly admission?: "signed_legacy_v1";
   readonly authoritativeDurationMs: number | null;
   readonly binding: HistoricalReleaseBindingV1;
   readonly humanTurns: readonly HistoricalTranscriptTurnV1[];
@@ -254,7 +255,7 @@ export function validateHistoricalReleaseBinding(
   return expected;
 }
 
-function normalizeActors(
+export function normalizeHistoricalActors(
   actors: readonly HistoricalActorInputV1[],
 ): readonly HistoricalActorV1[] {
   const normalized = actors.map((actor) => {
@@ -337,7 +338,7 @@ export function admitAcceptedFinalMeeting(
     );
   }
 
-  const actors = normalizeActors(input.actors);
+  const actors = normalizeHistoricalActors(input.actors);
   const identity = MeetingKnowledgeIdentity.admit({
     actors,
     identityProvenance: input.identityProvenance,
@@ -348,18 +349,7 @@ export function admitAcceptedFinalMeeting(
     return null;
   }
   const humanActors = new Set(identity.humanActorIds);
-  const turns = input.turns.map(normalizeTurn).toSorted((left, right) =>
-    left.startMs - right.startMs ||
-    left.endMs - right.endMs ||
-    compareOpaque(left.turnId, right.turnId)
-  );
-  if (new Set(turns.map(({ turnId }) => turnId)).size !== turns.length) {
-    throw new HistoricalEvidenceInvariantError(
-      "DUPLICATE_TURN",
-      "accepted transcript turn identities must be unique",
-    );
-  }
-  const humanTurns = turns.filter(({ speakerId }) => humanActors.has(speakerId));
+  const humanTurns = selectHistoricalHumanTurns(input.turns, humanActors);
   if (humanTurns.length === 0) {
     return null;
   }
@@ -381,4 +371,23 @@ export function admitAcceptedFinalMeeting(
 
 function compareOpaque(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function selectHistoricalHumanTurns(
+  inputTurns: readonly HistoricalTranscriptTurnV1[],
+  humanActors: ReadonlySet<string>,
+): readonly HistoricalTranscriptTurnV1[] {
+  const turns = inputTurns.map(normalizeTurn).toSorted((left, right) =>
+    left.startMs - right.startMs ||
+    left.endMs - right.endMs ||
+    compareOpaque(left.turnId, right.turnId)
+  );
+  if (new Set(turns.map(({ turnId }) => turnId)).size !== turns.length) {
+    throw new HistoricalEvidenceInvariantError(
+      "DUPLICATE_TURN",
+      "accepted transcript turn identities must be unique",
+    );
+  }
+  const humanTurns = turns.filter(({ speakerId }) => humanActors.has(speakerId));
+  return Object.freeze(humanTurns);
 }

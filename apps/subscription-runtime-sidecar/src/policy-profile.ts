@@ -22,6 +22,8 @@ import {
   subscriptionRuntimeKnowledgeAnswerPurpose,
   subscriptionRuntimeKnowledgeCoveragePurpose,
   subscriptionRuntimeKnowledgeEvidenceSelectorPurpose,
+  subscriptionRuntimeKnowledgeModel,
+  subscriptionRuntimeKnowledgeReasoningEffort,
   subscriptionRuntimeModel,
   subscriptionRuntimeProfileForPurpose,
   subscriptionRuntimePurpose,
@@ -120,9 +122,9 @@ export function reconstructProfileMetadata(
         transcriptVersion: parsed.transcriptVersion,
       },
       task: fixedTaskMetadata(
-        subscriptionRuntimeModel,
+        subscriptionRuntimeKnowledgeModel,
         knowledgeAnswerPolicyVersion,
-        subscriptionRuntimeReasoningEffort,
+        subscriptionRuntimeKnowledgeReasoningEffort,
         subscriptionRuntimeDefaultServiceTier,
       ),
     };
@@ -148,9 +150,10 @@ export function reconstructProfileMetadata(
         transcriptVersion: parsed.transcriptVersion,
       },
       task: fixedTaskMetadata(
-        subscriptionRuntimeModel,
+        subscriptionRuntimeKnowledgeModel,
         policyVersion,
-        subscriptionRuntimeReasoningEffort,
+        subscriptionRuntimeKnowledgeReasoningEffort,
+        subscriptionRuntimeDefaultServiceTier,
       ),
     };
   }

@@ -4,7 +4,8 @@ import { PrepareFocusedLocatorRetrievalV2Request,
   type FocusedLocatorRetrievalV2ProviderBinding } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
-  PostgresHistoricalRoomAuthoritySnapshot } from "@discord-meeting/postgres-adapter";
+  PostgresHistoricalRoomAuthoritySnapshot, PinnedLegacyHistoricalReceiptVerifier,
+  type LegacyHistoricalPublicTrustV1 } from "@discord-meeting/postgres-adapter";
 import { createGrpcQualifiedGroundedAnswerAdapter, GrpcSubscriptionRuntimeTransport,
   subscriptionRuntimeCliEngine, type KnowledgeAnswerQualificationExecutionBinding } from
   "@discord-meeting/subscription-runtime-adapter";
@@ -27,6 +28,8 @@ import { readCanonicalQualityCampaignJson, readQualityCampaignBytes,
   readQualityCampaignText } from "./production-execution-corpus-custody.js";
 
 export interface ProductionCanonicalExecutionConnectionConfiguration {
+  readonly actorKeyProfileId: string;
+  readonly legacyHistoricalPublicTrust?: readonly LegacyHistoricalPublicTrustV1[];
   readonly answerExecutionBindingPath: string;
   readonly answerJournalRoot: string;
   readonly artifactKeyId: string;
@@ -47,9 +50,10 @@ export interface ProductionCanonicalExecutionConnectionConfiguration {
 }
 
 interface ScopeTopologyDocument {
+  readonly actorKeyProfileId: string;
   readonly entries: readonly { readonly currentMeetingId: string; readonly questionId: string;
     readonly reference: string; readonly roomId: string; readonly scopeId: string }[];
-  readonly schemaVersion: "meeting_knowledge.quality_scope_topology.v1";
+  readonly schemaVersion: "meeting_knowledge.quality_scope_topology.v2";
 }
 
 /** Concrete installed composition of the official SDK, selected PostgreSQL evidence and gRPC answer. */
@@ -57,6 +61,9 @@ export async function createProductionCanonicalExecutorFactory(
   config: ProductionCanonicalExecutionConnectionConfiguration,
 ): Promise<QualificationQuestionExecutorFactoryPort> {
   validateConfiguration(config);
+  validateLegacyHistoricalPublicTrust(config.legacyHistoricalPublicTrust);
+  const legacyVerifier = config.legacyHistoricalPublicTrust === undefined ? undefined
+    : new PinnedLegacyHistoricalReceiptVerifier(config.legacyHistoricalPublicTrust);
   const [artifactKeyText, capabilityValue, executionBindingValue, infinityToken,
     postgresUrl, runtimeToken, topologyKey, topologyValue, topologyPublicKeyPem] =
     await Promise.all([
@@ -85,14 +92,14 @@ export async function createProductionCanonicalExecutorFactory(
   const providerBinding = providerBindingFrom(capability);
   const runtimeBinding = decodeRuntimeBinding(executionBindingValue);
   const topology = decodeTopology(topologyValue, config.topologyAuthority.keyId,
-    topologyPublicKeyPem);
+    topologyPublicKeyPem, config.actorKeyProfileId);
   const pool = new Pool({ connectionString: postgresUrl.trim(), connectionTimeoutMillis: 5_000,
     max: 32 });
   const store = new PostgresHistoricalMemoryStore(pool);
-  const evidenceAuthority = new PostgresHistoricalEvidenceAuthority(pool);
-  const ids = new HmacHistoricalOpaqueIds(topologyKey);
+  const evidenceAuthority = new PostgresHistoricalEvidenceAuthority(pool, undefined, legacyVerifier);
+  const ids = new HmacHistoricalOpaqueIds(topologyKey, topology.actorKeyProfileId);
   const preparer = new PrepareFocusedLocatorRetrievalV2Request({ ids, providerBinding,
-    snapshot: new PostgresHistoricalRoomAuthoritySnapshot(pool) });
+    snapshot: new PostgresHistoricalRoomAuthoritySnapshot(pool, undefined, legacyVerifier) });
   const transport = new GrpcSubscriptionRuntimeTransport({ address: config.runtimeAddress,
     serviceToken: runtimeToken.trim() });
   const topologyPort = topologyResolver(topology);
@@ -217,12 +224,15 @@ function sameRuntimeBinding(execution: KnowledgeAnswerQualificationExecutionBind
 }
 
 function decodeTopology(document: unknown, keyId: string,
-  publicKeyPem: string): ScopeTopologyDocument {
+  publicKeyPem: string, actorKeyProfileId: string): ScopeTopologyDocument {
   const signed = verifyExternalSignedValue<ScopeTopologyDocument>(document, keyId, publicKeyPem,
     "scope topology");
-  const payload = exactRecord(signed.payload, ["entries", "schemaVersion"], "scope topology");
-  if (payload.schemaVersion !== "meeting_knowledge.quality_scope_topology.v1" ||
+  const payload = exactRecord(signed.payload, ["actorKeyProfileId", "entries", "schemaVersion"], "scope topology");
+  if (payload.schemaVersion !== "meeting_knowledge.quality_scope_topology.v2" ||
     !Array.isArray(payload.entries)) {throw new Error("scope topology is invalid");}
+  if (safeId(payload.actorKeyProfileId, "scope topology actor key profile") !== actorKeyProfileId) {
+    throw new Error("scope topology actor key profile differs from configured binding");
+  }
   const entries = payload.entries.map((entryValue) => {
     const entry = exactRecord(entryValue, ["currentMeetingId", "questionId", "reference", "roomId",
       "scopeId"], "scope topology entry");
@@ -235,7 +245,7 @@ function decodeTopology(document: unknown, keyId: string,
   if (new Set(entries.map(({ reference }) => reference)).size !== entries.length) {
     throw new Error("scope topology references are duplicated");
   }
-  return Object.freeze({ entries: Object.freeze(entries), schemaVersion: payload.schemaVersion });
+  return Object.freeze({ actorKeyProfileId, entries: Object.freeze(entries), schemaVersion: payload.schemaVersion });
 }
 
 function topologyResolver(topology: ScopeTopologyDocument): QualificationScopeTopologyPort {
@@ -251,6 +261,7 @@ function topologyResolver(topology: ScopeTopologyDocument): QualificationScopeTo
 }
 
 function validateConfiguration(config: ProductionCanonicalExecutionConnectionConfiguration): void {
+  safeId(config.actorKeyProfileId, "canonical actor key profile");
   for (const [key, value] of Object.entries(config)) {
     if ((key.endsWith("Path") || key.endsWith("Root")) && typeof value === "string") {
       absolute(value, key);
@@ -283,4 +294,14 @@ async function readJson(path: string, label: string): Promise<unknown> {
 function absolute(path: string, label: string): string {
   if (!isAbsolute(path) || path.includes("\0")) {throw new Error(`${label} must be absolute`);}
   return resolve(path);
+}
+
+export function validateLegacyHistoricalPublicTrust(trust: readonly LegacyHistoricalPublicTrustV1[] | undefined): void {
+  if (trust === undefined) { return; }
+  if (!Array.isArray(trust)) { throw new Error("legacy public trust must be an array"); }
+  for (const candidate of trust) {
+    const entry = exactRecord(candidate, ["policyId", "signerId", "publicKeyPem"], "legacy public trust entry");
+    safeId(entry.policyId, "legacy policy"); safeId(entry.signerId, "legacy signer");
+    if (typeof entry.publicKeyPem !== "string") { throw new Error("legacy public key must be PEM text"); }
+  }
 }

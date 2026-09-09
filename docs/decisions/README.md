@@ -69,6 +69,16 @@
 
 - [ADR-0070: Bound normalized historical embedding documents](0070-normalized-historical-embedding-budget.md)
 
+- [ADR-0071: Terra low as the memory default](0071-terra-low-memory-default.md)
+
+- [ADR-0072: Diagnostic index readiness before question reservation](0072-diagnostic-index-readiness.md)
+
+- [ADR-0073: Bounded signed legacy historical admission](0073-signed-legacy-historical-admission.md)
+
+- [ADR-0074: Align focused production and qualification retrieval budgets](0074-focused-retrieval-budget-alignment.md)
+
+- [ADR-0075: Bind canonical memory execution to the signed actor profile](0075-canonical-memory-actor-profile.md)
+
 ## Superseded
 
 - [ADR-0024: Possession-based recording playback](0024-possession-based-recording-playback.md)

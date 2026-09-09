@@ -9,7 +9,9 @@ import type {
   JsonValue,
 } from "@infinity-context/sdk";
 import { decodeRetrieveContextResponse } from "@infinity-context/sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 
 import {
   InfinityContextRetrievalV2Adapter,
@@ -169,11 +171,12 @@ function adapter(endpoint: RetrievalV2Endpoint, timeoutMs = 1_000) {
 function adapterWithClock(
   endpoint: RetrievalV2Endpoint,
   monotonicNowMs: () => number,
+  operationTimeoutMs = 200,
 ) {
   return new InfinityContextRetrievalV2Adapter({
     baseUrl: "http://infinity.invalid/v1",
     monotonicNowMs,
-    operationTimeoutMs: 200,
+    operationTimeoutMs,
     requestTimeoutMs: 100,
     transport: endpoint,
   });
@@ -529,6 +532,25 @@ describe("Infinity Context locator-only Retrieval V2 validation", () => {
 });
 
 describe("Infinity Retrieval V2 deadline ownership", () => {
+  it("cancels an in-flight POST under the production 2000 ms budget without replay", async () => {
+    const endpoint = new RetrievalV2Endpoint();
+    endpoint.afterCapabilities = () => { endpoint.hang = true; };
+    const controller = new AbortController();
+    const retrieval = new InfinityContextRetrievalV2Adapter({
+      baseUrl: "http://infinity.invalid/v1", operationTimeoutMs: 4_000,
+      requestTimeoutMs: 2_000, transport: endpoint,
+    }).retrieve(request({ budgets: { ...request().budgets,
+      deadlineMs: DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY.deadlineMs },
+    }), { signal: controller.signal });
+    await vi.waitFor(() => { expect(endpoint.requests).toHaveLength(2); });
+    controller.abort(new Error("caller cancelled the pending POST"));
+    expect(await retrieval).toEqual({ code: "memory.operation_cancelled",
+      retryable: false, status: "unavailable" });
+    expect(endpoint.requests.map(({ url }) => url.pathname))
+      .toEqual(["/v1/capabilities", "/v1/context/retrieve"]);
+    expect(endpoint.requests[1]!.signal?.aborted).toBe(true);
+  });
+
   it("maps timeout and caller cancellation without returning partial locators", async () => {
     const timeoutEndpoint = new RetrievalV2Endpoint();
     timeoutEndpoint.hang = true;
@@ -552,13 +574,13 @@ describe("Infinity Retrieval V2 deadline ownership", () => {
     });
   });
 
-  it("uses one monotonic absolute deadline across both official-SDK requests", async () => {
+  it.each([200, 2_000])("uses one %i ms absolute deadline across both SDK requests", async (deadlineMs) => {
     let now = 1_000;
     const endpoint = new RetrievalV2Endpoint();
-    endpoint.afterCapabilities = () => { now = 1_201; };
+    endpoint.afterCapabilities = () => { now += deadlineMs + 1; };
 
-    await expect(adapterWithClock(endpoint, () => now).retrieve(request({
-      budgets: { ...request().budgets, deadlineMs: 200 },
+    await expect(adapterWithClock(endpoint, () => now, deadlineMs).retrieve(request({
+      budgets: { ...request().budgets, deadlineMs },
     }))).resolves.toEqual({
       code: "memory.context_retrieval_deadline_exceeded",
       retryable: true,

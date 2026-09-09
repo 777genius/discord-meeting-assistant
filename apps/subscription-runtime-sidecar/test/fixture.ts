@@ -191,15 +191,6 @@ export const knowledgeAnswerCanonicalRequest: SubscriptionRuntimeAgentTaskReques
   timeoutMs: 180_000,
 };
 
-const {
-  serviceTier: _answerControlsServiceTier,
-  ...knowledgeCoverageControls
-} = knowledgeAnswerCanonicalRequest.task.controls;
-const {
-  serviceTier: _answerMetadataServiceTier,
-  ...knowledgeCoverageMetadata
-} = knowledgeAnswerCanonicalRequest.task.metadata;
-
 export const knowledgeCoverageCanonicalRequest: SubscriptionRuntimeAgentTaskRequest = {
   ...knowledgeAnswerCanonicalRequest,
   context: {
@@ -217,7 +208,7 @@ export const knowledgeCoverageCanonicalRequest: SubscriptionRuntimeAgentTaskRequ
   task: {
     ...knowledgeAnswerCanonicalRequest.task,
     controls: {
-      ...knowledgeCoverageControls,
+      ...knowledgeAnswerCanonicalRequest.task.controls,
       maxOutputTokens: knowledgeCoverageExecutionProfile.maxOutputTokens,
       model: knowledgeCoverageExecutionProfile.model,
       outputSchema: providerKnowledgeCoverageExtractJsonSchema,
@@ -225,7 +216,7 @@ export const knowledgeCoverageCanonicalRequest: SubscriptionRuntimeAgentTaskRequ
       reasoningEffort: knowledgeCoverageExecutionProfile.reasoningEffort,
     },
     metadata: {
-      ...knowledgeCoverageMetadata,
+      ...knowledgeAnswerCanonicalRequest.task.metadata,
       model: knowledgeCoverageExecutionProfile.model,
       policyVersion: knowledgeCoverageExecutionProfile.policyVersion,
       reasoningEffort: knowledgeCoverageExecutionProfile.reasoningEffort,

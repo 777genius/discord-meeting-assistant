@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { HttpTransport } from "@infinity-context/sdk";
 
 import {
   buildHistoricalIndexPlan,
@@ -15,7 +16,7 @@ import { finalMeeting } from "./historical-e2e-test-kit.js";
 
 const tokenizer = new PinnedMultilingualMiniLmTokenizer();
 
-function adapter(endpoint: DisposableInfinityEndpoint) {
+function adapter(endpoint: HttpTransport) {
   return new InfinityContextHistoricalMemoryAdapter({
     actorKeys: {
       activeActorKey: (actorId) => ({
@@ -113,6 +114,69 @@ describe("Infinity Context historical Retrieval V2 projection ingest", () => {
       thread_external_ref: plan.topology.threadExternalRef,
       title: plan.documents[0]!.title,
     });
+  });
+
+  it("processes a committed pending ingest after its response is lost, using the same IDs", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const plan = fixture();
+    endpoint.loseNextIngestResponse();
+    const transport: HttpTransport = {
+      send: async (request) => {
+        const response = await endpoint.send(request);
+        if (request.method !== "POST" || request.url.pathname !== "/v1/documents") {
+          return response;
+        }
+        // The provider uses this ambiguous status even when no process was enqueued.
+        const body = JSON.parse(typeof response.body === "string"
+          ? response.body : new TextDecoder().decode(response.body)) as { data: { indexing_status: string } };
+        body.data.indexing_status = "already_indexed_or_pending";
+        return { ...response, body: JSON.stringify(body) };
+      },
+    };
+
+    const indexed = await adapter(transport).indexFinalMeeting(plan);
+    expect(indexed).toMatchObject({ status: "applied" });
+    expect(endpoint.documentCount()).toBe(1);
+    expect(endpoint.requests.filter(({ method, path }) =>
+      method === "POST" && path === "/v1/documents"
+    ).map(({ idempotencyKey }) => idempotencyKey)).toEqual([
+      plan.documents[0]!.mutationId, plan.documents[0]!.mutationId,
+    ]);
+    expect(endpoint.requests.filter(({ path }) => path.endsWith("/process"))
+      .map(({ idempotencyKey }) => idempotencyKey))
+      .toEqual([`${plan.documents[0]!.mutationId}:process`]);
+
+    // A later reconciliation keeps both the document and process mutation identities.
+    await expect(adapter(transport).indexFinalMeeting(plan)).resolves.toEqual(indexed);
+    expect(endpoint.documentCount()).toBe(1);
+    expect(endpoint.requests.filter(({ path }) => path.endsWith("/process"))
+      .map(({ idempotencyKey }) => idempotencyKey)).toEqual([
+        `${plan.documents[0]!.mutationId}:process`,
+        `${plan.documents[0]!.mutationId}:process`,
+      ]);
+  });
+
+  it("skips processing when an ingest replay explicitly confirms indexed", async () => {
+    const endpoint = new DisposableInfinityEndpoint();
+    const plan = fixture();
+    const indexed = await adapter(endpoint).indexFinalMeeting(plan);
+    expect(indexed).toMatchObject({ status: "applied" });
+    const transport: HttpTransport = {
+      send: async (request) => {
+        const response = await endpoint.send(request);
+        if (request.method !== "POST" || request.url.pathname !== "/v1/documents") {
+          return response;
+        }
+        const body = JSON.parse(typeof response.body === "string"
+          ? response.body : new TextDecoder().decode(response.body)) as { data: { indexing_status: string } };
+        body.data.indexing_status = "indexed";
+        return { ...response, body: JSON.stringify(body) };
+      },
+    };
+
+    await expect(adapter(transport).indexFinalMeeting(plan)).resolves.toEqual(indexed);
+    expect(endpoint.documentCount()).toBe(1);
+    expect(endpoint.requests.filter(({ path }) => path.endsWith("/process"))).toHaveLength(1);
   });
 
   it("rejects normalized document overflow before topology or ingestion transport", async () => {
