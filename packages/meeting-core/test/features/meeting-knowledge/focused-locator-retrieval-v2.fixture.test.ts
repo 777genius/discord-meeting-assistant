@@ -94,14 +94,14 @@ describe("focused locator retrieval V2 fixture", () => {
 const scopeBindings = new WeakMap<object, string>();
 export const scopeResolution: FocusedRetrievalScopeResolutionPort = Object.freeze({
   resolve: async (input: Parameters<FocusedRetrievalScopeResolutionPort["resolve"]>[0]) => {
-    const authority = JSON.stringify([input.spaceSlug, input.roomScopeExternalRef]);
+    const scopeAuthority = JSON.stringify([input.spaceSlug, input.roomScopeExternalRef]);
     let bound = false;
     return Object.freeze({ status: "resolved" as const,
       spaceId: "internal-space-123", memoryScopeId: "internal-room-456",
       bind: (request: Parameters<FocusedRetrievalScopeResolutionPort["matches"]>[0]["request"]) => {
         if (bound || !Object.isFrozen(request)) { throw new Error("Invalid fixture binding"); }
         bound = true;
-        scopeBindings.set(request, authority);
+        scopeBindings.set(request, scopeAuthority);
       },
     });
   },

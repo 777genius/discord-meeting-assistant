@@ -9,6 +9,9 @@ superseded_by: []
 
 Meeting Knowledge owns the consumer scope-resolution port and focused request
 preparer in `packages/meeting-core/src/features/meeting-knowledge/application`.
+Its bounded resolution helper is
+`packages/meeting-core/src/features/meeting-knowledge/application/focused-locator-retrieval-v2-scope.ts`,
+classified by the existing closed `core.meeting.knowledge` source root.
 Infinity's external space slug and room external reference are not its internal
 space and memory-scope IDs. Indexing resolves them; retrieval must do so too.
 

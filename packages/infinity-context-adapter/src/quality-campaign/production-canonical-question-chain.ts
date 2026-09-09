@@ -4,7 +4,6 @@ import {
   createFocusedRetrievalGroundingPlan,
   PrepareFocusedLocatorRetrievalV2Request,
   rehydrateHistoricalBlock,
-  type FocusedLocatorRetrievalV2RequestSnapshot,
   type GroundedAnswerGenerationBinding,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
@@ -28,7 +27,7 @@ import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval
 import { DiagnosticFrozenStore, assertDiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
 import type { DiagnosticQuestion } from "./diagnostic-manifest.js";
 import { canonicalJson } from "./canonical.js";
-import { validateCanonicalRetrievalObservation } from
+import { assertCanonicalRequest, validateCanonicalRetrievalObservation } from
   "./canonical-execution-artifact-validation.js";
 import type {
   QualificationCanonicalTurn,
@@ -396,20 +395,6 @@ async function sealRetrievalExchange(audit: QualificationEncryptedAuditPort, att
   const failure = settled.find((value): value is PromiseRejectedResult =>
     value.status === "rejected");
   if (failure !== undefined) {throw failure.reason;}
-}
-
-function assertCanonicalRequest(request: FocusedLocatorRetrievalV2RequestSnapshot,
-  question: string): void {
-  if (request.budgets.candidateLimit !== 100 || request.budgets.resultLimit !== 10 ||
-    !Object.is(request.budgets.neighborRadius, 0) ||
-    request.queries.length !== 1 || question.trim().length === 0) {
-    throw new Error("qualification request violates Meeting Knowledge ownership");
-  }
-  const [originalQuery] = request.queries;
-  if (originalQuery === undefined || originalQuery.queryId !== "original-question" ||
-    originalQuery.query.length === 0) {
-    throw new Error("qualification request violates Meeting Knowledge ownership");
-  }
 }
 
 async function sealAnswerExchanges(audit: QualificationEncryptedAuditPort, attemptId: string,

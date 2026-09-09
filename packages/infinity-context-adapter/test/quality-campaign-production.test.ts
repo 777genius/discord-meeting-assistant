@@ -424,17 +424,7 @@ function finalFixture() {
     questions.map((question, index): QualificationOutcome => {
       const identity = answerIdentity({ question, releaseRootSha256: release.releaseRootSha256,
         repetition, spendReservationSha256: spendDigests[repetition - 1]! });
-      for (const [ordinal, read] of scopeObservation(identity).reads.entries()) {
-        const effect = attemptIdentity({ campaignRootSha256: identity.campaignRootSha256,
-          releaseRootSha256: identity.releaseRootSha256, questionId: identity.questionId,
-          questionDigestSha256: identity.questionDigestSha256, repetition: identity.repetition,
-          spendReservationSha256: identity.spendReservationSha256, callKind: "capability", callOrdinal: ordinal + 1 });
-        schedulerClaims.push({ admissionId: `scheduler-${effect.attemptId}`, attemptId: effect.attemptId,
-          callKind: effect.callKind, campaignRootSha256: effect.campaignRootSha256,
-          repetition, requestedEncryptedBytes: 2048, requestedTokens: 1,
-          requestDigestSha256: read.requestSha256, spendReservationSha256: effect.spendReservationSha256,
-          schemaVersion: "meeting_knowledge.semantic_quality_budget_claim.v1" });
-      }
+      appendScopeClaims(identity, schedulerClaims);
       const expectedAbstention = index % 10 === 9;
       const resolverRequired = index === 0;
       const turnId = `turn-${repetition}-${index}`; const claimId = `final-${question.questionId}`;
@@ -1783,3 +1773,17 @@ describe("focused retrieval qualification budget binding", () => {
     }
   });
 });
+
+function appendScopeClaims(identity: AttemptIdentity, schedulerClaims: unknown[]): void {
+  for (const [ordinal, read] of scopeObservation(identity).reads.entries()) {
+    const effect = attemptIdentity({ campaignRootSha256: identity.campaignRootSha256,
+      releaseRootSha256: identity.releaseRootSha256, questionId: identity.questionId,
+      questionDigestSha256: identity.questionDigestSha256, repetition: identity.repetition,
+      spendReservationSha256: identity.spendReservationSha256, callKind: "capability", callOrdinal: ordinal + 1 });
+    schedulerClaims.push({ admissionId: `scheduler-${effect.attemptId}`, attemptId: effect.attemptId,
+      callKind: effect.callKind, campaignRootSha256: effect.campaignRootSha256,
+      repetition: identity.repetition, requestedEncryptedBytes: 2048, requestedTokens: 1,
+      requestDigestSha256: read.requestSha256, spendReservationSha256: effect.spendReservationSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_budget_claim.v1" });
+  }
+}

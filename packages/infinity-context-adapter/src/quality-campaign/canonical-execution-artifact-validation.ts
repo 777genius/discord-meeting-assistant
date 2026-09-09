@@ -1,3 +1,5 @@
+import type { FocusedLocatorRetrievalV2RequestSnapshot } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 import { createHash } from "node:crypto";
 
 import { canonicalJson, digest, exactRecord } from "./canonical.js";
@@ -73,8 +75,8 @@ export function validateCanonicalScopeResolutionObservation(value: unknown) {
     !Array.isArray(record.reads) || record.reads.length > 2) {
     throw new Error("canonical scope resolution observation is invalid");
   }
-  const reads = record.reads.map((value: unknown, index: number) => {
-    const read = exactRecord(value, ["kind", "requestSha256", "responseBytes", "responseSha256",
+  const reads = record.reads.map((readValue: unknown, index: number) => {
+    const read = exactRecord(readValue, ["kind", "requestSha256", "responseBytes", "responseSha256",
       "status"], "canonical scope metadata read");
     if (read.kind !== ["scope_spaces", "scope_memory_scopes"][index] ||
       !["received", "failed", "outcome_unknown"].includes(String(read.status)) ||
@@ -136,8 +138,8 @@ export function validateCanonicalRetrievalObservation(input: {
     [observation.requestBytes, observation.requestSha256, input.exchange.requestBytes],
     [observation.responseBytes, observation.responseSha256, input.exchange.responseBytes],
   ] as const;
-  if (measured.some(([size, digest, bytes]) => !Number.isSafeInteger(size) || size < 0 ||
-    size !== bytes.byteLength || !isDigest(digest) || sha256(bytes) !== digest)) {
+  if (measured.some(([size, expectedDigest, bytes]) => !Number.isSafeInteger(size) || size < 0 ||
+    size !== bytes.byteLength || !isDigest(expectedDigest) || sha256(bytes) !== expectedDigest)) {
     throw new Error("canonical retrieval observation does not match exact exchange");
   }
   return Object.freeze({ attemptId: input.attemptId,
@@ -216,4 +218,18 @@ export function validateSemanticQualityV4ArtifactReceipt(
     throw new Error("semantic quality V4 artifact receipt is invalid");
   }
   return value as unknown as SemanticQualityV4ArtifactReceipt;
+}
+
+export function assertCanonicalRequest(request: FocusedLocatorRetrievalV2RequestSnapshot,
+  question: string): void {
+  if (request.budgets.candidateLimit !== 100 || request.budgets.resultLimit !== 10 ||
+    !Object.is(request.budgets.neighborRadius, 0) ||
+    request.queries.length !== 1 || question.trim().length === 0) {
+    throw new Error("qualification request violates Meeting Knowledge ownership");
+  }
+  const [originalQuery] = request.queries;
+  if (originalQuery === undefined || originalQuery.queryId !== "original-question" ||
+    originalQuery.query.length === 0) {
+    throw new Error("qualification request violates Meeting Knowledge ownership");
+  }
 }

@@ -158,7 +158,7 @@ async function localFixture(options: { readonly extraObservationKey?: boolean;
     ["retrieval_response", retrievalResponse], ["retrieval_observation", bytes(canonicalJson(observation))],
     ["scope_resolution_observation", bytes(canonicalJson(options.scopeValue ?? {
       schemaVersion: "meeting_knowledge.scope_resolution.v1", status: options.scopeStatus ?? "prepared",
-      reads: ["scope_spaces", "scope_memory_scopes"].map((kind) => ({ kind,
+      reads: ["scope_spaces", "scope_memory_scopes"].map((readKind) => ({ kind: readKind,
         requestSha256: "1".repeat(64), responseSha256: options.scopeReadStatus === "outcome_unknown" ?
           null : "2".repeat(64), responseBytes: options.scopeReadStatus === "outcome_unknown" ? 0 : 12,
         status: options.scopeReadStatus ?? "received" })),

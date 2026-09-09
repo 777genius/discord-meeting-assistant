@@ -1,4 +1,3 @@
-import { validatedPersistedRetrievalScopeMatches, type FocusedRetrievalScopeResolutionPort } from "./ports/focused-locator-retrieval-v2.js";
 import {
   admitsHistoricalRetrieval,
   DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
@@ -14,12 +13,14 @@ import {
   buildHistoricalRoomTopology,
   rehydrateHistoricalBlock,
 } from "./historical-index-plan.js";
-import type {
-  FocusedHistoricalEvidenceV2Result,
-  FocusedHistoricalEvidenceV2UnavailableReason,
-  FocusedLocatorRetrievalV2Candidate,
-  FocusedLocatorRetrievalV2Port,
-  FocusedLocatorRetrievalV2RequestSnapshot,
+import {
+  validatedPersistedRetrievalScopeMatches,
+  type FocusedRetrievalScopeResolutionPort,
+  type FocusedHistoricalEvidenceV2Result,
+  type FocusedHistoricalEvidenceV2UnavailableReason,
+  type FocusedLocatorRetrievalV2Candidate,
+  type FocusedLocatorRetrievalV2Port,
+  type FocusedLocatorRetrievalV2RequestSnapshot,
 } from "./ports/focused-locator-retrieval-v2.js";
 import type { HistoricalAuthorizationPort } from "./ports/historical-grounding.js";
 import type {
@@ -124,22 +125,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     if (this.dependencies.servingAuthorized?.() === false) {
       return rejected("serving_not_authorized");
     }
-    const topology = buildHistoricalRoomTopology(input.scopeId, input.roomId,
-      this.dependencies.ids);
-    const persistedScope = validatedPersistedRetrievalScopeMatches(input);
-    const scopeInput = { request: input.request, spaceSlug: topology.spaceSlug,
-      roomScopeExternalRef: topology.roomScopeExternalRef,
-      ...(input.signal === undefined ? {} : { signal: input.signal }) };
-    let scopeMatches = false;
-    try {
-      scopeMatches = persistedScope === undefined
-        ? this.dependencies.scopeResolution?.matches({ ...scopeInput,
-            spaceId: input.request.scope.spaceId,
-            memoryScopeId: input.request.scope.memoryScopeId }) === true
-        : persistedScope && await this.dependencies.scopeResolution?.matchesPersisted?.(scopeInput) === true;
-    } catch { input.signal?.throwIfAborted(); }
-    input.signal?.throwIfAborted();
-    if (!scopeMatches) {
+    if (!await this.scopeIsAuthorized(input)) {
       return rejected("scope_not_bound");
     }
     const authorizationRequest = {
@@ -197,6 +183,27 @@ export class HistoricalFocusedLocatorRetrievalV2 {
       status: "current",
       turns: hydrated.turns,
     });
+  }
+
+  private async scopeIsAuthorized(
+    input: HistoricalLocatorRetrievalV2Input,
+  ): Promise<boolean> {
+    const topology = buildHistoricalRoomTopology(input.scopeId, input.roomId,
+      this.dependencies.ids);
+    const persistedScope = validatedPersistedRetrievalScopeMatches(input);
+    const scopeInput = { request: input.request, spaceSlug: topology.spaceSlug,
+      roomScopeExternalRef: topology.roomScopeExternalRef,
+      ...(input.signal === undefined ? {} : { signal: input.signal }) };
+    let scopeMatches = false;
+    try {
+      scopeMatches = persistedScope === undefined
+        ? this.dependencies.scopeResolution?.matches({ ...scopeInput,
+            spaceId: input.request.scope.spaceId,
+            memoryScopeId: input.request.scope.memoryScopeId }) === true
+        : persistedScope && await this.dependencies.scopeResolution?.matchesPersisted?.(scopeInput) === true;
+    } catch { input.signal?.throwIfAborted(); }
+    input.signal?.throwIfAborted();
+    return scopeMatches;
   }
 
   private async retrieveCandidates(

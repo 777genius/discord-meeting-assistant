@@ -1,3 +1,4 @@
+import { resolveFocusedRetrievalScope } from "./focused-locator-retrieval-v2-scope.js";
 import { compareRetrievalV2Utf8, retrievalV2ConsumerEvidenceByteLimit,
   type RetrievalBindingSnapshot } from
   "../domain/retrieval-admission.js";
@@ -95,22 +96,8 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       ...resolveRequestedActorKeys(input.question, aliases, skeletons),
       ...(this.dependencies.actorReferences?.actorKeysForQuestion(input.question) ?? []),
     ]);
-    const snapshotPort = this.dependencies.snapshot ?? this.dependencies.store;
-    if (snapshotPort === undefined) {
-      return unavailablePreparation("historical_authority_unavailable");
-    }
-    const snapshot = await snapshotPort.loadRoomAuthoritySnapshot({
-      maximumSources: this.policy.maximumSources,
-      pageSize: Math.min(25, this.policy.maximumSources),
-      roomId: input.roomId,
-      scopeId: input.scopeId,
-      ...(input.signal === undefined ? {} : { signal: input.signal }),
-    });
-    if (snapshot.status !== "current") {
-      return unavailablePreparation(snapshot.status === "overflow"
-        ? "historical_authority_overflow"
-        : "historical_authority_unavailable");
-    }
+    const snapshot = await this.loadSnapshot(input);
+    if (snapshot.status !== "current") { return snapshot; }
     const plans = snapshot.entries;
     if (plans.length === 0) {
       return Object.freeze({ reason: "no_history_or_index", status: "empty" });
@@ -138,19 +125,8 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       .toSorted(compareRetrievalV2Utf8));
     const relativeTimeInterval = timeFilter.status === "valid"
       ? timeFilter.interval : null;
-    let scope;
-    try { scope = await this.dependencies.scopeResolution?.resolve({
-      ...(input.scopeResolutionEffects === undefined ? {} : { effects: input.scopeResolutionEffects }),
-      spaceSlug: topology.spaceSlug,
-      roomScopeExternalRef: topology.roomScopeExternalRef,
-      ...(input.signal === undefined ? {} : { signal: input.signal }),
-    }); } catch {
-      input.signal?.throwIfAborted();
-      return unavailablePreparation("scope_resolution_unavailable");
-    }
-    input.signal?.throwIfAborted();
-    if (scope?.status !== "resolved" || !validResolvedId(scope.spaceId) ||
-      !validResolvedId(scope.memoryScopeId)) {
+    const scope = await resolveFocusedRetrievalScope(this.dependencies.scopeResolution, input, topology);
+    if (scope === null) {
       return unavailablePreparation("scope_resolution_unavailable");
     }
     const request = preparedRequest({
@@ -206,6 +182,30 @@ export class PrepareFocusedLocatorRetrievalV2Request {
     }
     return request;
   }
+
+  private async loadSnapshot(
+    input: Parameters<PrepareFocusedLocatorRetrievalV2Request["prepare"]>[0],
+  ) {
+    const snapshotPort = this.dependencies.snapshot ?? this.dependencies.store;
+    if (snapshotPort === undefined) {
+      return unavailablePreparation("historical_authority_unavailable");
+    }
+    const snapshot = await snapshotPort.loadRoomAuthoritySnapshot({
+      maximumSources: this.policy.maximumSources,
+      pageSize: Math.min(25, this.policy.maximumSources),
+      roomId: input.roomId,
+      scopeId: input.scopeId,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    if (snapshot.status !== "current") {
+      return unavailablePreparation(snapshot.status === "overflow"
+        ? "historical_authority_overflow"
+        : "historical_authority_unavailable");
+    }
+    return snapshot;
+  }
+
+
 }
 
 function preparedRequest(
@@ -226,7 +226,7 @@ function preparedRequest(
 function unavailablePreparation(
   reason: Extract<FocusedLocatorRetrievalV2Preparation,
     { readonly status: "unavailable" }>["reason"],
-): FocusedLocatorRetrievalV2Preparation {
+): Extract<FocusedLocatorRetrievalV2Preparation, { readonly status: "unavailable" }> {
   return Object.freeze({ reason, status: "unavailable" });
 }
 
@@ -415,8 +415,4 @@ export function isPersistedRetrievalV2Binding(
 ): binding is Extract<RetrievalBindingSnapshot,
   { readonly retrievalPath: "infinity_locator_v2" }> {
   return binding.retrievalPath === "infinity_locator_v2";
-}
-
-function validResolvedId(value: string): boolean {
-  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/u.test(value);
 }
