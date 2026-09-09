@@ -83,17 +83,19 @@ it.each(["PROVIDER_CLOSED", "PROVIDER_TIMEOUT", "PROVIDER_OUTCOME_UNKNOWN", "SYN
   const native = readFileSync(join(directory, "live-native.jsonl"), "utf8");
   const diagnostic = readFileSync(join(directory, "live-diagnostic-1.json"), "utf8");
   expect(JSON.parse(diagnostic)).toEqual({ kind: "oss-live-gateway-diagnostic-v1", sessionOrdinal: 1,
-    rowIndex: 3, relativeTimeMs: expect.any(Number), phase: "gateway-error-received", code: safeGatewayDiagnosticCode(code) });
+    rowIndex: 3, relativeTimeMs: expect.any(Number) as unknown, phase: "gateway-error-received", code: safeGatewayDiagnosticCode(code) });
   expect(native).not.toContain(code);
   expect(native + diagnostic).not.toMatch(/SYNTHETIC_SECRET_TOKEN|synthetic.invalid/u);
-  expect(JSON.parse(native.split("\n")[2]!).event).toEqual({ type: "received", message: { type: "error" } });
+  const row: unknown = JSON.parse(native.split("\n")[2]!);
+  if (typeof row !== "object" || row === null || !("event" in row)) { throw new Error("Missing native event"); }
+  expect(row.event).toEqual({ type: "received", message: { type: "error" } });
 });
 it("uses an exact closed allowlist and tolerates unavailable diagnostics", () => {
   for (const code of [null, {}, 5, "provider_closed", "PROVIDER_CLOSED_SUFFIX", "PROVIDER_CLOSED\n"]) {
     expect(safeGatewayDiagnosticCode(code)).toBe("UNKNOWN_GATEWAY_CODE");
   }
-  expect(() => recordOssReceivedEvidence({ record: () => {}, recordGatewayDiagnostic: () => { throw new Error("synthetic"); } },
-    { type: "error", code: "PROVIDER_CLOSED", message: "synthetic" })).not.toThrow();
+  expect(() => { recordOssReceivedEvidence({ record: () => {}, recordGatewayDiagnostic: () => { throw new Error("synthetic"); } },
+    { type: "error", code: "PROVIDER_CLOSED", message: "synthetic" }); }).not.toThrow();
 });
 
 it("bounds separate diagnostics and never overwrites an existing artifact", async () => {

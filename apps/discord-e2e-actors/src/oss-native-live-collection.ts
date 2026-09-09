@@ -125,7 +125,8 @@ export function collectNativeLive(bytes: Buffer, expectedRevision: string) {
 export function qualifyNativeSession(rows: readonly NativeLiveRow[]) {
   let rowIndex = rows[0]?.index;
   function checkSession(condition: unknown, detail: string, reason: CollectionDiagnostic["reason"] = "SESSION_INVALID"): asserts condition {
-    if (!condition) {
+    const accepted = Boolean(condition);
+    if (!accepted) {
       throw new OssCollectionDiagnosticError(detail, { kind: "oss-collection-diagnostic-v1",
         stage: "live-session", reason, ...(rowIndex === undefined ? {} : { rowIndex }) });
     }
