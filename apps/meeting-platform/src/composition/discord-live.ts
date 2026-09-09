@@ -39,6 +39,7 @@ import { FileConversationFarewellCueRegistry } from "../adapters/outbound/file-c
 import { FileParticipantGreetingCueRegistry } from "../adapters/outbound/file-participant-greeting-cue-registry.js";
 import type { PlatformConfig } from "../config.js";
 import { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
+import type { LiveSpeakerPendingReader } from "../live-runtime/contracts.js";
 import { PostgresRecordingPublicationReconciliation } from
   "../recording-playback/adapters/index.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
@@ -100,7 +101,7 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly logger: Logger;
   readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
-  readonly pendingLiveSpeakerPackets?: import("../live-runtime/contracts.js").LiveSpeakerPendingReader;
+  readonly pendingLiveSpeakerPackets?: LiveSpeakerPendingReader;
   readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
@@ -340,7 +341,7 @@ function createLiveRuntime(input: {
   readonly logger: Logger;
   readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
-  readonly pendingLiveSpeakerPackets?: import("../live-runtime/contracts.js").LiveSpeakerPendingReader;
+  readonly pendingLiveSpeakerPackets?: LiveSpeakerPendingReader;
   readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;

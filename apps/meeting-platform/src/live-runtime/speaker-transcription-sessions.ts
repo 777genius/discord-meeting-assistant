@@ -11,6 +11,7 @@ import {
   type LiveRuntimeClock,
   type LiveRuntimeLogger,
   type LiveRuntimeTimer,
+  type LiveSpeakerPendingReader,
   type LiveTranscriptionEvent,
   type LiveTranscriptionPort,
   type LiveVoicePacket,
@@ -27,7 +28,7 @@ export interface SpeakerTranscriptionSessionDependencies extends SpeakerTranscri
 }
 
 export interface SpeakerTranscriptionSessionsDependencies {
-  readonly pendingLiveSpeakerPackets?: import("./contracts.js").LiveSpeakerPendingReader;
+  readonly pendingLiveSpeakerPackets?: LiveSpeakerPendingReader;
   readonly clock: LiveRuntimeClock;
   readonly isMeetingFinishing: () => boolean;
   readonly logger: LiveRuntimeLogger;

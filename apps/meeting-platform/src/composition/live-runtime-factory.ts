@@ -29,6 +29,7 @@ import type {
   LiveRuntimeClock,
   LiveRuntimeLogger,
   LiveRuntimeTimer,
+  LiveSpeakerPendingReader,
   LiveTranscriptionPort,
 } from "../live-runtime/contracts.js";
 import type { PlatformLiveFinalizedMemoryRuntime } from "./live-finalized-memory.js";
@@ -107,7 +108,7 @@ export function createPlatformLiveMeetingRuntime(input: {
   readonly logger: LiveRuntimeLogger;
   readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
-  readonly pendingLiveSpeakerPackets?: import("../live-runtime/contracts.js").LiveSpeakerPendingReader;
+  readonly pendingLiveSpeakerPackets?: LiveSpeakerPendingReader;
   readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly packetFlowControl: LivePacketFlowControl;
