@@ -1,3 +1,4 @@
+import { InfinityRetrievalScopeResolution } from "../infinity-retrieval-scope-resolution.js";
 import { open, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Pool } from "pg";
@@ -295,6 +296,8 @@ async function executeQuestion(input: {
       } },
     evidenceAuthority: input.authority, store: input.store, ids: input.ids, journal: evidence.journal,
     preparer: new PrepareFocusedLocatorRetrievalV2Request({ ids: input.ids,
+      scopeResolution: new InfinityRetrievalScopeResolution({ baseUrl: c.infinityBaseUrl,
+        token: input.infinityToken, operationTimeoutMs: 500, requestTimeoutMs: 500 }),
       providerBinding: m.providerBinding, snapshot: input.store }),
     retrieval: new InfinityContextRetrievalV2Adapter({ baseUrl: c.infinityBaseUrl,
       token: input.infinityToken, operationTimeoutMs: 4000, requestTimeoutMs: 2000 }),

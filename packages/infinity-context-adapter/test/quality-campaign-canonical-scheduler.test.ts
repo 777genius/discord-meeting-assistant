@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DurableAttemptJournal, withOwnedAttemptJournal } from
   "../src/quality-campaign/attempt-journal.js";
+import { attemptIdentity, type VerifiedSpendReservation } from "../src/quality-campaign/execution.js";
 import { sha256 } from "../src/quality-campaign/canonical.js";
 import type { QualificationQuestionExecutorFactoryPort } from
   "../src/quality-campaign/execute-admitted-qualification-question.js";
@@ -28,7 +29,7 @@ const spendReservations = ([1, 2, 3] as const).map((repetition) => ({ payload: {
   maxCalls: 1_000, maxCallsByKind: { answer: 240, capability: 240, retrieval: 240 },
   maxEncryptedBytes: 100_000_000, maxTokens: 10_000_000, releaseRootSha256: digest("c"),
   repetition }, spendReservationSha256: [digest("d"), digest("e"), digest("f")][repetition - 1],
-})) as never;
+})) as unknown as readonly VerifiedSpendReservation[];
 const durable = async () => ({ journalRoot: await mkdtemp(join(tmpdir(), "canonical-schedule-")),
   policy: {} as never, reservations: spendReservations });
 
@@ -112,6 +113,44 @@ describe("installed canonical main scheduler", () => {
     expect(result.outcomeUnknown).toBe(true);
     expect([...creates.values()].every((count) => count === 1)).toBe(true);
     expect(result.terminalAttemptIds.length).toBeGreaterThan(0);
+  });
+
+  it("reserves metadata as capability ordinals 1/2 and refuses an unknown restart", async () => {
+    const stored = await durable();
+    const outcome = { citations: [], claims: [], rawRetrievalResponseSha256: digest("a"),
+      reason: "zero_admissible_evidence", retrievalCandidates: [], selectedTurns: [],
+      status: "abstained" as const };
+    let reads = 0;
+    const factory: QualificationQuestionExecutorFactoryPort = {
+      recover: async ({ questionId }) => questionId === "q-0" ? null : outcome,
+      create: async ({ reservation }) => ({ execute: async () => {
+        for (const effectKind of ["scope_spaces", "scope_memory_scopes"] as const) {
+          await reservation.reserve({ effectKind, payloadSha256: sha256(effectKind),
+            requestedEncryptedBytes: 2048, requestedTokens: 1 });
+          reads += 1;
+        }
+        return outcome;
+      } }),
+    };
+    const input = { campaignRootSha256: digest("b"), clock: { nowEpochMs: () => 1_000 },
+      concurrency: 2, deadlineEpochMs: 10_000, executionPackets: packets, executorFactory: factory,
+      questions, ...stored, release, releaseRootSha256: digest("c"),
+      spendReservationSha256ByRepetition: { 1: digest("d"), 2: digest("e"), 3: digest("f") } };
+    expect((await executeCanonicalMainCampaignSchedule(input)).outcomeUnknown).toBe(false);
+    expect(reads).toBe(6);
+    const journal = new DurableAttemptJournal(stored.journalRoot, stored.policy);
+    await withOwnedAttemptJournal(journal, async () => {
+      for (const repetition of [1, 2, 3] as const) {
+        const claims = await journal.loadAdmittedClaims(stored.reservations[repetition - 1]!);
+        expect(claims.map(({ attemptId }) => attemptId).toSorted()).toEqual([1, 2].map((callOrdinal) =>
+          attemptIdentity({ callKind: "capability", callOrdinal, campaignRootSha256: digest("b"),
+            questionDigestSha256: questions[0]!.questionDigestSha256, questionId: "q-0",
+            releaseRootSha256: digest("c"), repetition, spendReservationSha256:
+              input.spendReservationSha256ByRepetition[repetition] }).attemptId).toSorted());
+      }
+    });
+    expect((await executeCanonicalMainCampaignSchedule(input)).outcomeUnknown).toBe(true);
+    expect(reads).toBe(6);
   });
 
   it("rejects an execution corpus that differs from admitted question metadata", async () => {

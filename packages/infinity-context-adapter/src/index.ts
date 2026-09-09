@@ -79,3 +79,5 @@ export { admitFinalCampaign } from "./quality-campaign/final-admission.js";
 export { attemptIdentity } from "./quality-campaign/execution.js";
 export { measureQualificationModelInput } from
   "./quality-campaign/qualification-contract.js";
+
+export { InfinityRetrievalScopeResolution } from "./infinity-retrieval-scope-resolution.js";

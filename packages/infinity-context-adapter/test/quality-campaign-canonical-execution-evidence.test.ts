@@ -1,3 +1,5 @@
+import { DurableAttemptJournal } from "../src/quality-campaign/attempt-journal.js";
+import { attemptIdentity, type VerifiedSpendReservation } from "../src/quality-campaign/execution.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, unlink } from "node:fs/promises";
@@ -25,7 +27,8 @@ import { createProductionCanonicalExecutionEvidence, recoverProductionCanonicalO
   "../src/quality-campaign/production-canonical-execution-evidence.js";
 import { createProductionCanonicalQuestionChain } from
   "../src/quality-campaign/production-canonical-question-chain.js";
-import { ExecuteAdmittedQualificationQuestion } from
+import { ExecuteAdmittedQualificationQuestion,
+  type QualificationExternalEffectReservationPort } from
   "../src/quality-campaign/execute-admitted-qualification-question.js";
 
 const attemptId = `sqv4-${"1".repeat(64)}`;
@@ -59,7 +62,8 @@ describe("canonical execution evidence durability", () => {
       phase: "answer" });
     const reopened = createProductionCanonicalExecutionEvidence(fixture.input);
     await expect(reopened.journal.reserve({ attemptId, payloadSha256: "3".repeat(64),
-      phase: "answer" })).rejects.toThrow("cannot be retried");
+      phase: "answer" })).rejects.toThrow(
+        "canonical provider effect is already reserved and cannot be retried");
   });
 
   it("recovers an authenticated normalized outcome without reopening either provider effect",
@@ -217,6 +221,7 @@ describe("canonical execution evidence durability", () => {
         expect(routeLatencyUs).toBeGreaterThanOrEqual(0);
         expect(capabilityAndRetrievalLatencyUs).toBeGreaterThanOrEqual(routeLatencyUs);
         expect(fixture.events).toEqual([
+          "spend:scope_spaces", "spend:scope_memory_scopes", "seal:scope_resolution_observation",
           "spend:capability", "spend:retrieval", "journal:reserve", "http:capability",
           "http:retrieval", "seal:capability_request", "seal:capability_response",
           "seal:retrieval_request", "seal:retrieval_response", "seal:retrieval_observation",
@@ -224,7 +229,7 @@ describe("canonical execution evidence durability", () => {
         ]);
         expect(fixture.answerCalls()).toBe(0);
       } finally {
-        fixture.close();
+        await fixture.close();
       }
     });
 
@@ -247,8 +252,74 @@ describe("canonical execution evidence durability", () => {
         .toBeLessThan(fixture.events.indexOf("journal:failed"));
       expect(fixture.answerCalls()).toBe(0);
     } finally {
-      fixture.close();
+      await fixture.close();
     }
+  });
+
+});
+
+describe("canonical scope evidence and replay guards", () => {
+  it.each(["zero", "incomplete", "duplicate", "duplicate_reservation", "wrong", "wrong_kind",
+    "nonreceived", "failed"] as const)(
+    "blocks %s scope receipts before downstream provider I/O", async (fault) => {
+      const events: string[] = [];
+      const fixture = await canonicalChainFixture(
+        new ObservedExactAdapter(new SyntheticUnavailableEndpoint(events)), events,
+        new FixedPreparer(fault));
+      try {
+        await expect(fixture.executor.execute(executionPacket, executionOptions))
+          .rejects.toThrow(/scope metadata effect|scope resolution observation is (?:incomplete|invalid)|scope metadata read is invalid/u);
+        expect(events.some((event) => event.startsWith("http:") ||
+          event === "journal:reserve" || event === "spend:capability" ||
+          event === "spend:retrieval")).toBe(false);
+        expect(fixture.answerCalls()).toBe(0);
+        const envelopes = events.includes("seal:scope_resolution_observation")
+          ? await artifactEnvelopes(fixture.input.artifactRoot) : [];
+        for (const envelope of envelopes) {
+          if (envelope.artifactKind !== "scope_resolution_observation") { continue; }
+          const bytes = await new SemanticQualityV4EncryptedArtifactStore(fixture.input.artifactRoot)
+            .open({ envelopeSha256: envelope.envelopeSha256, key: fixture.input.artifactKey });
+          expect(JSON.parse(new TextDecoder().decode(bytes))).toMatchObject({ status: "interrupted" });
+        }
+      } finally { await fixture.close(); }
+    });
+
+  it.each(["interrupted", "unavailable"] as const)(
+    "retains %s scope evidence and preparation outcome", async (fault) => {
+      const events: string[] = [];
+      const fixture = await canonicalChainFixture(
+        new ObservedExactAdapter(new SyntheticUnavailableEndpoint(events)), events,
+        new FixedPreparer(fault));
+      try {
+        const execution = fixture.executor.execute(executionPacket, executionOptions);
+        if (fault === "interrupted") { await expect(execution).rejects.toBe(preparationError); }
+        else { await expect(execution).resolves.toMatchObject({ reason: "request_unavailable" }); }
+        const envelope = (await artifactEnvelopes(fixture.input.artifactRoot))
+          .find(({ artifactKind }) => artifactKind === "scope_resolution_observation")!;
+        const bytes = await new SemanticQualityV4EncryptedArtifactStore(fixture.input.artifactRoot)
+          .open({ envelopeSha256: envelope.envelopeSha256, key: fixture.input.artifactKey });
+        expect(JSON.parse(new TextDecoder().decode(bytes))).toMatchObject({ status: fault,
+          reads: [{ kind: "scope_spaces", status: "outcome_unknown", responseSha256: null }] });
+        expect(events.some((event) => event.startsWith("http:"))).toBe(false);
+        expect(fixture.answerCalls()).toBe(0);
+      } finally { await fixture.close(); }
+    });
+
+  it("rejects mismatched duplicate spend claims in the replay fixture", async () => {
+    const events: string[] = [];
+    const fixture = await canonicalChainFixture(
+      new ObservedExactAdapter(new SyntheticUnavailableEndpoint(events)), events);
+    try {
+      const claim = { effectKind: "scope_spaces" as const, payloadSha256: "6".repeat(64),
+        requestedEncryptedBytes: 2048, requestedTokens: 1 };
+      await fixture.spendPort.reserve(claim);
+      await expect(fixture.spendPort.reserve(claim)).resolves.toBeUndefined();
+      for (const changed of [{ payloadSha256: "7".repeat(64) },
+        { requestedEncryptedBytes: 2049 }, { requestedTokens: 2 }]) {
+        await expect(fixture.spendPort.reserve({ ...claim, ...changed }))
+          .rejects.toThrow("mismatched duplicate spend claim");
+      }
+    } finally { await fixture.close(); }
   });
 
   it("makes a missing exact exchange outcome unknown and prevents replay", async () => {
@@ -259,15 +330,21 @@ describe("canonical execution evidence durability", () => {
       await expect(fixture.executor.execute(executionPacket, executionOptions))
         .rejects.toThrow("external effect is unknown and terminal");
       expect(fixture.events.filter((event) => event === "http:retrieval")).toHaveLength(1);
-      expect(fixture.events.some((event) => event.startsWith("seal:"))).toBe(false);
+      expect(fixture.events.filter((event) => event.startsWith("seal:")))
+        .toEqual(["seal:scope_resolution_observation"]);
       expect(await readFile(join(fixture.input.retrievalJournalRoot, attemptId, "terminal.json"),
         "utf8")).toContain('"state":"outcome_unknown"');
+      const replayStart = events.length;
       await expect(fixture.executor.execute(executionPacket, executionOptions))
-        .rejects.toThrow("cannot be retried");
+        .rejects.toThrow("canonical provider effect is already reserved and cannot be retried");
+      expect(events.slice(replayStart)).toEqual([
+        "spend:scope_spaces", "spend:scope_memory_scopes", "seal:scope_resolution_observation",
+        "spend:capability", "spend:retrieval", "journal:reserve",
+      ]);
       expect(fixture.events.filter((event) => event === "http:retrieval")).toHaveLength(1);
       expect(fixture.answerCalls()).toBe(0);
     } finally {
-      fixture.close();
+      await fixture.close();
     }
   });
 });
@@ -277,10 +354,35 @@ const executionPacket = Object.freeze({ locale: "en" as const, questionId: "q-1"
   source: "independent_review" as const });
 const executionOptions = Object.freeze({ attemptId, signal: new AbortController().signal });
 
+const preparationError = new Error("synthetic preparation interruption");
+
 class FixedPreparer extends PrepareFocusedLocatorRetrievalV2Request {
-  public constructor() {super({} as never);}
-  public override async prepare(): Promise<Awaited<ReturnType<
+  public constructor(private readonly fault: "none" | "zero" | "incomplete" | "duplicate" |
+    "duplicate_reservation" | "wrong" | "wrong_kind" | "nonreceived" | "failed" |
+    "interrupted" | "unavailable" = "none") {super({} as never);}
+  public override async prepare(input: Parameters<PrepareFocusedLocatorRetrievalV2Request["prepare"]>[0]): Promise<Awaited<ReturnType<
     PrepareFocusedLocatorRetrievalV2Request["prepare"]>>> {
+    for (const kind of this.fault === "zero" ? [] :
+      ["scope_spaces", "scope_memory_scopes"] as const) {
+      if (this.fault === "incomplete" && kind === "scope_memory_scopes") { break; }
+      const requestSha256 = "6".repeat(64);
+      await input.scopeResolutionEffects?.beforeRead({ kind, requestSha256 });
+      if (this.fault === "duplicate_reservation") {
+        await input.scopeResolutionEffects?.beforeRead({ kind, requestSha256 });
+      }
+      if (this.fault === "failed") {
+        await input.scopeResolutionEffects?.observe({ kind, requestSha256,
+          responseSha256: null, responseBytes: 0, status: "failed" });
+        break;
+      }
+      if (this.fault === "interrupted") { throw preparationError; }
+      if (this.fault === "unavailable") { return { status: "unavailable", reason: "scope_resolution_unavailable" }; }
+      if (this.fault === "nonreceived") { break; }
+      const receipt = { kind: this.fault === "wrong_kind" ? "scope_memory_scopes" as const : kind, requestSha256: this.fault === "wrong" ? "8".repeat(64) : requestSha256,
+        responseSha256: "7".repeat(64), responseBytes: 12, status: "received" as const };
+      await input.scopeResolutionEffects?.observe(receipt);
+      if (this.fault === "duplicate") { await input.scopeResolutionEffects?.observe(receipt); }
+    }
     const request = retrievalRequest() as InfinityContextRetrievalV2Request & {
       readonly status: "prepared" };
     Object.defineProperty(request, "status", { enumerable: false, value: "prepared" });
@@ -322,7 +424,7 @@ class MissingExchangeAdapter extends ObservedExactAdapter {
 }
 
 async function canonicalChainFixture(retrieval: InfinityContextRetrievalV2Adapter,
-  events: string[]) {
+  events: string[], preparer = new FixedPreparer()) {
   const evidence = await evidenceFixture();
   const transport = new GrpcSubscriptionRuntimeTransport({ address: "127.0.0.1:1",
     serviceToken: "synthetic-token-1234" });
@@ -331,23 +433,62 @@ async function canonicalChainFixture(retrieval: InfinityContextRetrievalV2Adapte
     beforeProviderCall: async () => {answerCalls += 1;},
     options: { expectedLauncherSha256: "5".repeat(64) }, transport,
   });
+  const budget = new DurableAttemptJournal(await mkdtemp(join(tmpdir(), "chain-budget-")), {} as never);
+  const spend: VerifiedSpendReservation = { signerKeyId: "synthetic-budget-authority", signatureBase64: "AA==",
+    spendReservationSha256: "8".repeat(64), payload: {
+    allowedCallKinds: ["capability", "retrieval", "answer"], campaignRootSha256: rootBindingSha256,
+    releaseRootSha256: "9".repeat(64), repetition: 1, maxCalls: 5,
+    maxCallsByKind: { capability: 3, retrieval: 1, answer: 1, adjudicator_1: 0, adjudicator_2: 0, resolver: 0 },
+    maxTokens: 2052, maxEncryptedBytes: 52_096, expiresAtEpochMs: 2_000_000_000_000,
+    maximumEffectDurationMs: 3000, model: "gpt-5.6-terra", provider: "subscription-runtime",
+    reasoning: "low", serviceTier: "default" } };
+  const claims = new Map<string, string>();
+  const spendPort = { reserve: async ({ effectKind, payloadSha256, requestedEncryptedBytes, requestedTokens }: Parameters<
+    QualificationExternalEffectReservationPort["reserve"]>[0]) => {
+      const identity = attemptIdentity({ callKind: effectKind.startsWith("scope_") ? "capability" :
+        effectKind as "answer" | "capability" | "retrieval", callOrdinal: effectKind === "scope_spaces" ? 1 :
+        effectKind === "scope_memory_scopes" ? 2 : 0, campaignRootSha256: rootBindingSha256,
+        questionId: "q-1", questionDigestSha256: "a".repeat(64), releaseRootSha256: "9".repeat(64),
+        repetition: 1, spendReservationSha256: spend.spendReservationSha256 });
+      const claim = JSON.stringify({ identity, payloadSha256, requestedEncryptedBytes, requestedTokens });
+      const previous = claims.get(effectKind);
+      if (previous !== undefined) {
+        if (previous !== claim) { throw new Error("mismatched duplicate spend claim"); }
+        events.push(`spend:${effectKind}`);
+        return;
+      }
+      const admitted = await budget.admit({ identity, requestDigestSha256: payloadSha256,
+        requestedEncryptedBytes, requestedTokens, spend });
+      if (!admitted.admitted) { throw new Error("canonical provider external effect is unknown and terminal"); }
+      claims.set(effectKind, claim);
+      events.push(`spend:${effectKind}`);
+    } };
+  let sealedScopeDigest: string | undefined;
   const chain = createProductionCanonicalQuestionChain({ answer,
     audit: { seal: async (value) => {events.push(`seal:${value.kind}`);
-      await evidence.evidence.audit.seal(value);} },
+      // Replay must reach the phase journal, past the create-only metadata artifact.
+      const scopeDigest = value.kind === "scope_resolution_observation" ? sha256(value.plaintext) : undefined;
+      if (scopeDigest !== undefined && sealedScopeDigest !== undefined) {
+        if (scopeDigest !== sealedScopeDigest) { throw new Error("mismatched scope artifact replay"); }
+        return;
+      }
+      await evidence.evidence.audit.seal(value);
+      if (scopeDigest !== undefined) { sealedScopeDigest = scopeDigest; }
+    } },
     evidenceAuthority: new PostgresHistoricalEvidenceAuthority({} as never),
     ids: new HmacHistoricalOpaqueIds(new Uint8Array(32).fill(9)),
     journal: { reserve: async (value) => {events.push("journal:reserve");
       await evidence.evidence.journal.reserve(value);},
     terminal: async (value) => {events.push(`journal:${value.state}`);
       await evidence.evidence.journal.terminal(value);} },
-    preparer: new FixedPreparer(), retrieval,
-    spend: { reserve: async ({ effectKind }) => {events.push(`spend:${effectKind}`);} },
+    preparer, retrieval,
+    spend: spendPort,
     store: new PostgresHistoricalMemoryStore({} as never),
     topology: { resolve: async () => ({ currentMeetingId: "meeting-1", roomId: "room-1",
       scopeId: "scope-1" }) },
   });
-  return { answerCalls: () => answerCalls, close: () => {transport.close();},
-    events, executor: new ExecuteAdmittedQualificationQuestion(chain), input: evidence.input };
+  return { answerCalls: () => answerCalls, close: async () => {transport.close(); await budget.close();},
+    events, spendPort, executor: new ExecuteAdmittedQualificationQuestion(chain), input: evidence.input };
 }
 
 class SyntheticUnavailableEndpoint implements HttpTransport {

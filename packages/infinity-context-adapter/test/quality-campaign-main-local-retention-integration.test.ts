@@ -1,3 +1,4 @@
+import { scopeObservation } from "./quality-campaign-scope-observation-fixture.js";
 import { createHash } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -61,6 +62,7 @@ describe("main external/local retention binding", () => {
           ["capability_response", capabilityResponse], ["retrieval_request", retrievalRequest],
           ["retrieval_response", retrievalResponse],
           ["retrieval_observation", bytes(canonicalJson(observation))],
+          ["scope_resolution_observation", bytes(canonicalJson(scopeObservation(identity)))],
           ["answer_normalized_outcome", bytes(JSON.stringify(normalized))]] as const) {
           await evidence.audit.seal({ attemptId: identity.attemptId, kind, plaintext });
         }

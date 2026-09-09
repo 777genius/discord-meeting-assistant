@@ -111,6 +111,8 @@ boundaries:
       runtimeReferences: []
   # ADR-0073: domain/legacy-historical-admission.ts and its consumer-owned ports
   # remain in the closed Meeting Knowledge feature root.
+  # ADR-0076: application/focused-locator-retrieval-v2-scope.ts is an internal
+  # scope-resolution helper classified by this closed feature root.
   - id: core.meeting.knowledge
     roots:
       - packages/meeting-core/src/features/meeting-knowledge
@@ -261,6 +263,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/artifact-policy.ts
       - packages/infinity-context-adapter/src/quality-campaign/campaign-admission-policy.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-metadata-contract.ts
       - packages/infinity-context-adapter/src/quality-campaign/cleanup-evidence.ts
       - packages/infinity-context-adapter/src/quality-campaign/cumulative-spend.ts
       - packages/infinity-context-adapter/src/quality-campaign/execution.ts
@@ -412,6 +415,7 @@ boundaries:
       - packages/infinity-context-adapter/src/infinity-context-historical-memory.ts
       - packages/infinity-context-adapter/src/infinity-context-live-finalized-memory.ts
       - packages/infinity-context-adapter/src/infinity-context-retrieval-v2.ts
+      - packages/infinity-context-adapter/src/infinity-retrieval-scope-resolution.ts
       - packages/infinity-context-adapter/src/infinity-exact-document-compatibility.ts
       - packages/infinity-context-adapter/src/infinity-production-qualification.ts
       - packages/infinity-context-adapter/src/infinity-runtime-provenance.ts

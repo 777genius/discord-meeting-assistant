@@ -98,14 +98,15 @@ Promise<CanonicalScheduledCampaignResult> {
           terminals.push(Object.freeze({ attemptId: identity.attemptId, outcome: recovered }));
           continue;
         }
-        const effectIdentity = (effectKind: "answer" | "capability" | "retrieval") =>
-          attemptIdentity({ callKind: effectKind, callOrdinal: 0,
+        const effectIdentity = (effectKind: "answer" | "capability" | "retrieval" | "scope_spaces" | "scope_memory_scopes") =>
+          attemptIdentity({ callKind: effectKind === "scope_spaces" || effectKind === "scope_memory_scopes" ? "capability" : effectKind,
+            callOrdinal: effectKind === "scope_spaces" ? 1 : effectKind === "scope_memory_scopes" ? 2 : 0,
             campaignRootSha256: input.campaignRootSha256,
             questionDigestSha256: job.question.questionDigestSha256,
             questionId: job.question.questionId, releaseRootSha256: input.releaseRootSha256,
             repetition: job.repetition, spendReservationSha256:
               input.spendReservationSha256ByRepetition[job.repetition] });
-        if ((["capability", "retrieval", "answer"] as const).some((effectKind) =>
+        if ((["scope_spaces", "scope_memory_scopes", "capability", "retrieval", "answer"] as const).some((effectKind) =>
           claimedAttemptIds.has(effectIdentity(effectKind).attemptId))) {
           outcomeUnknown = true;
           unknownAttemptIds.push(identity.attemptId);
@@ -114,7 +115,7 @@ Promise<CanonicalScheduledCampaignResult> {
         const spend = input.reservations.find(({ payload }) =>
           payload.repetition === job.repetition)!;
         const reservation = Object.freeze({ reserve: async (effect: {
-          readonly effectKind: "answer" | "capability" | "retrieval";
+          readonly effectKind: "answer" | "capability" | "retrieval" | "scope_spaces" | "scope_memory_scopes";
           readonly payloadSha256: string; readonly requestedEncryptedBytes: number;
           readonly requestedTokens: number }) => {
           const effectAttempt = effectIdentity(effect.effectKind);

@@ -1,7 +1,9 @@
+import { scopeResolution } from "./focused-locator-retrieval-v2.fixture.test.js";
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 
 import {
+  DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY,
   FocusedHistoricalEvidenceV2,
   HistoricalFocusedLocatorRetrievalV2,
   PersistedFocusedMemoryRetrievalV2,
@@ -73,10 +75,10 @@ function authorization(): HistoricalAuthorizationPort {
   }) };
 }
 
-async function requestFor(store: AppliedStore) {
-  const request = await new PrepareFocusedLocatorRetrievalV2Request({
+async function requestFor(store: AppliedStore, evidenceByteLimit = 16_000) {
+  const request = await new PrepareFocusedLocatorRetrievalV2Request({ scopeResolution,
     ids: new TestIds(), providerBinding, store,
-  }).prepare({ currentMeetingId: "current-meeting", question: "What changed?",
+  }, { ...DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY, evidenceByteLimit }).prepare({ currentMeetingId: "current-meeting", question: "What changed?",
     roomId: "room-1", scopeId: "scope-1" });
   if (request.status !== "prepared") {throw new Error("missing retrieval request");}
   return request;
@@ -386,7 +388,7 @@ describe("focused retrieval candidate isolation edge cases", () => {
       const records = meetings.map((meeting) => ({ binding: meeting.binding,
         plan: buildHistoricalIndexPlan(meeting, new TestIds()), remoteDocumentIds: {} }));
       const store = new AppliedStore(records, [meetings[0]!, meetings[2]!, meetings[3]!]);
-      const request = await requestFor(store);
+      const request = await requestFor(store, 32);
       const locators = records.map(({ plan }) =>
         plan.documents[0]?.manifest.candidateLocator);
       if (locators.some((locator) => locator === undefined)) {
@@ -409,14 +411,13 @@ describe("focused retrieval candidate isolation edge cases", () => {
           missing, malformed, providerCandidate(locators[3]!, providerRequest, 7),
         ], status: "available" as const };
       } } as FocusedLocatorRetrievalV2Port;
-      const result = await new HistoricalFocusedLocatorRetrievalV2({
+      const result = await new HistoricalFocusedLocatorRetrievalV2({ scopeResolution,
         authority: { loadAcceptedFinalMeeting: async (binding) =>
           meetings.find((meeting) => meeting.binding.releaseId === binding.releaseId) ?? null },
         authorization: authorization(), ids: new TestIds(), retrieval, store,
         turnHashes: { hash: ({ turnId }) => `hash:${turnId}` },
       }).retrieve({ authorizationPrincipalRef: "principal",
-        currentMeetingId: "current-meeting", request: { ...request,
-          budgets: { ...request.budgets, evidenceByteLimit: 32 } }, roomId: "room-1",
+        currentMeetingId: "current-meeting", request, roomId: "room-1",
         scopeId: "scope-1" });
 
       expect(result).toMatchObject({ status: "current" });

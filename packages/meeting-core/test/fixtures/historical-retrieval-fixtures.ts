@@ -27,6 +27,7 @@ export function makeMeeting(input: {
   readonly authoritativeDurationMs?: number;
   readonly meetingId: string;
   readonly roomId?: string;
+  readonly scopeId?: string;
   readonly transcriptId?: string;
   readonly turns: readonly {
     readonly endMs: number;
@@ -41,7 +42,7 @@ export function makeMeeting(input: {
     desiredGeneration: 1,
     meetingId: input.meetingId,
     roomId: input.roomId ?? "room-1",
-    scopeId: "scope-1",
+    scopeId: input.scopeId ?? "scope-1",
     transcriptId: input.transcriptId ?? `transcript-${input.meetingId}`,
     transcriptVersion: 1,
   });

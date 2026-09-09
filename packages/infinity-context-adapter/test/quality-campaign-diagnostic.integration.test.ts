@@ -1,3 +1,4 @@
+import { InfinityRetrievalScopeResolution } from "../src/infinity-retrieval-scope-resolution.js";
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildHistoricalIndexPlan, canonicalHistoricalPlannerJson, createHistoricalReleaseBinding,
@@ -68,7 +69,8 @@ describe("nonqualifying diagnostic concrete boundaries", () => {
         beforeProviderCall: async () => { answerCalls += 1; throw new Error("model calls forbidden in this test"); } });
       const auditKinds: string[] = [];
       const input = { answer, evidenceAuthority: authority, ids, store, retrieval,
-        preparer: new PrepareFocusedLocatorRetrievalV2Request({ ids, providerBinding: DISPOSABLE_RETRIEVAL_V2_BINDING, snapshot: store }),
+        preparer: new PrepareFocusedLocatorRetrievalV2Request({ scopeResolution: new InfinityRetrievalScopeResolution({
+          baseUrl: http.baseUrl, token: "synthetic-token", operationTimeoutMs: 500, requestTimeoutMs: 500 }), ids, providerBinding: DISPOSABLE_RETRIEVAL_V2_BINDING, snapshot: store }),
         audit: { seal: async (value: { kind: string }) => { auditKinds.push(value.kind); } },
         journal: { reserve: async () => {}, terminal: async () => {} }, spend: { reserve: async () => {} },
         topology: { resolve: async () => ({ currentMeetingId: snapshot.meetingId, roomId: release.roomId, scopeId: release.scopeId }) } };
@@ -78,7 +80,22 @@ describe("nonqualifying diagnostic concrete boundaries", () => {
       const packet = { questionId: "synthetic-q1", questionText: "When is Project Cedar launch?", locale: "en" as const,
         scopeTopologyReference: "diagnostic:scope" };
       const options = { attemptId: `sqv4-${"a".repeat(64)}`, signal: new AbortController().signal };
+      const beforeRetrieval = http.endpoint.requests.length;
       const result = await chain.retrieval.retrieve(packet, options);
+      const retrievalRequests = http.endpoint.requests.slice(beforeRetrieval);
+      expect(retrievalRequests.filter(({ path }) => path === "/v1/spaces" || path === "/v1/memory-scopes"))
+        .toEqual([expect.objectContaining({ method: "GET", path: "/v1/spaces", query: "?limit=100" }),
+          expect.objectContaining({ method: "GET", path: "/v1/memory-scopes", query: "?space_id=space-1&limit=100" })]);
+      const contextRequests = retrievalRequests.filter(({ path }) => path === "/v1/context/retrieve");
+      expect(contextRequests).toHaveLength(1);
+      expect(contextRequests[0]?.method).toBe("POST");
+      const requestBody = contextRequests[0]?.body;
+      if (typeof requestBody !== "object" || requestBody === null || !("scope" in requestBody)) {
+        throw new Error("Expected a retrieval request object");
+      }
+      expect(requestBody.scope).toEqual({ space_id: "space-1", memory_scope_id: "scope-1", thread_id: null });
+      expect(plan.topology.spaceSlug).not.toBe("space-1");
+      expect(plan.topology.roomScopeExternalRef).not.toBe("scope-1");
       if (result.status !== "completed") { throw new Error(`synthetic retrieval failed: ${result.reason}`); }
       expect(result.candidates.length).toBeGreaterThan(0);
       const locators = result.candidates.map(candidate => candidate.locatorId);

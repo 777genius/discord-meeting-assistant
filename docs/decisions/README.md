@@ -79,6 +79,8 @@
 
 - [ADR-0075: Bind canonical memory execution to the signed actor profile](0075-canonical-memory-actor-profile.md)
 
+- [ADR-0076: Read-only retrieval scope resolution](0076-read-only-retrieval-scope-resolution.md)
+
 ## Superseded
 
 - [ADR-0024: Possession-based recording playback](0024-possession-based-recording-playback.md)

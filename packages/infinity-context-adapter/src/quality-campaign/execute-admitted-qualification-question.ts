@@ -102,7 +102,7 @@ export interface QualificationQuestionExecutorFactoryPort {
 }
 
 export interface QualificationExternalEffectReservationPort {
-  reserve(input: { readonly effectKind: "answer" | "capability" | "retrieval";
+  reserve(input: { readonly effectKind: "answer" | "capability" | "retrieval" | "scope_spaces" | "scope_memory_scopes";
     readonly payloadSha256: string; readonly requestedEncryptedBytes: number;
     readonly requestedTokens: number }): Promise<void>;
 }

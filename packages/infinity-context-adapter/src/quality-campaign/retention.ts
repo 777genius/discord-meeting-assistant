@@ -6,13 +6,56 @@ import { verifyDurableReservedExchangeEvidence,
   verifyRetainedFinalAdjudication } from "./adjudication.js";
 import { artifactAttemptIdentity, type ArtifactAad, type ArtifactReceipt,
 } from "./artifact-policy.js";
+import { validateCanonicalScopeResolutionObservation, type SemanticQualityV4ArtifactReceipt } from
+  "./canonical-metadata-contract.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import type { DurableSpendClaim, ExpectedSpendClaim } from "./cumulative-spend.js";
-import { assertAttemptIdentity, type AttemptIdentity, type VerifiedSpendReservation,
+import { attemptIdentity, assertAttemptIdentity, type AttemptIdentity, type VerifiedSpendReservation,
   verifyExternalSignedValue } from "./execution.js";
 import { QualityCampaignAuthorityPolicy } from "./release.js";
 import type { QualityCampaignRelease } from "./release.js";
 import { assertQualificationProviderAccounting } from "./qualification-contract.js";
+
+/** Custody authenticates the local metadata artifact against this exact answer attempt. */
+export interface CanonicalScopeObservationPort {
+  readScopeObservation(identity: AttemptIdentity): Promise<{
+    readonly observation: unknown; readonly receipt: SemanticQualityV4ArtifactReceipt }>;
+}
+
+export async function verifyCanonicalScopeRetention(identities: readonly AttemptIdentity[],
+  custody: CanonicalScopeObservationPort) {
+  const expectedSpendClaims: ExpectedSpendClaim[] = [];
+  const receipts: SemanticQualityV4ArtifactReceipt[] = [];
+  let totalStoredBytes = 0;
+  if (identities.length === 0 || new Set(identities.map(({ attemptId }) => attemptId)).size !==
+    identities.length) { throw new Error("scope retention identity inventory is invalid"); }
+  for (const identity of identities) {
+    assertAttemptIdentity(identity);
+    if (identity.callKind !== "answer" || identity.callOrdinal !== 0) {
+      throw new Error("scope retention requires canonical answer identity");
+    }
+    const { observation, receipt } = await custody.readScopeObservation(identity);
+    const scope = validateCanonicalScopeResolutionObservation(observation);
+    if (scope.status !== "prepared" || receipt.artifactKind !== "scope_resolution_observation" ||
+      receipt.attemptId !== identity.attemptId || receipt.rootBindingSha256 !== identity.campaignRootSha256 ||
+      !Number.isSafeInteger(receipt.sizeBytes) || receipt.sizeBytes < 1 || receipt.sizeBytes > 4096) {
+      throw new Error("scope retention observation is unknown, foreign, or oversized");
+    }
+    for (const [index, read] of scope.reads.entries()) {
+      expectedSpendClaims.push(Object.freeze({ identity: attemptIdentity({
+        campaignRootSha256: identity.campaignRootSha256,
+        releaseRootSha256: identity.releaseRootSha256, questionId: identity.questionId,
+        questionDigestSha256: identity.questionDigestSha256, repetition: identity.repetition,
+        spendReservationSha256: identity.spendReservationSha256,
+        callKind: "capability", callOrdinal: index + 1 }), requestDigestSha256: read.requestSha256 }));
+    }
+    receipts.push(receipt);
+    totalStoredBytes += receipt.sizeBytes;
+    if (!Number.isSafeInteger(totalStoredBytes)) { throw new Error("scope retention byte count is invalid"); }
+  }
+  return Object.freeze({ expectedSpendClaims: Object.freeze(expectedSpendClaims), totalStoredBytes,
+    inventorySha256: sha256(receipts.toSorted((left, right) => left.attemptId.localeCompare(right.attemptId))) });
+}
 
 export const MAX_PROVIDER_INPUT_BYTES = 16_000;
 
@@ -85,6 +128,7 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
   readonly effectVerificationEpochMs: number;
   readonly expectedOutcomes: readonly ExpectedOutcomeInventory[];
   readonly perRepetitionCardinality: 30 | 240;
+  readonly scopeObservationCustody?: CanonicalScopeObservationPort;
   readonly keyNamespace?: string;
   readonly providerResultAuthorityRole?: "holdout_provider_result" | "provider_result";
   readonly release: QualityCampaignRelease;
@@ -101,7 +145,7 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
   }
   const seen: RetentionSeen = { aadDigests: new Set(), artifactBindings: new Set(),
     envelopeDigests: new Set(), keyBindings: new Set(), memberships: new Set() };
-  const context = { artifactKeyCustodySha256: input.artifactKeyCustodySha256,
+  const context: RetentionContext = { artifactKeyCustodySha256: input.artifactKeyCustodySha256,
     authenticated: new Map<string, AuthenticatedArtifact>(), custody: input.custody,
     effectVerificationEpochMs: input.effectVerificationEpochMs, expected, releaseDocumentSha256:
     digest(input.releaseDocumentSha256, "retained release document"), reviewSpendClaims: [], seen,
@@ -110,7 +154,10 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
     providerResultAuthorityRole: input.providerResultAuthorityRole ?? "provider_result",
     release: input.release,
     spendReservations: input.spendReservations };
-  let totalStoredBytes = 0;
+  const scope = perRepetitionCardinality === 240 ? await verifyCanonicalScopeRetention(
+    input.expectedOutcomes.map(({ identity }) => identity), requireScopeCustody(input.scopeObservationCustody)) : null;
+  if (scope !== null) { context.expectedSpendClaims.push(...scope.expectedSpendClaims); }
+  let totalStoredBytes = scope?.totalStoredBytes ?? 0;
   for (const artifact of input.artifacts) {
     await admitRetainedArtifact(policy, artifact, context);
     totalStoredBytes += artifact.storedBytes;
@@ -127,11 +174,18 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
     totalStoredBytes > input.campaignByteCeiling) {
     throw new Error("retained inventory exceeds campaign byte ceiling");
   }
-  return Object.freeze({ artifactCount: seen.memberships.size,
+  const artifacts = [...input.artifacts].toSorted((a, b) =>
+    `${a.attemptId}:${a.kind}`.localeCompare(`${b.attemptId}:${b.kind}`));
+  return Object.freeze({ artifactCount: seen.memberships.size + (scope === null ? 0 : input.expectedOutcomes.length),
     expectedSpendClaims: Object.freeze(context.expectedSpendClaims),
-    inventorySha256: sha256([...input.artifacts].toSorted((a, b) =>
-      `${a.attemptId}:${a.kind}`.localeCompare(`${b.attemptId}:${b.kind}`))),
+    inventorySha256: sha256(scope === null ? artifacts : { artifacts,
+      scopeInventorySha256: scope.inventorySha256 }),
     reviewSpendClaims: Object.freeze(context.reviewSpendClaims), totalStoredBytes });
+}
+
+function requireScopeCustody(custody: CanonicalScopeObservationPort | undefined): CanonicalScopeObservationPort {
+  if (custody === undefined) { throw new Error("main retention requires authenticated scope observations"); }
+  return custody;
 }
 
 interface ExpectedArtifactMembership {

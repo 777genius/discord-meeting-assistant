@@ -1,3 +1,4 @@
+import { resolveFocusedRetrievalScope } from "./focused-locator-retrieval-v2-scope.js";
 import { compareRetrievalV2Utf8, retrievalV2ConsumerEvidenceByteLimit,
   type RetrievalBindingSnapshot } from
   "../domain/retrieval-admission.js";
@@ -13,6 +14,8 @@ import { boundedRetrievalQuery, classifyRelativeTimeFilter,
   "./focused-locator-retrieval-v2-query.js";
 import type { FocusedHistoricalEvidenceV2Port,
   FocusedLocatorRetrievalV2ProviderBinding,
+  FocusedRetrievalScopeResolutionPort,
+  FocusedRetrievalScopeResolutionEffects,
   FocusedLocatorRetrievalV2Preparation,
   FocusedLocatorRetrievalV2RequestSnapshot } from
   "./ports/focused-locator-retrieval-v2.js";
@@ -54,6 +57,7 @@ export class PrepareFocusedLocatorRetrievalV2Request {
   public constructor(
     private readonly dependencies: {
       readonly ids: HistoricalOpaqueIdPort;
+      readonly scopeResolution?: FocusedRetrievalScopeResolutionPort;
       readonly identitySkeletons?: IdentitySkeletonPortV1;
       readonly providerBinding: FocusedLocatorRetrievalV2ProviderBinding;
       readonly actorReferences?: RetrievalActorReferenceAuthorityV1;
@@ -68,6 +72,7 @@ export class PrepareFocusedLocatorRetrievalV2Request {
   ) {}
 
   public async prepare(input: {
+    readonly scopeResolutionEffects?: FocusedRetrievalScopeResolutionEffects;
     readonly currentMeetingId: string;
     readonly question: string;
     readonly roomId: string;
@@ -91,22 +96,8 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       ...resolveRequestedActorKeys(input.question, aliases, skeletons),
       ...(this.dependencies.actorReferences?.actorKeysForQuestion(input.question) ?? []),
     ]);
-    const snapshotPort = this.dependencies.snapshot ?? this.dependencies.store;
-    if (snapshotPort === undefined) {
-      return unavailablePreparation("historical_authority_unavailable");
-    }
-    const snapshot = await snapshotPort.loadRoomAuthoritySnapshot({
-      maximumSources: this.policy.maximumSources,
-      pageSize: Math.min(25, this.policy.maximumSources),
-      roomId: input.roomId,
-      scopeId: input.scopeId,
-      ...(input.signal === undefined ? {} : { signal: input.signal }),
-    });
-    if (snapshot.status !== "current") {
-      return unavailablePreparation(snapshot.status === "overflow"
-        ? "historical_authority_overflow"
-        : "historical_authority_unavailable");
-    }
+    const snapshot = await this.loadSnapshot(input);
+    if (snapshot.status !== "current") { return snapshot; }
     const plans = snapshot.entries;
     if (plans.length === 0) {
       return Object.freeze({ reason: "no_history_or_index", status: "empty" });
@@ -134,7 +125,11 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       .toSorted(compareRetrievalV2Utf8));
     const relativeTimeInterval = timeFilter.status === "valid"
       ? timeFilter.interval : null;
-    return preparedRequest({
+    const scope = await resolveFocusedRetrievalScope(this.dependencies.scopeResolution, input, topology);
+    if (scope === null) {
+      return unavailablePreparation("scope_resolution_unavailable");
+    }
+    const request = preparedRequest({
       binding: Object.freeze({ ...this.dependencies.providerBinding,
         requiredProviderLanes: Object.freeze([
           ...this.dependencies.providerBinding.requiredProviderLanes,
@@ -170,8 +165,8 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       })]),
       schemaVersion: 2 as const,
       scope: Object.freeze({
-        memoryScopeId: topology.roomScopeExternalRef,
-        spaceId: topology.spaceSlug,
+        memoryScopeId: scope.memoryScopeId,
+        spaceId: scope.spaceId,
         threadId: null,
       }),
       softPreferences: Object.freeze({
@@ -182,12 +177,40 @@ export class PrepareFocusedLocatorRetrievalV2Request {
         timeWeightMicros: null,
       }),
     });
+    try { scope.bind(request); } catch {
+      return unavailablePreparation("scope_resolution_unavailable");
+    }
+    return request;
   }
+
+  private async loadSnapshot(
+    input: Parameters<PrepareFocusedLocatorRetrievalV2Request["prepare"]>[0],
+  ) {
+    const snapshotPort = this.dependencies.snapshot ?? this.dependencies.store;
+    if (snapshotPort === undefined) {
+      return unavailablePreparation("historical_authority_unavailable");
+    }
+    const snapshot = await snapshotPort.loadRoomAuthoritySnapshot({
+      maximumSources: this.policy.maximumSources,
+      pageSize: Math.min(25, this.policy.maximumSources),
+      roomId: input.roomId,
+      scopeId: input.scopeId,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    if (snapshot.status !== "current") {
+      return unavailablePreparation(snapshot.status === "overflow"
+        ? "historical_authority_overflow"
+        : "historical_authority_unavailable");
+    }
+    return snapshot;
+  }
+
+
 }
 
 function preparedRequest(
   request: FocusedLocatorRetrievalV2RequestSnapshot,
-): FocusedLocatorRetrievalV2Preparation {
+): Extract<FocusedLocatorRetrievalV2Preparation, { readonly status: "prepared" }> {
   const result = request as FocusedLocatorRetrievalV2RequestSnapshot & {
     readonly status: "prepared";
   };
@@ -203,7 +226,7 @@ function preparedRequest(
 function unavailablePreparation(
   reason: Extract<FocusedLocatorRetrievalV2Preparation,
     { readonly status: "unavailable" }>["reason"],
-): FocusedLocatorRetrievalV2Preparation {
+): Extract<FocusedLocatorRetrievalV2Preparation, { readonly status: "unavailable" }> {
   return Object.freeze({ reason, status: "unavailable" });
 }
 

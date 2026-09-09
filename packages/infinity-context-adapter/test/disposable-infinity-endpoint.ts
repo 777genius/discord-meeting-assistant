@@ -16,7 +16,7 @@ import {
   deferred,
   envelope,
   json,
-  notFound, rankRetrievalCandidate,
+  notFound, rankRetrievalCandidate, matchesRetrievalScope,
   string,
   strings,
   type IngestGate,
@@ -700,10 +700,8 @@ export class DisposableInfinityEndpoint implements HttpTransport {
       ? bounds.result_limit
       : 1;
     const documents = [...this.#documents.values()]
-      .filter(({ memoryScopeExternalRef, processed, status }) =>
-        memoryScopeExternalRef === string(scope.memory_scope_id) &&
-        processed && status === "active"
-      )
+      .filter((document) => matchesRetrievalScope(document, scope,
+        this.#spaces.get(document.spaceSlug), this.#scopes.get(document.memoryScopeExternalRef)))
       .filter(({ retrievalProjection: projection }) =>
         generations.get(string(projection.source_key)) ===
           string(projection.projection_generation) &&

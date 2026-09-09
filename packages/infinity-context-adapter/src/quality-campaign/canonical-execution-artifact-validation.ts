@@ -1,16 +1,14 @@
+import type { FocusedLocatorRetrievalV2RequestSnapshot } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
 import { createHash } from "node:crypto";
 
+import type { SemanticQualityV4ArtifactKind, SemanticQualityV4ArtifactReceipt } from
+  "./canonical-metadata-contract.js";
 import { canonicalJson } from "./canonical.js";
 
-export type SemanticQualityV4ArtifactKind = "adjudication" | "answer" | "evidence" |
-  "answer_normalized_outcome" | "answer_original_model_surface" |
-  "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
-  "answer_repair_request" | "answer_repair_response" | "capability_request" |
-  "capability_response" |
-  "original_model_input" | "original_provider_request" | "original_provider_response" |
-  "repair_model_input" | "repair_provider_request" | "repair_provider_response" |
-  "raw_outcome" | "response_runtime" | "retrieval_request" | "retrieval_response" |
-  "retrieval_observation" | "selected_canonical_turns";
+export type { SemanticQualityV4ArtifactKind, SemanticQualityV4ArtifactReceipt } from
+  "./canonical-metadata-contract.js";
+export { validateCanonicalScopeResolutionObservation } from "./canonical-metadata-contract.js";
 
 export interface CanonicalRetrievalObservationArtifact {
   readonly attemptId: string;
@@ -23,19 +21,6 @@ export interface CanonicalRetrievalObservationArtifact {
   readonly responseSha256: string;
   readonly routeLatencyUs: number;
   readonly schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v1";
-}
-
-export interface SemanticQualityV4ArtifactReceipt {
-  readonly algorithm: "A256GCM";
-  readonly artifactKind: SemanticQualityV4ArtifactKind;
-  readonly attemptId: string;
-  readonly envelopeSha256: string;
-  readonly exchangeBindingSha256?: string;
-  readonly plaintextSha256: string;
-  readonly rootBindingSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_artifact_receipt.v1";
-  readonly sizeBytes: number;
-  readonly storeIdentitySha256: string;
 }
 
 export interface SemanticQualityV4ArtifactEnvelope {
@@ -61,7 +46,7 @@ const artifactKinds = new Set<unknown>([
   "capability_response", "evidence", "original_model_input", "original_provider_request",
   "original_provider_response", "repair_model_input", "repair_provider_request",
   "repair_provider_response", "raw_outcome", "response_runtime", "retrieval_request",
-  "retrieval_response", "retrieval_observation", "selected_canonical_turns",
+  "retrieval_response", "scope_resolution_observation", "retrieval_observation", "selected_canonical_turns",
 ]);
 
 export function validateCanonicalRetrievalObservation(input: {
@@ -100,8 +85,8 @@ export function validateCanonicalRetrievalObservation(input: {
     [observation.requestBytes, observation.requestSha256, input.exchange.requestBytes],
     [observation.responseBytes, observation.responseSha256, input.exchange.responseBytes],
   ] as const;
-  if (measured.some(([size, digest, bytes]) => !Number.isSafeInteger(size) || size < 0 ||
-    size !== bytes.byteLength || !isDigest(digest) || sha256(bytes) !== digest)) {
+  if (measured.some(([size, expectedDigest, bytes]) => !Number.isSafeInteger(size) || size < 0 ||
+    size !== bytes.byteLength || !isDigest(expectedDigest) || sha256(bytes) !== expectedDigest)) {
     throw new Error("canonical retrieval observation does not match exact exchange");
   }
   return Object.freeze({ attemptId: input.attemptId,
@@ -180,4 +165,18 @@ export function validateSemanticQualityV4ArtifactReceipt(
     throw new Error("semantic quality V4 artifact receipt is invalid");
   }
   return value as unknown as SemanticQualityV4ArtifactReceipt;
+}
+
+export function assertCanonicalRequest(request: FocusedLocatorRetrievalV2RequestSnapshot,
+  question: string): void {
+  if (request.budgets.candidateLimit !== 100 || request.budgets.resultLimit !== 10 ||
+    !Object.is(request.budgets.neighborRadius, 0) ||
+    request.queries.length !== 1 || question.trim().length === 0) {
+    throw new Error("qualification request violates Meeting Knowledge ownership");
+  }
+  const [originalQuery] = request.queries;
+  if (originalQuery === undefined || originalQuery.queryId !== "original-question" ||
+    originalQuery.query.length === 0) {
+    throw new Error("qualification request violates Meeting Knowledge ownership");
+  }
 }

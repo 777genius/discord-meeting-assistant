@@ -1,3 +1,4 @@
+import { InfinityRetrievalScopeResolution } from "../infinity-retrieval-scope-resolution.js";
 import { isAbsolute, resolve } from "node:path";
 
 import { PrepareFocusedLocatorRetrievalV2Request,
@@ -99,6 +100,9 @@ export async function createProductionCanonicalExecutorFactory(
   const evidenceAuthority = new PostgresHistoricalEvidenceAuthority(pool, undefined, legacyVerifier);
   const ids = new HmacHistoricalOpaqueIds(topologyKey, topology.actorKeyProfileId);
   const preparer = new PrepareFocusedLocatorRetrievalV2Request({ ids, providerBinding,
+    scopeResolution: new InfinityRetrievalScopeResolution({ baseUrl: config.infinityBaseUrl,
+      token: infinityToken.trim(), operationTimeoutMs: Math.min(config.requestTimeoutMs * 2, 500),
+      requestTimeoutMs: Math.min(config.requestTimeoutMs, 500) }),
     snapshot: new PostgresHistoricalRoomAuthoritySnapshot(pool, undefined, legacyVerifier) });
   const transport = new GrpcSubscriptionRuntimeTransport({ address: config.runtimeAddress,
     serviceToken: runtimeToken.trim() });

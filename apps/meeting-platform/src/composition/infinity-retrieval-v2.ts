@@ -1,4 +1,4 @@
-import { HmacHistoricalOpaqueIds, InfinityContextRetrievalV2Adapter } from
+import { HmacHistoricalOpaqueIds, InfinityRetrievalScopeResolution, InfinityContextRetrievalV2Adapter } from
   "@discord-meeting/infinity-context-adapter";
 import { HistoricalFocusedLocatorRetrievalV2,
   PrepareFocusedLocatorRetrievalV2Request,
@@ -18,6 +18,7 @@ import type { Pool } from "pg";
 import type { PlatformConfig } from "../config.js";
 export class InfinityRetrievalV2Composition {
   readonly #ids: HistoricalOpaqueIdPort;
+  readonly #scopeResolution: InfinityRetrievalScopeResolution;
   readonly #retrieval: InfinityContextRetrievalV2Adapter;
 
   public constructor(private readonly input: {
@@ -36,6 +37,9 @@ export class InfinityRetrievalV2Composition {
     readonly twoHourProfile: TwoHourHistoricalRetrievalProfileV1;
   }) {
     this.#ids = input.ids;
+    this.#scopeResolution = new InfinityRetrievalScopeResolution({ baseUrl: input.baseUrl,
+      token: input.token, operationTimeoutMs: Math.min(input.operationTimeoutMs, 500),
+      requestTimeoutMs: Math.min(input.requestTimeoutMs, 500) });
     this.#retrieval = new InfinityContextRetrievalV2Adapter({
       baseUrl: input.baseUrl,
       operationTimeoutMs: Math.min(input.operationTimeoutMs, 4_000),
@@ -46,6 +50,7 @@ export class InfinityRetrievalV2Composition {
 
   public admission(binding: FocusedLocatorRetrievalV2ProviderBinding) {
     return new PrepareFocusedLocatorRetrievalV2Request({
+      scopeResolution: this.#scopeResolution,
       ids: this.#ids,
       identitySkeletons: this.input.identitySkeletons,
       actorReferences: this.input.actorReferences,
@@ -62,6 +67,7 @@ export class InfinityRetrievalV2Composition {
       authorization,
       ids: this.#ids,
       retrieval: this.#retrieval,
+      scopeResolution: this.#scopeResolution,
       servingAuthorized: this.input.servingAuthorized,
       snapshot: new PostgresHistoricalRoomAuthoritySnapshot(this.input.pool, undefined, this.input.legacyVerifier),
       turnHashes: { hash: canonicalFinalReplyTurnHash },

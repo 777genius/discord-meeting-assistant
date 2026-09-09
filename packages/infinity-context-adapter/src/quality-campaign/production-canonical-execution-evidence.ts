@@ -138,6 +138,9 @@ Promise<{ readonly plaintext: Uint8Array; readonly receipt: SemanticQualityV4Art
     receipt.rootBindingSha256 !== input.rootBindingSha256) {
     throw new Error("canonical artifact receipt index is foreign or substituted");
   }
+  if (input.kind === "scope_resolution_observation" && receipt.sizeBytes > 4096) {
+    throw new Error("canonical scope resolution observation exceeds its encrypted byte bound");
+  }
   const store = new SemanticQualityV4EncryptedArtifactStore(input.artifactRoot);
   const plaintext = await store.openReceipt({ expectedKeyId: input.artifactKeyId,
     key: input.artifactKey, receipt });
@@ -291,6 +294,6 @@ function isArtifactKind(value: unknown): value is SemanticQualityV4ArtifactKind 
     "answer_repair_request", "answer_repair_response", "capability_request", "capability_response",
     "evidence", "original_model_input", "original_provider_request", "original_provider_response",
     "repair_model_input", "repair_provider_request", "repair_provider_response", "raw_outcome",
-    "response_runtime", "retrieval_request", "retrieval_response", "retrieval_observation",
+    "response_runtime", "retrieval_request", "retrieval_response", "scope_resolution_observation", "retrieval_observation",
     "selected_canonical_turns"].includes(value as string);
 }

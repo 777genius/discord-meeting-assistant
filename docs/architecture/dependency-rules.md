@@ -98,3 +98,14 @@ for disposable payload-free identity/offset metadata, recreated under runtime
 spool ownership. JSONL remains the sole durable receipt authority. Recovery
 streams records; short synchronous cache transactions never span filesystem
 I/O. SQLite closes before spool ownership is released.
+
+## Quality-campaign metadata boundary
+
+Meeting Knowledge quality qualification owns the consumer receipt contract and
+closed scope-observation schema in
+`packages/infinity-context-adapter/src/quality-campaign/canonical-metadata-contract.ts`.
+The existing `application.infinity-quality-campaign` boundary classifies and
+exports this file. Retention imports it directly; the canonical execution adapter
+imports inward and preserves its existing re-exports for callers. Cryptographic
+envelope and exact exchange validation remain in the adapter. This extraction
+implements ADR-0076 metadata retention without changing its accepted text.
