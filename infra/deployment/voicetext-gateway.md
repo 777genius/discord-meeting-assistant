@@ -1,8 +1,16 @@
 # Self-hosted VoiceText Gateway
 
-`compose.voicetext-gateway.yaml` replaces the default private VoiceText endpoint
-without changing Meeting Platform code. It builds the separately versioned OSS
-Rust gateway, gives it a private PostgreSQL database, and exposes only the
+`compose.voicetext-gateway.yaml` supplies the self-hosted OSS VoiceText endpoint
+without changing Meeting Platform code. A private VoiceText endpoint belongs to
+the legacy hosted lane; it is not a deployment default or an OSS dependency.
+Private SaaS reuse remains deferred/unverified under the
+[OSS topology plan](oss-meeting-topology.md). A bounded follow-up must pin the
+private SaaS contract/version, verify authentication and profile identity,
+batch idempotency, live ACK/finalization, bounded failures and retained evidence
+in an isolated synthetic deployment, then obtain separate provider and private
+Discord acceptance before adoption. No SaaS compatibility is inferred here.
+The overlay builds the separately versioned OSS Rust gateway, gives it a private
+PostgreSQL database, and exposes only the
 VoiceText-compatible HTTPS and WebSocket routes through Caddy.
 
 There is no released gateway image claimed by this repository. The overlay
@@ -25,12 +33,12 @@ BuildKit resolves that exact ref and verifies it with the identical `checksum`
 Git-context query before executing the gateway Dockerfile. This requires Docker
 Buildx 0.28.0 or newer and Dockerfile syntax 1.18 or newer.
 
-The current pin fixes WebSocket close code 1000 handling. Root reports gateway
-PR #1 exact CI, production composition, full Rust tests, and image checks PASS.
-This pin update adds no live qualification; the retained native fixture results
-below belong only to the historical gateway revision. Its approved source tree
-was `fdb2e59f79beb40623ce831b494ba3ca193c0e05`. Database pooling remains at
-the Compose default of 10; the historical isolated harness selected 1.
+The Compose source pin identifies build input, not a qualified deployment.
+Compare the observed image and source identities with the retained campaign
+receipt before applying its results to a deployment; see
+[receipt interpretation](oss-discord-stt-campaign.md#locate-and-interpret-a-trusted-receipt).
+Database pooling defaults to 10 in Compose; the historical isolated native
+harness selected 1.
 
 Point public DNS for `VOICETEXT_PUBLIC_HOST` to the host and allow inbound TCP
 80/443 and UDP 443. The overlay derives Meeting Platform's sole VoiceText URL
@@ -67,7 +75,11 @@ VOICETEXT_ELEVENLABS_API_KEY_FILE=/run/voicetext-provider-secrets/elevenlabs-api
 Omit the line and file for an unused provider. Never place key or token contents
 in Compose or `.env`. The gateway process, spool, Caddy state directories, and
 gateway-readable secrets use UID/GID `10001`; keep secrets mode `0400` and
-directories mode `0700`.
+directories mode `0700`. The PostgreSQL password file is read by PostgreSQL,
+so use its pinned Alpine image UID `70`, not the gateway UID. The URL file and
+provider keys remain owned by `10001`. Pre-create the persistent directories
+listed in the [topology custody section](oss-meeting-topology.md#operator-owned-configuration-and-custody)
+with their service owners so bind mounts do not become root-owned directories.
 
 `voicetext-service-token` is one shared machine-credential file, not two copied
 files. Generate at least 32 random bytes, encode them as one non-empty line with
@@ -89,14 +101,22 @@ VOICETEXT_BATCH_PROFILE=elevenlabs-scribe-v2
 VOICETEXT_LIVE_PROFILE=elevenlabs-scribe-v2-realtime
 ```
 
-Mixed profiles require both provider credentials. Missing or unknown profiles
-fail closed; neither Meeting Platform nor the gateway silently substitutes a
-provider. Keep Deepgram available while draining historical
+Omitted selectors default independently to `deepgram-nova-3`; selecting
+ElevenLabs for one does not change the other. Invalid profile values fail
+Meeting Platform startup. Missing credentials for a selected provider fail
+closed, without provider fallback. Mixed profiles require both provider
+credentials; configuration support does not qualify mixed-profile acoustics.
+Keep Deepgram available while draining historical
 `voicetext-batch-v2:deepgram-nova-3` work.
+
+These are native Deepgram and ElevenLabs integrations in the OSS gateway;
+Pipecat does not implement either STT path. Deepgram batch uses the v2 contract;
+ElevenLabs batch uses v3. Live uses the v2 WebSocket contract with the selected
+provider/model identity checked at readiness.
 
 ### Implemented profile mapping and qualification status
 
-Root verified independent B0/H0 review and full gates/CI PASS for gateway
+Historically, root verified independent B0/H0 review and full gates/CI PASS for gateway
 `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` and Discord
 `d934481304ea8791462f59261db11827dfc9eb20` (gateway PR #1, Discord PR #63;
 Canary PR #19). These are review/gate results, not Discord campaign acceptance.
@@ -126,7 +146,7 @@ Retained operator evidence (filesystem paths, not public links) under
 
 These results do not qualify broad language/acoustic coverage, all mixed
 combinations, or other revisions. Recognition remains provider/model-dependent;
-`multi` is not a language-coverage guarantee. Real Discord acceptance remains PENDING.
+`multi` is not a language-coverage guarantee.
 Ukrainian may be selected
 for presentation of already accepted text, but is not a qualified STT language
 and must not be inferred from presentation behavior. The implemented Discord
@@ -134,9 +154,10 @@ Pipecat conversation profile is optional, default-off, and non-core. A
 Pipecat-to-VoiceText provider adapter is future/unimplemented; it is not part of
 this gateway or the core OSS meeting topology.
 
-The adapter and gateway contract checks do not establish final private-guild
-acceptance; that remains PENDING until the live Discord campaign passes with an
-official test bot in a private test guild.
+The adapter and gateway contract checks do not establish private-guild
+acceptance. Claim Discord qualification only for profiles and identities
+supported by an original trusted campaign receipt; follow the
+[receipt lookup and applicability procedure](oss-discord-stt-campaign.md#locate-and-interpret-a-trusted-receipt).
 
 ## Validate the configuration
 
@@ -158,6 +179,20 @@ epoch and unused actor-keyring path. No dummy epoch or keyring is required.
 Feature validation is unchanged: enabling grounded voice requires its real
 rollout configuration, and Retrieval V2 requires its real actor-key mapping
 authority in a subsequent feature-specific overlay.
+
+Copy `infra/deployment/.env.example` to `/secure/oss-meeting.env` outside the
+checkout and fill the base storage/database credentials by mounted files as
+linked above. Set `DEPLOY_ROOT`, `MEETING_PLATFORM_SOURCE_REVISION` to the clean
+checkout's `git rev-parse HEAD`, distinct `DISCORD_CRAIG_APPLICATION_ID` and
+`DISCORD_PUBLICATION_APPLICATION_ID`, `DISCORD_RESULTS_CHANNEL_ID`, and
+`VOICETEXT_PUBLIC_HOST`. Put the independent batch/live selectors in this env
+file; put only provider key-file paths in `config/voicetext-gateway.env`.
+For this core quick start select `SUMMARY_PROVIDER=transcript-outline`,
+`CONVERSATION_ENABLED=false`, and `VOICETEXT_LIVE_ENABLED=true`. No hosted
+subscription credentials are needed for outline summaries. Install both official
+applications and configure the active voice/results room route with
+`/setup-voice-bot` as described in the topology; a running stack alone does not
+admit a room.
 
 From the repository root, with the provisioned `/secure/oss-meeting.env`, render
 all three files together before starting anything:
@@ -187,6 +222,17 @@ test bot, and a private test guild.
 The ordinary adapter package test is explicitly providerless. Its fake loopback
 gateway uses fabricated transcript text and is contract coverage only.
 
+### Historical provider-canary contract
+
+The invocation below is pinned in the checked-in canary source to historical
+gateway `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b`. It does not apply to the
+checked-in `3e0ede3ec9086a45bc026f43191a998f2682fd6e` Compose pin and is not a
+universal release requirement. Do not substitute hashes to imply compatibility.
+Discord qualification uses the separate
+[OSS trusted collection procedure](oss-discord-stt-campaign.md#exact-target-and-configuration);
+a current-revision provider-canary invocation requires separately reviewed
+compatibility and retained evidence.
+
 The separate opt-in provider canary sends the pinned real-speech Ogg fixture to
 one selected batch/live provider pair. Its five required transcript terms are
 checked-in constants, not operator inputs. It first verifies a create-only
@@ -195,7 +241,8 @@ Git tree, full immutable image digest, origins, run ID, and identity digest. It
 retains a create-only identity-bound receipt only after provider-derived batch
 and live text, timestamps, ACKs, idempotent replay, and finalization pass. The
 complete variable and receipt contracts are documented in
-`packages/voicetext-adapter/README.md`. A credentialed invocation has this shape:
+[adapter README](../../packages/voicetext-adapter/README.md#historical-provider-canary-contract).
+A historical credentialed invocation has this shape:
 
 ```sh
 VOICETEXT_GATEWAY_PROVIDER_CANARY_REQUIRED=1 \

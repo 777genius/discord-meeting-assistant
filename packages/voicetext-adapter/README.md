@@ -22,17 +22,30 @@ the selected contract/provider/model identity, and implement the bounded batch
 and live schemas. The separate OSS Rust VoiceText Gateway is a compatible
 backend. Its [Compose overlay](../../infra/deployment/compose.voicetext-gateway.yaml)
 uses a checksum-verified Git context; this repository does not claim a released
-gateway image.
+gateway image. Follow the [self-host quick start](../../infra/deployment/voicetext-gateway.md#provision-secrets-and-profiles)
+for mounted user-owned provider keys and the shared machine token; no private
+VoiceText backend is required. Each omitted selector independently defaults to
+Deepgram. Invalid profiles fail startup; missing selected-provider credentials
+fail closed without provider fallback. Deepgram batch uses v2, ElevenLabs batch
+uses v3, and live uses v2 with native provider/model identities.
+Private SaaS adoption is deferred to the bounded compatibility follow-up in that
+quick start. Pipecat STT is future/unimplemented; optional Pipecat conversation
+and TTS do not supply this package's STT backend.
 
 ## Qualification boundaries
 
 The [root-verified native campaign results](../../infra/deployment/voicetext-gateway.md#implemented-profile-mapping-and-qualification-status)
-record four profiles on gateway `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b`
+record four profiles on historical gateway `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b`
 with one 26-second synthetic RU/EN fixture. This narrow provider-fixture
 qualification is separate from the providerless suite and the canary contract
-below. Native WER/CER thresholds are 0.35/0.25; Discord retains 0.35/0.20 and
-acceptance remains PENDING. Broad language/acoustic coverage and all mixed
-combinations are unqualified; Ukrainian is not voice-qualified.
+below. Native WER/CER thresholds are 0.35/0.25; Discord retains 0.35/0.20.
+Broad language/acoustic coverage and all mixed combinations are unqualified;
+recognition languages depend on the provider and model, and `multi` does not
+guarantee language coverage. Ukrainian is not voice-qualified. For Discord
+qualification, locate the original trusted receipt and compare its exact
+collector, Platform, gateway and image identities using the
+[receipt applicability procedure](../../infra/deployment/oss-discord-stt-campaign.md#locate-and-interpret-a-trusted-receipt).
+A source-change audit or passing contract suite adds no acoustic qualification.
 
 The default package suite is providerless. Its in-process contract gateway
 drives the production `FetchVoicetextBatchClient` and production live session
@@ -40,6 +53,19 @@ for every configured profile. It proves client encoding, response parsing, ACK
 pacing, finalization, and ordered close without contacting a speech provider.
 The fake gateway deliberately returns `synthetic speech`; that result is contract
 evidence only and can never create provider qualification evidence.
+
+## Historical provider-canary contract
+
+The checked-in [canary source](test/voicetext-gateway-provider-canary.e2e.test.ts)
+hard-pins gateway `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b`. This is a historical
+compatibility contract, not a universal current gateway requirement. The
+[OSS quickstart](../../infra/deployment/voicetext-gateway.md) builds
+`3e0ede3ec9086a45bc026f43191a998f2682fd6e`; the invocation below does not qualify
+that revision. Do not replace the compatibility hash without reviewed evidence.
+For Discord qualification, use the separately authorized
+[OSS Discord campaign procedure](../../infra/deployment/oss-discord-stt-campaign.md#exact-target-and-configuration).
+No current-revision provider-canary invocation is established here; it requires
+separate compatibility review and retained evidence.
 
 A separate provider canary sends the real Opus speech packets extracted from the
 pinned `apps/discord-e2e-actors/test/fixtures/speaker-a.ru-en.ogg` fixture
@@ -96,9 +122,9 @@ canonical digest. An existing or partially retained path fails closed.
 A passing receipt qualifies only the named profile pair, pinned fixture terms,
 gateway commit/tree/image, and run. It does not qualify a language, general
 acoustic quality, another provider/model, another image, or private-guild
-acceptance. Run the canary once for each profile pair intended for release; do
-not infer English, Russian, Ukrainian, or any other language coverage from the
-fixture or contract value `multi`. Provider and Discord execution require the
+acceptance. Within this historical contract, each profile pair requires its
+own run; do not infer English, Russian, Ukrainian, or any other language coverage
+from the fixture or contract value `multi`. Provider and Discord execution require the
 separately approved credentialed environment.
 
 The legacy streaming-final adapter uploads Deepgram-compatible mono `pcm_s16le`
