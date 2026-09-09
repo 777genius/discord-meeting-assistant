@@ -125,16 +125,21 @@ describe("VoiceText gateway deployment overlay", () => {
   it("separates output presentation from provider-dependent recognition", async () => {
     const readme = (await readFile(new URL("README.md", repositoryRoot), "utf8")).replace(/\s+/gu, " ");
 
-    expect(readme).toContain("## Contents");
-    expect(readme).toContain("infra/deployment/oss-meeting-topology.md");
+    const providers = (await readFile(new URL("docs/speech-providers.md", repositoryRoot), "utf8")).replace(/\s+/gu, " ");
+    const setup = await readFile(new URL("docs/getting-started.md", repositoryRoot), "utf8");
+
+    expect(readme).toContain("docs/getting-started.md");
+    expect(readme).toContain("docs/speech-providers.md");
+    expect(readme).toContain("docs/README.md");
+    expect(setup).toContain("../infra/deployment/oss-meeting-topology.md");
     expect(readme).toContain("infra/deployment/oss-acceptance.md");
-    expect(readme).toMatch(/Recognition languages and quality depend on the provider and model/iu);
-    expect(readme).toMatch(/English, Russian and Ukrainian display labels are separate from speech recognition/iu);
-    expect(readme).toMatch(/Ukrainian speech has not been qualified/iu);
-    expect(readme).toMatch(/default setup publishes a complete transcript and a simple turn-count outline/iu);
-    expect(readme).toMatch(/AI summaries, voice features and playback require additional configuration/iu);
-    expect(readme).toMatch(/Both default to Deepgram/iu);
-    expect(readme).toMatch(/only have an ElevenLabs key[\s\S]*before starting the services/iu);
+    expect(providers).toMatch(/Recognition languages and quality depend on the provider and model/iu);
+    expect(providers).toMatch(/English, Russian and Ukrainian display labels are separate from speech recognition/iu);
+    expect(providers).toMatch(/Ukrainian speech has not been qualified/iu);
+    expect(readme).toMatch(/default setup includes a transcript and a simple turn-count outline/iu);
+    expect(readme).toMatch(/AI features and playback need extra configuration/iu);
+    expect(providers).toMatch(/Both default to Deepgram/iu);
+    expect(providers).toMatch(/only have an ElevenLabs key[\s\S]*before starting the services/iu);
     expect(readme).not.toMatch(/Real Discord campaign acceptance remains PENDING/u);
 
   });

@@ -96,6 +96,25 @@ export function usePostgresIntegrationDatabase(): void {
   }, POSTGRES_CONTAINER_CLEANUP_TIMEOUT_MS);
 }
 
+// The operation owns its serving client and destroys it on abort. Once it
+// settles, its recorded PID is no longer a cleanup handle: terminating it can
+// race the asynchronous socket close and emit a late pool error.
+export async function finishPostgresCancellationProbe(
+  controller: AbortController,
+  operation: Promise<unknown> | undefined,
+): Promise<void> {
+  if (!controller.signal.aborted) {
+    controller.abort(new Error("synthetic cancellation probe cleanup"));
+  }
+  try {
+    await operation;
+  } catch (error) {
+    if (error !== controller.signal.reason) {
+      throw error;
+    }
+  }
+}
+
 export function databaseOrSkip(context: TestContext): Pool {
   if (pool !== undefined) {
     return pool;
