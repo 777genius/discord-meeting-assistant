@@ -125,17 +125,18 @@ describe("VoiceText gateway deployment overlay", () => {
   it("separates output presentation from provider-dependent recognition", async () => {
     const readme = (await readFile(new URL("README.md", repositoryRoot), "utf8")).replace(/\s+/gu, " ");
 
-    expect(readme).toMatch(/Output presentation[\s\S]*English, Russian, or Ukrainian/iu);
-    expect(readme).toMatch(/Speech recognition[\s\S]*provider and model/iu);
-    expect(readme).toMatch(/Contract tests establish contract behavior only/iu);
-    expect(readme).toMatch(/retained native campaign below binds narrow provider-fixture results to the gateway revision/iu);
-    expect(readme).toContain("infra/deployment/voicetext-gateway.md#implemented-profile-mapping-and-qualification-status");
-    expect(readme).toMatch(/qualifies four provider\/mode profiles on one 26-second synthetic RU\/EN fixture/iu);
-    expect(readme).toMatch(/does not qualify broad language\/acoustic coverage or all mixed combinations/iu);
-    expect(readme).toMatch(/Ukrainian is not voice-qualified/u);
-    expect(readme).toMatch(/Real Discord campaign acceptance remains PENDING/u);
-    expect(readme).toMatch(/domain\/application ports are provider-agnostic/iu);
-    expect(readme).toMatch(/new public\s+V1 profile[\s\S]*Discord consumer/iu);
+    expect(readme).toContain("## Contents");
+    expect(readme).toContain("infra/deployment/oss-meeting-topology.md");
+    expect(readme).toContain("infra/deployment/oss-acceptance.md");
+    expect(readme).toMatch(/Recognition languages and quality depend on the provider and model/iu);
+    expect(readme).toMatch(/English, Russian and Ukrainian display labels are separate from speech recognition/iu);
+    expect(readme).toMatch(/Ukrainian speech has not been qualified/iu);
+    expect(readme).toMatch(/default setup publishes a complete transcript and a simple turn-count outline/iu);
+    expect(readme).toMatch(/AI summaries, voice features and playback require additional configuration/iu);
+    expect(readme).toMatch(/Both default to Deepgram/iu);
+    expect(readme).toMatch(/only have an ElevenLabs key[\s\S]*before starting the services/iu);
+    expect(readme).not.toMatch(/Real Discord campaign acceptance remains PENDING/u);
+
   });
 
   it("documents a private-SaaS-free OSS topology and one safe smoke path", async () => {
