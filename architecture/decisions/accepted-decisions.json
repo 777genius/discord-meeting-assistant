@@ -351,6 +351,11 @@
       "id": "ADR-0075",
       "path": "docs/decisions/0075-canonical-memory-actor-profile.md",
       "immutableDigest": "sha256:775f57e03fdacafc2904c76c4cc9a23b8236ad4a44352199a2f4a899865f76b9"
+    },
+    {
+      "id": "ADR-0076",
+      "path": "docs/decisions/0076-read-only-retrieval-scope-resolution.md",
+      "immutableDigest": "sha256:0b60dacf59f8c92831f0b8b9980b53acc939f23169c4fe89cb63ac80fb7d607d"
     }
   ]
 }

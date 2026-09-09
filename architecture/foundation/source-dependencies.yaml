@@ -263,6 +263,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/artifact-policy.ts
       - packages/infinity-context-adapter/src/quality-campaign/campaign-admission-policy.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-metadata-contract.ts
       - packages/infinity-context-adapter/src/quality-campaign/cleanup-evidence.ts
       - packages/infinity-context-adapter/src/quality-campaign/cumulative-spend.ts
       - packages/infinity-context-adapter/src/quality-campaign/execution.ts

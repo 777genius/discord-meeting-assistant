@@ -7,7 +7,7 @@ import { verifyDurableReservedExchangeEvidence,
 import { artifactAttemptIdentity, type ArtifactAad, type ArtifactReceipt,
 } from "./artifact-policy.js";
 import { validateCanonicalScopeResolutionObservation, type SemanticQualityV4ArtifactReceipt } from
-  "./canonical-execution-artifact-validation.js";
+  "./canonical-metadata-contract.js";
 import { canonicalJson, digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import type { DurableSpendClaim, ExpectedSpendClaim } from "./cumulative-spend.js";
 import { attemptIdentity, assertAttemptIdentity, type AttemptIdentity, type VerifiedSpendReservation,
