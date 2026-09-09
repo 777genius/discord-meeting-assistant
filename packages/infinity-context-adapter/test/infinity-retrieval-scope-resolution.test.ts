@@ -220,6 +220,38 @@ describe("official SDK read-only scope resolution", () => {
     expect(send.mock.calls[0]).toBeDefined();
   });
 
+  it.each([25, 80])("honors a configured %s ms operation deadline below 500 ms", async (budget) => {
+    vi.useFakeTimers();
+    try {
+      const send = vi.fn(() => new Promise<never>(() => {}));
+      const resolver = new InfinityRetrievalScopeResolution({ baseUrl: "http://scope.test/v1",
+        operationTimeoutMs: budget, requestTimeoutMs: 500, transport: { send } });
+      let settled = false;
+      const result = resolver.resolve(input).then((value) => { settled = true; return value; });
+      await vi.advanceTimersByTimeAsync(budget - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(result).resolves.toEqual({ status: "unavailable" });
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("honors a smaller request deadline before the operation deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const send = vi.fn(() => new Promise<never>(() => {}));
+      const resolver = new InfinityRetrievalScopeResolution({ baseUrl: "http://scope.test/v1",
+        operationTimeoutMs: 500, requestTimeoutMs: 25, transport: { send } });
+      let settled = false;
+      const result = resolver.resolve(input).then((value) => { settled = true; return value; });
+      await vi.advanceTimersByTimeAsync(24);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(result).resolves.toEqual({ status: "unavailable" });
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("does not call the SDK after caller cancellation", async () => {
     const { resolver, requests } = fixture();
     expect(await resolver.resolve({ ...input, signal: AbortSignal.abort() })).toEqual({ status: "unavailable" });

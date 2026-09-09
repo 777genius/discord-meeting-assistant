@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
 import * as infinityAdapter from "@discord-meeting/infinity-context-adapter";
@@ -343,3 +344,9 @@ function syntheticScopeResolution(): meetingKnowledge.FocusedRetrievalScopeResol
       input.spaceId === "internal-space-123" && input.memoryScopeId === "internal-room-456",
   };
 }
+
+it("caps scope preparation by the configured serving budgets", () => {
+  const source = readFileSync(new URL("../src/composition/infinity-retrieval-v2.ts",
+    import.meta.url), "utf8");
+  expect(source).toMatch(/new InfinityRetrievalScopeResolution\(\{[^}]*operationTimeoutMs: Math\.min\(input\.operationTimeoutMs, 500\),\s*requestTimeoutMs: Math\.min\(input\.requestTimeoutMs, 500\)/u);
+});

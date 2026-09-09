@@ -101,7 +101,8 @@ export async function createProductionCanonicalExecutorFactory(
   const ids = new HmacHistoricalOpaqueIds(topologyKey, topology.actorKeyProfileId);
   const preparer = new PrepareFocusedLocatorRetrievalV2Request({ ids, providerBinding,
     scopeResolution: new InfinityRetrievalScopeResolution({ baseUrl: config.infinityBaseUrl,
-      token: infinityToken.trim(), operationTimeoutMs: 500, requestTimeoutMs: 500 }),
+      token: infinityToken.trim(), operationTimeoutMs: Math.min(config.requestTimeoutMs * 2, 500),
+      requestTimeoutMs: Math.min(config.requestTimeoutMs, 500) }),
     snapshot: new PostgresHistoricalRoomAuthoritySnapshot(pool, undefined, legacyVerifier) });
   const transport = new GrpcSubscriptionRuntimeTransport({ address: config.runtimeAddress,
     serviceToken: runtimeToken.trim() });

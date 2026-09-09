@@ -27,7 +27,8 @@ import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval
 import { DiagnosticFrozenStore, assertDiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
 import type { DiagnosticQuestion } from "./diagnostic-manifest.js";
 import { canonicalJson } from "./canonical.js";
-import { assertCanonicalRequest, validateCanonicalRetrievalObservation } from
+import { assertCanonicalRequest, validateCanonicalRetrievalObservation,
+  validateCanonicalScopeResolutionObservation } from
   "./canonical-execution-artifact-validation.js";
 import type {
   QualificationCanonicalTurn,
@@ -161,13 +162,20 @@ function createCanonicalQuestionEngine(input: CanonicalEngineInput) {
           },
           observe: async (observation) => {
             const index = scopeReads.findIndex(({ kind }) => kind === observation.kind);
-            if (index < 0) { throw new Error("Unreserved scope metadata effect"); }
+            if (index < 0 || scopeReads[index]!.requestSha256 !== observation.requestSha256 ||
+              scopeReads[index]!.status !== "outcome_unknown") {
+              throw new Error("Unreserved or duplicate scope metadata effect");
+            }
             scopeReads[index] = observation;
           },
         } });
-      } finally { await input.audit.seal({ attemptId: options.attemptId, kind: "scope_resolution_observation",
-        plaintext: utf8(canonicalJson({ schemaVersion: "meeting_knowledge.scope_resolution.v1",
-          status: prepared?.status ?? "interrupted", reads: scopeReads })) }); }
+      } finally {
+        const observation = { schemaVersion: "meeting_knowledge.scope_resolution.v1",
+          status: prepared?.status ?? "interrupted", reads: scopeReads };
+        if (observation.status === "prepared") { validateCanonicalScopeResolutionObservation(observation); }
+        await input.audit.seal({ attemptId: options.attemptId, kind: "scope_resolution_observation",
+          plaintext: utf8(canonicalJson(observation)) });
+      }
       if (prepared.status !== "prepared") {
         return { reason: `request_${prepared.status}`, status: "failed" as const };
       }

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
@@ -148,4 +149,11 @@ describe("canonical scope preparation before retrieval identity", () => {
       });
     }
   });
+});
+
+it("caps canonical scope budgets while retaining the two-request operation budget", () => {
+  const source = readFileSync(new URL(
+    "../src/quality-campaign/production-canonical-executor-factory.ts", import.meta.url), "utf8");
+  expect(source).toMatch(/new InfinityRetrievalScopeResolution\(\{[^}]*operationTimeoutMs: Math\.min\(config\.requestTimeoutMs \* 2, 500\),\s*requestTimeoutMs: Math\.min\(config\.requestTimeoutMs, 500\)/u);
+  expect(source).toContain("operationTimeoutMs: Math.min(4_000, config.requestTimeoutMs * 2)");
 });

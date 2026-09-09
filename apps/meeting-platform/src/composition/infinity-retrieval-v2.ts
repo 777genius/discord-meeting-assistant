@@ -38,7 +38,8 @@ export class InfinityRetrievalV2Composition {
   }) {
     this.#ids = input.ids;
     this.#scopeResolution = new InfinityRetrievalScopeResolution({ baseUrl: input.baseUrl,
-      token: input.token, operationTimeoutMs: 500, requestTimeoutMs: 500 });
+      token: input.token, operationTimeoutMs: Math.min(input.operationTimeoutMs, 500),
+      requestTimeoutMs: Math.min(input.requestTimeoutMs, 500) });
     this.#retrieval = new InfinityContextRetrievalV2Adapter({
       baseUrl: input.baseUrl,
       operationTimeoutMs: Math.min(input.operationTimeoutMs, 4_000),
