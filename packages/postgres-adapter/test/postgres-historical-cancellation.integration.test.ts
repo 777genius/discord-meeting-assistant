@@ -8,6 +8,7 @@ import { queryHistoricalPostgres } from "../src/postgres-historical-query.js";
 import {
   createIsolatedDatabase,
   databaseOrSkip,
+  finishPostgresCancellationProbe,
   usePostgresIntegrationDatabase,
 } from "./postgres-integration-fixtures.js";
 
@@ -73,16 +74,26 @@ describe("PostgreSQL historical pg-native cancellation probe", () => {
       await expect(operation).rejects.toBe(cancellation);
       await expect(backendIsActive(database, backendPid)).resolves.toBe(false);
     } finally {
-      if (!controller.signal.aborted) {
-        controller.abort(new Error("synthetic probe cleanup"));
-      }
-      await operation.catch(() => {});
-      if (backendPid !== undefined) {
-        await database.query(
-          "SELECT pg_terminate_backend($1) FROM pg_stat_activity WHERE pid = $1",
-          [backendPid],
-        );
-      }
+      await finishPostgresCancellationProbe(controller, operation);
+    }
+  }, 15_000);
+
+  it("cleanup cancels a genuinely outstanding sleeping operation", async (context) => {
+    const database = databaseOrSkip(context);
+    const controller = new AbortController();
+    const operation = queryHistoricalPostgres(database, {
+      text: `SELECT /* ${probeMarker} */ pg_sleep(30)`,
+    }, controller.signal);
+    try {
+      const backendPid = await waitForSleepingBackend(database);
+      await finishPostgresCancellationProbe(controller, operation);
+      await expect(operation).rejects.toBe(controller.signal.reason);
+      await expect(backendIsActive(database, backendPid)).resolves.toBe(false);
+      await expect(database.query("SELECT 1 AS healthy")).resolves.toMatchObject({
+        rows: [{ healthy: 1 }],
+      });
+    } finally {
+      await finishPostgresCancellationProbe(controller, operation);
     }
   }, 15_000);
 
@@ -126,17 +137,11 @@ describe("PostgreSQL historical pg-native cancellation probe", () => {
       await expect(operation).rejects.toBe(cancellation);
       await expect(backendIsActive(isolated.pool, backendPid)).resolves.toBe(false);
     } finally {
-      if (!controller.signal.aborted) {
-        controller.abort(new Error("synthetic live-finalized probe cleanup"));
+      try {
+        await finishPostgresCancellationProbe(controller, operation);
+      } finally {
+        await isolated.dispose();
       }
-      await operation?.catch(() => {});
-      if (backendPid !== undefined) {
-        await isolated.pool.query(
-          "SELECT pg_terminate_backend($1) FROM pg_stat_activity WHERE pid = $1",
-          [backendPid],
-        );
-      }
-      await isolated.dispose();
     }
   }, 45_000);
 });

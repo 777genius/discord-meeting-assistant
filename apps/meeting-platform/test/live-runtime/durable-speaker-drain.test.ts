@@ -100,6 +100,8 @@ async function fixture() {
   const storage = mapLiveSttDurability(ingress.liveSttDurability);
   const receiptHeld = Promise.withResolvers<void>(), releaseReceipt = Promise.withResolvers<void>();
   let holdReceipt = false; let readUnavailable = false;
+  const readHeld = Promise.withResolvers<void>(), releaseRead = Promise.withResolvers<void>();
+  let holdRead = false;
   const pages: number[] = [];
   const runtime = new PlatformLiveMeetingRuntime({
     appendTurn: new AppendLiveTranscriptTurn(meetings), startMeeting: new StartLiveMeeting({ meetings }),
@@ -115,6 +117,7 @@ async function fixture() {
     pendingLivePackets: async (id, after) => { const page = await ingress.pendingLivePackets(id, after); pages.push(page.length); return page; },
     pendingLiveSpeakerPackets: async (id: string, speaker: string) => {
       if (readUnavailable) { throw new Error("synthetic unavailable durable observation"); }
+      if (holdRead && speaker === a) { readHeld.resolve(); await releaseRead.promise; }
       return await ingress.pendingLiveSpeakerPackets(id, speaker);
     },
     packetFlowControl: { maximumQueuedPacketsPerSpeaker: 1, maximumQueuedPacketsGlobally: 2 },
@@ -135,8 +138,9 @@ async function fixture() {
   return { ingress, runtime, sessions, sockets, storage, pages, ingest, finish, originals, notify,
     setReadUnavailable: (unavailable: boolean) => { readUnavailable = unavailable; },
     holdReceipt: () => { holdReceipt = true; }, receiptHeld, releaseReceipt,
+    holdRead: () => { holdRead = true; }, readHeld, releaseRead,
     cleanup: async () => {
-      releaseReceipt.resolve(); for (const socket of sockets) { socket.ack(); }
+      releaseRead.resolve(); releaseReceipt.resolve(); for (const socket of sockets) { socket.ack(); }
       let done = false; const isDone = () => done; const releasing = runtime.releaseForRestart().catch(() => {}).finally(() => { done = true; });
       for (let n = 0; n < 60 && !isDone(); n++) { await advance(1000); }
       await releasing; await ingress.close(); await rm(root, { recursive: true, force: true });
@@ -188,7 +192,7 @@ it("durable preflight: closed exhausted A finalizes while B still has over 13 se
 }, 90_000);
 
 
-it.each(["ACK", "receipt", "already exhausted", "resumed speech"] as const)("durable preflight: ending during a live drain waits for A's delayed %s, independently of B", async mode => {
+it.each(["ACK", "receipt", "already exhausted", "resumed speech", "resumed speech delayed read"] as const)("durable preflight: ending during a live drain waits for A's delayed %s, independently of B", async mode => {
   const f = await fixture();
   try {
     await f.ingest([packet(a, 0), packet(b, 0)]);
@@ -197,11 +201,23 @@ it.each(["ACK", "receipt", "already exhausted", "resumed speech"] as const)("dur
     await advance(20); await initial;
     const socket = f.sockets[f.sessions.findIndex(s => s.speaker === a)]!;
     if (mode === "ACK") { socket.holdAck = true; } else if (mode === "receipt") { f.holdReceipt(); }
-    await f.ingest([...(mode === "resumed speech" ? [] : [packet(a, 1)]), ...Array.from({ length: 700 }, (_, n) => packet(b, n + 1))]);
+    await f.ingest([...(mode.startsWith("resumed speech") ? [] : [packet(a, 1)]), ...Array.from({ length: 700 }, (_, n) => packet(b, n + 1))]);
     const draining = f.notify();
     await advance(100);
-    if (mode === "resumed speech") {
-      await f.ingest([packet(a, 1)]); await f.notify(); await advance(100);
+    if (mode.startsWith("resumed speech")) {
+      if (mode === "resumed speech delayed read") { f.holdRead(); }
+      await f.ingest([packet(a, 1)]); await f.notify();
+      if (mode === "resumed speech delayed read") { await f.readHeld.promise; }
+      await advance(100);
+      if (mode === "resumed speech delayed read") {
+        // Notification acknowledges ingress, not the asynchronous filesystem read.
+        // Hold that read across the old assertion window, without wall-clock sleeps.
+        expect(f.sessions.find(s => s.speaker === a)?.sent).toHaveLength(1);
+        f.releaseRead.resolve();
+      }
+      // Pacing is already due. Keep logical time fixed while real spool I/O settles;
+      // waiting for native send evidence must not consume the latency budget.
+      await until(() => f.sessions.find(s => s.speaker === a)?.sent.length === 2);
       expect(f.sessions.find(s => s.speaker === a)?.sent).toHaveLength(2);
     }
     const original = await f.originals(); expect(original).toHaveLength(2);
@@ -219,6 +235,8 @@ it.each(["ACK", "receipt", "already exhausted", "resumed speech"] as const)("dur
     expect(await f.originals()).toEqual(original);
     expect(await f.ingress.pendingLivePackets("r")).toEqual([]);
     expect(f.sessions).toHaveLength(2);
+    expect(f.sessions.find(s => s.speaker === a)?.sent).toHaveLength(2);
+    expect(f.sessions.find(s => s.speaker === b)?.sent).toHaveLength(701);
     for (const s of f.sessions) {
       expect(new Set(s.sent).size).toBe(s.sent.length);
       expect(s.partials).toBeGreaterThan(0); expect(s.finalized).toBe(1); expect(s.closed).toBe(true);
