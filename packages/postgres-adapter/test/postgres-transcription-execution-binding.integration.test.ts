@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   createIsolatedDatabase,
   databaseOrSkip,
+  finishPostgresCancellationProbe,
   recordedMeeting,
   usePostgresIntegrationDatabase,
 } from "./postgres-integration-fixtures.js";
@@ -87,19 +88,16 @@ describe("Postgres transcription execution binding", () => {
       await expect(operation).rejects.toBe(cancellation);
       await expect(backendIsActive(isolated.pool, backendPid)).resolves.toBe(false);
     } finally {
-      if (!controller.signal.aborted) {
-        controller.abort(new Error("synthetic admission probe cleanup"));
+      try {
+        await finishPostgresCancellationProbe(controller, operation);
+      } finally {
+        try {
+          await locker?.query("ROLLBACK");
+        } finally {
+          locker?.release(true);
+          await isolated.dispose();
+        }
       }
-      await operation?.catch(() => {});
-      if (backendPid !== undefined) {
-        await isolated.pool.query(
-          "SELECT pg_terminate_backend($1) FROM pg_stat_activity WHERE pid = $1",
-          [backendPid],
-        );
-      }
-      await locker?.query("ROLLBACK").catch(() => {});
-      locker?.release();
-      await isolated.dispose();
     }
   }, 45_000);
 
