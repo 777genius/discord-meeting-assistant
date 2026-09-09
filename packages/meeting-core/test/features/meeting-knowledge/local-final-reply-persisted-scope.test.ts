@@ -130,7 +130,8 @@ describe("persisted final reply scope authority", () => {
       candidate.meetingId === meeting.binding.meetingId && candidate.turnId === "historical-turn"))
       .toBe(true);
     expect(persisted.retrievalBinding?.retrievalPath).toBe("infinity_locator_v2");
-    if (persisted.retrievalBinding?.retrievalPath !== "infinity_locator_v2") {
+    if (persisted.bindingProtocolVersion !== 2 ||
+      persisted.retrievalBinding.retrievalPath !== "infinity_locator_v2") {
       throw new Error("missing persisted request");
     }
     expect(requests[0]).not.toBe(persisted.retrievalBinding.request);
