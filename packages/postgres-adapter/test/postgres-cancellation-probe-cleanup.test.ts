@@ -27,7 +27,7 @@ class ClosingProbeClient extends Client {
   public override end(callback: (error: Error) => void): void;
   public override end(callback?: (error: Error) => void): Promise<void> | void {
     if (callback !== undefined) {
-      this.closes.push(() => Reflect.apply(callback, undefined, []));
+      this.closes.push(() => { Reflect.apply(callback, undefined, []); });
       return;
     }
     return new Promise<void>((resolve) => {
