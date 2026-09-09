@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { buildHistoricalIndexPlan, PrepareFocusedLocatorRetrievalV2Request,
+  type FocusedRetrievalScopeResolutionPort,
   type HistoricalAuthorizationPort, type HistoricalEvidenceAuthority } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { AppliedStore, TestIds, makeMeeting } from
@@ -90,9 +91,21 @@ describe("focused locator retrieval V2 fixture", () => {
   });
 });
 
-export const scopeResolution = Object.freeze({
-  resolve: async () => ({ status: "resolved" as const,
-    spaceId: "internal-space-123", memoryScopeId: "internal-room-456" }),
-  matches: (input: { spaceId: string; memoryScopeId: string }) =>
+const scopeBindings = new WeakMap<object, string>();
+export const scopeResolution: FocusedRetrievalScopeResolutionPort = Object.freeze({
+  resolve: async (input: Parameters<FocusedRetrievalScopeResolutionPort["resolve"]>[0]) => {
+    const authority = JSON.stringify([input.spaceSlug, input.roomScopeExternalRef]);
+    let bound = false;
+    return Object.freeze({ status: "resolved" as const,
+      spaceId: "internal-space-123", memoryScopeId: "internal-room-456",
+      bind: (request: Parameters<FocusedRetrievalScopeResolutionPort["matches"]>[0]["request"]) => {
+        if (bound || !Object.isFrozen(request)) { throw new Error("Invalid fixture binding"); }
+        bound = true;
+        scopeBindings.set(request, authority);
+      },
+    });
+  },
+  matches: (input: Parameters<FocusedRetrievalScopeResolutionPort["matches"]>[0]) => scopeBindings.get(input.request) ===
+    JSON.stringify([input.spaceSlug, input.roomScopeExternalRef]) &&
     input.spaceId === "internal-space-123" && input.memoryScopeId === "internal-room-456",
 });

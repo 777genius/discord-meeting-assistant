@@ -1,7 +1,7 @@
 import { scopeResolution } from "./focused-locator-retrieval-v2.fixture.test.js";
 import { describe, expect, it, vi } from "vitest";
 import { HistoricalFocusedLocatorRetrievalV2, PrepareFocusedLocatorRetrievalV2Request,
-  buildHistoricalIndexPlan,
+  buildHistoricalIndexPlan, DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY,
   type FocusedLocatorRetrievalV2Port,
   type HistoricalAuthorizationPort,
   type HistoricalOpaqueIdPort,
@@ -649,17 +649,16 @@ describe("focused locator Retrieval V2 rehydration", () => {
       text: "Vlad changed a later detail", turnId: "turn-vlad-late",
     }] });
     const plan = buildHistoricalIndexPlan(meeting, new TestIds()), store = new AppliedStore([{ binding: meeting.binding, plan, remoteDocumentIds: {} }], [meeting]);
-    const prepared = await new PrepareFocusedLocatorRetrievalV2Request({ scopeResolution,
-      ids: new TestIds(), providerBinding, store }).prepare({
-      currentMeetingId: "current-meeting", question: "launch budget",
+    const request = await new PrepareFocusedLocatorRetrievalV2Request({ scopeResolution,
+      ids: new TestIds(), providerBinding, store, identitySkeletons,
+      speakerAliases: [{ actorKeys: ["opaque-vlad"], aliases: ["Vlad"] }],
+    }).prepare({
+      currentMeetingId: "current-meeting", question: "What did Vlad decide between 00:00 and 01:40?",
       roomId: "room-1", scopeId: "scope-1" });
-    expectPrepared(prepared);
+    expectPrepared(request);
     const locator = plan.documents[0]?.manifest.candidateLocator; if (locator === undefined) {throw new Error("missing filter fixture");}
-    const request = Object.freeze({ ...prepared, filters: Object.freeze({
-      ...prepared.filters,
-      actorKeys: Object.freeze(["opaque-vlad"]),
-      relativeTimeInterval: Object.freeze({ endMs: 100_000, startMs: 0 }),
-    }) });
+    expect(request.filters.actorKeys).toEqual(["opaque-vlad"]);
+    expect(request.filters.relativeTimeInterval).toEqual({ endMs: 100_000, startMs: 0 });
     const result = await new HistoricalFocusedLocatorRetrievalV2({ scopeResolution,
       actorKeysForSpeaker: (speakerId) => [speakerId],
       authority: authority(meeting), authorization: authorization(), ids: new TestIds(),
@@ -790,10 +789,14 @@ describe("focused locator Retrieval V2 rehydration", () => {
       store.current = true;
       await expect(run(locator, authorization([true, false]))).resolves
         .toMatchObject({ status: "unavailable" });
-      await expect(run(locator, authorization(), {
-        ...base,
-        budgets: { ...base.budgets, evidenceByteLimit: 1 },
-      })).resolves.toMatchObject({ status: "unavailable" });
+      const tiny = await new PrepareFocusedLocatorRetrievalV2Request({ scopeResolution,
+        ids: new TestIds(), providerBinding, store,
+      }, { ...DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY, evidenceByteLimit: 1 }).prepare({
+        currentMeetingId: "current-meeting", question: "What happened?",
+        roomId: "room-1", scopeId: "scope-1",
+      });
+      expectPrepared(tiny);
+      await expect(run(locator, authorization(), tiny)).resolves.toMatchObject({ status: "unavailable" });
       const controller = new AbortController();
       controller.abort(new Error("cancelled"));
       await expect(new HistoricalFocusedLocatorRetrievalV2({ scopeResolution,
@@ -817,9 +820,63 @@ describe("resolved scope preparation", () => {
     expect(request.scope).toEqual({ spaceId: "internal-space-123", memoryScopeId: "internal-room-456", threadId: null });
     expect(JSON.parse(JSON.stringify(request)).scope).toEqual(request.scope);
   });
+  it("rejects copied prepared requests before provider or authorization I/O", async () => {
+    const { prepare, store } = fixture();
+    const request = await prepare.prepare({ currentMeetingId: "current", question: "What happened?",
+      roomId: "room-1", scopeId: "scope-1" });
+    expectPrepared(request);
+    const retrieve = vi.fn<FocusedLocatorRetrievalV2Port["retrieve"]>(async () => ({
+      status: "available", candidates: [],
+    }));
+    const authorize = vi.fn(authorization().authorize);
+    const rehydrate = new HistoricalFocusedLocatorRetrievalV2({ scopeResolution,
+      ids: new TestIds(), store, authorization: { authorize }, retrieval: { retrieve },
+      turnHashes: { hash: () => "unused" },
+    });
+    const input = { authorizationPrincipalRef: "principal", currentMeetingId: "current",
+      request, roomId: "room-1", scopeId: "scope-1" };
+    await expect(rehydrate.retrieveEvidence({ ...input, request: Object.freeze({ ...request }) }))
+      .resolves.toEqual({ status: "unavailable", reason: "scope_not_bound" });
+    expect(retrieve).not.toHaveBeenCalled();
+    expect(authorize).not.toHaveBeenCalled();
+    await expect(rehydrate.retrieveEvidence(input)).resolves.toMatchObject({ status: "empty" });
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(retrieve.mock.calls[0]?.[0]).toBe(request);
+  });
+
+  it("binds the exact immutable serialized request and rejects failed binding", async () => {
+    const { store } = fixture();
+    let bound: unknown;
+    const resolver = { ...scopeResolution, resolve: async () => ({
+      status: "resolved" as const, spaceId: "internal-space-123", memoryScopeId: "internal-room-456",
+      bind: (request: unknown) => { bound = request; },
+    }) };
+    const prepare = new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(), providerBinding, scopeResolution: resolver, store,
+    });
+    const request = await prepare.prepare({ currentMeetingId: "current", question: "What happened?",
+      roomId: "room-1", scopeId: "scope-1" });
+    expectPrepared(request);
+    expect(bound).toBe(request);
+    expect(Object.isFrozen(request)).toBe(true);
+    expect(Object.isFrozen(request.scope)).toBe(true);
+    expect(Object.keys(request)).not.toContain("bind");
+    expect(Object.keys(request)).not.toContain("status");
+    const failing = new PrepareFocusedLocatorRetrievalV2Request({
+      ids: new TestIds(), providerBinding, store, scopeResolution: { ...resolver,
+        resolve: async () => ({ ...await resolver.resolve(),
+          bind: () => { throw new Error("Binding denied"); } }),
+      },
+    });
+    await expect(failing.prepare({ currentMeetingId: "current", question: "What happened?",
+      roomId: "room-1", scopeId: "scope-1" })).resolves.toEqual({
+      status: "unavailable", reason: "scope_resolution_unavailable",
+    });
+  });
+
   it.each([undefined, { ...scopeResolution, resolve: async () => ({ status: "unavailable" as const }) },
     { ...scopeResolution, resolve: async () => { throw new Error("metadata timeout"); } },
-    { ...scopeResolution, resolve: async () => ({ status: "resolved" as const, spaceId: "", memoryScopeId: "room" }) },
+    { ...scopeResolution, resolve: async () => ({ status: "resolved" as const, spaceId: "", memoryScopeId: "room", bind: () => {} }) },
   ])("does not prepare a retrieval request when resolution fails", async (resolver) => {
     const { store } = fixture();
     const preparer = new PrepareFocusedLocatorRetrievalV2Request({ ids: new TestIds(), providerBinding,

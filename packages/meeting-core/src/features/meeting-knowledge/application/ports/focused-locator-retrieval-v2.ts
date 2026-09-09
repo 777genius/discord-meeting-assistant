@@ -97,9 +97,12 @@ export type FocusedLocatorRetrievalV2PreparationUnavailableReason =
 /** Read-only resolution of external topology references before request identity exists.
  * Implementations must prove complete bounded collections and unique parent-bound
  * matches. No topology creation or external-reference fallback is permitted.
+ * Authority belongs to one immutable request identity, with lifetime bounded by
+ * request ownership. Later resolutions must never invalidate existing bindings.
  */
 export interface FocusedRetrievalScopeResolutionPort {
-  matches(input: { readonly spaceSlug: string; readonly roomScopeExternalRef: string;
+  matches(input: { readonly request: FocusedLocatorRetrievalV2RequestSnapshot;
+    readonly spaceSlug: string; readonly roomScopeExternalRef: string;
     readonly spaceId: string; readonly memoryScopeId: string }): boolean;
   resolve(input: {
     readonly effects?: FocusedRetrievalScopeResolutionEffects;
@@ -108,7 +111,9 @@ export interface FocusedRetrievalScopeResolutionPort {
     readonly signal?: AbortSignal;
   }): Promise<
     | { readonly status: "resolved"; readonly spaceId: string;
-        readonly memoryScopeId: string }
+        readonly memoryScopeId: string;
+        /** Bind exactly one immutable request by identity; never serialized. */
+        bind(request: FocusedLocatorRetrievalV2RequestSnapshot): void }
     | { readonly status: "unavailable" }
   >;
 }

@@ -10,18 +10,19 @@ const preparationBudgetMs = 500;
 
 /** SDK 0.2.4 exposes limit but no cursor or total. A full page cannot prove uniqueness. */
 export class InfinityRetrievalScopeResolution implements FocusedRetrievalScopeResolutionPort {
-  readonly #resolved = new Map<string, string>();
+  readonly #resolved = new WeakMap<object, string>();
 
   public matches(input: Parameters<FocusedRetrievalScopeResolutionPort["matches"]>[0]): boolean {
-    return this.#resolved.get(JSON.stringify([input.spaceSlug, input.roomScopeExternalRef])) ===
-      JSON.stringify([input.spaceId, input.memoryScopeId]);
+    return input.request.scope.spaceId === input.spaceId &&
+      input.request.scope.memoryScopeId === input.memoryScopeId &&
+      this.#resolved.get(input.request) ===
+      JSON.stringify([input.spaceSlug, input.roomScopeExternalRef,
+        input.spaceId, input.memoryScopeId]);
   }
 
   public constructor(private readonly config: InfinityContextRetrievalV2Config) {}
 
   public async resolve(input: Parameters<FocusedRetrievalScopeResolutionPort["resolve"]>[0]) {
-    const key = JSON.stringify([input.spaceSlug, input.roomScopeExternalRef]);
-    this.#resolved.delete(key);
     const controller = new AbortController();
     const abort = () => { controller.abort(input.signal?.reason); };
     if (input.signal?.aborted === true) { abort(); }
@@ -36,7 +37,7 @@ export class InfinityRetrievalScopeResolution implements FocusedRetrievalScopeRe
       else { signal.addEventListener("abort", onAbort, { once: true }); }
     });
     try {
-      return await Promise.race([this.read(input, signal), cancelled]);
+      return await Promise.race([this.read({ ...input }, signal), cancelled]);
     } catch {
       return { status: "unavailable" as const };
     } finally {
@@ -89,10 +90,18 @@ export class InfinityRetrievalScopeResolution implements FocusedRetrievalScopeRe
       return { status: "unavailable" as const };
     }
     signal.throwIfAborted();
-    const key = JSON.stringify([input.spaceSlug, input.roomScopeExternalRef]);
-    if (this.#resolved.size >= collectionLimit) { this.#resolved.delete(this.#resolved.keys().next().value!); }
-    this.#resolved.set(key, JSON.stringify([space.id, scope.id]));
-    return Object.freeze({ status: "resolved" as const, spaceId: space.id, memoryScopeId: scope.id });
+    const authority = JSON.stringify([input.spaceSlug, input.roomScopeExternalRef, space.id, scope.id]);
+    let bound = false;
+    return Object.freeze({ status: "resolved" as const, spaceId: space.id, memoryScopeId: scope.id,
+      bind: (request: Parameters<FocusedRetrievalScopeResolutionPort["matches"]>[0]["request"]) => {
+        if (bound || this.#resolved.has(request) || !Object.isFrozen(request) || !Object.isFrozen(request.scope) ||
+          request.scope.spaceId !== space.id || request.scope.memoryScopeId !== scope.id) {
+          throw new Error("Invalid request scope binding");
+        }
+        bound = true;
+        this.#resolved.set(request, authority);
+      },
+    });
   }
 }
 

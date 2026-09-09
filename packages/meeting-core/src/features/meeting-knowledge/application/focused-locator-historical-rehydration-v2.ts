@@ -127,6 +127,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     const topology = buildHistoricalRoomTopology(input.scopeId, input.roomId,
       this.dependencies.ids);
     if (this.dependencies.scopeResolution?.matches({
+      request: input.request,
       spaceSlug: topology.spaceSlug, roomScopeExternalRef: topology.roomScopeExternalRef,
       spaceId: input.request.scope.spaceId, memoryScopeId: input.request.scope.memoryScopeId,
     }) !== true) {

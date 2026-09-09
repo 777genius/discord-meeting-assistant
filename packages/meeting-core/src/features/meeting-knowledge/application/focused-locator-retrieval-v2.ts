@@ -153,7 +153,7 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       !validResolvedId(scope.memoryScopeId)) {
       return unavailablePreparation("scope_resolution_unavailable");
     }
-    return preparedRequest({
+    const request = preparedRequest({
       binding: Object.freeze({ ...this.dependencies.providerBinding,
         requiredProviderLanes: Object.freeze([
           ...this.dependencies.providerBinding.requiredProviderLanes,
@@ -201,12 +201,16 @@ export class PrepareFocusedLocatorRetrievalV2Request {
         timeWeightMicros: null,
       }),
     });
+    try { scope.bind(request); } catch {
+      return unavailablePreparation("scope_resolution_unavailable");
+    }
+    return request;
   }
 }
 
 function preparedRequest(
   request: FocusedLocatorRetrievalV2RequestSnapshot,
-): FocusedLocatorRetrievalV2Preparation {
+): Extract<FocusedLocatorRetrievalV2Preparation, { readonly status: "prepared" }> {
   const result = request as FocusedLocatorRetrievalV2RequestSnapshot & {
     readonly status: "prepared";
   };

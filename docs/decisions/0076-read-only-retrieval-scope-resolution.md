@@ -27,8 +27,12 @@ retrieval request budget and all quality thresholds remain unchanged.
 Serving, diagnostic, and canonical factories compose this adapter. Preparation
 resolves IDs before the canonical request digest or retrieval reservation exists.
 The captured retrieval payload is never rewritten. Serving rehydration verifies
-the request IDs against the same resolver's bounded, previously validated mapping;
-missing or evicted mappings fail closed. No additional metadata read occurs there.
+the request identity and IDs against the same resolver's immutable authority. Each
+successful resolution binds exactly one frozen prepared request. A WeakMap keyed
+by that request retains authority only while the request is owned; later reads,
+failures, and collection volume cannot replace or evict it. Copied requests and
+foreign resolver instances fail closed. Binding is out of band and adds no fields
+to serialized requests or their hashes. No additional metadata read occurs there.
 
 Canonical and diagnostic execution reserve both metadata GET effects separately
 before sending them. Canonical spend identity uses capability ordinals 1 and 2;
