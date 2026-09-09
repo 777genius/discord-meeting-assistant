@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { canonicalJson, digest, exactRecord } from "./canonical.js";
-import { validateCanonicalRetrievalObservation,
+import { validateCanonicalRetrievalObservation, validateCanonicalScopeResolutionObservation,
   type SemanticQualityV4ArtifactKind, type SemanticQualityV4ArtifactReceipt } from
   "./canonical-execution-artifact-validation.js";
 import { readProductionCanonicalArtifact } from
@@ -12,7 +12,7 @@ import type { MainCanonicalEvidenceProjection, MainCanonicalEvidenceVerification
   "./production-ports.js";
 
 const REQUIRED_KINDS = Object.freeze(["capability_request", "capability_response",
-  "retrieval_request", "retrieval_response", "retrieval_observation",
+  "retrieval_request", "retrieval_response", "retrieval_observation", "scope_resolution_observation",
   "answer_normalized_outcome"] as const satisfies readonly SemanticQualityV4ArtifactKind[]);
 
 /** Read-only authentication of artifacts emitted by the installed main canonical SDK chain. */
@@ -22,7 +22,14 @@ export function createProductionLocalCanonicalEvidenceReader(input: { readonly a
     throw new Error("canonical artifact key is invalid");
   }
   const key = new Uint8Array(input.artifactKey);
-  return Object.freeze({ verify: async (verification: Parameters<
+  return Object.freeze({ readScopeObservation: async (identity: Parameters<
+    MainCanonicalEvidenceVerificationPort["readScopeObservation"]>[0]) => {
+    const opened = await readProductionCanonicalArtifact({ artifactKey: key,
+      artifactKeyId: input.artifactKeyId, artifactRoot: input.artifactRoot,
+      attemptId: identity.attemptId, kind: "scope_resolution_observation",
+      rootBindingSha256: identity.campaignRootSha256 });
+    return Object.freeze({ observation: decodeScopeObservation(opened.plaintext), receipt: opened.receipt });
+  }, verify: async (verification: Parameters<
     MainCanonicalEvidenceVerificationPort["verify"]>[0]) => {
     const { attempts, campaignRootSha256 } = verification;
     digest(campaignRootSha256, "local canonical evidence campaign root");
@@ -48,6 +55,7 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
       attemptId: expected.attemptId, kind, rootBindingSha256: expected.campaignRootSha256 }));
   }
   const bytes = (kind: typeof REQUIRED_KINDS[number]) => opened.get(kind)!.plaintext;
+  decodeScopeObservation(bytes("scope_resolution_observation"));
   const hashes = [
     ["capability request", bytes("capability_request"), expected.capabilityRequestSha256],
     ["capability response", bytes("capability_response"), expected.capabilityResponseSha256],
@@ -102,6 +110,18 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
     throw new Error("canonical outcome locators or turns differ from external evidence");
   }
   return REQUIRED_KINDS.map((kind) => opened.get(kind)!.receipt);
+}
+
+function decodeScopeObservation(bytes: Uint8Array) {
+  if (bytes.byteLength > 1024) {
+    throw new Error("canonical scope resolution observation exceeds its byte bound");
+  }
+  const scope = validateCanonicalScopeResolutionObservation(JSON.parse(
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown);
+  if (scope.status !== "prepared") {
+    throw new Error("canonical scope resolution observation is not prepared");
+  }
+  return scope;
 }
 
 async function mapBounded<T, U>(values: readonly T[], concurrency: number,

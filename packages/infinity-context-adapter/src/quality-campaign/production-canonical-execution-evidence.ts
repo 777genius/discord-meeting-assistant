@@ -138,6 +138,9 @@ Promise<{ readonly plaintext: Uint8Array; readonly receipt: SemanticQualityV4Art
     receipt.rootBindingSha256 !== input.rootBindingSha256) {
     throw new Error("canonical artifact receipt index is foreign or substituted");
   }
+  if (input.kind === "scope_resolution_observation" && receipt.sizeBytes > 4096) {
+    throw new Error("canonical scope resolution observation exceeds its encrypted byte bound");
+  }
   const store = new SemanticQualityV4EncryptedArtifactStore(input.artifactRoot);
   const plaintext = await store.openReceipt({ expectedKeyId: input.artifactKeyId,
     key: input.artifactKey, receipt });

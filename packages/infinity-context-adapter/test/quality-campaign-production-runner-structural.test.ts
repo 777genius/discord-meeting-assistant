@@ -1,4 +1,5 @@
 /* oxlint-disable max-lines, max-lines-per-function -- one production-scale fixture proves the closed 3x240 graph */
+import { scopeObservation, scopeObservationCustody } from "./quality-campaign-scope-observation-fixture.js";
 import { createCipheriv, generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -526,9 +527,9 @@ function spendDocument(spend: ReturnType<typeof signer>, campaignRootSha256: str
   releaseRootSha256: string, repetition: 1 | 2 | 3) {
   return spend.signed({
     allowedCallKinds: ["answer", "capability", "retrieval", "adjudicator_1", "adjudicator_2",
-      "resolver"], campaignRootSha256, expiresAtEpochMs: 4_000_000_000_000, maxCalls: 1_201,
+      "resolver"], campaignRootSha256, expiresAtEpochMs: 4_000_000_000_000, maxCalls: 1_681,
     maxEncryptedBytes: 100_000_000, maxCallsByKind: { adjudicator_1: 240, adjudicator_2: 240,
-      answer: 240, capability: 240, resolver: 1, retrieval: 240 }, maximumEffectDurationMs: 120_000,
+      answer: 240, capability: 720, resolver: 1, retrieval: 240 }, maximumEffectDurationMs: 120_000,
     maxTokens: 10_000_000, ...FROZEN_ANSWER_EXECUTION, provider: "structural-provider",
     releaseRootSha256, repetition });
 }
@@ -931,7 +932,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         questionReviewReceipts: [{}, {}], repetitionEvidence: [] };})() },
     holdoutProvider: { answer: holdoutExchange, capability: holdoutExchange,
       resultAuthority: input.holdoutProvider, retrieval: holdoutExchange },
-    mainCanonicalEvidence: { verify: async ({ attempts, campaignRootSha256 }) => ({
+    mainCanonicalEvidence: { ...scopeObservationCustody(), verify: async ({ attempts, campaignRootSha256 }) => ({
       inventorySha256: sha256({ attempts, campaignRootSha256,
         localInventoryRevision,
         schemaVersion: "synthetic.local_canonical_inventory.v1" }) }) },
@@ -953,6 +954,14 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
           release: input.release, releaseRootSha256: binding.releaseRootSha256,
           repetition: binding.repetition,
           spendReservationSha256: binding.spendReservationSha256 };
+        const answerIdentity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+          campaignRootSha256: binding.campaignRootSha256, questionDigestSha256: question.questionDigestSha256,
+          questionId: packet.questionId, releaseRootSha256: binding.releaseRootSha256,
+          repetition: binding.repetition, spendReservationSha256: binding.spendReservationSha256 });
+        for (const read of scopeObservation(answerIdentity).reads) {
+          await binding.reservation.reserve({ effectKind: read.kind as "scope_spaces" | "scope_memory_scopes",
+            payloadSha256: read.requestSha256, requestedEncryptedBytes: 2048, requestedTokens: 1 });
+        }
         for (const callKind of ["capability", "retrieval", "answer"] as const) {
           const identity = attemptIdentity({ callKind, callOrdinal: 0,
             campaignRootSha256: binding.campaignRootSha256,

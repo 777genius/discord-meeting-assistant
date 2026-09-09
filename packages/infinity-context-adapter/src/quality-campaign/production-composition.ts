@@ -117,6 +117,7 @@ Promise<ProductionCompositionResult> {
     assertAdjudicationCheckpoint(adjudicatedReceiptSha256, admitted.rootBindingSha256,
       evidence.externalEvidence.adjudications);
     const reconstructed = await reconstructExactMainEvidence({ authorityPolicy: policy,
+      scopeObservationCustody: input.ports.mainCanonicalEvidence,
       artifactKeyCustodySha256:
       verifiedRelease.release.artifactKeyCustodySha256, campaignRootSha256:
       admitted.rootBindingSha256, custody: input.ports.artifactCustody,
@@ -140,6 +141,7 @@ Promise<ProductionCompositionResult> {
       releaseRootSha256: verifiedRelease.releaseRootSha256,
       spendReservationSha256ByRepetition: spendDigests });
     const reconstructed = await reconstructExactMainEvidence({ authorityPolicy: policy,
+      scopeObservationCustody: input.ports.mainCanonicalEvidence,
       artifactKeyCustodySha256:
       verifiedRelease.release.artifactKeyCustodySha256, campaignRootSha256:
       admitted.rootBindingSha256, custody: input.ports.artifactCustody,
@@ -179,6 +181,7 @@ Promise<ProductionCompositionResult> {
     const spendLedger = new DurableAttemptJournal(config.journalRoot, policy);
     const final = await withOwnedAttemptJournal(spendLedger, async () =>
       await admitFinalCampaign(policy, { artifactCustody: input.ports.artifactCustody,
+      scopeObservationCustody: input.ports.mainCanonicalEvidence,
       artifacts: evidence.externalEvidence.artifacts,
       campaignByteCeiling: evidence.externalEvidence.campaignByteCeiling,
       campaignRootSha256: admitted.rootBindingSha256,

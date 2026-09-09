@@ -1,3 +1,4 @@
+import { prepareValidatedPersistedRetrievalScope } from "./ports/focused-locator-retrieval-v2.js";
 import { isLegacyQuestionBinding, type QuestionBindingSnapshot } from
   "../domain/question-job.js";
 import { createFocusedRetrievalGroundingPlan, type FocusedMemoryReference,
@@ -40,6 +41,7 @@ export function focusedMemoryRequest(
   lease: QuestionJobLease,
   policy: LocalFinalReplyPolicy,
 ): Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0] {
+  prepareValidatedPersistedRetrievalScope(binding);
   const sealedFilters = binding.retrievalBinding?.canonicalEvidenceFilters;
   return {
     authorizationPrincipalRef: binding.authorizationPrincipalRef,

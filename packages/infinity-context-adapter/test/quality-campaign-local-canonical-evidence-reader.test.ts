@@ -45,6 +45,44 @@ describe("production local canonical evidence reader", () => {
       .rejects.toThrow("size or envelope digest differs");
   });
 
+  it("rejects authenticated unknown or unprepared scope metadata", async () => {
+    for (const options of [{ scopeStatus: "interrupted" },
+      { scopeReadStatus: "outcome_unknown" }]) {
+      const fixture = await localFixture(options);
+      await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
+        .rejects.toThrow("canonical scope resolution observation");
+    }
+  });
+
+  it.each(["missing", "substituted", "corrupt"])("rejects %s scope metadata artifacts", async (mode) => {
+    const fixture = await localFixture();
+    const path = join(fixture.artifactRoot, "receipts", attemptId, "scope_resolution_observation.json");
+    const receipt = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    if (mode === "missing") { await unlink(path); }
+    else if (mode === "substituted") {
+      await writeFile(path, canonicalJson({ ...receipt, artifactKind: "retrieval_observation" }));
+    } else {
+      await writeFile(join(fixture.artifactRoot, `${String(receipt.envelopeSha256)}.enc.json`), "corrupt");
+    }
+    await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
+      .rejects.toThrow();
+  });
+
+  it("rejects authenticated malformed and oversized metadata observations", async () => {
+    const read = { kind: "scope_spaces", requestSha256: "1".repeat(64),
+      responseSha256: "2".repeat(64), responseBytes: 12, status: "received" };
+    const valid = { schemaVersion: "meeting_knowledge.scope_resolution.v1", status: "prepared",
+      reads: [read, { ...read, kind: "scope_memory_scopes" }] };
+    for (const scopeValue of [{ ...valid, reads: [read] }, { ...valid, reads: [read, read] },
+      { ...valid, reads: [{ ...read, responseBytes: 65_537 }, valid.reads[1]] },
+      { ...valid, reads: [{ ...read, requestSha256: "invalid" }, valid.reads[1]] },
+      { ...valid, extra: "x".repeat(5000) }]) {
+      const fixture = await localFixture({ scopeValue });
+      await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
+        .rejects.toThrow();
+    }
+  });
+
   it("rejects outcome and attempt projections that do not match retained local bytes", async () => {
     const fixture = await localFixture();
     await expect(fixture.reader.verify({ attempts: [{ ...fixture.projection,
@@ -89,6 +127,7 @@ describe("production local canonical evidence reader", () => {
 });
 
 async function localFixture(options: { readonly extraObservationKey?: boolean;
+  readonly scopeStatus?: string; readonly scopeReadStatus?: string; readonly scopeValue?: unknown;
   readonly outcomeStatus?: "answered" | "failed" } = {}) {
   const root = await mkdtemp(join(tmpdir(), "canonical-local-reader-"));
   const artifactRoot = join(root, "artifacts"); const artifactKey = new Uint8Array(32).fill(7);
@@ -117,6 +156,13 @@ async function localFixture(options: { readonly extraObservationKey?: boolean;
   for (const [kind, plaintext] of [["capability_request", capabilityRequest],
     ["capability_response", capabilityResponse], ["retrieval_request", retrievalRequest],
     ["retrieval_response", retrievalResponse], ["retrieval_observation", bytes(canonicalJson(observation))],
+    ["scope_resolution_observation", bytes(canonicalJson(options.scopeValue ?? {
+      schemaVersion: "meeting_knowledge.scope_resolution.v1", status: options.scopeStatus ?? "prepared",
+      reads: ["scope_spaces", "scope_memory_scopes"].map((kind) => ({ kind,
+        requestSha256: "1".repeat(64), responseSha256: options.scopeReadStatus === "outcome_unknown" ?
+          null : "2".repeat(64), responseBytes: options.scopeReadStatus === "outcome_unknown" ? 0 : 12,
+        status: options.scopeReadStatus ?? "received" })),
+    }))],
     ["answer_normalized_outcome", bytes(JSON.stringify(outcome))]] as const) {
     await evidence.audit.seal({ attemptId, kind, plaintext });
   }

@@ -156,7 +156,7 @@ function createCanonicalQuestionEngine(input: CanonicalEngineInput) {
         signal: options.signal, scopeResolutionEffects: {
           beforeRead: async ({ kind, requestSha256 }) => {
             await input.spend.reserve({ effectKind: kind, payloadSha256: requestSha256,
-              requestedEncryptedBytes: 1024, requestedTokens: 0 });
+              requestedEncryptedBytes: 2048, requestedTokens: 1 });
             scopeReads.push({ kind, requestSha256, responseSha256: null,
               responseBytes: 0, status: "outcome_unknown" });
           },

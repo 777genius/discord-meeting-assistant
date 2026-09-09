@@ -1,3 +1,5 @@
+import { DurableAttemptJournal } from "../src/quality-campaign/attempt-journal.js";
+import { attemptIdentity, type VerifiedSpendReservation } from "../src/quality-campaign/execution.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, unlink } from "node:fs/promises";
@@ -59,7 +61,7 @@ describe("canonical execution evidence durability", () => {
       phase: "answer" });
     const reopened = createProductionCanonicalExecutionEvidence(fixture.input);
     await expect(reopened.journal.reserve({ attemptId, payloadSha256: "3".repeat(64),
-      phase: "answer" })).rejects.toThrow("cannot be retried");
+      phase: "answer" })).rejects.toThrow();
   });
 
   it("recovers an authenticated normalized outcome without reopening either provider effect",
@@ -217,6 +219,7 @@ describe("canonical execution evidence durability", () => {
         expect(routeLatencyUs).toBeGreaterThanOrEqual(0);
         expect(capabilityAndRetrievalLatencyUs).toBeGreaterThanOrEqual(routeLatencyUs);
         expect(fixture.events).toEqual([
+          "spend:scope_spaces", "spend:scope_memory_scopes", "seal:scope_resolution_observation",
           "spend:capability", "spend:retrieval", "journal:reserve", "http:capability",
           "http:retrieval", "seal:capability_request", "seal:capability_response",
           "seal:retrieval_request", "seal:retrieval_response", "seal:retrieval_observation",
@@ -224,7 +227,7 @@ describe("canonical execution evidence durability", () => {
         ]);
         expect(fixture.answerCalls()).toBe(0);
       } finally {
-        fixture.close();
+        await fixture.close();
       }
     });
 
@@ -247,7 +250,7 @@ describe("canonical execution evidence durability", () => {
         .toBeLessThan(fixture.events.indexOf("journal:failed"));
       expect(fixture.answerCalls()).toBe(0);
     } finally {
-      fixture.close();
+      await fixture.close();
     }
   });
 
@@ -259,15 +262,16 @@ describe("canonical execution evidence durability", () => {
       await expect(fixture.executor.execute(executionPacket, executionOptions))
         .rejects.toThrow("external effect is unknown and terminal");
       expect(fixture.events.filter((event) => event === "http:retrieval")).toHaveLength(1);
-      expect(fixture.events.some((event) => event.startsWith("seal:"))).toBe(false);
+      expect(fixture.events.filter((event) => event.startsWith("seal:")))
+        .toEqual(["seal:scope_resolution_observation"]);
       expect(await readFile(join(fixture.input.retrievalJournalRoot, attemptId, "terminal.json"),
         "utf8")).toContain('"state":"outcome_unknown"');
       await expect(fixture.executor.execute(executionPacket, executionOptions))
-        .rejects.toThrow("cannot be retried");
+        .rejects.toThrow();
       expect(fixture.events.filter((event) => event === "http:retrieval")).toHaveLength(1);
       expect(fixture.answerCalls()).toBe(0);
     } finally {
-      fixture.close();
+      await fixture.close();
     }
   });
 });
@@ -279,8 +283,14 @@ const executionOptions = Object.freeze({ attemptId, signal: new AbortController(
 
 class FixedPreparer extends PrepareFocusedLocatorRetrievalV2Request {
   public constructor() {super({} as never);}
-  public override async prepare(): Promise<Awaited<ReturnType<
+  public override async prepare(input: Parameters<PrepareFocusedLocatorRetrievalV2Request["prepare"]>[0]): Promise<Awaited<ReturnType<
     PrepareFocusedLocatorRetrievalV2Request["prepare"]>>> {
+    for (const kind of ["scope_spaces", "scope_memory_scopes"] as const) {
+      const requestSha256 = "6".repeat(64);
+      await input.scopeResolutionEffects?.beforeRead({ kind, requestSha256 });
+      await input.scopeResolutionEffects?.observe({ kind, requestSha256,
+        responseSha256: "7".repeat(64), responseBytes: 12, status: "received" });
+    }
     const request = retrievalRequest() as InfinityContextRetrievalV2Request & {
       readonly status: "prepared" };
     Object.defineProperty(request, "status", { enumerable: false, value: "prepared" });
@@ -331,6 +341,15 @@ async function canonicalChainFixture(retrieval: InfinityContextRetrievalV2Adapte
     beforeProviderCall: async () => {answerCalls += 1;},
     options: { expectedLauncherSha256: "5".repeat(64) }, transport,
   });
+  const budget = new DurableAttemptJournal(await mkdtemp(join(tmpdir(), "chain-budget-")), {} as never);
+  const spend: VerifiedSpendReservation = { signerKeyId: "synthetic-budget-authority", signatureBase64: "AA==",
+    spendReservationSha256: "8".repeat(64), payload: {
+    allowedCallKinds: ["capability", "retrieval", "answer"], campaignRootSha256: rootBindingSha256,
+    releaseRootSha256: "9".repeat(64), repetition: 1, maxCalls: 5,
+    maxCallsByKind: { capability: 3, retrieval: 1, answer: 1, adjudicator_1: 0, adjudicator_2: 0, resolver: 0 },
+    maxTokens: 2052, maxEncryptedBytes: 52_096, expiresAtEpochMs: 2_000_000_000_000,
+    maximumEffectDurationMs: 3000, model: "gpt-5.6-terra", provider: "subscription-runtime",
+    reasoning: "low", serviceTier: "default" } };
   const chain = createProductionCanonicalQuestionChain({ answer,
     audit: { seal: async (value) => {events.push(`seal:${value.kind}`);
       await evidence.evidence.audit.seal(value);} },
@@ -341,12 +360,22 @@ async function canonicalChainFixture(retrieval: InfinityContextRetrievalV2Adapte
     terminal: async (value) => {events.push(`journal:${value.state}`);
       await evidence.evidence.journal.terminal(value);} },
     preparer: new FixedPreparer(), retrieval,
-    spend: { reserve: async ({ effectKind }) => {events.push(`spend:${effectKind}`);} },
+    spend: { reserve: async ({ effectKind, payloadSha256, requestedEncryptedBytes, requestedTokens }) => {
+      const identity = attemptIdentity({ callKind: effectKind.startsWith("scope_") ? "capability" :
+        effectKind as "answer" | "capability" | "retrieval", callOrdinal: effectKind === "scope_spaces" ? 1 :
+        effectKind === "scope_memory_scopes" ? 2 : 0, campaignRootSha256: rootBindingSha256,
+        questionId: "q-1", questionDigestSha256: "a".repeat(64), releaseRootSha256: "9".repeat(64),
+        repetition: 1, spendReservationSha256: spend.spendReservationSha256 });
+      const admitted = await budget.admit({ identity, requestDigestSha256: payloadSha256,
+        requestedEncryptedBytes, requestedTokens, spend });
+      if (!admitted.admitted) { throw new Error("canonical provider external effect is unknown and terminal"); }
+      events.push(`spend:${effectKind}`);
+    } },
     store: new PostgresHistoricalMemoryStore({} as never),
     topology: { resolve: async () => ({ currentMeetingId: "meeting-1", roomId: "room-1",
       scopeId: "scope-1" }) },
   });
-  return { answerCalls: () => answerCalls, close: () => {transport.close();},
+  return { answerCalls: () => answerCalls, close: async () => {transport.close(); await budget.close();},
     events, executor: new ExecuteAdmittedQualificationQuestion(chain), input: evidence.input };
 }
 

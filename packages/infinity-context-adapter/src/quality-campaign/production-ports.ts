@@ -1,7 +1,7 @@
 import type { AdjudicationEffectEvidence, RawOutcomeVaultPort } from "./adjudication.js";
 import type { ProviderExchangePort } from "./execution.js";
 import type { QualityCampaignRelease } from "./release.js";
-import type { ArtifactCustodyPort } from "./retention.js";
+import type { ArtifactCustodyPort, CanonicalScopeObservationPort } from "./retention.js";
 import type { ExactCampaignEvidence } from "./production-evidence.js";
 import type { QualificationQuestionExecutorFactoryPort } from
   "./execute-admitted-qualification-question.js";
@@ -107,7 +107,7 @@ export interface VerifiedMainCanonicalEvidence {
 }
 
 /** Consumer-owned local proof boundary; no corpus, gold, or adjudication facts cross it. */
-export interface MainCanonicalEvidenceVerificationPort {
+export interface MainCanonicalEvidenceVerificationPort extends CanonicalScopeObservationPort {
   verify(input: { readonly attempts: readonly MainCanonicalEvidenceProjection[];
     readonly campaignRootSha256: string }): Promise<VerifiedMainCanonicalEvidence>;
 }

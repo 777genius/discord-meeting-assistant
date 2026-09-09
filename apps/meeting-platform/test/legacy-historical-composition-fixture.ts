@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { InfinityContextRetrievalV2Adapter } from "@discord-meeting/infinity-context-adapter";
+import { InfinityContextRetrievalV2Adapter, InfinityRetrievalScopeResolution } from "@discord-meeting/infinity-context-adapter";
 import { createProductionCanonicalQuestionChain } from "@discord-meeting/infinity-context-adapter/quality-campaign/canonical-chain";
 import { DISPOSABLE_RETRIEVAL_V2_BINDING, startDisposableInfinityHttpService } from
   "@discord-meeting/infinity-context-adapter/test-support";

@@ -1,4 +1,5 @@
 /* oxlint-disable max-lines -- one complete 3x240 authority fixture prevents divergent test builders */
+import { scopeObservation, scopeObservationCustody } from "./quality-campaign-scope-observation-fixture.js";
 import { createCipheriv, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -163,7 +164,7 @@ function spendReceipt(input: { readonly authority: TestSigner; readonly releaseR
   return input.authority.signed({ allowedCallKinds: ["answer", "retrieval", "capability",
     "adjudicator_1", "adjudicator_2", "resolver"], campaignRootSha256: CAMPAIGN_ROOT,
   expiresAtEpochMs: 10_000, maxCalls: 2_000, maxCallsByKind: { adjudicator_1: 240,
-    adjudicator_2: 240, answer: 240, capability: 240, resolver: 240, retrieval: 240 },
+    adjudicator_2: 240, answer: 240, capability: 720, resolver: 240, retrieval: 240 },
   maxEncryptedBytes: 100_000_000,
   maximumEffectDurationMs: 1_000, maxTokens: 5_000_000, ...FROZEN_ANSWER_EXECUTION,
   provider: PROVIDER,
@@ -423,6 +424,17 @@ function finalFixture() {
     questions.map((question, index): QualificationOutcome => {
       const identity = answerIdentity({ question, releaseRootSha256: release.releaseRootSha256,
         repetition, spendReservationSha256: spendDigests[repetition - 1]! });
+      for (const [ordinal, read] of scopeObservation(identity).reads.entries()) {
+        const effect = attemptIdentity({ campaignRootSha256: identity.campaignRootSha256,
+          releaseRootSha256: identity.releaseRootSha256, questionId: identity.questionId,
+          questionDigestSha256: identity.questionDigestSha256, repetition: identity.repetition,
+          spendReservationSha256: identity.spendReservationSha256, callKind: "capability", callOrdinal: ordinal + 1 });
+        schedulerClaims.push({ admissionId: `scheduler-${effect.attemptId}`, attemptId: effect.attemptId,
+          callKind: effect.callKind, campaignRootSha256: effect.campaignRootSha256,
+          repetition, requestedEncryptedBytes: 2048, requestedTokens: 1,
+          requestDigestSha256: read.requestSha256, spendReservationSha256: effect.spendReservationSha256,
+          schemaVersion: "meeting_knowledge.semantic_quality_budget_claim.v1" });
+      }
       const expectedAbstention = index % 10 === 9;
       const resolverRequired = index === 0;
       const turnId = `turn-${repetition}-${index}`; const claimId = `final-${question.questionId}`;
@@ -589,8 +601,9 @@ function finalFixture() {
     releaseRootSha256: release.releaseRootSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v5" });
   const input = { artifactCustody: custody(authorities.policy, stored), artifacts,
+    scopeObservationCustody: scopeObservationCustody(),
     authorizedLocatorInventory,
-    campaignByteCeiling: artifacts.reduce((total, artifact) => total + artifact.storedBytes, 0),
+    campaignByteCeiling: artifacts.reduce((total, artifact) => total + artifact.storedBytes, 0) + 720 * 2048,
     campaignRootSha256: CAMPAIGN_ROOT, cleanupAuthorityKeyId: cleanupAuthority.keyId,
     effectVerificationEpochMs: 1_000,
     cleanupReceipt, goldRelevanceAuthorityKeyId: goldRelevanceAuthority.keyId,

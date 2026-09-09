@@ -12,7 +12,7 @@ import { QUALIFICATION_PROVIDER_INPUT_CONTRACT, QUALIFICATION_THRESHOLDS } from
   "./qualification-contract.js";
 import { calculateAbstentionStatistics } from "./qualification-metrics.js";
 import { verifyExactRetentionInventory, type ArtifactCustodyPort,
-  type RetainedArtifact, type RetainedArtifactKind } from "./retention.js";
+  type CanonicalScopeObservationPort, type RetainedArtifact, type RetainedArtifactKind } from "./retention.js";
 
 export interface ExactOutcomeEvidence {
   readonly artifactBindingSha256ByKind:
@@ -131,6 +131,7 @@ export interface ExactOutcomeAuthorityBindings {
 
 export async function reconstructExactMainEvidence(input: {
   readonly authorityPolicy: QualityCampaignAuthorityPolicy;
+  readonly scopeObservationCustody: CanonicalScopeObservationPort;
   readonly artifactKeyCustodySha256: string; readonly custody: ArtifactCustodyPort;
   readonly campaignRootSha256: string;
   readonly evidence: ExactCampaignEvidence;
@@ -172,6 +173,7 @@ export async function reconstructExactMainEvidence(input: {
     campaignByteCeiling: input.evidence.campaignByteCeiling,
     custody: input.custody, effectVerificationEpochMs: input.effectVerificationEpochMs,
     perRepetitionCardinality: 240,
+    scopeObservationCustody: input.scopeObservationCustody,
     releaseDocumentSha256: input.releaseDocumentSha256,
     release: input.release,
     spendReservations: input.spendReservations, expectedOutcomes: expected.map(({ attempt }) => {

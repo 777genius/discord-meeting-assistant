@@ -20,6 +20,14 @@ export class InfinityRetrievalScopeResolution implements FocusedRetrievalScopeRe
         input.spaceId, input.memoryScopeId]);
   }
 
+  public async matchesPersisted(input: Parameters<NonNullable<
+    FocusedRetrievalScopeResolutionPort["matchesPersisted"]>>[0]): Promise<boolean> {
+    const resolved = await this.resolve(input);
+    return resolved.status === "resolved" &&
+      resolved.spaceId === input.request.scope.spaceId &&
+      resolved.memoryScopeId === input.request.scope.memoryScopeId;
+  }
+
   public constructor(private readonly config: InfinityContextRetrievalV2Config) {}
 
   public async resolve(input: Parameters<FocusedRetrievalScopeResolutionPort["resolve"]>[0]) {
@@ -82,11 +90,11 @@ export class InfinityRetrievalScopeResolution implements FocusedRetrievalScopeRe
     signal.throwIfAborted();
     const spaces = await client.spaces.listSpaces({ limit: collectionLimit, signal });
     const space = unique(spaces, "slug", input.spaceSlug);
-    if (space === null || !validId(space.id)) { return { status: "unavailable" as const }; }
+    if (space === null || space.status !== "active" || !validId(space.id)) { return { status: "unavailable" as const }; }
     signal.throwIfAborted();
     const scopes = await client.spaces.listMemoryScopes({ spaceId: space.id, limit: collectionLimit, signal });
     const scope = unique(scopes, "external_ref", input.roomScopeExternalRef);
-    if (scope === null || !validId(scope.id) || scope.space_id !== space.id) {
+    if (scope === null || scope.status !== "active" || !validId(scope.id) || scope.space_id !== space.id) {
       return { status: "unavailable" as const };
     }
     signal.throwIfAborted();

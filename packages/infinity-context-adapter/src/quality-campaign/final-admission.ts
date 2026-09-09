@@ -11,7 +11,7 @@ import { type PinnedReleaseDocument, QualityCampaignAuthorityPolicy,
 import { type CitationCheck, type ClaimCheck, type QualificationMetricGroup,
   type QualificationOutcome, reconstructMetrics, type SpeakerTimeCheck } from "./qualification-metrics.js";
 import { type ArtifactCustodyPort, type ExpectedOutcomeInventory, type RetainedArtifact,
-  verifyExactRetentionInventory } from "./retention.js";
+  type CanonicalScopeObservationPort, verifyExactRetentionInventory } from "./retention.js";
 
 export interface RepetitionQualificationEvidence {
   readonly campaignRootSha256: string; readonly metrics: readonly QualificationMetricGroup[];
@@ -65,7 +65,8 @@ interface ReviewedMainQuestionSet {
 
 export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
   input: { readonly artifactCustody:
-  ArtifactCustodyPort; readonly artifacts: readonly RetainedArtifact[];
+  ArtifactCustodyPort; readonly scopeObservationCustody: CanonicalScopeObservationPort;
+  readonly artifacts: readonly RetainedArtifact[];
   readonly authorizedLocatorInventory: unknown; readonly campaignByteCeiling: number;
   readonly campaignRootSha256: string; readonly cleanupAuthorityKeyId: string;
   readonly cleanupReceipt: unknown;
@@ -137,6 +138,7 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
     campaignByteCeiling: input.campaignByteCeiling, custody: input.artifactCustody,
     effectVerificationEpochMs: input.effectVerificationEpochMs, expectedOutcomes,
     perRepetitionCardinality: MAIN_CARDINALITY.perRepetition,
+    scopeObservationCustody: input.scopeObservationCustody,
     release: release.release,
     releaseDocumentSha256: sha256(input.release.document),
     spendReservations: verifiedSpendReservations });

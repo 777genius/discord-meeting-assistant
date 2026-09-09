@@ -44,6 +44,36 @@ function match(resolver: InfinityRetrievalScopeResolution, request: FocusedLocat
 }
 
 describe("official SDK read-only scope resolution", () => {
+  it("rechecks persisted internal IDs after restart without trusting copied prepared identities", async () => {
+    const admitted = fixture();
+    const prepared = preparedRequest();
+    const resolution = await admitted.resolver.resolve(input);
+    if (resolution.status !== "resolved") { throw new Error("Missing resolution"); }
+    resolution.bind(prepared);
+    const request = Object.freeze({ ...JSON.parse(JSON.stringify(prepared)),
+      scope: Object.freeze({ ...prepared.scope }) }) as FocusedLocatorRetrievalV2RequestSnapshot;
+    const bytes = JSON.stringify(request);
+    const spaces = { data: [{ ...space }] };
+    const scopes = { data: [{ ...scope }] };
+    const restarted = fixture(spaces, scopes);
+    expect(match(restarted.resolver, request)).toBe(false);
+    await expect(restarted.resolver.matchesPersisted({ ...input, request })).resolves.toBe(true);
+    expect(JSON.stringify(request)).toBe(bytes);
+    expect(match(restarted.resolver, request)).toBe(false);
+    scopes.data[0]!.id = "replacement-id";
+    await expect(restarted.resolver.matchesPersisted({ ...input, request })).resolves.toBe(false);
+    scopes.data[0] = { ...scope, status: "deleted" };
+    await expect(restarted.resolver.matchesPersisted({ ...input, request })).resolves.toBe(false);
+    scopes.data = [{ ...scope }, { ...scope }];
+    await expect(restarted.resolver.matchesPersisted({ ...input, request })).resolves.toBe(false);
+    scopes.data = [];
+    await expect(restarted.resolver.matchesPersisted({ ...input, request })).resolves.toBe(false);
+    scopes.data = [{ ...scope }];
+    spaces.data[0]!.id = "replacement-space";
+    await expect(restarted.resolver.matchesPersisted({ ...input, request })).resolves.toBe(false);
+    expect(match(admitted.resolver, prepared)).toBe(true);
+  });
+
   it("keeps an admitted binding valid when a later same-scope read fails", async () => {
     const { resolver } = fixture();
     const admitted = await resolver.resolve(input);
