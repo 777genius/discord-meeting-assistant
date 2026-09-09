@@ -452,6 +452,7 @@ boundaries:
         - node:crypto
         - node:url
       runtimeReferences: []
+  # Durable STT journal/contracts are private recording-ingress-owned source.
   - id: adapters.recording-ingress
     roots:
       - packages/recording-ingress-adapter/src
@@ -468,6 +469,7 @@ boundaries:
         - node:fs
         - node:fs/promises
         - node:path
+        - node:sqlite
       runtimeReferences: []
   - id: adapters.object-storage
     roots:
@@ -525,6 +527,7 @@ boundaries:
         - node:crypto
         - node:url
       runtimeReferences: []
+  # Includes voicetext-live-session-config.ts: same session owner and closed adapter dependencies.
   - id: adapters.voicetext
     roots:
       - packages/voicetext-adapter/src
@@ -539,6 +542,8 @@ boundaries:
       builtins:
         - node:child_process
         - node:crypto
+        - node:fs
+        - node:path
         - node:events
         - node:http
         - node:perf_hooks
@@ -552,8 +557,10 @@ boundaries:
     entrypoints: []
     allow:
       boundaries:
+        - adapters.discord
         - contracts.conversation-runtime
       packages:
+        - "@discord-meeting/discord-adapter"
         - "@discord-meeting/conversation-runtime-contracts"
         - "@discordjs/opus"
         - "@discordjs/voice"
@@ -617,6 +624,7 @@ boundaries:
       - apps/meeting-platform/src/adapters/outbound/subscription-runtime-farewell-classifier.ts
       - apps/meeting-platform/src/adapters/outbound/system-conversation-delay.ts
       - apps/meeting-platform/src/adapters/outbound/test-only-answer-delivery-crash-injection.ts
+      - apps/meeting-platform/src/adapters/outbound/transcript-outline-summary-adapter.ts
     allow:
       boundaries:
         - adapters.object-storage
@@ -644,6 +652,7 @@ boundaries:
         - zod
       builtins:
         - node:crypto
+        - node:async_hooks
         - node:fs
         - node:fs/promises
         - node:path
@@ -728,6 +737,7 @@ boundaries:
         - node:http
         - node:net
       runtimeReferences: []
+  # Consumer STT durability contracts and attempt orchestration stay in this root.
   - id: apps.meeting-platform.live-runtime
     roots:
       - apps/meeting-platform/src/live-runtime
@@ -754,6 +764,23 @@ boundaries:
         - fastify
       builtins: []
       runtimeReferences: []
+  - id: apps.meeting-platform.recording-compatibility-adapter
+    roots:
+      - apps/meeting-platform/src/adapters/recording-compatibility
+    entrypoints:
+      - apps/meeting-platform/src/adapters/recording-compatibility/verified-recording-repository.ts
+    allow:
+      boundaries:
+        - adapters.postgres
+        - adapters.object-storage
+        - core.meeting.lifecycle
+      packages:
+        - "@discord-meeting/postgres-adapter"
+        - "@discord-meeting/object-storage-adapter"
+        - "@discord-meeting/meeting-core"
+      builtins:
+        - node:crypto
+      runtimeReferences: []
   - id: apps.meeting-platform.composition
     roots:
       - apps/meeting-platform/src/composition
@@ -770,6 +797,7 @@ boundaries:
       - apps/meeting-platform/src/run-voicetext-semantic-canary.ts
     allow:
       boundaries:
+        - apps.meeting-platform.recording-compatibility-adapter
         - adapters.bullmq
         - adapters.craig-playback
         - adapters.discord
@@ -825,6 +853,7 @@ boundaries:
         - node:crypto
         - node:events
         - node:fs
+        - node:path
         - node:fs/promises
         - node:http
         - node:url

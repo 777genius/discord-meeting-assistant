@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc --project tsconfig.build.json --pretty false",
     "capacity:e2e": "pnpm run build && node dist/capacity-main.js",
+    "collect:oss-native": "pnpm run build && node dist/oss-collect-main.js",
     "collect:e2e": "pnpm run build && node dist/collect-retained-evidence.js",
     "collect:hosted-clock-preflight": "pnpm run build && node dist/collect-hosted-clock-preflight.js",
     "collect:hosted-service-levels": "pnpm run build && node dist/collect-hosted-service-levels.js",
@@ -33,6 +34,7 @@
     "start": "pnpm run build && node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit --pretty false",
+    "verify:oss-campaign": "pnpm run build && node dist/oss-campaign-main.js",
     "verify:e2e": "pnpm run build && node dist/verify-retained-evidence.js",
     "verify:campaign": "pnpm run build && node dist/verify-campaign.js",
     "verify:hosted-pass": "pnpm run build && node dist/verify-hosted-campaign-pass.js",
@@ -40,6 +42,7 @@
   },
   "dependencies": {
     "@discord-meeting/conversation-runtime-contracts": "workspace:*",
+    "@discord-meeting/discord-adapter": "workspace:*",
     "@discordjs/opus": "catalog:",
     "@discordjs/voice": "catalog:",
     "discord.js": "catalog:",
@@ -48,7 +51,6 @@
   },
   "devDependencies": {
     "@discord-meeting/bullmq-adapter": "workspace:*",
-    "@discord-meeting/discord-adapter": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

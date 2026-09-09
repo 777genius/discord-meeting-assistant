@@ -1,3 +1,4 @@
+import type { OssSessionEvidence } from "./oss-native-evidence.js";
 import type { OpenVoicetextLiveSessionRequest } from "./voicetext-live-transcription-configuration.js";
 import type {
   VoicetextFinalSegment,
@@ -11,6 +12,7 @@ export class VoicetextLiveTranscriptEmitter {
   public constructor(
     private readonly request: OpenVoicetextLiveSessionRequest,
     private readonly timeline: VoicetextLiveTimeline,
+    private readonly evidence?: OssSessionEvidence,
   ) {}
 
   public emit(
@@ -25,7 +27,7 @@ export class VoicetextLiveTranscriptEmitter {
       return;
     }
     try {
-      this.request.onTranscript({
+      const emitted = {
         ...(segment.confidence === undefined ? {} : { confidence: segment.confidence }),
         endMs: this.timeline.mapProviderTimeToSource(segment.startMs + segment.durationMs, "end"),
         isFinal,
@@ -33,7 +35,9 @@ export class VoicetextLiveTranscriptEmitter {
         speakerId: this.request.speakerId,
         startMs: this.timeline.mapProviderTimeToSource(segment.startMs, "start"),
         text,
-      });
+      };
+      this.request.onTranscript(emitted);
+      this.evidence?.record({ type: "transcript_emitted", startMs: emitted.startMs, endMs: emitted.endMs, text, isFinal });
     } catch {
       // Observer failures must not corrupt the provider receive loop.
     }

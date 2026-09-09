@@ -12,8 +12,8 @@ const readyCatalog: RecordingPlaybackCatalog = {
   findByMeetingId: async () => ({
     status: "ready",
     tracks: [
-      { audioLocator: "s3://meeting-artifacts/recordings/a.ogg", timelineOffsetMs: 250 },
-      { audioLocator: "s3://meeting-artifacts/recordings/b.ogg", timelineOffsetMs: 900 },
+      { artifactRevision: "v-a", audioLocator: "s3://meeting-artifacts/recordings/a.ogg", checksumSha256: "a".repeat(64), sizeBytes: 10, timelineOffsetMs: 250 },
+      { artifactRevision: "v-b", audioLocator: "s3://meeting-artifacts/recordings/b.ogg", checksumSha256: "b".repeat(64), sizeBytes: 10, timelineOffsetMs: 900 },
     ],
   }),
 };

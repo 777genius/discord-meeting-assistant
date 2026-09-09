@@ -33,7 +33,7 @@ export async function finalizeAuthoritative(
   const request = createManifestRequest(runtime, state, event, tracks, signal);
   const receipt = await runtime.writer.write(request);
   verifyWriteReceipt(request, receipt);
-  const recording = createRecordingSnapshot(state, tracks, receipt.locator);
+  const recording = createRecordingSnapshot(state, tracks, receipt);
   await persistCompleted(runtime, state, recording, tracks);
   return recording;
 }
@@ -109,6 +109,7 @@ function createManifestRequest(
     },
     startedAt: state.startedAt,
     tracks: tracks.map((track) => ({
+      artifactRevision: requireTrackRevision(track),
       checksumSha256: track.checksumSha256,
       locator: track.audioLocator,
       sizeBytes: track.sizeBytes,
@@ -136,18 +137,54 @@ function createManifestRequest(
 function createRecordingSnapshot(
   state: RecordingSpoolState,
   tracks: readonly StoredAuthoritativeTrack[],
-  manifestLocator: string,
+  manifest: {
+    readonly checksumSha256: string;
+    readonly locator: string;
+    readonly sizeBytes: number;
+    readonly versionId?: string;
+  },
 ): RecordingArtifactSnapshot {
+  const manifestRevision = requireManifestRevision(manifest.versionId);
   return {
     authoritativeDurationMs: authoritativeDurationMs(state),
-    manifestLocator,
+    manifestChecksumSha256: manifest.checksumSha256,
+    manifestLocator: manifest.locator,
+    manifestRevision,
+    manifestSizeBytes: manifest.sizeBytes,
     recordingId: state.recordingId,
     speakerAudio: tracks.map((track) => ({
+      artifactRevision: requireTrackRevision(track),
       audioLocator: track.audioLocator,
+      checksumSha256: track.checksumSha256,
+      sizeBytes: track.sizeBytes,
       speakerId: track.speakerId,
       timelineOffsetMs: track.timelineOffsetMs,
     })),
   };
+}
+
+function requireManifestRevision(versionId: string | undefined): string {
+  if (versionId === undefined || versionId.length === 0 || versionId === "null") {
+    throw new RecordingIngressError(
+      "artifact-write-mismatch",
+      "authoritative manifest has no immutable artifact revision",
+    );
+  }
+  return versionId;
+}
+
+function requireTrackRevision(track: StoredAuthoritativeTrack): string {
+  if (
+    typeof track.artifactVersionId !== "string" ||
+    track.artifactVersionId.length === 0 ||
+    track.artifactVersionId === "null"
+  ) {
+    throw new RecordingIngressError(
+      "corrupt-spool",
+      "authoritative track has no immutable artifact revision",
+    );
+  }
+  return track.artifactVersionId;
 }
 
 function authoritativeDurationMs(state: RecordingSpoolState): number {
@@ -192,7 +229,7 @@ async function persistCompleted(
     lifecycleSchemaVersion: state.lifecycleSchemaVersion,
     recording,
     recordingId: state.recordingId,
-    schemaVersion: 5,
+    schemaVersion: 6,
   };
   await runtime.spool.writeCompleted(completed);
   await runtime.cleanupAfterSuccess(state.recordingId);

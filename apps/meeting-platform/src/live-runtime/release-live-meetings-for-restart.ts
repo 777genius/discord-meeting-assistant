@@ -17,6 +17,8 @@ export async function releaseLiveMeetingsForRestart(input: {
         return;
       }
       state.finishing = true;
+      state.packetRecovery = null;
+      state.packetDrainReady = false;
       state.farewell?.close();
       state.greetings?.close();
       state.conversation?.close();

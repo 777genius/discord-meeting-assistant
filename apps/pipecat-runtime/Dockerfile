@@ -10,10 +10,10 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /build
 
-COPY pyproject.toml uv.lock README.md ./
+COPY apps/pipecat-runtime/pyproject.toml apps/pipecat-runtime/uv.lock apps/pipecat-runtime/README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY src ./src
+COPY apps/pipecat-runtime/src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
 

@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { fixtureManifestV1Schema } from "../src/e2e-evidence.js";
 import { publishReplayAttestation } from "../src/replay-attestation-publisher.js";
 
 const manifestSource = new URL("./fixtures/manifest.v1.json", import.meta.url);
@@ -15,7 +16,9 @@ describe("replay attestation publisher", () => {
   it("derives the marker from the pinned manifest and passes it to one create-only remote command", async () => {
     const root = await mkdtemp(join(tmpdir(), "replay-attestation-publisher-"));
     const fixtureManifestPath = join(root, "manifest.json");
-    await writeFile(fixtureManifestPath, await readFile(manifestSource));
+    const manifestBytes = await readFile(manifestSource);
+    const { fixtureSetId } = fixtureManifestV1Schema.parse(JSON.parse(manifestBytes.toString("utf8")));
+    await writeFile(fixtureManifestPath, manifestBytes);
     const runner = vi.fn(async (_config, script: string, args: readonly string[]) => {
       expect(script).toContain("e2e.test-only");
       expect(script.indexOf('env_file=$1')).toBeLessThan(script.indexOf("set -- $container_ids"));
@@ -25,7 +28,7 @@ describe("replay attestation publisher", () => {
       expect(args.slice(0, 2)).toEqual(["/srv/e2e/.env", "/srv/e2e/compose.yml"]);
       const markerBase = JSON.parse(Buffer.from(args[4]!, "base64url").toString("utf8")) as Record<string, unknown>;
       expect(markerBase).toEqual({
-        fixtureSetId: "discord-meeting-ru-en-v6", purpose: "bullmq-post-call-replay",
+        fixtureSetId, purpose: "bullmq-post-call-replay",
         recordingId: "recording-1", runId: "run-1",
       });
       expect(args[2]).toContain("schemaVersion: 2");
@@ -41,7 +44,7 @@ describe("replay attestation publisher", () => {
       remoteAttestationPath: "/tmp/discord-e2e-attestations/run-1.json",
       remoteSourceRoot: "/srv/e2e", runId: "run-1",
     }, runner)).resolves.toEqual({
-      containerId, fixtureSetId: "discord-meeting-ru-en-v6", imageId, recordingId: "recording-1",
+      containerId, fixtureSetId, imageId, recordingId: "recording-1",
       remoteAttestationPath: "/tmp/discord-e2e-attestations/run-1.json", runId: "run-1",
       sourceRevision,
     });

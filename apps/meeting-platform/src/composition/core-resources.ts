@@ -2,6 +2,9 @@ import { S3Client } from "@aws-sdk/client-s3";
 import type { ConnectionOptions } from "bullmq";
 import { ResolveMeetingPublicationTarget } from "@discord-meeting/meeting-routing-core";
 import {
+  type SummaryGenerationPort,
+} from "@discord-meeting/meeting-core/meeting-intelligence";
+import {
   type FinalTranscriptionPort,
 } from "@discord-meeting/meeting-core/transcription";
 import {
@@ -12,7 +15,7 @@ import type { Logger, PrometheusMetrics } from "@discord-meeting/observability-a
 import {
   PostgresMeetingSourceConfigurationRepository,
   PostgresLiveMeetingRepository,
-  PostgresMeetingRepository,
+  type PostgresMeetingRepository,
   PostgresSummaryPublicationEffectLedger,
   PostgresTranscriptionExecutionBindingStore,
 } from "@discord-meeting/postgres-adapter";
@@ -28,6 +31,11 @@ import { InstrumentedSubscriptionRuntimeTransport } from "../adapters/outbound/i
 import { CraigRecordingIngressAdapter } from "../adapters/outbound/craig-recording-ingress-adapter.js";
 import { DiscordPublicationTargetResolver } from "../adapters/outbound/discord-publication-target-resolver.js";
 import { GrpcSubscriptionRuntimeTransport } from "../adapters/outbound/subscription-runtime-grpc-transport.js";
+import {
+  TranscriptOutlineSummaryAdapter,
+  type SummaryProviderHealth,
+} from "../adapters/outbound/transcript-outline-summary-adapter.js";
+import { VerifiedRecordingRepository } from "../adapters/recording-compatibility/verified-recording-repository.js";
 import type { RecordingDurabilityPort } from "../application/recording-ingress.js";
 import type { PlatformConfig } from "../config.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
@@ -50,8 +58,9 @@ export interface PlatformCoreResources {
   readonly pool: Pool;
   readonly publicationTargets: DiscordPublicationTargetResolver;
   readonly publicationEffects: PostgresSummaryPublicationEffectLedger;
-  readonly rawRuntimeTransport: GrpcSubscriptionRuntimeTransport;
-  readonly rawSummarizer: SubscriptionRuntimeSummaryAdapter;
+  readonly rawSummarizer: SummaryGenerationPort & {
+    checkHealth(): Promise<SummaryProviderHealth>;
+  };
   readonly rawTranscriber: FinalTranscriptionPort;
   readonly legacyTranscriptionExecutionBinding: FinalTranscriptionExecutionBinding;
   readonly selectedTranscriptionExecutionBinding: FinalTranscriptionExecutionBinding;
@@ -59,8 +68,13 @@ export interface PlatformCoreResources {
   readonly transcriptionExecutionBindings: PostgresTranscriptionExecutionBindingStore;
   readonly recordingIngress: RecordingDurabilityPort;
   readonly recordings: DurableCraigRecordingIngress;
-  readonly runtimeTransport: InstrumentedSubscriptionRuntimeTransport;
+  readonly subscriptionRuntime?: PlatformSubscriptionRuntimeResources;
   readonly s3: S3Client;
+}
+
+export interface PlatformSubscriptionRuntimeResources {
+  readonly rawTransport: GrpcSubscriptionRuntimeTransport;
+  readonly transport: InstrumentedSubscriptionRuntimeTransport;
 }
 
 export function createPlatformCoreResources(input: {
@@ -90,25 +104,26 @@ export function createPlatformCoreResources(input: {
     writer: artifactWriter,
   });
   input.cleanup.defer("recording ingress spool", () => recordings.close());
-  const meetings = new PostgresMeetingRepository(pool);
+  const meetings = new VerifiedRecordingRepository(pool, {
+    artifacts: artifactReader,
+    completedRecording: (recordingId) => recordings.completedRecording(recordingId),
+    onVerified: (evidence) => { input.logger.info("Verified legacy recording identity", evidence); },
+  });
   const transcriptionExecutionBindings = new PostgresTranscriptionExecutionBindingStore(pool);
   const sourceConfigurations = new PostgresMeetingSourceConfigurationRepository(pool);
   const publicationTargets = new DiscordPublicationTargetResolver(
     new ResolveMeetingPublicationTarget(sourceConfigurations),
     input.config.discordLegacyRoute,
   );
-  const rawRuntimeTransport = new GrpcSubscriptionRuntimeTransport({
-    address: input.config.subscriptionRuntime.address,
-    serviceToken: input.config.secrets.subscriptionRuntimeToken,
-  });
-  input.cleanup.defer("subscription runtime transport", () => {
-    rawRuntimeTransport.close();
-  });
-  const runtimeTransport = new InstrumentedSubscriptionRuntimeTransport(
-    rawRuntimeTransport,
+  const subscriptionRuntime = createPlatformSubscriptionRuntimeResources(
+    input.config,
     input.logger,
-    () => performance.now(),
   );
+  if (subscriptionRuntime !== undefined) {
+    input.cleanup.defer("subscription runtime transport", () => {
+      subscriptionRuntime.rawTransport.close();
+    });
+  }
   return {
     connection: redisConnection(input.config.secrets.redisUrl),
     sourceConfigurations,
@@ -117,13 +132,17 @@ export function createPlatformCoreResources(input: {
     pool,
     publicationTargets,
     publicationEffects: new PostgresSummaryPublicationEffectLedger(pool),
-    rawRuntimeTransport,
-    rawSummarizer: new SubscriptionRuntimeSummaryAdapter(runtimeTransport, {
-      expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
-      expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-      maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
-      technicalVocabulary: meetingVocabulary,
-    }),
+    rawSummarizer: input.config.summaryProvider === "subscription-runtime"
+      ? new SubscriptionRuntimeSummaryAdapter(
+          requirePlatformSubscriptionRuntime(subscriptionRuntime).transport,
+          {
+          expectedLauncherSha256: requireSubscriptionRuntimeConfig(input.config)
+            .launcherSha256,
+          expectedRuntimeEngine: subscriptionRuntimeCliEngine,
+          maxOutputTokens: subscriptionRuntimeSummaryMaxOutputTokens,
+          technicalVocabulary: meetingVocabulary,
+        })
+      : new TranscriptOutlineSummaryAdapter(),
     rawTranscriber: createFinalTranscriber(
       input.config,
       artifactReader,
@@ -131,13 +150,57 @@ export function createPlatformCoreResources(input: {
     ),
     recordingIngress: new CraigRecordingIngressAdapter(recordings),
     recordings,
-    runtimeTransport,
+    ...(subscriptionRuntime === undefined ? {} : { subscriptionRuntime }),
     s3,
     legacyTranscriptionExecutionBinding: legacyFinalTranscriptionExecutionBinding(input.config),
     selectedTranscriptionExecutionBinding: selectedFinalTranscriptionExecutionBinding(input.config),
     supportedTranscriptionExecutionBindings: supportedFinalTranscriptionExecutionBindings(input.config),
     transcriptionExecutionBindings,
   };
+}
+
+export function createPlatformSubscriptionRuntimeResources(
+  config: PlatformConfig,
+  logger: Logger,
+): PlatformSubscriptionRuntimeResources | undefined {
+  const runtimeConfig = config.subscriptionRuntime;
+  const serviceToken = config.secrets.subscriptionRuntimeToken;
+  if (runtimeConfig === undefined && serviceToken === undefined) {
+    return undefined;
+  }
+  if (runtimeConfig === undefined || serviceToken === undefined) {
+    throw new Error("Subscription Runtime configuration must be complete when enabled");
+  }
+  const rawTransport = new GrpcSubscriptionRuntimeTransport({
+    address: runtimeConfig.address,
+    serviceToken,
+  });
+  return {
+    rawTransport,
+    transport: new InstrumentedSubscriptionRuntimeTransport(
+      rawTransport,
+      logger,
+      () => performance.now(),
+    ),
+  };
+}
+
+function requirePlatformSubscriptionRuntime(
+  runtime: PlatformSubscriptionRuntimeResources | undefined,
+): PlatformSubscriptionRuntimeResources {
+  if (runtime === undefined) {
+    throw new Error("Subscription Runtime is required for this enabled feature");
+  }
+  return runtime;
+}
+
+function requireSubscriptionRuntimeConfig(
+  config: PlatformConfig,
+): NonNullable<PlatformConfig["subscriptionRuntime"]> {
+  if (config.subscriptionRuntime === undefined) {
+    throw new Error("Subscription Runtime configuration is missing");
+  }
+  return config.subscriptionRuntime;
 }
 
 function s3ClientOptions(config: PlatformConfig) {

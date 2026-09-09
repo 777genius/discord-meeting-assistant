@@ -16,6 +16,11 @@
   ],
   "consumers": [
     {
+      "boundary": "apps.meeting-platform.recording-compatibility-adapter",
+      "roots": ["apps/meeting-platform/src/adapters/recording-compatibility"],
+      "allowFeatureSubpaths": ["meeting-lifecycle"]
+    },
+    {
       "boundary": "adapters.ai",
       "roots": ["packages/ai-adapters/src"],
       "allowFeatureSubpaths": ["meeting-intelligence", "recording", "transcription"]

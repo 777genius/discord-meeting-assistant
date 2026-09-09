@@ -3,6 +3,7 @@ import type {
   RecordingIngressLimits,
 } from "./contracts.js";
 import { RecordingIngressAbortedError, RecordingIngressError } from "./errors.js";
+import { LiveDeliveryIndex } from "./live-delivery-index.js";
 import { journalFileSize, journalPacketIdentity, scanJournal } from "./journal.js";
 import {
   journalPacketFingerprint,
@@ -33,6 +34,7 @@ export class RecordingIngressRuntime {
   public readonly limits: RecordingIngressLimits;
   public readonly spool: DurableSpool;
   public readonly writer: DurableCraigRecordingIngressOptions["writer"];
+  #liveDeliveryIndex: Promise<LiveDeliveryIndex> | undefined;
   #cachedJournalPackets = 0;
   #activeOperations = 0;
   #closing: Promise<void> | undefined;
@@ -92,6 +94,25 @@ export class RecordingIngressRuntime {
         this.#idleResolver = undefined;
       }
     }
+  }
+
+  public async liveDeliveryIndex(): Promise<LiveDeliveryIndex> {
+    this.#liveDeliveryIndex ??= this.#createLiveDeliveryIndex();
+    const current = this.#liveDeliveryIndex;
+    const index = await current;
+    if (current !== this.#liveDeliveryIndex) { return this.liveDeliveryIndex(); }
+    if (!index.valid()) {
+      index.close();
+      this.#liveDeliveryIndex = this.#createLiveDeliveryIndex();
+    }
+    return this.#liveDeliveryIndex;
+  }
+
+  #createLiveDeliveryIndex(): Promise<LiveDeliveryIndex> {
+    return LiveDeliveryIndex.create(this.spool.root).catch((error: unknown) => {
+      this.#liveDeliveryIndex = undefined;
+      throw error;
+    });
   }
 
   public close(): Promise<void> {
@@ -196,6 +217,9 @@ export class RecordingIngressRuntime {
       await new Promise<void>((resolve) => {
         this.#idleResolver = resolve;
       });
+    }
+    if (this.#liveDeliveryIndex !== undefined) {
+      (await this.#liveDeliveryIndex).close();
     }
     await this.spool.releaseExclusiveOwnership();
   }

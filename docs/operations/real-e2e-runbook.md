@@ -1,5 +1,19 @@
 # Real Discord E2E and isolated hosting
 
+This runbook retains the legacy hosted qualification lane and its optional
+feature procedures. For core OSS self-hosting, start with the
+[OSS topology](../../infra/deployment/oss-meeting-topology.md), provision the
+[shared machine token and independent batch/live profiles](../../infra/deployment/voicetext-gateway.md#provision-secrets-and-profiles),
+and use the [OSS Discord campaign procedure](../../infra/deployment/oss-discord-stt-campaign.md).
+OSS has no private VoiceText SaaS dependency and does not use the hosted CLI
+credential provisioning below. Locate the exact campaign's original trusted
+receipt through the final task report linked from the PR description, then apply
+[receipt and revision checks](../../infra/deployment/oss-discord-stt-campaign.md#locate-and-interpret-a-trusted-receipt)
+before claiming any OSS profile qualified. Hosted gates, local checks and CI
+results do not establish OSS Discord acceptance.
+The hosted replay and optional conversation gates below do not replace the OSS
+three-scenario trusted collection procedure.
+
 ## Fixed test assets
 
 These assets are test-only and must never be reused for real meetings or other
@@ -41,11 +55,14 @@ Secrets must be provisioned through the host's existing secret mechanism or a
 new permission-restricted deployment environment file outside the checkout.
 Never print them during provisioning or health checks.
 
-Production transcription uses the Voicetext machine boundary and batch-v2 final
-contract from ADR 0008. Rotate the `meeting-platform` machine identity with the
-Voicetext CLI and route its one-time stdout directly into the host secret file;
+### Legacy hosted VoiceText credentials and batch-v2
+
+The legacy hosted lane uses the Voicetext machine boundary and batch-v2 final
+contract from ADR 0008. Only for that lane, rotate the `meeting-platform` machine
+identity with the Voicetext CLI and route its one-time stdout directly into the
+host secret file;
 never put the bearer in argv, an environment variable, shell history, or this
-repository. The isolated deployment expects:
+repository. The hosted isolated deployment expects:
 
 ```text
 secrets/platform/voicetext-service-token  10001:10001 0400
@@ -58,6 +75,13 @@ container-internal Botik identity and Voicetext canary probes require these
 remote deployment secrets to remain exact owner `10001` mode `0400`. Campaign
 definition, runtime-binding, and local official-bot token files are separate
 local campaign inputs and remain exact current-user-owned mode `0600`.
+
+OSS also uses batch v2 for Deepgram; ElevenLabs batch uses v3. These contracts
+are selected independently of the live profile, and each omitted selector
+defaults to Deepgram. Neither batch v2 nor the shared secret filename implies
+a hosted SaaS dependency; follow the linked OSS provisioning procedure.
+
+### Resource limits
 
 Set `VOICETEXT_BATCH_MAX_CONCURRENCY` in the deployment environment to an
 integer from `1` through `10`; it limits provider work within each meeting. The
@@ -78,7 +102,9 @@ require about 1.5 GiB of Ogg and Blob payloads before runtime and transport
 overhead. Raising it requires a separately sized host and a disposable canary;
 it is not a distributed admission control.
 
-Before a Discord campaign, a canary must prove authenticated batch submission,
+### Legacy hosted canary
+
+Before a hosted Discord campaign, a canary must prove authenticated batch submission,
 poll/re-submit recovery under one idempotency key, immutable final utterances,
 and exact speaker timeline mapping against the same Voicetext endpoint. A
 transport success is insufficient: verify the canary transcript against its

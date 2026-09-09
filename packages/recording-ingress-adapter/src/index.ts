@@ -8,6 +8,9 @@ export {
   type RecordingIngressFailure,
 } from "./errors.js";
 export {
+  type DurableLiveVoicePacket,
+} from "./live-delivery-outbox.js";
+export {
   compileOggOpus,
   opusPacketDurationSamples,
   validateOggOpus,
@@ -31,3 +34,5 @@ export {
   type RecordingIdentityProvenance,
   type RecordingSourceIdentity,
 } from "./contracts.js";
+
+export type { SttJournalPort, SttCompletion, SttOperation, SttOwner, SttSession, SttFenceReason } from "./live-stt-journal-contracts.js";

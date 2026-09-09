@@ -15,6 +15,12 @@ export interface VoicetextPartialSegment {
   readonly text: string;
 }
 
+export interface VoicetextFinalizeComplete {
+  readonly sawResult: boolean;
+  readonly status: "flushed" | "no_provider" | "timeout";
+  readonly type: "finalize_complete";
+}
+
 export type VoicetextServerMessage =
   | ({ readonly sessionId: string; readonly type: "ready" } & VoicetextLiveContractIdentity)
   | { readonly seq: number; readonly type: "ack" }
@@ -22,12 +28,8 @@ export type VoicetextServerMessage =
   | { readonly segment: VoicetextPartialSegment | null; readonly type: "partial" }
   | ({ readonly type: "segment_final" } & VoicetextFinalSegment)
   | { readonly type: "usage_update" }
-  | { readonly code: string; readonly message: string; readonly type: "error" }
-  | {
-    readonly sawResult: boolean;
-    readonly status: "flushed" | "no_provider" | "timeout";
-    readonly type: "finalize_complete";
-  }
+  | { readonly code: string; readonly message: string; readonly failureClass?: "known_accepted_terminal"; readonly type: "error" }
+  | VoicetextFinalizeComplete
   | { readonly type: "resumed" };
 
 interface VoicetextConfigBase {
@@ -130,7 +132,10 @@ function parseError(
   ) {
     throw protocolError("Voicetext returned an invalid error message");
   }
-  return { code: value.code, message: value.message, type: "error" };
+  return { code: value.code, message: value.message, type: "error",
+    ...(value.failure_class === "known_accepted_terminal"
+      ? { failureClass: value.failure_class } : {}),
+  };
 }
 
 function parseFinalizeComplete(

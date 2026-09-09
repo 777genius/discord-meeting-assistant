@@ -1,8 +1,8 @@
 ---
 id: ADR-0024
-status: accepted
+status: superseded
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0068]
 ---
 
 # ADR-0024: Possession-based recording playback

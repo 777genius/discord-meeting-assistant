@@ -1,3 +1,4 @@
+import { LiveTranscriptionNotAccepted } from "../../src/live-runtime/contracts.js";
 import {
   type CommitLiveMeetingSummaryInput,
   type GeneratedIncrementalSummary,
@@ -659,14 +660,14 @@ export class FailFirstOpenAndSendLiveTranscriberStub {
   public openSession(): Promise<VoicetextLiveSession> {
     this.openAttemptCount += 1;
     if (this.openAttemptCount === 1) {
-      return Promise.reject(new Error("provider open failed"));
+      return Promise.reject(new LiveTranscriptionNotAccepted());
     }
     return Promise.resolve({
       finalize: () => Promise.resolve(),
       sendPacket: (packet) => {
         this.sendAttemptCount += 1;
         if (this.sendAttemptCount === 1) {
-          return Promise.reject(new Error("provider send failed"));
+          return Promise.reject(new LiveTranscriptionNotAccepted());
         }
         this.packets.push(packet);
         this.sentAtMs.push(Date.now());
@@ -689,7 +690,7 @@ export class FailFirstSendLiveTranscriberStub {
       sendPacket: (packet) => {
         this.sendAttempts.push(packet);
         if (this.sendAttempts.length <= this.failedSendAttempts) {
-          return Promise.reject(new Error("provider send failed"));
+          return Promise.reject(new LiveTranscriptionNotAccepted());
         }
         this.deliveredPackets.push(packet);
         return Promise.resolve("accepted" as const);

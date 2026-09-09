@@ -62,7 +62,7 @@ interface DerivedLiveIngressPort {
   ): void | "accepted" | "retry" | Promise<void | "accepted" | "retry">;
   /**
    * Resolves after bounded derived admission. It must not reject the durable
-   * durable ingress request when live captions are degraded.
+   * ingress request when live captions are degraded.
    */
   acceptVoiceBatch(batch: DerivedLiveVoicePacketBatch): void | Promise<void>;
   prepareForAuthoritativeFinal(recordingId: string): void | Promise<void>;
@@ -139,8 +139,8 @@ export class PlatformRecordingIngress {
       this.dependencies.ingress.ingestPacketBatch(batch),
     );
     // The recording spool is authoritative. Only after it accepted this batch
-    // may a bounded live-admission wait slow the source down; live failure cannot
-    // turn a durable packet into a failed ingress request.
+    // may live delivery be scheduled. Durable runtimes coalesce this notification
+    // and drain the outbox independently of this acknowledgement.
     try {
       await Promise.resolve(
         this.dependencies.live?.acceptVoiceBatch({

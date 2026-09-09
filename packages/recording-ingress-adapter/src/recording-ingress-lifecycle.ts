@@ -1,5 +1,7 @@
 import type { CraigLifecycleEvent } from "@discord-meeting/craig-gateway-contracts";
 
+import { initializeLiveStt } from "./live-delivery-outbox.js";
+
 import type { LifecycleIngressResult } from "./contracts.js";
 import { finalizeAuthoritative, type AuthoritativeReadyEvent } from "./recording-ingress-authoritative-finalization.js";
 import { RecordingIngressError } from "./errors.js";
@@ -163,6 +165,7 @@ async function startRecording(input: LifecycleIngressInput): Promise<LifecycleIn
       status: "active",
     };
     await input.runtime.spool.writeRecording(state);
+    await initializeLiveStt(input.runtime, state.recordingId);
   });
   return { kind: "accepted", recordingId: input.event.recordingId, replayed: false };
 }

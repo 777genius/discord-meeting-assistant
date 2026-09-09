@@ -25,7 +25,7 @@ import {
 } from "./live-runtime-fixtures.js";
 
 type RuntimeOverrides = Partial<Pick<LiveMeetingRuntimeDependencies,
-  "finishMeeting" | "startMeeting" | "transcriber"
+  "finishMeeting" | "startMeeting" | "transcriber" | "markLivePacketDelivered" | "packetInspector"
 >>;
 type OpenSessionRequest = Parameters<LiveTranscriptionPort["openSession"]>[0];
 
@@ -231,6 +231,7 @@ function createRuntime(
   overrides: RuntimeOverrides = {},
 ): PlatformLiveMeetingRuntime {
   return new PlatformLiveMeetingRuntime({
+    ...overrides,
     appendTurn: new AppendLiveTranscriptTurn(meetings),
     finishMeeting: overrides.finishMeeting ?? new FinishLiveMeeting(meetings),
     logger,
@@ -305,3 +306,62 @@ interface Deferred<Value> {
   readonly reject: (reason?: unknown) => void;
   readonly resolve: (value: Value) => void;
 }
+
+
+it("settles the meeting on retry after a receipt outlives the two-second stall deadline", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(Date.parse(started().occurredAt));
+  try {
+    const meetings = new MemoryLiveMeetingRepository();
+    const actualFinish = new FinishLiveMeeting(meetings);
+    const finishMeeting = { execute: vi.fn((id: string, endMs: number) => actualFinish.execute(id, endMs)) };
+    const receipt = deferred<void>();
+    const receiptStarted = deferred<void>();
+    const receiptCompleted = deferred<void>();
+    const sendPacket = vi.fn(async () => "accepted" as const);
+    const finalize = vi.fn(async () => {});
+    const terminate = vi.fn();
+    const openSession = vi.fn(async () => ({ sendPacket, finalize, terminate }));
+    const markLivePacketDelivered = vi.fn(async () => {
+      receiptStarted.resolve();
+      await receipt.promise;
+      receiptCompleted.resolve();
+    });
+    const runtime = createRuntime(meetings, {
+      finishMeeting, transcriber: { openSession }, markLivePacketDelivered,
+      packetInspector: { durationSamples48Khz: () => 960 },
+    });
+    await runtime.acceptLifecycle(started());
+    const batch = packets();
+    await runtime.acceptVoiceBatch({ ...batch, packets: [{ ...batch.packets[0]!, relativeTimeMs: 0 }] });
+    await receiptStarted.promise;
+    const first = runtime.settleBeforeFinalPublication("recording-live-1");
+    let settled = false;
+    const failure = first.catch((error: unknown) => { settled = true; return error; });
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(settled).toBe(false);
+    expect(terminate).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await failure).toBeInstanceOf(AggregateError);
+    expect(finishMeeting.execute).not.toHaveBeenCalled();
+    expect(meetings.snapshot).toMatchObject({ status: "active" });
+    expect(terminate).toHaveBeenCalledTimes(1);
+    receipt.resolve();
+    await receiptCompleted.promise;
+    await vi.advanceTimersByTimeAsync(0);
+    await runtime.settleBeforeFinalPublication("recording-live-1");
+    expect(meetings.snapshot).toMatchObject({ status: "ended" });
+    expect(finishMeeting.execute).toHaveBeenCalledTimes(1);
+    await runtime.acceptVoiceBatch(batch);
+    await runtime.close();
+    expect(openSession).toHaveBeenCalledTimes(1);
+    expect(sendPacket).toHaveBeenCalledTimes(1);
+    expect(markLivePacketDelivered).toHaveBeenCalledTimes(1);
+    expect(finalize).not.toHaveBeenCalled();
+    expect(terminate).toHaveBeenCalledTimes(1);
+    expect(finishMeeting.execute).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});

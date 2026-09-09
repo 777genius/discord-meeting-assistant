@@ -17,6 +17,7 @@ export interface DatabaseObservation {
 }
 
 interface S3TrackEvidence {
+  readonly artifactRevision: string;
   readonly checksumSha256: string;
   readonly durationMs: number;
   readonly locator: string;
@@ -29,6 +30,8 @@ export interface S3RecordingEvidence {
   readonly endedAt: string;
   readonly manifestChecksumSha256: string;
   readonly manifestLocator: string;
+  readonly manifestRevision: string;
+  readonly manifestSizeBytes: number;
   readonly recordingId: string;
   readonly sourceChecksumSha256: string;
   readonly startedAt: string;
@@ -62,7 +65,20 @@ export interface DeploymentEvidenceProbe {
   collectDatabase(recordingId: string): Promise<DatabaseObservation>;
   collectProcessing(meetingId: string, recordingStartedAt: string): Promise<ProcessingEvidence>;
   collectProvenance(): Promise<CurrentDeploymentProvenance>;
-  collectS3(manifestLocator: string, recordingId: string): Promise<S3RecordingEvidence>;
+  collectS3(recording: {
+    readonly manifestChecksumSha256: string;
+    readonly manifestLocator: string;
+    readonly manifestRevision: string;
+    readonly manifestSizeBytes: number;
+    readonly speakerAudio: readonly {
+      readonly artifactRevision: string;
+      readonly audioLocator: string;
+      readonly checksumSha256: string;
+      readonly sizeBytes: number;
+      readonly speakerId: string;
+      readonly timelineOffsetMs: number;
+    }[];
+  }, recordingId: string): Promise<S3RecordingEvidence>;
   replayPostCall(attestation: ReplayTargetAttestation): Promise<ReplayJobEvidence>;
 }
 

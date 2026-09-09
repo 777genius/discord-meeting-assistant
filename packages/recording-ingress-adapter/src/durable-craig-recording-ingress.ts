@@ -1,3 +1,4 @@
+import type { RecordingArtifactSnapshot } from "@discord-meeting/meeting-core/recording";
 import type {
   AuthoritativeTrackUploadMetadata,
   CraigLifecycleEvent,
@@ -13,6 +14,13 @@ import type {
 import { ingestAuthoritativeTrack } from "./recording-ingress-authoritative.js";
 import { ingestLifecycleEvent } from "./recording-ingress-lifecycle.js";
 import { ingestPacketBatch } from "./recording-ingress-packet-ingest.js";
+import {
+  liveSttJournal,
+  markLivePacketDelivered,
+  pendingLivePackets,
+  pendingLiveSpeakerPackets,
+  type DurableLiveVoicePacket,
+} from "./live-delivery-outbox.js";
 import { RecordingIngressRuntime } from "./recording-ingress-runtime.js";
 
 export { DEFAULT_RECORDING_INGRESS_LIMITS } from "./recording-ingress-invariants.js";
@@ -48,6 +56,32 @@ export class DurableCraigRecordingIngress {
       () => ingestPacketBatch(this.#runtime, batch, options),
       options.signal,
     );
+  }
+
+  /** Only the validated terminal receipt can supply historical artifact identity. */
+  public async completedRecording(recordingId: string): Promise<RecordingArtifactSnapshot | undefined> {
+    const receipt = await this.#runtime.spool.readCompleted(recordingId);
+    if (receipt !== undefined && receipt.recordingId !== recordingId) {
+      throw new Error("completion receipt recording identity mismatch");
+    }
+    return receipt?.recording;
+  }
+
+  public get liveSttDurability(): import("./live-stt-journal-contracts.js").SttJournalPort {
+    return liveSttJournal(this.#runtime);
+  }
+
+  public pendingLivePackets(recordingId: string, afterPacket?: string): Promise<readonly DurableLiveVoicePacket[]> {
+    return pendingLivePackets(this.#runtime, recordingId, afterPacket);
+  }
+
+  public pendingLiveSpeakerPackets(recordingId: string, speakerId: string):
+  Promise<{ readonly packets: readonly DurableLiveVoicePacket[]; readonly closed: boolean }> {
+    return pendingLiveSpeakerPackets(this.#runtime, recordingId, speakerId);
+  }
+
+  public markLivePacketDelivered(packetId: string): Promise<"marked" | "reused"> {
+    return markLivePacketDelivered(this.#runtime, packetId);
   }
 
   public ingestLifecycleEvent(

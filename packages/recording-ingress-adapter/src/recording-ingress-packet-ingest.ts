@@ -2,6 +2,7 @@ import type { VoicePacketBatch } from "@discord-meeting/craig-gateway-contracts"
 
 import type { PacketBatchIngressResult } from "./contracts.js";
 import { RecordingIngressError } from "./errors.js";
+import { appendPendingLivePackets } from "./live-delivery-outbox.js";
 import { appendJournal, journalPacketIdentity } from "./journal.js";
 import {
   abortIfRequested,
@@ -108,6 +109,8 @@ async function ingestLockedPacketBatch(input: LockedPacketBatchInput): Promise<P
   const state = await ensureSpeakers(runtime, activeState, packets);
   const snapshot = await loadJournalIndexes(runtime, state);
   const acceptance = acceptPackets({ packets, runtime, signal, snapshot });
+  // Persist delivery admission before journal append so either crash boundary leaves replay.
+  await appendPendingLivePackets(runtime, [...acceptance.acceptedBySpeaker.values()].flat());
   await appendAcceptedPackets({ acceptance, runtime, signal, snapshot, state });
   return {
     acceptedPackets: packets.length - acceptance.duplicatePackets,

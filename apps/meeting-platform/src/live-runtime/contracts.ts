@@ -1,3 +1,5 @@
+import type { LiveSttDurabilityPort } from "./live-stt-durability-contracts.js";
+export * from "./live-stt-durability-contracts.js";
 import type { LiveConversationConfiguration } from "./conversation-contracts.js";
 
 export type {
@@ -154,6 +156,30 @@ interface OpenLiveTranscriptionSession {
   readonly onTranscript: (event: LiveTranscriptionEvent) => void;
   readonly signal?: AbortSignal;
   readonly speakerId: string;
+}
+
+/** Proven rejection before any audio delivery; scoped to the runtime configuration. */
+export class LiveTranscriptionAdmissionRejected extends Error {
+  public constructor() {
+    super("Live transcription configuration admission rejected");
+    this.name = "LiveTranscriptionAdmissionRejected";
+  }
+}
+
+/** Provider evidence forbids reopening for this meeting/speaker lifecycle. */
+export class LiveTranscriptionTerminalFailure extends Error {
+  public constructor() {
+    super("Live transcription provider reported terminal failure");
+    this.name = "LiveTranscriptionTerminalFailure";
+  }
+}
+
+/** Audio may have been accepted; replay requires resume/reconciliation evidence. */
+export class LiveTranscriptionAcceptanceUnknown extends Error {
+  public constructor() {
+    super("Live transcription audio acceptance remains unresolved");
+    this.name = "LiveTranscriptionAcceptanceUnknown";
+  }
 }
 
 export interface LiveTranscriptionPort {
@@ -325,6 +351,10 @@ export interface LiveMeetingRuntimeDependencies {
     synchronizeMeeting(meetingId: string): Promise<void>;
   };
   readonly logger: LiveRuntimeLogger;
+  readonly liveSttDurability?: LiveSttDurabilityPort;
+  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
+  readonly pendingLiveSpeakerPackets?: LiveSpeakerPendingReader;
+  readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly LiveVoicePacket[]>;
   readonly packetFlowControl?: LivePacketFlowControl;
   readonly packetInspector?: LivePacketInspector;
   readonly refreshMeeting: LiveMeetingRefresher;
@@ -333,3 +363,9 @@ export interface LiveMeetingRuntimeDependencies {
   readonly timer?: LiveRuntimeTimer;
   readonly transcriber: LiveTranscriptionPort;
 }
+
+/** A bounded durable read; only a closed ingress fence proves terminal exhaustion. */
+export type LiveSpeakerPendingReader = (recordingId: string, speakerId: string) => Promise<{
+  readonly packets: readonly LiveVoicePacket[];
+  readonly closed: boolean;
+}>;

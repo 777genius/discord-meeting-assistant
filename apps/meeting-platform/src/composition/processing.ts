@@ -1,3 +1,4 @@
+import type { OssPostCallEvidence } from "./oss-post-call-evidence.js";
 import {
   ProcessMeetingSummary,
 } from "@discord-meeting/meeting-core/post-call-workflow";
@@ -22,6 +23,7 @@ import { LiveFencedSummaryPublicationPort } from "../application/live-fenced-sum
 import type { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
 
 export function createProcessingRuntime(input: {
+  readonly ossPostCallEvidence?: OssPostCallEvidence;
   readonly live?: PlatformLiveMeetingRuntime;
   readonly liveMeetings: PostgresLiveMeetingRepository;
   readonly logger: Logger;
@@ -58,8 +60,7 @@ export function createProcessingRuntime(input: {
   );
   return new ProcessMeetingSummary({
     meetings: input.meetings,
-    publisher,
-    summarizer,
-    transcriber,
+    ...(input.ossPostCallEvidence?.wrap({ publisher, summarizer, transcriber }) ??
+      { publisher, summarizer, transcriber }),
   });
 }

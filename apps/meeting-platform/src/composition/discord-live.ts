@@ -1,3 +1,5 @@
+import { hasLiveTranscriptionConfiguration, createOssNativeEvidence, type OssPlatformEvidence } from "./oss-native-evidence.js";
+import type { OssNativeEvidenceSink } from "@discord-meeting/voicetext-adapter";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -14,8 +16,7 @@ import {
 } from "@discord-meeting/discord-adapter";
 import { ConfigureMeetingSource } from "@discord-meeting/meeting-routing-core";
 import { CraigPlaybackGateway } from "@discord-meeting/craig-playback-adapter";
-import type { ConversationCoordinator } from
-  "@discord-meeting/meeting-core/conversation";
+import type { ConversationCoordinator } from "@discord-meeting/meeting-core/conversation";
 import type { GroundedMeetingAnswer } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
   type SummaryPublicationPort,
@@ -29,20 +30,15 @@ import {
 } from "@discord-meeting/postgres-adapter";
 import type { Pool } from "pg";
 import { GrpcPipecatConversationRuntime } from "@discord-meeting/pipecat-runtime-adapter";
-import {
-  SubscriptionRuntimeIncrementalSummaryAdapter,
-  subscriptionRuntimeCliEngine,
-  subscriptionRuntimeIncrementalMaxOutputTokens,
-  type SubscriptionRuntimeTransportPort,
-} from "@discord-meeting/subscription-runtime-adapter";
+import type { SubscriptionRuntimeTransportPort } from "@discord-meeting/subscription-runtime-adapter";
 import { VoicetextLiveTranscriptionAdapter } from "@discord-meeting/voicetext-adapter";
 import { Client, GatewayIntentBits, Partials } from "discord.js";
 
 import { FileConversationFarewellCueRegistry } from "../adapters/outbound/file-conversation-farewell-cue-registry.js";
 import { FileParticipantGreetingCueRegistry } from "../adapters/outbound/file-participant-greeting-cue-registry.js";
-import { SubscriptionRuntimeFarewellClassifier } from "../adapters/outbound/subscription-runtime-farewell-classifier.js";
 import type { PlatformConfig } from "../config.js";
 import { PlatformLiveMeetingRuntime } from "../live-meeting-runtime.js";
+import type { LiveSpeakerPendingReader } from "../live-runtime/contracts.js";
 import { PostgresRecordingPublicationReconciliation } from
   "../recording-playback/adapters/index.js";
 import type { PlatformStartupCleanup } from "./startup-cleanup.js";
@@ -50,7 +46,12 @@ import type { PlatformLiveFinalizedMemoryRuntime } from "./live-finalized-memory
 import type { PlatformHistoricalMemoryRuntime } from "./historical-memory.js";
 import { classifyPlatformError } from "./observability.js";
 import { discordLiveCaptionSignature } from "./discord-live-caption-signature.js";
-import { meetingVocabulary } from "./meeting-vocabulary.js";
+import { liveMeetingVocabulary } from "./meeting-vocabulary.js";
+import {
+  createFarewellClassifier,
+  createLiveIncrementalSummaryPort,
+} from "./optional-live-runtime.js";
+export { createLiveIncrementalSummaryPort } from "./optional-live-runtime.js";
 import {
   createPlatformLiveConversationConfiguration,
   createPlatformLiveMeetingRuntime,
@@ -67,14 +68,16 @@ export {
 export { createConversationCoordinator } from "./conversation-coordinator.js";
 import { createLiveConversationResources } from "./conversation-coordinator.js";
 import { createVoiceGroundedAnswers } from "./voice-grounded-answers.js";
+import { mapLiveAdmission } from "./live-admission-mapper.js";
+export { mapLiveAdmission } from "./live-admission-mapper.js";
 
 // Keep wall-clock-shaped timestamps compatible with STT while preventing clock
 // adjustments from corrupting playback deadlines and the four-second guard.
 const monotonicUnixNowMilliseconds = (): number =>
   Math.floor(performance.timeOrigin + performance.now());
-const incrementalSummaryTimeoutMs = 120_000;
 
 export interface PlatformDiscordLiveComposition {
+  readonly ossNativeEvidence?: OssPlatformEvidence;
   readonly conversationRuntime?: GrpcPipecatConversationRuntime;
   readonly craigPlaybackGateway: CraigPlaybackGateway;
   readonly discord: Client;
@@ -95,6 +98,10 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly groundedAnswerUseCase?: GroundedMeetingAnswer;
   readonly historicalMemory?: PlatformHistoricalMemoryRuntime;
   readonly logger: Logger;
+  readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
+  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
+  readonly pendingLiveSpeakerPackets?: LiveSpeakerPendingReader;
+  readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly pool: Pool;
@@ -104,18 +111,9 @@ export async function createPlatformDiscordLiveComposition(input: {
     | { readonly status: "ready"; readonly url: string }
   >;
   readonly recordingPlaybackUrl?: (meetingId: string) => string;
-  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
+  readonly runtimeTransport?: SubscriptionRuntimeTransportPort;
 }): Promise<PlatformDiscordLiveComposition> {
-  const knowledgeIntents = input.config.meetingKnowledge?.localFinalReply === true
-    ? [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
-    : [];
-  const knowledgePartials = input.config.meetingKnowledge?.localFinalReply === true
-    ? [Partials.Message]
-    : [];
-  const discord = new Client({
-    intents: [GatewayIntentBits.Guilds, ...knowledgeIntents],
-    partials: knowledgePartials,
-  });
+  const discord = createDiscordClient(input.config);
   input.cleanup.defer("Discord client", async () => {
     await discord.destroy();
   });
@@ -156,14 +154,10 @@ export async function createPlatformDiscordLiveComposition(input: {
     });
   }
   const groundedAnswers = createVoiceGroundedAnswers(input, discord);
-  const conversation = await createLiveConversationResources({
-    config: input.config,
-    ...(groundedAnswers === undefined ? {} : { groundedAnswers }),
-    logger: input.logger,
-    playback: craigPlaybackGateway,
-    ...(conversationRuntime === undefined ? {} : { runtime: conversationRuntime }),
-  });
+  const conversation = await createConversationResources(input, groundedAnswers, craigPlaybackGateway, conversationRuntime);
+  const evidenceSink = createOssNativeEvidence(input.cleanup);
   const live = createLiveRuntime({
+    ...(evidenceSink === undefined ? {} : { evidenceSink: evidenceSink.live }),
     config: input.config,
     ...(conversation.coordinator === undefined
       ? {}
@@ -177,6 +171,10 @@ export async function createPlatformDiscordLiveComposition(input: {
       : { greetingCues: conversation.greetingCues }),
     isPlaybackReady: (recordingId) => craigPlaybackGateway.hasSession(recordingId),
     logger: input.logger,
+    ...(input.liveSttDurability === undefined ? {} : { liveSttDurability: input.liveSttDurability }),
+    ...(input.markLivePacketDelivered === undefined ? {} : { markLivePacketDelivered: input.markLivePacketDelivered }),
+    ...(input.pendingLiveSpeakerPackets === undefined ? {} : { pendingLiveSpeakerPackets: input.pendingLiveSpeakerPackets }),
+    ...(input.pendingLivePackets === undefined ? {} : { pendingLivePackets: input.pendingLivePackets }),
     ...(input.liveFinalizedMemory === undefined
       ? {}
       : { liveFinalizedMemory: input.liveFinalizedMemory }),
@@ -271,6 +269,7 @@ export async function createPlatformDiscordLiveComposition(input: {
   }
   return {
     ...(conversationRuntime === undefined ? {} : { conversationRuntime }),
+    ...(evidenceSink === undefined ? {} : { ossNativeEvidence: evidenceSink }),
     craigPlaybackGateway,
     discord,
     guildSetupHandler,
@@ -278,6 +277,21 @@ export async function createPlatformDiscordLiveComposition(input: {
     ...(live === undefined ? {} : { live }),
     rawPublisher,
   };
+}
+
+async function createConversationResources(
+  input: Parameters<typeof createPlatformDiscordLiveComposition>[0],
+  groundedAnswers: ReturnType<typeof createVoiceGroundedAnswers>,
+  playback: CraigPlaybackGateway,
+  runtime: GrpcPipecatConversationRuntime | undefined,
+) {
+  return createLiveConversationResources({
+    config: input.config,
+    ...(groundedAnswers === undefined ? {} : { groundedAnswers }),
+    logger: input.logger,
+    playback,
+    ...(runtime === undefined ? {} : { runtime }),
+  });
 }
 
 function createInstallUrls(config: PlatformConfig): {
@@ -316,6 +330,7 @@ function createConversationRuntime(
 }
 
 function createLiveRuntime(input: {
+  readonly evidenceSink?: OssNativeEvidenceSink;
   readonly config: PlatformConfig;
   readonly conversationCoordinator?: ConversationCoordinator;
   readonly discordPublisher: DiscordSummaryPublisher;
@@ -323,23 +338,21 @@ function createLiveRuntime(input: {
   readonly greetingCues?: FileParticipantGreetingCueRegistry;
   readonly isPlaybackReady: (recordingId: string) => boolean;
   readonly logger: Logger;
+  readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
+  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
+  readonly pendingLiveSpeakerPackets?: LiveSpeakerPendingReader;
+  readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly oneShotReceipts: PostgresConversationOneShotReceiptStore;
-  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
+  readonly runtimeTransport?: SubscriptionRuntimeTransportPort | undefined;
 }): PlatformLiveMeetingRuntime | undefined {
   if (!hasLiveTranscriptionConfiguration(input.config)) {
     return undefined;
   }
-  const summarizer = new SubscriptionRuntimeIncrementalSummaryAdapter(
+  const summarizer = createLiveIncrementalSummaryPort(
+    input.config,
     input.runtimeTransport,
-    {
-      expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
-      expectedRuntimeEngine: subscriptionRuntimeCliEngine,
-      maxOutputTokens: subscriptionRuntimeIncrementalMaxOutputTokens,
-      maxRecentContextTurns: 256,
-      timeoutMs: incrementalSummaryTimeoutMs,
-    },
   );
   const projector = new DiscordLiveMeetingProjectionAdapter(input.discordPublisher, {
     publisherIdentity: input.config.discordApplicationId,
@@ -350,10 +363,7 @@ function createLiveRuntime(input: {
       ? {}
       : { coordinator: input.conversationCoordinator }),
     ...(input.farewellCues === undefined ? {} : { farewellCues: input.farewellCues }),
-    farewellClassifier: new SubscriptionRuntimeFarewellClassifier(
-      input.runtimeTransport,
-      input.config.subscriptionRuntime.launcherSha256,
-    ),
+    ...createFarewellClassifier(input.config, input.runtimeTransport),
     ...(input.greetingCues === undefined ? {} : { greetingCues: input.greetingCues }),
     isPlaybackReady: input.isPlaybackReady,
     oneShotReceipts: input.oneShotReceipts,
@@ -365,6 +375,10 @@ function createLiveRuntime(input: {
       ? {}
       : { finalizedMemory: input.liveFinalizedMemory }),
     logger: input.logger,
+    ...(input.liveSttDurability === undefined ? {} : { liveSttDurability: input.liveSttDurability }),
+    ...(input.markLivePacketDelivered === undefined ? {} : { markLivePacketDelivered: input.markLivePacketDelivered }),
+    ...(input.pendingLiveSpeakerPackets === undefined ? {} : { pendingLiveSpeakerPackets: input.pendingLiveSpeakerPackets }),
+    ...(input.pendingLivePackets === undefined ? {} : { pendingLivePackets: input.pendingLivePackets }),
     meetings: input.meetings,
     packetFlowControl: {
       maximumConcurrentSessions:
@@ -374,27 +388,27 @@ function createLiveRuntime(input: {
     },
     projector,
     summarizer,
-    transcriber: new VoicetextLiveTranscriptionAdapter({
+    transcriber: mapLiveAdmission(new VoicetextLiveTranscriptionAdapter({
+      ...(input.evidenceSink === undefined ? {} : { evidenceSink: input.evidenceSink }),
       endpoint: input.config.voicetext.webSocketUrl,
-      keyterms: meetingVocabulary,
+      keyterms: liveMeetingVocabulary,
       language: "multi",
       profile: input.config.voicetext.liveProfile,
       token: input.config.secrets.voicetextServiceToken,
-    }),
+    })),
   });
 }
 
-function hasLiveTranscriptionConfiguration(
-  config: PlatformConfig,
-): config is PlatformConfig & {
-  readonly voicetext: NonNullable<PlatformConfig["voicetext"]>;
-  readonly secrets: PlatformConfig["secrets"] & {
-    readonly voicetextServiceToken: string;
-  };
-} {
-  return (
-    config.transcriptionProvider === "voicetext" &&
-    config.voicetext !== undefined &&
-    config.secrets.voicetextServiceToken !== undefined
-  );
+
+function createDiscordClient(config: PlatformConfig): Client {
+  const knowledgeIntents = config.meetingKnowledge?.localFinalReply === true
+    ? [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+    : [];
+  const knowledgePartials = config.meetingKnowledge?.localFinalReply === true
+    ? [Partials.Message]
+    : [];
+  return new Client({
+    intents: [GatewayIntentBits.Guilds, ...knowledgeIntents],
+    partials: knowledgePartials,
+  });
 }

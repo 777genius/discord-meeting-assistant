@@ -362,8 +362,8 @@ it("finalizes an idle speaker and reopens with a new absolute timeline segment",
   expect(
     transcriber.requests.map(({ idempotencyKey }) => idempotencyKey),
   ).toEqual([
-    "live-transcription:v2|recording-live-1|1533228054724346087|1",
-    "live-transcription:v2|recording-live-1|1533228054724346087|2",
+    "live-transcription:v3|recording-live-1|1533228054724346087",
+    "live-transcription:v3|recording-live-1|1533228054724346087",
   ]);
   expect(transcriber.finalizationCount).toBe(2);
   expect(meetings.finalizedTurns.map(({ startMs }) => startMs)).toEqual([

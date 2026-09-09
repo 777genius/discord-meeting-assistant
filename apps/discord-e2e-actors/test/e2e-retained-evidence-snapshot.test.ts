@@ -84,6 +84,8 @@ function recording(): S3RecordingEvidence {
     endedAt: new Date(recordingStartedAtMs + 60_000).toISOString(),
     manifestChecksumSha256: "e".repeat(64),
     manifestLocator: "s3://meeting-artifacts/recording-1/manifest.json",
+    manifestRevision: "manifest-version-1",
+    manifestSizeBytes: 1_024,
     recordingId: "recording-1",
     sourceChecksumSha256: "f".repeat(64),
     startedAt: new Date(recordingStartedAtMs).toISOString(),

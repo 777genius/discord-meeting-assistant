@@ -11,12 +11,13 @@ import { participantSpeakerAliases } from
   "../config/participant-greeting-profiles.js";
 
 export function createGroundedAnswerGenerator(input: {
-  readonly config: PlatformConfig;
+  readonly config: Pick<PlatformConfig, "participantGreetingProfiles">;
+  readonly launcherSha256: string;
   readonly runtimeTransport: SubscriptionRuntimeTransportPort;
   readonly timeoutMs: number;
 }) {
   return new SubscriptionRuntimeGroundedAnswerAdapter(input.runtimeTransport, {
-    expectedLauncherSha256: input.config.subscriptionRuntime.launcherSha256,
+    expectedLauncherSha256: input.launcherSha256,
     expectedRuntimeEngine: subscriptionRuntimeCliEngine,
     speakerAliases: participantSpeakerAliases(
       input.config.participantGreetingProfiles,
