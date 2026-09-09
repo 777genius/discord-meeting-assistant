@@ -1,3 +1,4 @@
+import { collectionFailureDiagnostic, OssCollectionDiagnosticError } from "./oss-native-live-collection.js";
 import { runOssTrustedCollection } from "./oss-trusted-collection.js";
 import { collectOssDeployment } from "./oss-deployment-collection.js";
 import { assembleOssNativeArchive } from "./oss-native-archive-assembly.js";
@@ -60,7 +61,11 @@ if (nonempty(process.argv[1]) && resolve(process.argv[1]) === fileURLToPath(impo
   void runOssCollectCommand(process.argv.slice(2)).then((result) => {
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
-  }).catch(() => {
+  }).catch((error: unknown) => {
+    if (error instanceof OssCollectionDiagnosticError) {
+      try { process.stderr.write(`${JSON.stringify(collectionFailureDiagnostic(error, "assembly"))}\n`); }
+      catch { /* The generic external fallback remains safe. */ }
+    }
     process.stderr.write("OSS native read-only collection failed; retain source artifacts\n");
     process.exitCode = 1;
   });

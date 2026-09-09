@@ -353,6 +353,7 @@ export interface LiveMeetingRuntimeDependencies {
   readonly logger: LiveRuntimeLogger;
   readonly liveSttDurability?: LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
+  readonly pendingLiveSpeakerPackets?: LiveSpeakerPendingReader;
   readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly LiveVoicePacket[]>;
   readonly packetFlowControl?: LivePacketFlowControl;
   readonly packetInspector?: LivePacketInspector;
@@ -362,3 +363,9 @@ export interface LiveMeetingRuntimeDependencies {
   readonly timer?: LiveRuntimeTimer;
   readonly transcriber: LiveTranscriptionPort;
 }
+
+/** A bounded durable read; only a closed ingress fence proves terminal exhaustion. */
+export type LiveSpeakerPendingReader = (recordingId: string, speakerId: string) => Promise<{
+  readonly packets: readonly LiveVoicePacket[];
+  readonly closed: boolean;
+}>;

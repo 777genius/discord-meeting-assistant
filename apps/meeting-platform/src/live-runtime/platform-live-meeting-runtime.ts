@@ -133,10 +133,10 @@ export class PlatformLiveMeetingRuntime {
     if (this.dependencies.liveSttDurability !== undefined && this.dependencies.pendingLivePackets !== undefined) {
       // Ingress already committed these payloads. Retain only a coalesced wakeup;
       // provider delivery must never hold the upstream acknowledgement open.
-      for (const recordingId of new Set(batch.packets.map((packet) => packet.recordingId))) {
+      for (const [recordingId, packets] of groupPacketsByMeeting(batch.packets)) {
         const state = this.meetings.get(recordingId);
         if (state !== undefined && !state.finishing && state.packetDrainReady && state.packetRecovery !== null) {
-          void scheduleDurableLivePacketDrain(this.dependencies, state);
+          void scheduleDurableLivePacketDrain(this.dependencies, state, packets.map(packet => packet.speakerId));
         }
       }
       return;

@@ -136,6 +136,12 @@ export class LiveMeetingFinalizer {
   }
 
   private async finish(state: ActiveLiveMeeting, endedAtMs: number): Promise<void> {
+    // Fence new ingress before proving independent speaker exhaustion. Existing
+    // owned provider generations remain eligible for durable send/finalize.
+    if (this.dependencies.runtime.pendingLiveSpeakerPackets !== undefined) {
+      await this.closeAdmission(state.meetingId, endedAtMs);
+      await state.transcription.recoverDurableSpeakers([], () => state.packetRecovery !== null);
+    }
     if (this.dependencies.runtime.liveSttDurability !== undefined &&
         this.dependencies.runtime.pendingLivePackets !== undefined && state.packetRecovery !== null) {
       // Ingress may already have closed admission. Its journal keeps this

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { close, closeSync, constants, fstatSync, fsync, linkSync, lstatSync, openSync, write } from "node:fs";
+import { close, closeSync, constants, fstatSync, fsync, linkSync, lstatSync, openSync, write, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { VoicetextServerMessage } from "./protocol.js";
 
@@ -18,6 +18,7 @@ export type OssSessionEvidenceEvent =
 
 export interface OssSessionEvidence {
   record(event: OssSessionEvidenceEvent): void;
+  recordGatewayDiagnostic?(code: unknown): void;
 }
 export interface OssNativeEvidenceSink {
   open(): OssSessionEvidence;
@@ -34,6 +35,8 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
   private readonly publishedPath: string;
   private readonly digest = createHash("sha256");
   private sequence = 0;
+  private sessionOrdinal = 0;
+  private readonly diagnosticDirectory: string;
   private bytes = 0;
   private failed = false;
   private closed = false;
@@ -53,6 +56,7 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
       !/^[a-f0-9]{40}$/u.test(input.revision) || !isAbsolute(input.directory)) {
       throw new Error("OSS capture requires explicit isolated TEST admission and exact revision");
     }
+    this.diagnosticDirectory = input.directory;
     this.maximumBytes = input.maximumBytes ?? 256 * 1024 * 1024;
     if (!Number.isSafeInteger(this.maximumBytes) || this.maximumBytes < 1024 ||
       this.maximumBytes > 256 * 1024 * 1024) { throw new Error("Invalid OSS capture bound"); }
@@ -85,11 +89,29 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
     if (this.closing || this.closed || this.failed) { throw this.captureError(); }
     if (this.pending.size >= 4096) { this.failed = true; throw this.captureError(); }
     const session = randomUUID();
+    const sessionOrdinal = ++this.sessionOrdinal;
+    const openedAtMs = Date.now();
+    let diagnosed = false;
+    let errorRowIndex: number | undefined;
     this.pending.add(session);
     return {
       record: (event) => {
         this.append({ session, event });
+        errorRowIndex = event.type === "received" && event.message.type === "error" ? this.sequence : undefined;
         if (["success", "failure", "terminated"].includes(event.type)) { this.pending.delete(session); }
+      },
+      recordGatewayDiagnostic: (code) => {
+        // Separate create-only artifacts are advisory, never native-v1 rows or
+        // acceptance input. At most one bounded record per first 100 sessions.
+        if (diagnosed || sessionOrdinal > 100 || errorRowIndex === undefined || this.closed || this.closing || this.failed) { return; }
+        diagnosed = true;
+        try {
+          writeFileSync(join(this.diagnosticDirectory, `live-diagnostic-${sessionOrdinal}.json`),
+            JSON.stringify({ kind: "oss-live-gateway-diagnostic-v1", sessionOrdinal,
+              rowIndex: errorRowIndex, relativeTimeMs: Math.max(0, Math.min(86400000, Date.now() - openedAtMs)),
+              phase: "gateway-error-received", code: safeGatewayDiagnosticCode(code) }) + "\n",
+            { flag: "wx", mode: 0o600 });
+        } catch { /* Diagnostic loss cannot change native capture or acceptance. */ }
       }
     };
   }
@@ -211,4 +233,24 @@ export class OssNativeEvidenceJournal implements OssNativeEvidenceSink {
 export function ossReceivedEvidence(message: VoicetextServerMessage): OssSessionEvidenceEvent {
   // Provider error strings can contain credentials/URLs. Retain occurrence only.
   return { type: "received", message: message.type === "error" ? { type: "error" } : message };
+}
+
+// Exact gateway 3e0ede3ec9086a45bc026f43191a998f2682fd6e:
+// crates/voicetext-gateway/src/server/live_error.rs SafeLiveError::code.
+const gatewayDiagnosticCodes = [
+  "CONFIG_TIMEOUT", "INVALID_CONFIG", "INVALID_COMMAND", "INVALID_AUDIO", "FRAME_TOO_LARGE",
+  "PROFILE_NOT_CONFIGURED", "AUDIO_RUNTIME_UNAVAILABLE", "PENDING_ACKNOWLEDGEMENTS",
+  "PROVIDER_UNAVAILABLE", "PROVIDER_TERMINAL", "PROVIDER_OUTCOME_UNKNOWN", "PROVIDER_CLOSED",
+  "INVALID_PROVIDER_EVENT", "TRANSPORT_CLOSED", "PROVIDER_TIMEOUT", "TIMEOUT"
+] as const;
+export function safeGatewayDiagnosticCode(code: unknown): typeof gatewayDiagnosticCodes[number] | "UNKNOWN_GATEWAY_CODE" {
+  return gatewayDiagnosticCodes.find(allowed => allowed === code) ?? "UNKNOWN_GATEWAY_CODE";
+}
+
+export function recordOssReceivedEvidence(evidence: OssSessionEvidence | undefined, message: VoicetextServerMessage): void {
+  evidence?.record(ossReceivedEvidence(message));
+  if (message.type === "error") {
+    try { evidence?.recordGatewayDiagnostic?.(safeGatewayDiagnosticCode(message.code)); }
+    catch { /* Optional diagnostics never change transport behavior. */ }
+  }
 }

@@ -18,6 +18,7 @@ import {
   liveSttJournal,
   markLivePacketDelivered,
   pendingLivePackets,
+  pendingLiveSpeakerPackets,
   type DurableLiveVoicePacket,
 } from "./live-delivery-outbox.js";
 import { RecordingIngressRuntime } from "./recording-ingress-runtime.js";
@@ -72,6 +73,11 @@ export class DurableCraigRecordingIngress {
 
   public pendingLivePackets(recordingId: string, afterPacket?: string): Promise<readonly DurableLiveVoicePacket[]> {
     return pendingLivePackets(this.#runtime, recordingId, afterPacket);
+  }
+
+  public pendingLiveSpeakerPackets(recordingId: string, speakerId: string):
+  Promise<{ readonly packets: readonly DurableLiveVoicePacket[]; readonly closed: boolean }> {
+    return pendingLiveSpeakerPackets(this.#runtime, recordingId, speakerId);
   }
 
   public markLivePacketDelivered(packetId: string): Promise<"marked" | "reused"> {

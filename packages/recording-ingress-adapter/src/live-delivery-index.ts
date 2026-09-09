@@ -58,6 +58,8 @@ export class LiveDeliveryIndex {
         speaker TEXT, time INTEGER, media INTEGER, sequence INTEGER,
         PRIMARY KEY(generation, packet)
       ) WITHOUT ROWID;
+      CREATE INDEX eligible_speaker_order ON packets(generation,speaker,time,media,sequence,packet)
+        WHERE length>0 AND delivered=0;
       CREATE INDEX eligible_packet_order ON packets(generation,time,speaker,media,sequence,packet)
         WHERE length>0 AND delivered=0;
     `);
@@ -177,16 +179,18 @@ export class LiveDeliveryIndex {
       index.generation, JSON.stringify(packet)));
   }
 
-  public eligible(index: LiveGeneration, after: string, closed = false): LiveOffset[] {
+  public eligible(index: LiveGeneration, after: string, closed = false, speakerId?: string): LiveOffset[] {
     this.#assertGeneration(index);
     const rows = this.#access(() => this.#db.prepare(`SELECT p.packet,p.offset,p.length,p.delivered FROM packets p
       LEFT JOIN stt s ON s.generation=p.generation AND s.key=p.speaker
       WHERE p.generation=? AND p.length>0 AND p.delivered=0 AND json_extract(s.value,'$.fence') IS NULL
       AND (?=0 OR json_extract(s.value,'$.opened')=1)
+      ${speakerId === undefined ? "" : "AND p.speaker=?"}
       AND (?='' OR (p.time,p.speaker,p.media,p.sequence,p.packet) >
         (SELECT time,speaker,media,sequence,packet FROM packets WHERE generation=p.generation AND packet=?))
-      ORDER BY p.time,p.speaker,p.media,p.sequence,p.packet LIMIT 256`)
-      .all(index.generation, Number(closed), after, JSON.stringify(after)) as unknown as LiveOffset[]);
+      ORDER BY p.time,p.speaker,p.media,p.sequence,p.packet LIMIT ?`)
+      .all(index.generation, Number(closed), ...(speakerId === undefined ? [] : [`speaker:${JSON.stringify(speakerId)}`]),
+        after, JSON.stringify(after), speakerId === undefined ? 256 : 1) as unknown as LiveOffset[]);
     return rows.map((row) => ({ ...row, packet: JSON.parse(row.packet) as string }));
   }
 

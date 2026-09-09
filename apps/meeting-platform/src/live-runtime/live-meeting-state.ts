@@ -106,6 +106,7 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
   const transcription = new SpeakerTranscriptionSessions({
     clock: input.clock,
     isMeetingFinishing: () => state.finishing,
+    ...(input.dependencies.pendingLiveSpeakerPackets === undefined ? {} : { pendingLiveSpeakerPackets: input.dependencies.pendingLiveSpeakerPackets }),
     logger: input.dependencies.logger,
     ...(input.dependencies.liveSttDurability === undefined ? {} : { liveSttDurability: input.dependencies.liveSttDurability }),
     ...(input.dependencies.markLivePacketDelivered === undefined ? {} : {

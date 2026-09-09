@@ -100,6 +100,7 @@ export async function createPlatformDiscordLiveComposition(input: {
   readonly logger: Logger;
   readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
+  readonly pendingLiveSpeakerPackets?: import("../live-runtime/contracts.js").LiveSpeakerPendingReader;
   readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
@@ -172,6 +173,7 @@ export async function createPlatformDiscordLiveComposition(input: {
     logger: input.logger,
     ...(input.liveSttDurability === undefined ? {} : { liveSttDurability: input.liveSttDurability }),
     ...(input.markLivePacketDelivered === undefined ? {} : { markLivePacketDelivered: input.markLivePacketDelivered }),
+    ...(input.pendingLiveSpeakerPackets === undefined ? {} : { pendingLiveSpeakerPackets: input.pendingLiveSpeakerPackets }),
     ...(input.pendingLivePackets === undefined ? {} : { pendingLivePackets: input.pendingLivePackets }),
     ...(input.liveFinalizedMemory === undefined
       ? {}
@@ -338,6 +340,7 @@ function createLiveRuntime(input: {
   readonly logger: Logger;
   readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
   readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
+  readonly pendingLiveSpeakerPackets?: import("../live-runtime/contracts.js").LiveSpeakerPendingReader;
   readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly liveFinalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly meetings: PostgresLiveMeetingRepository;
@@ -374,6 +377,7 @@ function createLiveRuntime(input: {
     logger: input.logger,
     ...(input.liveSttDurability === undefined ? {} : { liveSttDurability: input.liveSttDurability }),
     ...(input.markLivePacketDelivered === undefined ? {} : { markLivePacketDelivered: input.markLivePacketDelivered }),
+    ...(input.pendingLiveSpeakerPackets === undefined ? {} : { pendingLiveSpeakerPackets: input.pendingLiveSpeakerPackets }),
     ...(input.pendingLivePackets === undefined ? {} : { pendingLivePackets: input.pendingLivePackets }),
     meetings: input.meetings,
     packetFlowControl: {

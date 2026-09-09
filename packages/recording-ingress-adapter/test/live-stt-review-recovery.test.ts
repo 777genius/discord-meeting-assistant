@@ -220,3 +220,39 @@ serialTest("closed drain eligibility ends at clean settlement even with retained
     assert.equal((await f.journal.beginFinalize(opening.operation.session)).status, "recording-closed");
   } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
 });
+
+serialTest("speaker pending reads retain next-page knowledge, bound payloads, and fence exhaustion through cache rebuild and late ingress", async () => {
+  const f = await fixture();
+  try {
+    const { pendingLiveSpeakerPackets } = await import("../src/live-delivery-outbox.js");
+    await appendPendingLivePackets(f.runtime, [...Array.from({ length: 255 }, (_, n) => packet("a", n)),
+      packet("b", 254), packet("b", 255)]);
+    const page = await pendingLivePackets(f.runtime, "r", "");
+    assert.equal(page.length, 256);
+    assert.equal(page.filter(p => p.speakerId === "b").length, 1);
+    const opening = await f.journal.beginOpen(f.owner, "b");
+    assert.equal(opening.status, "granted"); assert.equal(opening.operation.kind, "open");
+    await f.journal.complete({ operation: opening.operation, outcome: "opened" });
+    let next = await pendingLiveSpeakerPackets(f.runtime, "r", "b");
+    assert.equal(next.closed, false); assert.equal(next.packets.length, 1);
+    const send = await f.journal.beginSend(opening.operation.session, next.packets[0]!.packetId);
+    assert.equal(send.status, "granted"); assert.equal(send.operation.kind, "send");
+    await f.journal.closeRecording(f.owner, 10_000);
+    // An outstanding ACK/receipt remains pending; it cannot prove exhaustion.
+    assert.equal((await pendingLiveSpeakerPackets(f.runtime, "r", "b")).packets[0]!.packetId, send.operation.packetId);
+    await f.journal.complete({ operation: send.operation, outcome: "accepted" });
+    const db = await f.runtime.liveDeliveryIndex(); await db.forget(db.find("r")!);
+    next = await pendingLiveSpeakerPackets(f.runtime, "r", "b");
+    assert.equal(next.closed, true); assert.equal(next.packets.length, 1); assert.equal(next.packets[0]!.relativeTimeMs, 5100);
+    const last = await f.journal.beginSend(opening.operation.session, next.packets[0]!.packetId);
+    assert.equal(last.status, "granted"); assert.equal(last.operation.kind, "send");
+    await f.journal.complete({ operation: last.operation, outcome: "accepted" });
+    assert.deepEqual(await pendingLiveSpeakerPackets(f.runtime, "r", "b"), { packets: [], closed: true });
+    await appendPendingLivePackets(f.runtime, [packet("b", 256)]);
+    assert.deepEqual(await pendingLiveSpeakerPackets(f.runtime, "r", "b"), { packets: [], closed: true });
+    assert.equal((await pendingLivePackets(f.runtime, "r")).length, 255, "unopened retained evidence survives closed eligibility");
+    await f.journal.fence(opening.operation.session, "acceptance-unknown");
+    assert.equal((await pendingLiveSpeakerPackets(f.runtime, "r", "b")).packets.length, 0);
+    assert.deepEqual(await readFile(join(f.root, "original.ogg")), f.original);
+  } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
+});

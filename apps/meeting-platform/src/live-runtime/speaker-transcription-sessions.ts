@@ -20,12 +20,14 @@ import { livePacketIdentity, LivePacketDeliveryLedger } from "./packet-delivery-
 import { SpeakerTranscriptionSession } from "./speaker-transcription-session.js";
 
 export interface SpeakerTranscriptionSessionDependencies extends SpeakerTranscriptionSessionsDependencies {
+  readonly isDurableDrainPending?: () => boolean;
   readonly admissionRejection?: AbortController;
   readonly ledger: LivePacketDeliveryLedger;
   readonly speakerId: string;
 }
 
 export interface SpeakerTranscriptionSessionsDependencies {
+  readonly pendingLiveSpeakerPackets?: import("./contracts.js").LiveSpeakerPendingReader;
   readonly clock: LiveRuntimeClock;
   readonly isMeetingFinishing: () => boolean;
   readonly logger: LiveRuntimeLogger;
@@ -50,6 +52,9 @@ export class SpeakerTranscriptionSessions {
   // Survives speaker deletion/disconnect; restart durability requires separate storage.
   private readonly lifecycleFences = new Map<string, AbortController>();
   private cancelled = false;
+  private readonly drainingSpeakers = new Set<string>();
+  private readonly durableWakeups = new Set<string>();
+  private readonly durableWorkers = new Map<string, Promise<void>>();
   private readonly retiredSpeakers = new Set<SpeakerTranscriptionSession>();
   private readonly ledger = new LivePacketDeliveryLedger();
   private readonly speakers = new Map<string, SpeakerTranscriptionSession>();
@@ -74,6 +79,65 @@ export class SpeakerTranscriptionSessions {
     await Promise.all([...groupPacketsBySpeaker(packets)].map(([speakerId, speakerPackets]) =>
       this.speaker(speakerId).recover(speakerPackets),
     ));
+  }
+
+  public async recoverDurableSpeakers(speakerIds: readonly string[], active: () => boolean): Promise<void> {
+    // Discovery retains at most one global page. Each independent worker holds
+    // only one additional payload, regardless of the other speakers' backlogs.
+    const ids = new Set([...this.speakers.keys(), ...speakerIds]);
+    const results = await Promise.allSettled([...ids].map(id => this.recoverDurableSpeaker(id, active)));
+    const failures = results.flatMap(result => result.status === "rejected" ? [result.reason as unknown] : []);
+    if (failures.length > 0) { throw new AggregateError(failures, "Live speaker drain incomplete"); }
+  }
+
+  public wakeDurableSpeakers(speakerIds: readonly string[], active: () => boolean): void {
+    for (const id of new Set(speakerIds)) {
+      if (this.durableWorkers.has(id)) { this.durableWakeups.add(id); continue; }
+      void this.recoverDurableSpeaker(id, active).catch(() => {
+        // A wakeup owns no upstream receipt. The main drain/terminal barrier
+        // re-reads eligibility and retries settlement before releasing ownership.
+        this.dependencies.logger.warn("Derived live speaker wakeup failed", { meetingId: this.dependencies.meetingId, speakerId: id });
+      });
+    }
+  }
+
+  private recoverDurableSpeaker(speakerId: string, active: () => boolean): Promise<void> {
+    const existing = this.durableWorkers.get(speakerId);
+    if (existing !== undefined) { this.durableWakeups.add(speakerId); return existing; }
+    const work = (async () => {
+      do {
+        this.durableWakeups.delete(speakerId);
+        await this.drainDurableSpeaker(speakerId, active);
+      } while (active() && this.durableWakeups.has(speakerId));
+    })().finally(() => { this.durableWorkers.delete(speakerId); this.durableWakeups.delete(speakerId); });
+    this.durableWorkers.set(speakerId, work);
+    return work;
+  }
+
+  private isCancelled(): boolean { return this.cancelled; }
+
+  private async drainDurableSpeaker(speakerId: string, active: () => boolean): Promise<void> {
+    const read = this.dependencies.pendingLiveSpeakerPackets;
+    if (read === undefined || this.isCancelled() || this.lifecycleFences.get(speakerId)?.signal.aborted === true) { return; }
+    const speaker = this.speaker(speakerId);
+    this.drainingSpeakers.add(speakerId);
+    try {
+      while (active() && !this.isCancelled()) {
+        const page = await read(this.dependencies.meetingId, speakerId);
+        if (!active() || this.isCancelled() || this.lifecycleFences.get(speakerId)?.signal.aborted === true) { return; }
+        if (page.packets.length === 0) {
+          // ACK and synced receipt precede this read. Only closed durable
+          // eligibility permits independent terminal settlement.
+          if (page.closed) { this.drainingSpeakers.delete(speakerId); await speaker.settle(); }
+          return;
+        }
+        await speaker.recover(page.packets);
+        if (page.packets.some(packet => !this.ledger.isDelivered(livePacketIdentity(packet)))) { return; }
+      }
+    } finally {
+      this.drainingSpeakers.delete(speakerId);
+      speaker.scheduleIdleFinalizationIfReady();
+    }
   }
 
   public restoreDurability(recovery: LiveRecovery): void {
@@ -152,6 +216,7 @@ export class SpeakerTranscriptionSessions {
       admissionRejection,
       ...this.dependencies,
       ledger: this.ledger,
+      isDurableDrainPending: () => this.drainingSpeakers.has(speakerId),
       speakerId,
     });
     this.speakers.set(speakerId, created);
@@ -211,12 +276,13 @@ export function initializeLivePacketRecovery(dependencies: LiveMeetingRuntimeDep
 
 /** Coalesces ingress notifications into one bounded outbox page, never a heap batch queue. */
 export function scheduleDurableLivePacketDrain(
-  dependencies: LiveMeetingRuntimeDependencies, state: ActiveLiveMeeting,
+  dependencies: LiveMeetingRuntimeDependencies, state: ActiveLiveMeeting, speakerIds: readonly string[] = [],
 ): Promise<void> {
   state.packetDrainRequested = true;
-  if (state.packetDrain !== null) { return state.packetDrain; }
   const ownership = state.packetRecovery;
   const active = (): boolean => state.packetRecovery === ownership && ownership !== null;
+  if (dependencies.pendingLiveSpeakerPackets !== undefined) { state.transcription.wakeDurableSpeakers(speakerIds, active); }
+  if (state.packetDrain !== null) { return state.packetDrain; }
   // Notifications can mutate this flag while page reads or recovery are awaited.
   const drainRequested = (): boolean => state.packetDrainRequested;
   const drain = (async () => {
@@ -225,8 +291,14 @@ export function scheduleDurableLivePacketDrain(
       let after = "";
       while (active()) {
         const page = await dependencies.pendingLivePackets?.(state.meetingId, after);
-        if (!active() || page === undefined || page.length === 0) { break; }
-        await state.transcription.recover(page);
+        if (!active() || page === undefined) { break; }
+        if (dependencies.pendingLiveSpeakerPackets !== undefined) {
+          // Discover later speakers without retaining pages or waiting for an
+          // earlier speaker's backlog. Wakeups coalesce in the speaker registry.
+          state.transcription.wakeDurableSpeakers(page.map(packet => packet.speakerId), active);
+          if (page.length === 0) { await state.transcription.recoverDurableSpeakers([], active); }
+        } else if (page.length > 0) { await state.transcription.recover(page); }
+        if (page.length === 0) { break; }
         after = drainRequested() ? "" : livePacketIdentity(page[page.length - 1]!);
         state.packetDrainRequested = false;
       }

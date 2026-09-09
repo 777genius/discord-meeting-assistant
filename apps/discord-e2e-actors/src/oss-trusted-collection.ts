@@ -1,3 +1,4 @@
+import { collectionFailureDiagnostic, OssCollectionDiagnosticError } from "./oss-native-live-collection.js";
 import { constants } from "node:fs";
 import { lstat, open, mkdir, realpath, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
@@ -146,32 +147,32 @@ export async function runOssTrustedCollection(args: readonly string[]) {
     // Root may gracefully stop Platform after the final healthy observation. Read
     // from the mount discovered from that exact running container, never a sidecar
     // filename supplied as authority. No restart, shutdown or replay is performed.
-    for (const [position, name] of journalNames.entries()) {
-      const bytes = name === "live-native.jsonl"
-        ? await readPublishedLiveJournal(journalRoot, liveHandle)
-        : await readSource(journalRoot, name, 1024 * 1024);
-      check(bytes.subarray(0, initial[position]!.length).equals(initial[position]!), "Runtime journal replaced");
-      await put(name, bytes);
+    let postSealStage: Parameters<typeof collectionFailureDiagnostic>[1] = "publication";
+    try {
+      await retainPublishedJournals(journalNames, journalRoot, liveHandle, initial, put);
+      postSealStage = "assembly";
+      const assembly = {
+        kind: "oss-native-assembly-v1", deploymentPaths: ["deployment-before.json", "deployment-after.json"],
+        livePath: journalNames[0], postCallPath: journalNames[1], runs };
+      const assemblyPath = await put("assembly.json", assembly);
+      const assembled = await assembleOssNativeArchive({
+        planPath: resolve(sourceRoot, "plan.json"), sourceRoot,
+        assemblyPath: resolve(sourceRoot, assemblyPath), outputRoot,
+        retained: { planBytes, assemblyBytes: retained.get(assemblyPath)!, sources: retained }
+      });
+      postSealStage = "quality";
+      const archive = await loadArchive(resolve(sourceRoot, "plan.json"), outputRoot);
+      check(archive.planSha256 === sha256(planBytes) && archive.indexSha256 === assembled.collectionSha256,
+        "Collector-owned complete inventory changed before admission");
+      const evidence = await verifyOssCampaign(archive, fixtureBytes);
+      check(evidence.consistency === "complete", `Campaign PASS unavailable: ${evidence.missingSourceCapabilities.join("; ")}`);
+      postSealStage = "receipt";
+      return await publishTrustedPass(receiptPath, evidence, plan.campaignId, archive.indexSha256);
+
+    } catch (error) {
+      reportCollectionFailure(error, postSealStage);
+      throw error;
     }
-    const assembly = {
-      kind: "oss-native-assembly-v1", deploymentPaths: ["deployment-before.json", "deployment-after.json"],
-      livePath: journalNames[0], postCallPath: journalNames[1], runs };
-    const assemblyPath = await put("assembly.json", assembly);
-    const assembled = await assembleOssNativeArchive({
-      planPath: resolve(sourceRoot, "plan.json"), sourceRoot,
-      assemblyPath: resolve(sourceRoot, assemblyPath), outputRoot,
-      retained: { planBytes, assemblyBytes: retained.get(assemblyPath)!, sources: retained }
-    });
-    const archive = await loadArchive(resolve(sourceRoot, "plan.json"), outputRoot);
-    check(archive.planSha256 === sha256(planBytes) && archive.indexSha256 === assembled.collectionSha256,
-      "Collector-owned complete inventory changed before admission");
-    const evidence = await verifyOssCampaign(archive, fixtureBytes);
-    check(evidence.consistency === "complete", `Campaign PASS unavailable: ${evidence.missingSourceCapabilities.join("; ")}`);
-    const receipt = {
-      kind: "oss-discord-stt-trusted-pass-v1", status: "passed", origin: "root-runtime-collection",
-      evidence, inventorySha256: sha256(canonical(evidence.artifacts)) };
-    await createReceipt(receiptPath, receipt);
-    return { kind: receipt.kind, status: receipt.status, campaignId: plan.campaignId, collectionSha256: archive.indexSha256 };
   } finally {
     clearTimeout(timeout);
     await control.return();
@@ -303,4 +304,37 @@ async function readInitialLiveJournal(root: string, handle: Awaited<ReturnType<t
   }
   await validate();
   return bytes;
+}
+
+function reportCollectionFailure(error: unknown, stage: Parameters<typeof collectionFailureDiagnostic>[1]): void {
+  try { process.stderr.write(`${JSON.stringify(collectionFailureDiagnostic(error, stage))}\n`); }
+  catch { /* Preserve the generic external catch if diagnostic output fails. */ }
+}
+
+async function retainPublishedJournals(names: readonly string[], root: string,
+  handle: Awaited<ReturnType<typeof open>>, initial: readonly Buffer[],
+  put: (name: string, bytes: Buffer) => Promise<string>): Promise<void> {
+  let stage: Parameters<typeof collectionFailureDiagnostic>[1] = "publication";
+  try {
+    for (const [position, name] of names.entries()) {
+      stage = "publication";
+      const bytes = name === "live-native.jsonl"
+        ? await readPublishedLiveJournal(root, handle) : await readSource(root, name, 1024 * 1024);
+      stage = "prefix";
+      check(bytes.subarray(0, initial[position]!.length).equals(initial[position]!), "Runtime journal replaced");
+      stage = "retention";
+      await put(name, bytes);
+    }
+  } catch (error) {
+    throw new OssCollectionDiagnosticError("Runtime journal collection failed", collectionFailureDiagnostic(error, stage));
+  }
+}
+
+async function publishTrustedPass(path: string, evidence: Awaited<ReturnType<typeof verifyOssCampaign>>,
+  campaignId: string, collectionSha256: string) {
+  const receipt = {
+    kind: "oss-discord-stt-trusted-pass-v1", status: "passed", origin: "root-runtime-collection",
+    evidence, inventorySha256: sha256(canonical(evidence.artifacts)) };
+  await createReceipt(path, receipt);
+  return { kind: receipt.kind, status: receipt.status, campaignId, collectionSha256 };
 }

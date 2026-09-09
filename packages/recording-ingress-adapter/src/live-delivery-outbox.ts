@@ -106,6 +106,12 @@ export async function appendPendingLivePackets(
   if (recordingId === undefined || packets.some((packet) => packet.recordingId !== recordingId)) {
     throw new RecordingIngressError("invalid-input", "live outbox batch identity is invalid");
   }
+  // The recording journal still accepts authoritative audio when its lifecycle
+  // permits it. Closing derived admission must not grow a supposedly exhausted
+  // live backlog; both operations share the recording critical section.
+  const index = await readIndex(runtime, recordingId);
+  const db = await runtime.liveDeliveryIndex();
+  if (db.sttGet<SttRecordingState>(index, "recording")?.endedAtMs !== undefined) { return; }
   const records = packets.map<PendingRecord>((packet) => {
     const identity = {
       mediaTimestamp: packet.rtpTimestamp,
@@ -123,7 +129,7 @@ export async function appendPendingLivePackets(
       type: "pending",
     };
   });
-  await appendRecords(runtime, recordingId, records);
+  await appendRecords(runtime, recordingId, records, index);
 }
 
 /** A cursor (including "" for the first page) selects bounded eligible recovery.
@@ -132,18 +138,29 @@ export async function appendPendingLivePackets(
 export async function pendingLivePackets(
   runtime: RecordingIngressRuntime, recordingId: string, afterPacket?: string,
 ): Promise<readonly DurableLiveVoicePacket[]> {
+  return (await readPendingLivePage(runtime, recordingId, afterPacket)).packets;
+}
+
+/** One payload plus an atomic closed-ingress observation, under spool ownership. */
+export function pendingLiveSpeakerPackets(runtime: RecordingIngressRuntime, recordingId: string, speakerId: string):
+Promise<{ readonly packets: readonly DurableLiveVoicePacket[]; readonly closed: boolean }> {
+  return readPendingLivePage(runtime, recordingId, "", speakerId);
+}
+
+async function readPendingLivePage(runtime: RecordingIngressRuntime, recordingId: string, afterPacket?: string, speakerId?: string):
+Promise<{ readonly packets: readonly DurableLiveVoicePacket[]; readonly closed: boolean }> {
   return runtime.withExclusiveSpoolOwnership(() => runtime.exclusive(recordingId, async () => {
     const index = await readIndex(runtime, recordingId);
     if (index.conflicting !== 0) {
       throw new RecordingIngressError("conflicting-duplicate", "live outbox packet identity was replayed with different content");
     }
-    if (index.stamp === "missing") { return []; }
+    if (index.stamp === "missing") { return { packets: [], closed: false }; }
     const db = await runtime.liveDeliveryIndex();
     const state = db.sttGet<SttRecordingState>(index, "recording");
     const closed = state?.endedAtMs !== undefined;
     // Terminal ingress may close admission during an ACK. Only this spool's
     // existing owner can keep paging opened sessions until they settle.
-    if (afterPacket !== undefined && !liveSttJournal(runtime).isDrainEligible(state)) { return []; }
+    if (afterPacket !== undefined && !liveSttJournal(runtime).isDrainEligible(state)) { return { packets: [], closed: false }; }
     const path = outboxPath(runtime, recordingId);
     const handle = await openEvidence(path);
     const packets: DurableLiveVoicePacket[] = [];
@@ -153,7 +170,7 @@ export async function pendingLivePackets(
       }
       let after = afterPacket ?? "";
       for (;;) {
-        const rows = afterPacket === undefined ? db.pending(index, after) : db.eligible(index, after, closed);
+        const rows = afterPacket === undefined ? db.pending(index, after) : db.eligible(index, after, closed, speakerId);
         if (rows.length === 0) { break; }
         for (const row of rows) {
           const record = await readOffset(handle, row.offset, row.length);
@@ -170,7 +187,7 @@ export async function pendingLivePackets(
       }
     } catch (error) { db.invalidate(index); throw error; }
     finally { await handle.close(); }
-    return afterPacket === undefined ? packets.toSorted(comparePackets) : packets;
+    return { packets: afterPacket === undefined ? packets.toSorted(comparePackets) : packets, closed };
   }));
 }
 

@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { OssNativeEvidenceJournal, ossReceivedEvidence } from "../src/oss-native-evidence.js";
+import { OssNativeEvidenceJournal, ossReceivedEvidence, recordOssReceivedEvidence, safeGatewayDiagnosticCode } from "../src/oss-native-evidence.js";
 import { VoicetextLiveTranscriptionAdapter } from "../src/voicetext-live-transcription-adapter.js";
 
 const directories: string[] = [];
@@ -70,4 +70,46 @@ describe("native OSS session journal", async () => {
       testOnly: true, revision: "a".repeat(40)
     })).toThrow("TEST admission");
   });
+});
+
+it.each(["PROVIDER_CLOSED", "PROVIDER_TIMEOUT", "PROVIDER_OUTCOME_UNKNOWN", "SYNTHETIC_SECRET_TOKEN", "https://synthetic.invalid/token"])("retains only allowlisted diagnostic code %s outside native-v1", async code => {
+  const { directory, sink } = journal();
+  const session = sink.open();
+  session.record({ type: "opening", meetingId: "meeting", speakerId: "speaker",
+    clientSessionId: "00000000-0000-4000-8000-000000000001" });
+  recordOssReceivedEvidence(session, { type: "error", code, message: "https://synthetic.invalid/SYNTHETIC_SECRET_TOKEN" });
+  session.record({ type: "failure" });
+  await sink.close();
+  const native = readFileSync(join(directory, "live-native.jsonl"), "utf8");
+  const diagnostic = readFileSync(join(directory, "live-diagnostic-1.json"), "utf8");
+  expect(JSON.parse(diagnostic)).toEqual({ kind: "oss-live-gateway-diagnostic-v1", sessionOrdinal: 1,
+    rowIndex: 3, relativeTimeMs: expect.any(Number), phase: "gateway-error-received", code: safeGatewayDiagnosticCode(code) });
+  expect(native).not.toContain(code);
+  expect(native + diagnostic).not.toMatch(/SYNTHETIC_SECRET_TOKEN|synthetic.invalid/u);
+  expect(JSON.parse(native.split("\n")[2]!).event).toEqual({ type: "received", message: { type: "error" } });
+});
+it("uses an exact closed allowlist and tolerates unavailable diagnostics", () => {
+  for (const code of [null, {}, 5, "provider_closed", "PROVIDER_CLOSED_SUFFIX", "PROVIDER_CLOSED\n"]) {
+    expect(safeGatewayDiagnosticCode(code)).toBe("UNKNOWN_GATEWAY_CODE");
+  }
+  expect(() => recordOssReceivedEvidence({ record: () => {}, recordGatewayDiagnostic: () => { throw new Error("synthetic"); } },
+    { type: "error", code: "PROVIDER_CLOSED", message: "synthetic" })).not.toThrow();
+});
+
+it("bounds separate diagnostics and never overwrites an existing artifact", async () => {
+  const { directory, sink } = journal();
+  writeFileSync(join(directory, "live-diagnostic-1.json"), "synthetic-existing");
+  for (let index = 0; index < 101; index++) {
+    const session = sink.open();
+    session.record({ type: "opening", meetingId: "meeting", speakerId: "speaker",
+      clientSessionId: "00000000-0000-4000-8000-000000000001" });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      recordOssReceivedEvidence(session, { type: "error", code: "PROVIDER_CLOSED", message: "synthetic" });
+    }
+    session.record({ type: "failure" });
+  }
+  await sink.close();
+  expect(readdirSync(directory).filter(name => name.startsWith("live-diagnostic-"))).toHaveLength(100);
+  expect(readFileSync(join(directory, "live-diagnostic-1.json"), "utf8")).toBe("synthetic-existing");
+  expect(existsSync(join(directory, "live-native.jsonl"))).toBe(true);
 });

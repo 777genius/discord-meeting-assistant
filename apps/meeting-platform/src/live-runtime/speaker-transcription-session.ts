@@ -111,9 +111,8 @@ export class SpeakerTranscriptionSession {
   }
 
   public cancelRecovery(): boolean {
-    if (this.recovery === null) { return false; }
-    this.cancelDelivery();
-    return true;
+    if (this.recovery === null && this.dependencies.isDurableDrainPending?.() !== true) { return false; }
+    this.cancelDelivery(); return true;
   }
 
   private cancelDelivery(): void {
@@ -139,8 +138,7 @@ export class SpeakerTranscriptionSession {
   private isPacketDeliveryBlocked(): boolean { return this.isDeliveryCancelled() || this.recoveryBlocked || this.isAdmissionRejected(); }
 
   private async drainRecovery(packets: readonly LiveVoicePacket[]): Promise<void> {
-    this.recoveryBlocked = false;
-    for (const packet of packets) {
+    this.recoveryBlocked = false; for (const packet of packets) {
       if (this.isAdmissionClosed()) { return; }
       await this.untilCancelled(this.chain);
       this.deliveryFailed = false;
@@ -396,13 +394,15 @@ export class SpeakerTranscriptionSession {
     return this.providerFinalization;
   }
 
-  private scheduleIdleFinalizationIfReady(): void {
+  public scheduleIdleFinalizationIfReady(): void {
     if (this.admissionClosed || this.shouldSkipIdleFinalization()) { return; }
-    this.cancelIdleFinalization();
-    this.inactivityTimer = this.dependencies.timer.schedule(this.dependencies.speakerIdleFinalizeMs, () => {
+    this.cancelIdleFinalization(); this.inactivityTimer = this.dependencies.timer.schedule(this.dependencies.speakerIdleFinalizeMs, () => {
       this.inactivityTimer = null;
       const finalize = async (): Promise<void> => {
         if (this.shouldSkipIdleFinalization()) { return; }
+        const empty = await this.dependencies.pendingLiveSpeakerPackets?.(this.dependencies.meetingId, this.dependencies.speakerId)
+          .then(page => page.packets.length === 0, () => false);
+        if (this.shouldSkipIdleFinalization() || empty === false) { return; }
         await this.finalize("Derived live idle speaker finalize failed");
       };
       this.chain = this.chain.then(finalize, finalize);
@@ -410,7 +410,7 @@ export class SpeakerTranscriptionSession {
   }
 
   private shouldSkipIdleFinalization(): boolean {
-    return this.dependencies.isMeetingFinishing() || this.packetFlow.queuedPacketCount > 0 || this.packetFlow.pendingAdmissionPacketCount > 0 || !this.providerSession.isOpen;
+    return this.dependencies.isDurableDrainPending?.() === true || this.dependencies.isMeetingFinishing() || this.packetFlow.queuedPacketCount > 0 || this.packetFlow.pendingAdmissionPacketCount > 0 || !this.providerSession.isOpen;
   }
 
   private cancelIdleFinalization(): void {

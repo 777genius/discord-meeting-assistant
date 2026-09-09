@@ -168,6 +168,7 @@ it.each(["hardlink", "symlink"])("rejects runtime source %s before retention or 
 it.each(["substitution", "extra-hardlink", "final-symlink", "staging-symlink", "inode-change"])(
   "rejects live publication %s before assembly", async attack => {
     const { args, receipt, journals } = await setup();
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const publish = mocks.deployment.getMockImplementation()!;
     mocks.deployment.mockImplementation(async (input: { phase: string }) => {
       const result = await publish(input);
@@ -188,6 +189,9 @@ it.each(["substitution", "extra-hardlink", "final-symlink", "staging-symlink", "
     });
     await expect(runOssTrustedCollection(args)).rejects.toThrow(/journal/u);
     expect(mocks.assemble).not.toHaveBeenCalled();
+    expect(stderr.mock.calls.some(([value]) => String(value) === JSON.stringify({
+      kind: "oss-collection-diagnostic-v1", stage: "publication", reason: "PUBLICATION_FAILED"
+    }) + "\n")).toBe(true);
     await expect(readFile(receipt)).rejects.toThrow();
   });
 
@@ -399,3 +403,23 @@ it.each(["platform", "craig"].flatMap(service => ["before", "after"].flatMap(pha
     await expect(readFile(join(args[2]!, "assembly.json"))).rejects.toThrow();
     await expect(readFile(receipt)).rejects.toThrow();
   });
+
+it.each(["prefix", "assembly"])("exposes safe postseal %s failure and never writes PASS", async stage => {
+  const { args, receipt, journals } = await setup();
+  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  if (stage === "assembly") { mocks.assemble.mockRejectedValue(new Error("https://synthetic.invalid/SYNTHETIC_SECRET_TOKEN")); }
+  else {
+    const publish = mocks.deployment.getMockImplementation()!;
+    mocks.deployment.mockImplementation(async input => {
+      const result = await publish(input);
+      if (input.phase === "after") { await writeFile(join(journals, "post-call-native.jsonl"), "SYNTHETIC_SECRET_TOKEN\n"); }
+      return result;
+    });
+  }
+  await expect(runOssTrustedCollection(args)).rejects.toThrow();
+  const diagnostics = stderr.mock.calls.map(([value]) => String(value)).filter(value => value.includes("oss-collection-diagnostic-v1"));
+  expect(diagnostics).toEqual([JSON.stringify({ kind: "oss-collection-diagnostic-v1", stage,
+    reason: stage === "prefix" ? "PREFIX_MISMATCH" : "ASSEMBLY_FAILED" }) + "\n"]);
+  expect(JSON.stringify(stderr.mock.calls)).not.toContain("SYNTHETIC_SECRET_TOKEN");
+  await expect(readFile(receipt)).rejects.toThrow();
+});

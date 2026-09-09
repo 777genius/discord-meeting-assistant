@@ -128,6 +128,7 @@ for (const close of ["delayed-normal", "missing"] as const) {
         completions.push(completion.outcome);
         if (completion.outcome === "acceptance-unknown") { failurePersisted.resolve(); }
       } },
+      pendingLiveSpeakerPackets: (id, speaker) => ingress.pendingLiveSpeakerPackets(id, speaker),
       pendingLivePackets: async (id, after) => {
         const page = await ingress.pendingLivePackets(id, after); pages.push(page.length); return page;
       },

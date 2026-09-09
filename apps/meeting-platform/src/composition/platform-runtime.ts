@@ -250,6 +250,7 @@ async function createPlatformKnowledgeComposition(input: {
     ...(historicalMemory === undefined ? {} : { historicalMemory }),
     logger,
     liveSttDurability: mapLiveSttDurability(core.recordings.liveSttDurability),
+    pendingLiveSpeakerPackets: (recordingId, speakerId) => core.recordings.pendingLiveSpeakerPackets(recordingId, speakerId),
     pendingLivePackets: async (recordingId, afterPacket) => {
       const packets = await core.recordings.pendingLivePackets(recordingId, afterPacket);
       return packets.map((packet) => ({

@@ -42,6 +42,40 @@ const rowSchema = z.object({ ...base, session: z.uuid(), event }).strict();
 const seal = z.object({ ...base, type: z.literal("capture_seal"), priorSha256: digest }).strict();
 export type NativeLiveRow = z.infer<typeof rowSchema>;
 
+// Advisory failure metadata only. Never consumed by acceptance or campaign PASS.
+const collectionDiagnosticSchema = z.object({
+  kind: z.literal("oss-collection-diagnostic-v1"),
+  stage: z.enum(["publication", "prefix", "retention", "assembly", "native-parse", "live-session", "quality", "receipt"]),
+  reason: z.enum(["PUBLICATION_FAILED", "PREFIX_MISMATCH", "RETENTION_FAILED", "ASSEMBLY_FAILED",
+    "NATIVE_INVALID", "SESSION_INVALID", "PROVIDER_ERROR", "ZERO_PARTIAL", "QUALITY_FAILED", "RECEIPT_FAILED"]),
+  sessionOrdinal: z.number().int().min(1).max(100).optional(),
+  rowIndex: z.number().int().min(1).max(1000000).optional()
+}).strict();
+type CollectionDiagnostic = z.infer<typeof collectionDiagnosticSchema>;
+export class OssCollectionDiagnosticError extends Error {
+  public constructor(detail: string, public readonly diagnostic: CollectionDiagnostic) { super(detail); }
+}
+export function collectionFailureDiagnostic(error: unknown, stage: CollectionDiagnostic["stage"]): CollectionDiagnostic {
+  if (error instanceof OssCollectionDiagnosticError) {
+    const parsed = collectionDiagnosticSchema.safeParse(error.diagnostic);
+    if (parsed.success) { return parsed.data; }
+  }
+  const reasons = { publication: "PUBLICATION_FAILED", prefix: "PREFIX_MISMATCH", retention: "RETENTION_FAILED",
+    assembly: "ASSEMBLY_FAILED", "native-parse": "NATIVE_INVALID", "live-session": "SESSION_INVALID",
+    quality: "QUALITY_FAILED", receipt: "RECEIPT_FAILED" } as const;
+  return collectionDiagnosticSchema.parse({ kind: "oss-collection-diagnostic-v1", stage, reason: reasons[stage] });
+}
+
+export function qualifyNativeSessions(sessions: ReadonlyMap<string, NativeLiveRow[]>) {
+  return [...sessions.values()].map((rows, index) => {
+    try { return qualifyNativeSession(rows); }
+    catch (error) {
+      throw new OssCollectionDiagnosticError("Native session qualification failed",
+        { ...collectionFailureDiagnostic(error, "live-session"), sessionOrdinal: index + 1 });
+    }
+  });
+}
+
 /** Parse the exact native journal bytes, not an operator-normalized report.
  * Returns every discovered session, including failures; qualification is separate.
  */
@@ -61,16 +95,25 @@ export function collectNativeLive(bytes: Buffer, expectedRevision: string) {
   const sessions = new Map<string, NativeLiveRow[]>();
   let atMs = start.atMs;
   for (let index = 1; index < lines.length - 1; index++) {
-    const row = rowSchema.parse(parse(lines[index]!));
-    check(row.index === index + 1 && row.atMs >= atMs && row.atMs <= end.atMs,
-      "Native journal sequence/time gap");
-    atMs = row.atMs;
-    const rows = sessions.get(row.session) ?? [];
-    check(rows.length > 0 ? row.event.type !== "opening" : row.event.type === "opening",
-      "Native journal missing/duplicate session opening");
-    rows.push(row);
-    sessions.set(row.session, rows);
-    check(sessions.size <= 100, "Native session bound exceeded");
+    let sessionOrdinal: number | undefined;
+    try {
+      const row = rowSchema.parse(parse(lines[index]!));
+      sessionOrdinal = [...sessions.keys()].indexOf(row.session) + 1 || sessions.size + 1;
+      check(row.index === index + 1 && row.atMs >= atMs && row.atMs <= end.atMs,
+        "Native journal sequence/time gap");
+      atMs = row.atMs;
+      const rows = sessions.get(row.session) ?? [];
+      check(rows.length > 0 ? row.event.type !== "opening" : row.event.type === "opening",
+        "Native journal missing/duplicate session opening");
+      rows.push(row);
+      sessions.set(row.session, rows);
+      check(sessions.size <= 100, "Native session bound exceeded");
+    } catch {
+      throw new OssCollectionDiagnosticError("Native journal row invalid", {
+        kind: "oss-collection-diagnostic-v1", stage: "native-parse", reason: "NATIVE_INVALID",
+        rowIndex: index + 1, ...(sessionOrdinal === undefined || sessionOrdinal > 100 ? {} : { sessionOrdinal })
+      });
+    }
   }
   check(end.atMs >= atMs, "Native capture seal predates events");
   return { start, end, sessions };
@@ -80,8 +123,15 @@ export function collectNativeLive(bytes: Buffer, expectedRevision: string) {
  * finalize/close. send promises may settle after the corresponding receive event.
  */
 export function qualifyNativeSession(rows: readonly NativeLiveRow[]) {
+  let rowIndex = rows[0]?.index;
+  function checkSession(condition: unknown, detail: string, reason: CollectionDiagnostic["reason"] = "SESSION_INVALID"): asserts condition {
+    if (!condition) {
+      throw new OssCollectionDiagnosticError(detail, { kind: "oss-collection-diagnostic-v1",
+        stage: "live-session", reason, ...(rowIndex === undefined ? {} : { rowIndex }) });
+    }
+  }
   const opening = rows[0]?.event;
-  check(opening?.type === "opening", "Native session opening required");
+  checkSession(opening?.type === "opening", "Native session opening required");
   const state: {
     ready: Extract<z.infer<typeof message>, { type: "ready" }> | undefined;
     sent: number; ack: number; accepted: number; finalized: number; finalizeSent: number;
@@ -94,8 +144,9 @@ export function qualifyNativeSession(rows: readonly NativeLiveRow[]) {
   const packets = new Set<string>();
   let relativeTime = -1;
   for (const row of rows.slice(1)) {
+    rowIndex = row.index;
     const e = row.event;
-    check(!state.success && e.type !== "failure" && e.type !== "terminated", "Failed or late native session event");
+    checkSession(!state.success && e.type !== "failure" && e.type !== "terminated", "Failed or late native session event");
     switch (e.type) {
       case "opening": throw new Error("Duplicate native opening");
       case "audio_send": case "audio_sent": case "audio_accepted": acceptAudio(e); break;
@@ -104,59 +155,64 @@ export function qualifyNativeSession(rows: readonly NativeLiveRow[]) {
       case "transcript_emitted":
         verifyEmission(e); break;
       case "close": close(e.code); break;
-      case "success": check(state.closed && state.finalizeSent === 1 && state.partials > 0, "Native session incomplete"); state.success = true; break;
+      case "success": succeed(); break;
     }
   }
-  check(state.success && state.ready, "Native session lacks successful terminal");
+  checkSession(state.success && state.ready, "Native session lacks successful terminal");
   verifyNativeTranscriptMapping(rows);
   return { ...opening, providerSessionId: state.ready.sessionId, rows };
+  function succeed(): void {
+    checkSession(state.closed && state.finalizeSent === 1 && state.partials > 0, "Native session incomplete",
+      state.closed && state.finalizeSent === 1 && state.partials === 0 ? "ZERO_PARTIAL" : "SESSION_INVALID");
+    state.success = true;
+  }
   function close(code: number): void {
-    check(state.completed && !state.closed && code === 1000, "Native close failed");
+    checkSession(state.completed && !state.closed && code === 1000, "Native close failed");
     state.closed = true;
   }
 
   function receive(m: z.infer<typeof message>): void {
-    check(!state.closed && !state.completed, "Native receive after terminal");
-    if (m.type === "ready") { check(!state.ready && !state.sent, "Native duplicate ready"); state.ready = m; }
+    checkSession(!state.closed && !state.completed, "Native receive after terminal");
+    if (m.type === "ready") { checkSession(!state.ready && !state.sent, "Native duplicate ready"); state.ready = m; }
     else if (m.type === "ack") {
-      check(!state.finalized && m.seq === state.ack + 1 && m.seq <= state.sent, "Native acknowledgement mismatch"); state.ack++;
-    } else if (m.type === "partial") { check(state.ready && state.sent > 0 && m.segment !== null, "Invalid native partial"); state.partials++; }
+      checkSession(!state.finalized && m.seq === state.ack + 1 && m.seq <= state.sent, "Native acknowledgement mismatch"); state.ack++;
+    } else if (m.type === "partial") { checkSession(state.ready && state.sent > 0 && m.segment !== null, "Invalid native partial"); state.partials++; }
     else if (m.type === "final" || m.type === "segment_final") {
-      check(state.ready && state.sent > 0 && m.durationMs > 0 && m.text.length > 0, "Invalid native final"); state.finals++;
+      checkSession(state.ready && state.sent > 0 && m.durationMs > 0 && m.text.length > 0, "Invalid native final"); state.finals++;
     } else if (m.type === "finalize_complete") {
       verifyFinalizeComplete(m); state.completed = true;
-    } else { check(m.type !== "error", "Native provider error"); }
+    } else { checkSession(m.type !== "error", "Native provider error", "PROVIDER_ERROR"); }
   }
   function acceptAudio(e: Extract<NativeLiveRow["event"], { type: "audio_send" | "audio_sent" | "audio_accepted" }>): void {
     switch (e.type) {
       case "audio_send":
-        check(state.ready && !state.finalized && state.sent === state.accepted && e.seq === state.sent + 1 &&
+        checkSession(state.ready && !state.finalized && state.sent === state.accepted && e.seq === state.sent + 1 &&
           !packets.has(e.packetId) && e.relativeTimeMs > relativeTime &&
           (e.toc & 7) === 0 && opusDurationMs(e.toc) === 20, "Native audio ordering mismatch");
         packets.add(e.packetId); relativeTime = e.relativeTimeMs; state.sent++; break;
       case "audio_sent":
-        check(e.seq <= state.sent && !sentEffects.has(e.seq), "Native send completion mismatch");
+        checkSession(e.seq <= state.sent && !sentEffects.has(e.seq), "Native send completion mismatch");
         sentEffects.add(e.seq); break;
       case "audio_accepted":
-        check(e.seq === state.accepted + 1 && e.seq <= state.ack && sentEffects.has(e.seq), "Native accepted audio mismatch");
+        checkSession(e.seq === state.accepted + 1 && e.seq <= state.ack && sentEffects.has(e.seq), "Native accepted audio mismatch");
         state.accepted++; break;
     }
   }
   function finalize(type: "finalize_send" | "finalize_sent"): void {
     switch (type) {
       case "finalize_send":
-        check(state.ready && !state.finalized && state.sent > 0 && state.sent === state.accepted && state.ack === state.sent,
+        checkSession(state.ready && !state.finalized && state.sent > 0 && state.sent === state.accepted && state.ack === state.sent,
           "Native finalize ordering mismatch"); state.finalized++; break;
-      case "finalize_sent": check(state.finalized === 1 && !state.finalizeSent, "Native duplicate finalize send"); state.finalizeSent++; break;
+      case "finalize_sent": checkSession(state.finalized === 1 && !state.finalizeSent, "Native duplicate finalize send"); state.finalizeSent++; break;
     }
   }
   function verifyFinalizeComplete(m: Extract<z.infer<typeof message>, { type: "finalize_complete" }>): void {
-    check(state.finalized === 1 && m.status === "flushed" && m.sawResult && state.finals > 0,
+    checkSession(state.finalized === 1 && m.status === "flushed" && m.sawResult && state.finals > 0,
       "Native finalize failed");
   }
 
   function verifyEmission(e: Extract<NativeLiveRow["event"], { type: "transcript_emitted" }>): void {
-    check(state.ready && !state.completed && !state.closed && e.endMs > e.startMs, "Invalid emitted native transcript");
+    checkSession(state.ready && !state.completed && !state.closed && e.endMs > e.startMs, "Invalid emitted native transcript");
   }
 
 }

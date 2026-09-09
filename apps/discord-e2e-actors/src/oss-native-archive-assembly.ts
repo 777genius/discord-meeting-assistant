@@ -5,7 +5,7 @@ import { z } from "zod";
 import { canonical, createReceipt, readRegular, requireEvidence as check, sha256, type Artifact } from "./oss-campaign-artifacts.js";
 import { artifactSchema, id, indexSchema, planSchema, runSchema } from "./oss-campaign-profile.js";
 import { normalizeOssDatabase } from "./oss-database.js";
-import { collectNativeLive, qualifyNativeSession } from "./oss-native-live-collection.js";
+import { collectNativeLive, qualifyNativeSessions, collectionFailureDiagnostic, OssCollectionDiagnosticError } from "./oss-native-live-collection.js";
 import { collectNativePostCall, qualifyNativePostCall } from "./oss-native-post-call-collection.js";
 import { snapshotSchema, publicationSchema, originalSchema } from "./oss-native-campaign-sources.js";
 
@@ -41,8 +41,10 @@ export async function assembleOssNativeArchive(input: {
   };
   const liveBytes = await read(assembly.livePath, 256 * 1024 * 1024);
   const postCallBytes = await read(assembly.postCallPath, 1024 * 1024);
-  const live = collectNativeLive(liveBytes, plan.target.platformRevision);
-  const sessions = [...live.sessions.values()].map(qualifyNativeSession);
+  let live: ReturnType<typeof collectNativeLive>;
+  try { live = collectNativeLive(liveBytes, plan.target.platformRevision); }
+  catch (error) { throw new OssCollectionDiagnosticError("Native live parsing failed", collectionFailureDiagnostic(error, "native-parse")); }
+  const sessions = qualifyNativeSessions(live.sessions);
   const postCall = collectNativePostCall(postCallBytes, plan.target.platformRevision);
   const files = new Map<string, Buffer>();
   const artifacts: Artifact[] = [];

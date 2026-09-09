@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { qualifyNativeSession, type NativeLiveRow } from "../src/oss-native-live-collection.js";
+import { collectNativeLive, qualifyNativeSessions, collectionFailureDiagnostic, qualifyNativeSession, type NativeLiveRow } from "../src/oss-native-live-collection.js";
 import { verifyNativeCampaignSources, verifyNativeTranscriptIdentity } from "../src/oss-native-campaign-sources.js";
 import { verifyOssQuality } from "../src/oss-campaign-quality.js";
 import { fixtureManifestV1Schema } from "../src/e2e-fixture-manifest-schema.js";
@@ -191,3 +191,54 @@ it("independently scores finalized live text, terms, timing, speaker and overlap
     expect(() => { verifyNativeTranscriptIdentity(source, { ...run, transcript: { ...run.transcript, version: "19" } }); }).toThrow();
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 60000);
+
+it.each(["provider-error", "zero-partial"])("diagnoses actual sealed native %s failure without granting acceptance", kind => {
+  let rows = session();
+  if (kind === "provider-error") {
+    const index = rows.findIndex(row => row.event.type === "finalize_send");
+    rows = [...rows.slice(0, index), { ...rows[index]!, event: { type: "received", message: { type: "error" } } },
+      { ...rows[index + 1]!, event: { type: "failure" } }];
+  } else {
+    rows = rows.filter(({ event }) => !(event.type === "received" && event.message.type === "partial") &&
+      !(event.type === "transcript_emitted" && !event.isFinal));
+  }
+  const allRows = [...session().map(row => ({ ...row, session: "00000000-0000-4000-8000-000000000004" })), ...rows];
+  allRows.forEach((row, index) => { row.index = index + 2; row.atMs = 1000 + index; });
+  const revision = "a".repeat(40);
+  const prefix = [JSON.stringify({ index: 1, atMs: 0, type: "capture_start", kind: "oss-native-live-v1",
+    project: "vtoss-test-oss-8f49a06-r1", revision }), ...allRows.map(row => JSON.stringify(row))].join("\n") + "\n";
+  const bytes = Buffer.from(prefix + JSON.stringify({ index: allRows.length + 2, atMs: 1000000,
+    type: "capture_seal", priorSha256: sha256(prefix) }) + "\n");
+  const parsed = collectNativeLive(bytes, revision);
+  let failure: unknown;
+  try { qualifyNativeSessions(parsed.sessions); } catch (error) { failure = error; }
+  expect(failure).toBeDefined();
+  expect(collectionFailureDiagnostic(failure, "assembly")).toEqual({ kind: "oss-collection-diagnostic-v1",
+    stage: "live-session", reason: kind === "provider-error" ? "PROVIDER_ERROR" : "ZERO_PARTIAL",
+    sessionOrdinal: 2, rowIndex: kind === "provider-error" ? rows.at(-2)!.index : rows.at(-1)!.index });
+});
+it("never serializes arbitrary collector errors", () => {
+  for (const stage of ["publication", "prefix", "assembly", "quality"] as const) {
+    const diagnostic = collectionFailureDiagnostic(new Error("https://synthetic.invalid/SYNTHETIC_SECRET_TOKEN"), stage);
+    expect(diagnostic.stage).toBe(stage);
+    expect(JSON.stringify(diagnostic)).not.toMatch(/synthetic|https/u);
+  }
+});
+
+it("keeps native-v1 strict and sanitizes malicious error fields at the parser boundary", () => {
+  const rows = session().slice(0, 2);
+  rows.forEach((row, index) => { row.index = index + 2; });
+  const prefix = [JSON.stringify({ index: 1, atMs: 0, type: "capture_start", kind: "oss-native-live-v1",
+    project: "vtoss-test-oss-8f49a06-r1", revision: "a".repeat(40) }),
+    ...rows.map(row => JSON.stringify(row)), JSON.stringify({ ...rows[1], index: 4,
+      event: { type: "received", message: { type: "error", code: "SYNTHETIC_SECRET_TOKEN", message: "https://synthetic.invalid/token" } }
+    })].join("\n") + "\n";
+  const bytes = Buffer.from(prefix + JSON.stringify({ index: 5, atMs: 1000000,
+    type: "capture_seal", priorSha256: sha256(prefix) }) + "\n");
+  let failure: unknown;
+  try { collectNativeLive(bytes, "a".repeat(40)); } catch (error) { failure = error; }
+  expect(failure).toBeDefined();
+  expect(collectionFailureDiagnostic(failure, "assembly")).toEqual({ kind: "oss-collection-diagnostic-v1",
+    stage: "native-parse", reason: "NATIVE_INVALID", rowIndex: 4 });
+  expect(String(failure)).not.toMatch(/SYNTHETIC_SECRET_TOKEN|synthetic.invalid/u);
+});

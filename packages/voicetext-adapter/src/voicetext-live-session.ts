@@ -1,6 +1,6 @@
 import { createLiveSessionConfig } from "./voicetext-live-session-config.js";
 import { createHash } from "node:crypto";
-import { ossReceivedEvidence, type OssSessionEvidence } from "./oss-native-evidence.js";
+import { recordOssReceivedEvidence, type OssSessionEvidence } from "./oss-native-evidence.js";
 import { liveProviderError, VoicetextAdapterError } from "./errors.js";
 import {
   asLiveSessionError, createLiveSessionDeferred, rememberLiveSessionPacketId,
@@ -71,7 +71,7 @@ export class LiveSession implements VoicetextLiveSession {
         this.options.maxTranscriptCharsPerSegment,
         this.options.identity,
       );
-      this.evidence?.record(ossReceivedEvidence(message));
+      recordOssReceivedEvidence(this.evidence, message);
       if (message.type === "ready") { break; }
       if (message.type === "error") {
         if (message.code === "INVALID_CONFIG") {
@@ -324,7 +324,7 @@ export class LiveSession implements VoicetextLiveSession {
   }
 
   private handleServerMessage(message: ReturnType<typeof parseServerMessage>): void {
-    this.evidence?.record(ossReceivedEvidence(message));
+    recordOssReceivedEvidence(this.evidence, message);
     if (message.type === "ack") {
       const waiter = this.ackWaiters.get(message.seq);
       if (waiter === undefined) {
