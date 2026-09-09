@@ -1,5 +1,10 @@
 # Isolated host deployment
 
+**New self-hosted installation:** start with the [core OSS topology](oss-meeting-topology.md).
+It includes the bot and speech gateway. The auth-pool and sidecar instructions below apply only
+when you deliberately enable optional hosted generation. See the
+[dated acceptance record](oss-acceptance.md) for tested capabilities.
+
 This Compose stack is isolated under one explicit `DEPLOY_ROOT`. Its non-external
 networks use Compose-generated, project-scoped names, its service discovery is
 limited to those networks, and it never mounts another project's mutable runtime
@@ -139,7 +144,8 @@ profiles have deterministic routing and contract coverage, plus narrow native
 qualification on one synthetic RU/EN fixture at gateway `550ec217`.
 See the [exact results, revisions, and retained operator evidence](voicetext-gateway.md#implemented-profile-mapping-and-qualification-status).
 Broad language/acoustic coverage and all mixed combinations are unqualified;
-Ukrainian is not voice-qualified. Real Discord acceptance remains PENDING.
+Ukrainian is not voice-qualified. The [recorded Discord campaign](oss-acceptance.md)
+passed; this does not automatically qualify a new deployment.
 
 Rollback is a profile change on the binding-aware release: set both selectors
 back to Deepgram and redeploy the same source revision. Do not code-revert to a

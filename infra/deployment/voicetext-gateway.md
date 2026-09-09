@@ -1,14 +1,6 @@
 # Self-hosted VoiceText Gateway
 
-`compose.voicetext-gateway.yaml` supplies the self-hosted OSS VoiceText endpoint
-without changing Meeting Platform code. A private VoiceText endpoint belongs to
-the legacy hosted lane; it is not a deployment default or an OSS dependency.
-Private SaaS reuse remains deferred/unverified under the
-[OSS topology plan](oss-meeting-topology.md). A bounded follow-up must pin the
-private SaaS contract/version, verify authentication and profile identity,
-batch idempotency, live ACK/finalization, bounded failures and retained evidence
-in an isolated synthetic deployment, then obtain separate provider and private
-Discord acceptance before adoption. No SaaS compatibility is inferred here.
+`compose.voicetext-gateway.yaml` supplies the speech endpoint used by Meeting Platform.
 The overlay builds the separately versioned OSS Rust gateway, gives it a private
 PostgreSQL database, and exposes only the
 VoiceText-compatible HTTPS and WebSocket routes through Caddy.
@@ -115,6 +107,11 @@ ElevenLabs batch uses v3. Live uses the v2 WebSocket contract with the selected
 provider/model identity checked at readiness.
 
 ### Implemented profile mapping and qualification status
+
+**2026-09-09:** the final Discord campaign passed and all delivery PRs merged.
+See the [acceptance record](oss-acceptance.md) for the trusted receipt, exact
+revisions and distinction between current Discord and historical provider runs.
+The conditional requirement for a new deployment below remains applicable.
 
 Historically, root verified independent B0/H0 review and full gates/CI PASS for gateway
 `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` and Discord

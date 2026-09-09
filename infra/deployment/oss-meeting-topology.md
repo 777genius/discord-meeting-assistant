@@ -3,18 +3,11 @@
 This is the one supported clean-checkout Compose workflow for the core
 self-hosted lane. It runs Meeting Platform, a user-owned Craig bot with its own
 PostgreSQL, Redis, and recording custody, and the OSS VoiceText gateway with its
-own PostgreSQL and Caddy TLS edge. It never uses the public hosted Craig bot or
-private VoiceText SaaS. Private SaaS reuse is deferred/unverified; current
-self-hosting does not require SaaS. Future adapter adoption must first pin the
-SaaS contract/version and validate authentication, profile identity, batch
-idempotency, live ACK/finalization, bounded failures and evidence retention in
-an isolated synthetic-fixture deployment, then obtain separate provider and
-private-Discord acceptance before adoption. No private SaaS compatibility is
-claimed by the native OSS results.
+own PostgreSQL and Caddy TLS edge.
 
 The [native provider-fixture results](voicetext-gateway.md#implemented-profile-mapping-and-qualification-status)
 cover four profiles on one synthetic RU/EN fixture only. Real Discord acceptance
-remains PENDING; Ukrainian is not voice-qualified.
+passed for the [recorded deployment](oss-acceptance.md); Ukrainian is not voice-qualified.
 
 ## Immutable sources and identities
 
@@ -43,15 +36,12 @@ identity is configured separately. Any explicit
 `lifecycleProducer.producerRevision` override for this deployment must also be
 `7776b698f6bec26eff52cd383f4e5a7f3f429f42`.
 
-Root reports gateway PR #1 exact CI, production composition, full Rust tests, and
-image checks PASS. For [Craig PR #7](https://github.com/777genius/craig-meeting-gateway/pull/7),
-root reports B0/H0 review, the pinned production build, and 141 bot tests PASS;
-exact CI remains pending root verification. These are upstream review/build
-results, not new live acceptance. The historical provider qualification at
-gateway `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b` and the frozen identities
-and producer override in [the campaign runbook](oss-discord-stt-campaign.md)
-remain historical evidence; do not reuse that campaign configuration as current
-deployment provenance. Root owns final review, full gates, CI, and deployment.
+Gateway PR #1, Craig PR #7 and Discord PR #63 are merged with successful
+exact-head CI. The private Discord sequential/overlap/reconnect campaign passed
+with a trusted receipt. The [acceptance record](oss-acceptance.md) distinguishes
+actual deployed image revisions from collector and merge revisions, and records
+historical four-profile provider results with their applicability limits.
+Use your own deployment identities; never reuse the qualification campaign.
 
 Do not replace either remote context with a mutable branch, an unversioned image, a
 local source directory, or the public Craig service. BuildKit must be 0.28.0 or
@@ -60,7 +50,9 @@ newer so the Git-context checksum is enforced. Set
 generator fails before Compose if it does not identify the clean Discord
 checkout being deployed.
 
-Create exactly two official Discord applications owned by the operator:
+Create exactly two official Discord applications owned by the operator.
+For qualification, create one test bot for each application:
+
 
 1. the **Craig application**, whose token is mounted only into `craig-bot` and
    which has the voice permissions required to record;
