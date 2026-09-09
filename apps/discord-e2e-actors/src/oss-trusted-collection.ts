@@ -28,10 +28,10 @@ export async function runOssTrustedCollection(args: readonly string[]) {
   const before = await collectOssDeployment({ plan, phase: "before" });
   const platform = before.services[0]!.containerId, craig = before.services[1]!.containerId;
 
-  const platformMounts = await mounts(platform), craigMounts = await mounts(craig);
+  const initialMounts = await observeMounts(platform, craig, "before");
+  const platformMounts = initialMounts[0].entries!, craigMounts = initialMounts[1].entries!;
 
-  const journalRoot = await mountRoot(platformMounts, "/evidence/oss-stt");
-  const craigRoot = await mountRoot(craigMounts, "/app/rec");
+  const journalRoot = await mountRoot(platformMounts, "/evidence/oss-stt"), craigRoot = await mountRoot(craigMounts, "/app/rec");
   const captureConfig = JSON.parse(await runOssReadCommand(["exec", platform, "node", "-e",
     'console.log(JSON.stringify([process.env.OSS_STT_NATIVE_EVIDENCE_DIRECTORY,process.env.OSS_STT_NATIVE_EVIDENCE_PROJECT,process.env.OSS_STT_NATIVE_EVIDENCE_REVISION,process.env.E2E_TEST_ONLY_LABEL]))',
   ])) as unknown;
@@ -69,8 +69,8 @@ export async function runOssTrustedCollection(args: readonly string[]) {
     await writeFile(resolve(sourceRoot, path), bytes, { flag: "wx", mode: 0o600 });
     return path;
   };
-  await put("plan.json", planBytes);
-  await put("deployment-before.json", before);
+  await put("plan.json", planBytes); await put("deployment-before.json", before);
+  await put("mounts-before.json", initialMounts.map(item => item.observation));
   const runs = [];
   const control = controlLines();
   const timeout = setTimeout(() => process.stdin.destroy(new Error("Trusted collection control deadline")), 60 * 60 * 1000);
@@ -127,7 +127,9 @@ export async function runOssTrustedCollection(args: readonly string[]) {
       afterCheck = "custody";
       check(same(before.services, after.services) && same(before.config, after.config), "Deployment changed during custody");
       afterCheck = "mount";
-      check(same(platformMounts, await mounts(platform)) && same(craigMounts, await mounts(craig)), "Runtime source mounts changed");
+      const afterMounts = await observeMounts(platform, craig, "after", [platformMounts, craigMounts]);
+      await put("mounts-after.json", afterMounts.map(item => item.observation));
+      requireMounts(afterMounts);
       afterCheck = "retention";
       await put("deployment-after.json", after);
     } catch {
@@ -153,8 +155,7 @@ export async function runOssTrustedCollection(args: readonly string[]) {
     }
     const assembly = {
       kind: "oss-native-assembly-v1", deploymentPaths: ["deployment-before.json", "deployment-after.json"],
-      livePath: journalNames[0], postCallPath: journalNames[1], runs
-    };
+      livePath: journalNames[0], postCallPath: journalNames[1], runs };
     const assemblyPath = await put("assembly.json", assembly);
     const assembled = await assembleOssNativeArchive({
       planPath: resolve(sourceRoot, "plan.json"), sourceRoot,
@@ -168,8 +169,7 @@ export async function runOssTrustedCollection(args: readonly string[]) {
     check(evidence.consistency === "complete", `Campaign PASS unavailable: ${evidence.missingSourceCapabilities.join("; ")}`);
     const receipt = {
       kind: "oss-discord-stt-trusted-pass-v1", status: "passed", origin: "root-runtime-collection",
-      evidence, inventorySha256: sha256(canonical(evidence.artifacts))
-    };
+      evidence, inventorySha256: sha256(canonical(evidence.artifacts)) };
     await createReceipt(receiptPath, receipt);
     return { kind: receipt.kind, status: receipt.status, campaignId: plan.campaignId, collectionSha256: archive.indexSha256 };
   } finally {
@@ -193,10 +193,46 @@ async function* controlLines() {
   check(pending.length === 0, "Truncated root control");
 }
 
-const mounts = async (container: string) => z.array(z.object({
-  Type: z.enum(["bind", "volume", "tmpfs"]), Source: z.string(), Destination: z.string(),
-})).parse(JSON.parse(await runOssReadCommand(["inspect", "--format", "{{json .Mounts}}", container])));
-const mountRoot = async (entries: Awaited<ReturnType<typeof mounts>>, destination: string) => {
+// Bound the inspect response before parsing; retain only closed labels and hashes.
+// Paths and Docker errors can contain secrets, even when the tuple is well formed.
+const mountSchema = z.array(z.object({
+  Type: z.enum(["bind", "volume", "tmpfs"]),
+  Source: z.string().max(4096), Destination: z.string().min(1).max(4096).startsWith("/"),
+}).refine(entry => entry.Type === "tmpfs" || entry.Source.length > 0)).max(256);
+type MountInventory = z.infer<typeof mountSchema>;
+type MountStatus = "ok" | "command" | "parse" | "duplicate-destination" | "tuple-mismatch";
+async function observeMount(container: string, service: "platform" | "craig", expected?: MountInventory) {
+  let status: MountStatus = "command";
+  let entries: MountInventory | undefined;
+  try {
+    const raw = await runOssReadCommand(["inspect", "--format", "{{json .Mounts}}", container]);
+    status = "parse";
+    check(Buffer.byteLength(raw) <= 1024 * 1024, "Mount response bound");
+    entries = mountSchema.parse(JSON.parse(raw));
+    // Destination uniqueness makes this a total ordering without losing entries.
+    entries.sort((a, b) => a.Destination < b.Destination ? -1 : a.Destination > b.Destination ? 1 : 0);
+    status = new Set(entries.map(entry => entry.Destination)).size !== entries.length
+      ? "duplicate-destination" : expected && !same(expected, entries) ? "tuple-mismatch" : "ok";
+  } catch { /* Never retain raw output, rejected tuples, or exception messages. */ }
+  return { entries, observation: { service, status, inventory: entries?.map(entry => ({
+    type: entry.Type, sourceSha256: sha256(Buffer.from(entry.Source)),
+    destinationSha256: sha256(Buffer.from(entry.Destination)),
+  })) ?? null } };
+}
+async function observeMounts(platform: string, craig: string, phase: "before" | "after",
+  expected?: readonly [MountInventory, MountInventory]) {
+  // Observe both services even when the first command, parse, or comparison fails.
+  const observations = [await observeMount(platform, "platform", expected?.[0]),
+    await observeMount(craig, "craig", expected?.[1])] as const;
+  process.stderr.write(`${JSON.stringify({ event: "oss-trusted-mount-observations", phase,
+    services: observations.map(item => item.observation) })}\n`);
+  if (phase === "before") { requireMounts(observations); }
+  return observations;
+}
+function requireMounts(observations: Awaited<ReturnType<typeof observeMounts>>) {
+  check(observations.every(item => item.observation.status === "ok"), "Runtime mount inventory rejected; retain mount observations");
+}
+const mountRoot = async (entries: MountInventory, destination: string) => {
   const matches = entries.filter((entry) => entry.Destination === destination && entry.Type === "bind");
   check(matches.length === 1, "Exact runtime source bind mount required");
   const path = resolve(matches[0]!.Source);

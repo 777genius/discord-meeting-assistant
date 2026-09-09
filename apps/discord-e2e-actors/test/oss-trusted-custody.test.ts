@@ -299,7 +299,7 @@ it.each(["deployment", "custody", "mount", "retention"] as const)(
     });
     await expect(runOssTrustedCollection(args)).rejects.toThrow(
       "OSS native read-only collection failed; retain source artifacts");
-    expect(stderr.mock.calls).toEqual([[JSON.stringify({ event: "oss-trusted-collection-failed",
+    expect(stderr.mock.calls.filter(([value]) => String(value).includes("oss-trusted-collection-failed"))).toEqual([[JSON.stringify({ event: "oss-trusted-collection-failed",
       stage: "post-third-settled", check }) + "\n"]]);
     const stdout = stdoutSpy.mock.calls.map(([value]) => String(value)).join("");
     expect(stdout.match(/"status":"settled"/gu)).toHaveLength(3);
@@ -307,5 +307,95 @@ it.each(["deployment", "custody", "mount", "retention"] as const)(
     expect(JSON.stringify(stderr.mock.calls) + stdout).not.toContain("synthetic-secret");
     expect(mocks.assemble).not.toHaveBeenCalled();
     expect(mocks.verify).not.toHaveBeenCalled();
+    await expect(readFile(receipt)).rejects.toThrow();
+  });
+
+function interceptMounts(change: (entries: ReturnType<typeof mounts>, service: string, phase: string) => unknown) {
+  const docker = mocks.docker.getMockImplementation()!;
+  const counts = new Map<string, number>();
+  mocks.docker.mockImplementation(async (args: string[]) => {
+    const raw = await docker(args) as string;
+    if (args[0] !== "inspect") { return raw; }
+    const service = args.at(-1)!.startsWith("a") ? "platform" : "craig";
+    const count = counts.get(service) ?? 0; counts.set(service, count + 1);
+    const entries = JSON.parse(raw) as ReturnType<typeof mounts>;
+    entries.push({ Type: "volume", Source: "/synthetic-secret/volume", Destination: "/extra" },
+      { Type: "tmpfs", Source: "", Destination: "/scratch" });
+    const result = change(entries, service, count === 0 ? "before" : "after");
+    return typeof result === "string" ? result : JSON.stringify(result);
+  });
+}
+
+it.each([[2, 1, 0], [1, 2, 0], [0, 2, 1], [2, 0, 1], [1, 0, 2], [0, 1, 2]])(
+  "accepts complete multi-mount permutation %s %s %s", async (a, b, c) => {
+    const { args, receipt } = await setup();
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    interceptMounts((entries, service, phase) => phase === "after"
+      ? (service === "platform" ? [a, b, c] : [c, a, b]).map(index => entries[index]) : entries);
+    await expect(runOssTrustedCollection(args)).resolves.toMatchObject({ status: "passed" });
+    const before = await readFile(join(args[2]!, "mounts-before.json"), "utf8");
+    expect(await readFile(join(args[2]!, "mounts-after.json"), "utf8")).toBe(before);
+    expect(JSON.parse(before)).toEqual(["platform", "craig"].map(service => ({ service, status: "ok",
+      inventory: expect.arrayContaining([expect.objectContaining({ type: "bind" }),
+        expect.objectContaining({ type: "volume" }), expect.objectContaining({ type: "tmpfs" })]) as unknown })));
+    expect(before).not.toContain("synthetic-secret");
+    expect(before).not.toContain(root);
+    expect(mocks.assemble).toHaveBeenCalledOnce();
+    await expect(readFile(receipt)).resolves.toBeDefined();
+  });
+
+const mountFailures = ["source", "type", "destination", "add", "remove", "duplicate", "conflicting-duplicate",
+  "json", "shape", "missing", "invalid-type", "empty-destination", "empty-source", "field-bound", "count-bound", "byte-bound", "command"] as const;
+it.each(["platform", "craig"].flatMap(service => ["before", "after"].flatMap(phase =>
+  mountFailures.filter(attack => phase === "after" || !["source", "type", "destination", "add", "remove"].includes(attack))
+    .map(attack => ({ service, phase, attack }))))) (
+  "rejects $service $phase mount $attack before seal, assembly or PASS", async ({ service, phase, attack }) => {
+    const { args, receipt, stdout } = await setup();
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    interceptMounts((entries, observedService, observedPhase) => {
+      if (observedService !== service || observedPhase !== phase) { return entries; }
+      switch (attack) {
+        case "source": entries[1]!.Source += "/changed"; break;
+        case "type": entries[1]!.Type = "bind"; break;
+        case "destination": entries[1]!.Destination = "/changed"; break;
+        case "add": entries.push({ Type: "tmpfs", Source: "", Destination: "/added" }); break;
+        case "remove": entries.pop(); break;
+        case "duplicate": entries.push({ ...entries[1]! }); break;
+        case "conflicting-duplicate": entries.push({ ...entries[1]!, Source: "/changed" }); break;
+        case "json": return "{synthetic-secret";
+        case "shape": return { secret: "synthetic-secret" };
+        case "missing": return [{ Type: "bind", Source: "synthetic-secret" }];
+        case "invalid-type": entries[1]!.Type = "synthetic-secret"; break;
+        case "empty-destination": entries[1]!.Destination = ""; break;
+        case "empty-source": entries[1]!.Source = ""; break;
+        case "field-bound": entries[1]!.Source = "s".repeat(4097); break;
+        case "count-bound": return Array.from({ length: 257 }, (_, index) => ({ Type: "tmpfs", Source: "", Destination: `/mount-${index}` }));
+        case "byte-bound": return " ".repeat(1024 * 1024 + 1);
+        case "command": throw new Error("Bearer synthetic-secret");
+      }
+      return entries;
+    });
+    await expect(runOssTrustedCollection(args)).rejects.toThrow(/retain/u);
+    const events = stderr.mock.calls.map(([value]) => JSON.parse(String(value)) as {
+      event: string; phase: string; services: { service: string; status: string; inventory: unknown }[];
+    });
+    const observation = events.find(event => event.event === "oss-trusted-mount-observations" && event.phase === phase)!;
+    const status = attack === "command" ? "command" : attack.includes("duplicate") ? "duplicate-destination"
+      : ["source", "type", "destination", "add", "remove"].includes(attack) ? "tuple-mismatch" : "parse";
+    expect(observation.services).toHaveLength(2);
+    expect(observation.services.find(item => item.service === service)!.status).toBe(status);
+    expect(observation.services.find(item => item.service !== service)!.status).toBe("ok");
+    if (status === "command" || status === "parse") {
+      expect(observation.services.find(item => item.service === service)!.inventory).toBeNull();
+    }
+    if (phase === "after") {
+      expect(JSON.parse(await readFile(join(args[2]!, "mounts-after.json"), "utf8"))).toEqual(observation.services);
+      expect(JSON.parse(await readFile(join(args[2]!, "mounts-before.json"), "utf8"))).toHaveLength(2);
+    } else { expect(mocks.snapshot).not.toHaveBeenCalled(); }
+    expect(JSON.stringify(stderr.mock.calls)).not.toContain("synthetic-secret");
+    expect(JSON.stringify(stderr.mock.calls)).not.toContain(root);
+    expect(JSON.stringify(stdout.mock.calls)).not.toContain("awaiting-seal");
+    expect(mocks.assemble).not.toHaveBeenCalled(); expect(mocks.verify).not.toHaveBeenCalled();
+    await expect(readFile(join(args[2]!, "assembly.json"))).rejects.toThrow();
     await expect(readFile(receipt)).rejects.toThrow();
   });
