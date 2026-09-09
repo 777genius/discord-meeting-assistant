@@ -17,7 +17,7 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
   const output = `${root}-archive`;
   const versionOutput = `${root}-version-archive`;
   try {
-    const f = await campaignFixture(root);
+    const f = await campaignFixture(root, true);
     for (const run of f.runs) {
       const database = f.files.get(run.databasePath)!.value as { snapshot: { transcript: object } };
       Object.assign(database.snapshot.transcript, { version: 1, recordingId: run.recordingId });
@@ -179,12 +179,22 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
     const archive = await loadArchive(f.planPath, output);
     const report = await verifyOssCampaign(archive, f.manifestBytes);
     expect(report.status).toBe("sources-unverified");
+    for (const [position, entry] of archive.index.runs.entries()) {
+      const assembledRun = archive.json(entry.evidencePath) as typeof f.runs[number];
+      expect(assembledRun.transcript).toEqual(f.runs[position]!.transcript);
+      expect(assembledRun.transcript.transcriptId).toHaveLength(598);
+      expect(assembledRun.transcript.turns.map(turn => turn.turnId.length)).toEqual([601, 601]);
+      expect(assembledRun.summary.transcriptId).toBe(assembledRun.transcript.transcriptId);
+      expect(assembledRun.settled.map(value => value.transcriptIds)).toEqual([
+        [assembledRun.transcript.transcriptId], [assembledRun.transcript.transcriptId],
+      ]);
+    }
     expect(report.consistency).toBe(withProof ? "complete" : "incomplete");
     if (withProof) { expect(report.missingSourceCapabilities).toEqual([]); }
     else { expect(report.missingSourceCapabilities.join()).toContain("Prepared Craig job"); }
     if (withProof) { await verifyIndependentPacketCoverage(input, f.manifestBytes); }
     const firstRunPath = archive.index.runs[0]!.evidencePath;
-    for (const mutation of ["stage", "session", "ledger"] as const) {
+    for (const mutation of ["stage", "session", "ledger", "summary-reference", "settled-reference", "duplicate-turn"] as const) {
       const altered = {
         ...archive, json: (path: string, system?: Parameters<typeof archive.json>[1]) => {
           const value = archive.json(path, system);
@@ -193,6 +203,9 @@ it.each([false, true])("assembles synthetic native sources with checksum proof=%
             if (mutation === "stage") { run.stages[0]!.startedAtMs++; }
             if (mutation === "session") { run.sessions.pop(); }
             if (mutation === "ledger") { run.liveTurns[0]!.text += " forged"; }
+            if (mutation === "summary-reference") { run.summary.transcriptId += "-wrong"; }
+            if (mutation === "settled-reference") { run.settled[0]!.transcriptIds[0] += "-wrong"; }
+            if (mutation === "duplicate-turn") { run.transcript.turns[1]!.turnId = run.transcript.turns[0]!.turnId; }
           }
           return value;
         }

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { collectNativeLive, qualifyNativeSession } from "./oss-native-live-collection.js";
 import { collectNativePostCall, qualifyNativePostCall } from "./oss-native-post-call-collection.js";
 import { sha256, same, canonical, requireEvidence as check, type Archive } from "./oss-campaign-artifacts.js";
-import { digest, id, revision, time, turnSchema, type OssRun } from "./oss-campaign-profile.js";
+import { authoritativeTranscriptId, digest, id, revision, time, turnSchema, type OssRun } from "./oss-campaign-profile.js";
 
 export const snapshotSchema = z.object({
   kind: z.literal("oss-native-readonly-snapshot-v1"),
@@ -174,7 +174,7 @@ export function verifyNativeTranscriptIdentity(database: unknown, run: OssRun): 
     snapshot: z.object({
       revision: time,
       recording: z.object({ recordingId: id }),
-      transcript: z.object({ transcriptId: id, recordingId: id, version: time.positive() }),
+      transcript: z.object({ transcriptId: authoritativeTranscriptId, recordingId: id, version: time.positive() }),
     })
   }).parse(database).snapshot;
   check(source.recording.recordingId === run.recordingId &&

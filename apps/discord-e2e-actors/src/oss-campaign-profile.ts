@@ -3,6 +3,10 @@ import { z } from "zod";
 export const digest = z.string().regex(/^[a-f0-9]{64}$/u);
 export const revision = z.string().regex(/^[a-f0-9]{40}$/u);
 export const id = z.string().min(1).max(256);
+// Final transcription identities embed length-prefixed immutable artifact identities.
+// The published/domain contract is nonempty, with no character cap. Retained
+// source-file and archive byte limits bound these inputs; preserve their exact bytes.
+export const authoritativeTranscriptId = z.string().min(1);
 export const time = z.number().int().nonnegative();
 const scenario = z.enum(["sequential", "overlap", "reconnect"]);
 export const baseRevision = "8f49a06128307bfcd13d8cb7a95e00daa528f2ea";
@@ -76,6 +80,7 @@ export const indexSchema = z.object({
 export const turnSchema = z.object({
   turnId: id, speakerId: id, startMs: time, endMs: time, text: z.string().min(1).max(20000),
 }).strict();
+const authoritativeTurnSchema = turnSchema.extend({ turnId: authoritativeTranscriptId });
 export const runSchema = z.object({
   kind: z.literal("oss-discord-stt-run-v1"),
   campaignId: id, runId: id, scenario,
@@ -91,13 +96,13 @@ export const runSchema = z.object({
     speakerId: id, path: id, originalPaths: z.array(id).min(1),
     timelineOffsetMs: time,
   }).strict()).length(2),
-  transcript: z.object({ transcriptId: id, version: id, turns: z.array(turnSchema).min(2).max(500) }).strict(),
+  transcript: z.object({ transcriptId: authoritativeTranscriptId, version: id, turns: z.array(authoritativeTurnSchema).min(2).max(500) }).strict(),
   liveTurns: z.array(turnSchema).min(2).max(1000),
   sessions: z.array(z.object({
     sessionId: id, speakerId: id, sourceRevision: revision, wirePath: id,
   }).strict()).min(2).max(20),
   summary: z.object({
-    summaryId: z.string().regex(/^outline-[a-f0-9]{32}$/u), transcriptId: id,
+    summaryId: z.string().regex(/^outline-[a-f0-9]{32}$/u), transcriptId: authoritativeTranscriptId,
     version: z.literal(1), title: id, overview: z.string().min(1).max(4000),
     decisions: z.array(z.never()).length(0), actionItems: z.array(z.never()).length(0),
     topics: z.array(z.never()).length(0), openQuestions: z.array(z.never()).length(0),
@@ -113,7 +118,7 @@ export const runSchema = z.object({
   // Two independent database reads bracket collection; no queue replay is implied.
   settled: z.array(z.object({
     observedAtMs: time, terminalAtMs: time,
-    meetingIds: z.array(id), recordingIds: z.array(id), transcriptIds: z.array(id),
+    meetingIds: z.array(id), recordingIds: z.array(id), transcriptIds: z.array(authoritativeTranscriptId),
     summaryIds: z.array(id), finalMessageIds: z.array(id), transcriptSha256: digest,
   }).strict()).length(2),
 }).strict();

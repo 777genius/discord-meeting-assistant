@@ -5,7 +5,7 @@ import { fixtureManifestV1Schema } from "../src/e2e-fixture-manifest-schema.js";
 import { sha256, canonical, type Artifact } from "../src/oss-campaign-artifacts.js";
 import { baseRevision, planSchema, runSchema, wireSchema } from "../src/oss-campaign-profile.js";
 
-export async function campaignFixture(root: string) {
+export async function campaignFixture(root: string, generatedAuthoritativeIds = false) {
   const manifestBytes = await readFile(new URL("./fixtures/manifest.v1.json", import.meta.url));
   const manifest = fixtureManifestV1Schema.parse(JSON.parse(manifestBytes.toString()));
   const fixtureAudio = await Promise.all(manifest.fixtures.map((fixture) =>
@@ -56,7 +56,23 @@ export async function campaignFixture(root: string) {
     };
     actors.push(actor);
     const original = put(`recording-${i}.original`, "craig", Buffer.from(`offline-original-${i}`));
-    const transcript = { transcriptId: `transcript-${i}`, version: "1", turns };
+    // Mirror operationIdentity and stableVoicetextBatchId using synthetic immutable
+    // artifact locators/revisions. No provider access or producer deep import.
+    const identityPart = (value: string) => `${value.length}:${value}`;
+    const operationKey = ["final-transcription:v2", ...[
+      `meeting-${i}`, `recording-${i}`,
+      ...turns.flatMap((turn, j) => [
+        `s3://vtoss-test-oss/campaigns/00000000-0000-4000-8000-000000000000/sequential/run/recordings/recording-${i}/speakers/${turn.speakerId}/audio.ogg`,
+        "00000000-0000-4000-8000-000000000000", "a".repeat(64), j === 0 ? "100000" : "1000000",
+      ]),
+    ].map(identityPart)].join("|");
+    const transcript = {
+      transcriptId: generatedAuthoritativeIds ? `transcript:v2:${identityPart(operationKey)}` : `transcript-${i}`,
+      version: "1",
+      turns: generatedAuthoritativeIds ? turns.map((turn, j) => ({
+        ...turn, turnId: `turn:v2:${identityPart(operationKey)}:${identityPart(String(j + 1))}:2:10`,
+      })) : turns,
+    };
     const summaryKey = `evidence-summary:v3|${`meeting-${i}`.length}:meeting-${i}|${transcript.transcriptId.length}:${transcript.transcriptId}`;
     const summary = {
       summaryId: `outline-${sha256(`meeting-${i}\0${summaryKey}\0${transcript.transcriptId}`).slice(0, 32)}`, transcriptId: transcript.transcriptId,
