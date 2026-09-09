@@ -318,9 +318,23 @@ function rawProbe(
       });
       return meetingPlatformLogs(retainedV8Evidence());
     },
-    collectS3: async (manifestLocator, recordingId) => {
-      expect({ manifestLocator, recordingId }).toEqual({
-        manifestLocator: fixture.values.s3.manifestLocator,
+    collectS3: async (recording, recordingId) => {
+      expect({ recording, recordingId }).toEqual({
+        recording: {
+          manifestChecksumSha256: fixture.values.s3.manifestChecksumSha256,
+          manifestLocator: fixture.values.s3.manifestLocator,
+          manifestRevision: fixture.values.s3.manifestRevision,
+          manifestSizeBytes: fixture.values.s3.manifestSizeBytes,
+          recordingId: fixture.values.s3.recordingId,
+          speakerAudio: fixture.values.s3.tracks.map((track) => ({
+            artifactRevision: track.artifactRevision,
+            audioLocator: track.locator,
+            checksumSha256: track.checksumSha256,
+            sizeBytes: track.sizeBytes,
+            speakerId: track.speakerId,
+            timelineOffsetMs: track.timelineOffsetMs,
+          })),
+        },
         recordingId: "meeting-1",
       });
       return fixture.values.s3;
@@ -381,10 +395,15 @@ function databaseSnapshot(evidence: ReturnType<typeof retainedV8Evidence>, dupli
     publicationStage: evidence.stages.find(({ stage }) => stage === "publication")!,
     publicationTargetId: publicationChannel,
     recording: {
+      manifestChecksumSha256: evidence.recording.s3.manifestChecksumSha256,
       manifestLocator: evidence.recording.s3.manifestLocator,
+      manifestRevision: evidence.recording.s3.manifestRevision,
+      manifestSizeBytes: evidence.recording.s3.manifestSizeBytes,
       recordingId: evidence.recording.recordingId,
       speakerAudio: evidence.recording.s3.tracks.map((track) => ({
-        audioLocator: track.locator, speakerId: track.speakerId,
+        artifactRevision: track.artifactRevision,
+        audioLocator: track.locator, checksumSha256: track.checksumSha256,
+        sizeBytes: track.sizeBytes, speakerId: track.speakerId,
         timelineOffsetMs: track.timelineOffsetMs,
       })),
     },
@@ -400,6 +419,8 @@ function s3Observation(evidence: ReturnType<typeof retainedV8Evidence>) {
     endedAt: evidence.recording.endedAt,
     manifestChecksumSha256: evidence.recording.s3.manifestChecksumSha256,
     manifestLocator: evidence.recording.s3.manifestLocator,
+    manifestRevision: evidence.recording.s3.manifestRevision,
+    manifestSizeBytes: evidence.recording.s3.manifestSizeBytes,
     recordingId: evidence.recording.recordingId,
     sourceChecksumSha256: evidence.recording.s3.sourceChecksumSha256,
     startedAt: evidence.recording.startedAt,

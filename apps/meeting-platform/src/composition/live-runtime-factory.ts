@@ -29,6 +29,7 @@ import type {
   LiveRuntimeClock,
   LiveRuntimeLogger,
   LiveRuntimeTimer,
+  LiveSpeakerPendingReader,
   LiveTranscriptionPort,
 } from "../live-runtime/contracts.js";
 import type { PlatformLiveFinalizedMemoryRuntime } from "./live-finalized-memory.js";
@@ -105,6 +106,10 @@ export function createPlatformLiveMeetingRuntime(input: {
   readonly conversation?: LiveConversationConfiguration;
   readonly finalizedMemory?: PlatformLiveFinalizedMemoryRuntime;
   readonly logger: LiveRuntimeLogger;
+  readonly liveSttDurability?: import("../live-runtime/contracts.js").LiveSttDurabilityPort;
+  readonly markLivePacketDelivered?: (packetId: string) => Promise<void>;
+  readonly pendingLiveSpeakerPackets?: LiveSpeakerPendingReader;
+  readonly pendingLivePackets?: (recordingId: string, afterPacket?: string) => Promise<readonly import("../live-runtime/contracts.js").LiveVoicePacket[]>;
   readonly meetings: PostgresLiveMeetingRepository;
   readonly packetFlowControl: LivePacketFlowControl;
   readonly packetInspector?: LivePacketInspector;
@@ -128,6 +133,10 @@ export function createPlatformLiveMeetingRuntime(input: {
       ? {}
       : { finalizedMemory: input.finalizedMemory }),
     logger: input.logger,
+    ...(input.liveSttDurability === undefined ? {} : { liveSttDurability: input.liveSttDurability }),
+    ...(input.markLivePacketDelivered === undefined ? {} : { markLivePacketDelivered: input.markLivePacketDelivered }),
+    ...(input.pendingLiveSpeakerPackets === undefined ? {} : { pendingLiveSpeakerPackets: input.pendingLiveSpeakerPackets }),
+    ...(input.pendingLivePackets === undefined ? {} : { pendingLivePackets: input.pendingLivePackets }),
     packetFlowControl: input.packetFlowControl,
     ...(input.packetInspector === undefined
       ? {}

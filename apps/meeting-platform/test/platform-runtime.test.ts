@@ -1,3 +1,33 @@
+import { existsSync, readFileSync } from "node:fs";
+import { createOssNativeEvidence } from "../src/composition/oss-native-evidence.js";
+import { PlatformStartupCleanup } from "../src/composition/startup-cleanup.js";
+
+const filesystemGate = vi.hoisted(() => ({
+  stage: "" as string, releases: [] as (() => void)[],
+}));
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...fs,
+    write: (...args: Parameters<typeof fs.write>) => {
+      if (filesystemGate.stage === "write") {
+        filesystemGate.releases.push(() => { fs.write(...args); });
+      } else { fs.write(...args); }
+    },
+    fsync: (fd: number, callback: (error: Error | null) => void) => {
+      if (filesystemGate.stage === "fsync") {
+        filesystemGate.releases.push(() => { fs.fsync(fd, callback); });
+      } else { fs.fsync(fd, callback); }
+    },
+    close: (fd: number, callback: (error: Error | null) => void) => {
+      fs.close(fd, (error) => {
+        if (filesystemGate.stage === "close") {
+          filesystemGate.releases.push(() => { callback(error); });
+        } else { callback(error); }
+      });
+    },
+  };
+});
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -565,18 +595,20 @@ describe("meeting platform shutdown", () => {
       worker,
     });
 
-    await vi.waitFor(() => {
-      expect(calls).toEqual([
-        "worker:pause",
-        "worker:cancel",
-        "outbox:idle",
-        "server:close",
-        "recordings:close",
-      ]);
-    });
-    expect(calls).not.toContain("live:close");
-    resumePause();
-    await closing;
+    try {
+      await vi.waitFor(() => {
+        expect(calls).toEqual([
+          "worker:pause",
+          "worker:cancel",
+          "outbox:idle",
+          "server:close",
+        ]);
+      });
+      expect(calls).not.toContain("live:close");
+    } finally {
+      resumePause();
+      await closing;
+    }
 
     expect(calls.indexOf("worker:cancel")).toBeLessThan(
       calls.indexOf("server:close"),
@@ -588,6 +620,9 @@ describe("meeting platform shutdown", () => {
       calls.indexOf("live:close"),
     );
     expect(calls.indexOf("server:close")).toBeLessThan(
+      calls.indexOf("recordings:close"),
+    );
+    expect(calls.indexOf("live:close")).toBeLessThan(
       calls.indexOf("recordings:close"),
     );
     expect(calls.indexOf("worker:close:true")).toBeLessThan(
@@ -631,10 +666,13 @@ describe("meeting platform shutdown", () => {
       } as unknown as PostCallWorker,
     });
 
-    await vi.waitFor(() => {
-      expect(calls).toContain("recordings:close");
-    });
-    releaseRecordings();
+    const closingObserved = Promise.allSettled([closing]);
+    try {
+      await vi.waitFor(() => { expect(calls).toContain("recordings:close"); });
+    } finally {
+      releaseRecordings();
+      await closingObserved;
+    }
     await expect(closing).rejects.toBeInstanceOf(AggregateError);
 
     expect(performance.now() - startedAt).toBeLessThan(1_000);
@@ -649,7 +687,7 @@ describe("meeting platform shutdown", () => {
     ]));
   });
 
-  it("uses one deadline across stalled shutdown phases and still starts final cleanup", async () => {
+  it("uses one deadline across stalled shutdown phases and retains live dependencies", async () => {
     const calls: string[] = [];
     const never = new Promise<void>(() => {});
     const startedAt = performance.now();
@@ -676,12 +714,9 @@ describe("meeting platform shutdown", () => {
     })).rejects.toBeInstanceOf(AggregateError);
 
     expect(performance.now() - startedAt).toBeLessThan(250);
-    expect(calls).toEqual(expect.arrayContaining([
-      "discord:destroy",
-      "runtime:close",
-      "s3:destroy",
-      "worker:cancel",
-    ]));
+    expect(calls).toEqual(expect.arrayContaining(["s3:destroy", "worker:cancel"]));
+    expect(calls).not.toContain("discord:destroy");
+    expect(calls).not.toContain("runtime:close");
   });
 
   it("observes an immediate post-call rejection while HTTP shutdown is pending", async () => {
@@ -727,4 +762,100 @@ describe("meeting platform shutdown", () => {
       process.off("unhandledRejection", onUnhandled);
     }
   });
+});
+
+function ossShutdownResources(close: () => Promise<void>, serverClose = async () => {}) {
+  return {
+    ossNativeEvidence: { close, abort: vi.fn() },
+    discord: { destroy: () => {} } as unknown as Client,
+    logger: { flush: async () => {} } as unknown as Logger,
+    outboxDispatcher: { whenIdle: async () => {} },
+    pool: { end: async () => {} } as unknown as Pool,
+    queue: { close: async () => {} },
+    queueEvents: { close: async () => {} },
+    recordings: { close: async () => {} },
+    s3: { destroy: () => {} } as unknown as S3Client,
+    server: { close: serverClose, start: async () => {} },
+    shutdownTimeoutMilliseconds: 100,
+    worker: {
+      cancelActivePostCallJobs: () => {}, close: async () => {},
+      pause: async () => {}, waitForActivePostCallJobs: async () => {},
+    } as unknown as PostCallWorker,
+  };
+}
+
+describe("OSS durable shutdown supervision", () => {
+  it("awaits capture durability before reporting successful shutdown", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const close = vi.fn(() => gate);
+    let done = false;
+    const closing = closeMeetingPlatformResources(ossShutdownResources(close)).then(() => { done = true; return null; });
+    await vi.waitFor(() => { expect(close).toHaveBeenCalledOnce(); });
+    expect(done).toBe(false);
+    release();
+    await closing;
+    expect(done).toBe(true);
+  });
+
+  it("does not authorize capture closure after an earlier drain failure", async () => {
+    const close = vi.fn(async () => {});
+    await expect(closeMeetingPlatformResources(ossShutdownResources(close, async () => {
+      throw new Error("HTTP drain failed");
+    }))).rejects.toThrow("shutdown was incomplete");
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("does not seal capture when a dependency teardown fails after producer drains", async () => {
+    const close = vi.fn(async () => {});
+    const input = ossShutdownResources(close);
+    input.pool = { end: async () => { throw new Error("pool drain failed"); } } as unknown as Pool;
+    await expect(closeMeetingPlatformResources(input)).rejects.toThrow("shutdown was incomplete");
+    expect(close).not.toHaveBeenCalled();
+    expect(input.ossNativeEvidence.abort).toHaveBeenCalledOnce();
+  });
+
+  it.each(["failure", "timeout"])("fails shutdown on capture close %s", async (mode) => {
+    const close = vi.fn(() => mode === "failure"
+      ? Promise.reject(new Error("writer failed"))
+      : new Promise<void>(() => {}));
+    const input = ossShutdownResources(close);
+    await expect(closeMeetingPlatformResources(input)).rejects.toThrow("shutdown was incomplete");
+    expect(close).toHaveBeenCalledOnce();
+    expect(input.ossNativeEvidence.abort).toHaveBeenCalledOnce();
+  });
+});
+
+it.each(["write", "fsync", "close", "prior failure"])("actual shutdown failure cancels %s before publication", async (stage) => {
+  const directory = await mkdtemp(join(tmpdir(), "oss-shutdown-cancel-"));
+  const evidence = createOssNativeEvidence(new PlatformStartupCleanup(), {
+    OSS_STT_NATIVE_EVIDENCE_DIRECTORY: directory,
+    OSS_STT_NATIVE_EVIDENCE_PROJECT: "vtoss-test-oss-8f49a06-r1",
+    OSS_STT_NATIVE_EVIDENCE_REVISION: "a".repeat(40),
+    E2E_TEST_ONLY_LABEL: "true", CONVERSATION_ENABLED: "false",
+    SUMMARY_PROVIDER: "transcript-outline",
+  })!;
+  await evidence.live.settle();
+  filesystemGate.stage = stage;
+  try {
+    const input = { ...ossShutdownResources(() => evidence.close()), ossNativeEvidence: evidence };
+    if (stage === "prior failure") {
+      input.server.close = async () => { throw new Error("HTTP drain failed"); };
+    }
+    await expect(closeMeetingPlatformResources(input)).rejects.toThrow("shutdown was incomplete");
+    expect(filesystemGate.releases).toHaveLength(stage === "prior failure" ? 0 : 1);
+    expect(existsSync(join(directory, "live-native.jsonl"))).toBe(false);
+    filesystemGate.stage = "";
+    filesystemGate.releases.splice(0).forEach((release) => { release(); });
+    await expect(evidence.close()).rejects.toThrow("cannot qualify");
+    await expect(evidence.close()).rejects.toThrow("cannot qualify");
+    expect(existsSync(join(directory, "live-native.jsonl"))).toBe(false);
+    expect(readFileSync(join(directory, "post-call-native.jsonl"), "utf8")).not.toContain("capture_seal");
+  } finally {
+    filesystemGate.stage = "";
+    filesystemGate.releases.splice(0).forEach((release) => { release(); });
+    await evidence.close().catch(() => {});
+    evidence.postCall.seal();
+    await rm(directory, { recursive: true });
+  }
 });

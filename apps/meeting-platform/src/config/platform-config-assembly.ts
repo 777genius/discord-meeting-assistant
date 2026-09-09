@@ -17,7 +17,7 @@ export interface LoadedPlatformSecrets {
   readonly redisUrl: string;
   readonly s3AccessKeyId: string;
   readonly s3SecretAccessKey: string;
-  readonly subscriptionRuntimeToken: string;
+  readonly subscriptionRuntimeToken?: string;
   readonly voicetextServiceToken?: string;
   readonly twoHourHistoricalQualification?: TwoHourHistoricalQualificationV1;
   readonly recordingPlayback: {
@@ -75,7 +75,9 @@ function platformSecrets(loaded: LoadedPlatformSecrets): PlatformConfig["secrets
     redisUrl: loaded.redisUrl,
     s3AccessKeyId: loaded.s3AccessKeyId,
     s3SecretAccessKey: loaded.s3SecretAccessKey,
-    subscriptionRuntimeToken: loaded.subscriptionRuntimeToken,
+    ...(loaded.subscriptionRuntimeToken === undefined
+      ? {}
+      : { subscriptionRuntimeToken: loaded.subscriptionRuntimeToken }),
     ...(loaded.voicetextServiceToken === undefined
       ? {}
       : { voicetextServiceToken: loaded.voicetextServiceToken }),
@@ -180,7 +182,14 @@ export function assemblePlatformConfig(
           sourceTreeSha256: loaded.buildProvenance.sourceTreeSha256,
         }),
     speaches: { baseUrl: environment.SPEACHES_BASE_URL, model: environment.SPEACHES_MODEL },
-    subscriptionRuntime: { address: environment.SUBSCRIPTION_RUNTIME_ADDRESS, launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256 },
+    summaryProvider: environment.SUMMARY_PROVIDER,
+    ...(environment.SUBSCRIPTION_RUNTIME_ADDRESS === undefined ||
+      environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256 === undefined
+      ? {}
+      : { subscriptionRuntime: {
+          address: environment.SUBSCRIPTION_RUNTIME_ADDRESS,
+          launcherSha256: environment.SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256,
+        } }),
     ...(environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_ROOT === undefined ||
       environment.MEETING_KNOWLEDGE_E2E_PUBLIC_REPLY_CRASH_WORKER_ID === undefined
       ? {}
@@ -190,6 +199,6 @@ export function assemblePlatformConfig(
         } } }),
     transcriptionProvider: environment.TRANSCRIPTION_PROVIDER,
     transcriptionLegacyExecutionBinding: environment.TRANSCRIPTION_LEGACY_EXECUTION_BINDING,
-    ...(environment.VOICETEXT_WS_URL === undefined ? {} : { voicetext: { batchMaxArtifactBytes: environment.VOICETEXT_BATCH_MAX_ARTIFACT_BYTES, batchMaxConcurrency: environment.VOICETEXT_BATCH_MAX_CONCURRENCY, batchMaxConcurrentMeetings: environment.VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS, batchProfile: environment.VOICETEXT_BATCH_PROFILE, liveMaxConcurrentSessions: environment.VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS, livePacketBackpressureTimeoutMs: environment.VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS, liveProfile: environment.VOICETEXT_LIVE_PROFILE, webSocketUrl: environment.VOICETEXT_WS_URL } }),
+    ...(environment.VOICETEXT_WS_URL === undefined ? {} : { voicetext: { batchMaxArtifactBytes: environment.VOICETEXT_BATCH_MAX_ARTIFACT_BYTES, batchMaxConcurrency: environment.VOICETEXT_BATCH_MAX_CONCURRENCY, batchMaxConcurrentMeetings: environment.VOICETEXT_BATCH_MAX_CONCURRENT_MEETINGS, batchProfile: environment.VOICETEXT_BATCH_PROFILE, liveEnabled: environment.VOICETEXT_LIVE_ENABLED, liveMaxConcurrentSessions: environment.VOICETEXT_LIVE_MAX_CONCURRENT_SESSIONS, livePacketBackpressureTimeoutMs: environment.VOICETEXT_LIVE_PACKET_BACKPRESSURE_TIMEOUT_MS, liveProfile: environment.VOICETEXT_LIVE_PROFILE, webSocketUrl: environment.VOICETEXT_WS_URL } }),
   });
 }

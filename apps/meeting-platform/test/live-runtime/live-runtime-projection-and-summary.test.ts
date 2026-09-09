@@ -8,6 +8,9 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 
 import { PlatformLiveMeetingRuntime } from "../../src/live-meeting-runtime.js";
+import { createLiveIncrementalSummaryPort } from
+  "../../src/composition/discord-live.js";
+import type { PlatformConfig } from "../../src/config.js";
 import {
   DeferredSummaryStub,
   FailingProjectionStub,
@@ -445,6 +448,39 @@ it("keeps caption projection live while one incremental summary generation is in
 
   summarizer.resolveNext();
   await vi.advanceTimersByTimeAsync(0);
+  await runtime.close();
+});
+
+it("projects ordinary live captions without a Subscription Runtime and never fabricates a brief", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime("2026-08-02T10:00:00.000Z");
+  const meetings = new MemoryLiveMeetingRepository();
+  const projector = new ProjectionStub();
+  const summarizer = createLiveIncrementalSummaryPort({
+    secrets: {},
+    summaryProvider: "transcript-outline",
+  } as PlatformConfig);
+  const runtime = new PlatformLiveMeetingRuntime({
+    appendTurn: new AppendLiveTranscriptTurn(meetings),
+    finishMeeting: new FinishLiveMeeting(meetings),
+    logger,
+    refreshMeeting: new RefreshLiveMeeting({ meetings, projector, summarizer }),
+    startMeeting: new StartLiveMeeting({ meetings }),
+    transcriber: new LiveTranscriberStub(),
+  });
+  const firstBatch = packets();
+  firstBatch.packets[0] = { ...firstBatch.packets[0]!, relativeTimeMs: 0 };
+
+  await runtime.acceptLifecycle(started());
+  void runtime.acceptVoiceBatch(firstBatch);
+  await vi.advanceTimersByTimeAsync(300_000);
+
+  expect(projector.requests.some(({ captions }) => captions.length > 0)).toBe(true);
+  expect(meetings.snapshot?.draftSummary).toBeNull();
+  await expect(summarizer.generate({} as never)).resolves.toMatchObject({
+    failure: { code: "LIVE_SUMMARY_PROVIDER_UNAVAILABLE", retryable: false },
+    ok: false,
+  });
   await runtime.close();
 });
 

@@ -22,6 +22,7 @@ export type ArtifactIntegrityFailure =
   | "missing-checksum"
   | "missing-content-type"
   | "missing-size"
+  | "revision-mismatch"
   | "size-mismatch"
   | "unsupported-body";
 

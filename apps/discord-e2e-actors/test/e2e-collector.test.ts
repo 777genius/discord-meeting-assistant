@@ -119,11 +119,14 @@ function snapshot() {
     publicationStage: { attempts: 1, status: "succeeded" },
     publicationTargetId: "1533228891827736657",
     recording: {
+      manifestChecksumSha256: "e".repeat(64),
       manifestLocator: "s3://meeting-artifacts/recording-1/manifest.json",
+      manifestRevision: "manifest-version-1",
+      manifestSizeBytes: 1_024,
       recordingId: "recording-1",
       speakerAudio: [
-        { audioLocator: "s3://meeting-artifacts/recording-1/a.ogg", speakerId: speakerA, timelineOffsetMs: 0 },
-        { audioLocator: "s3://meeting-artifacts/recording-1/b.ogg", speakerId: speakerB, timelineOffsetMs: 750 },
+        { artifactRevision: "track-version-a", checksumSha256: "1".repeat(64), audioLocator: "s3://meeting-artifacts/recording-1/a.ogg", sizeBytes: 10_000, speakerId: speakerA, timelineOffsetMs: 0 },
+        { artifactRevision: "track-version-b", checksumSha256: "2".repeat(64), audioLocator: "s3://meeting-artifacts/recording-1/b.ogg", sizeBytes: 10_000, speakerId: speakerB, timelineOffsetMs: 750 },
       ],
     },
     revision: 6,
@@ -195,11 +198,14 @@ function s3(): S3RecordingEvidence {
     endedAt: "1970-01-01T00:17:00.000Z",
     manifestChecksumSha256: "e".repeat(64),
     manifestLocator: "s3://meeting-artifacts/recording-1/manifest.json",
+    manifestRevision: "manifest-version-1",
+    manifestSizeBytes: 1_024,
     recordingId: "recording-1",
     sourceChecksumSha256: "f".repeat(64),
     startedAt: "1970-01-01T00:16:40.000Z",
     tracks: [
       {
+        artifactRevision: "track-version-a",
         checksumSha256: "1".repeat(64),
         durationMs: 16_001,
         locator: "s3://meeting-artifacts/recording-1/a.ogg",
@@ -208,6 +214,7 @@ function s3(): S3RecordingEvidence {
         timelineOffsetMs: 0,
       },
       {
+        artifactRevision: "track-version-b",
         checksumSha256: "2".repeat(64),
         durationMs: 12_367,
         locator: "s3://meeting-artifacts/recording-1/b.ogg",

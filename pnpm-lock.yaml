@@ -149,6 +149,9 @@ importers:
       '@discord-meeting/conversation-runtime-contracts':
         specifier: workspace:*
         version: link:../../packages/conversation-runtime-contracts
+      '@discord-meeting/discord-adapter':
+        specifier: workspace:*
+        version: link:../../packages/discord-adapter
       '@discordjs/opus':
         specifier: 'catalog:'
         version: 0.10.0(supports-color@7.2.0)
@@ -168,9 +171,6 @@ importers:
       '@discord-meeting/bullmq-adapter':
         specifier: workspace:*
         version: link:../../packages/bullmq-adapter
-      '@discord-meeting/discord-adapter':
-        specifier: workspace:*
-        version: link:../../packages/discord-adapter
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3

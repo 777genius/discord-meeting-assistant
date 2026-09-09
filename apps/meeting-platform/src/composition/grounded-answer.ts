@@ -13,13 +13,16 @@ import { localFinalReplyPolicy } from "./meeting-knowledge.js";
 /** One shared grounded-generation use case for durable Discord and live voice. */
 export function createPlatformGroundedMeetingAnswer(input: {
   readonly config: PlatformConfig;
-  readonly runtimeTransport: SubscriptionRuntimeTransportPort;
+  readonly runtimeTransport?: SubscriptionRuntimeTransportPort;
 }): GroundedMeetingAnswer | undefined {
   if (
     input.config.meetingKnowledge?.localFinalReply !== true &&
     input.config.conversation === undefined
   ) {
     return undefined;
+  }
+  if (input.runtimeTransport === undefined || input.config.subscriptionRuntime === undefined) {
+    throw new Error("Subscription Runtime is required for grounded answers");
   }
   return new GroundedMeetingAnswer(
     new SubscriptionRuntimeGroundedAnswerAdapter(input.runtimeTransport, {

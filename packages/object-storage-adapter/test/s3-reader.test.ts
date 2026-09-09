@@ -83,6 +83,7 @@ describe("S3BinaryArtifactReader", () => {
         sizeBytes: bytes.byteLength,
       },
       locator,
+      revision: "version-1",
     });
 
     await expect(collect(result.body)).resolves.toEqual(bytes);
@@ -99,7 +100,20 @@ describe("S3BinaryArtifactReader", () => {
       ChecksumMode: "ENABLED",
       ExpectedBucketOwner: "123456789012",
       Key: "recordings/meeting-1/track-a.flac",
+      VersionId: "version-1",
     });
+  });
+
+  it("rejects a response for any object version other than the requested revision", async () => {
+    const bytes = new TextEncoder().encode("audio");
+    const reader = new S3BinaryArtifactReader({
+      accessPolicy,
+      client: fakeClient(objectOutput(bytes, { VersionId: "version-2" })),
+    });
+
+    await expect(reader.read({ locator, revision: "version-1" })).rejects.toMatchObject({
+      failure: "revision-mismatch",
+    } satisfies Partial<ArtifactIntegrityError>);
   });
 
   it("detects body corruption while the caller drains the stream", async () => {

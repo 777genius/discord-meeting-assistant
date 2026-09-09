@@ -1,9 +1,10 @@
+import { scheduleDurableLivePacketDrain, initializeLivePacketRecovery, waitForLivePacketRecovery, acceptLivePackets, groupPacketsByMeeting } from "./speaker-transcription-sessions.js";
 import { GlobalPacketFlowControl, LiveSessionAdmission,
   resolveLivePacketFlowControl } from "./live-packet-flow-control.js";
 import type { LiveMeetingLifecycleEvent, LiveMeetingParticipantEvent,
   LiveMeetingRuntimeDependencies, LiveMeetingStartedEvent, LiveRuntimeClock,
   LiveRuntimeTimer, LiveRuntimeTimerHandle, LiveTranscriptionEvent,
-  LiveVoicePacket, LiveVoicePacketBatch } from "./contracts.js";
+  LiveVoicePacketBatch } from "./contracts.js";
 import { createActiveLiveMeeting, type ActiveLiveMeeting } from
   "./live-meeting-state.js";
 import { LiveMeetingFinalizer } from "./live-meeting-finalizer.js";
@@ -26,6 +27,7 @@ const refreshSchedulerIntervalMs = 100;
 export class PlatformLiveMeetingRuntime {
   private closePromise: Promise<void> | null = null;
   private closed = false;
+  private shutdownSignal: AbortSignal | undefined;
   private readonly clock: LiveRuntimeClock;
   private readonly finalizer: LiveMeetingFinalizer;
   private readonly meetings = new Map<string, ActiveLiveMeeting>();
@@ -81,7 +83,8 @@ export class PlatformLiveMeetingRuntime {
       return "retry";
     }
     if (event.type === "meeting.started") {
-      await this.recordingOperations.enqueue(event.recordingId, () => this.start(event));
+      const started = await this.recordingOperations.enqueue(event.recordingId, () => this.start(event));
+      await started?.recovery;
       return "accepted";
     }
     if (event.type === "participant.joined" || event.type === "participant.left") {
@@ -96,10 +99,24 @@ export class PlatformLiveMeetingRuntime {
       return "accepted";
     }
     if (event.type === "meeting.connection_lost") {
-      await this.recordingOperations.enqueue(event.recordingId, () =>
-        this.meetings.get(event.recordingId)?.conversation?.disconnect() ?? Promise.resolve()
-      );
+      await this.recordingOperations.enqueue(event.recordingId, () => {
+        const state = this.meetings.get(event.recordingId);
+        if (state !== undefined) {
+          state.packetRecovery = null;
+          state.packetDrainReady = false;
+          state.transcription.cancelRecovery();
+        }
+        return state?.conversation?.disconnect() ?? Promise.resolve();
+      });
       return "accepted";
+    }
+    if (event.type === "meeting.connection_recovered") {
+      const resumed = await this.recordingOperations.enqueue(event.recordingId, async () => {
+        const state = this.meetings.get(event.recordingId);
+        return { recovery: state !== undefined && !state.finishing && state.packetRecovery === null
+          ? initializeLivePacketRecovery(this.dependencies, state) : state?.packetRecovery };
+      });
+      await resumed.recovery;
     }
     if (event.type === "recording.authoritative_ready") {
       await sealFinalizedMemory(this.dependencies, event);
@@ -112,31 +129,34 @@ export class PlatformLiveMeetingRuntime {
    * degrades the derived live path without altering authoritative evidence.
    */
   public async acceptVoiceBatch(batch: LiveVoicePacketBatch): Promise<void> {
-    if (this.closed) {
+    if (this.closed) { return; }
+    if (this.dependencies.liveSttDurability !== undefined && this.dependencies.pendingLivePackets !== undefined) {
+      // Ingress already committed these payloads. Retain only a coalesced wakeup;
+      // provider delivery must never hold the upstream acknowledgement open.
+      for (const [recordingId, packets] of groupPacketsByMeeting(batch.packets)) {
+        const state = this.meetings.get(recordingId);
+        if (state !== undefined && !state.finishing && state.packetDrainReady && state.packetRecovery !== null) {
+          void scheduleDurableLivePacketDrain(this.dependencies, state, packets.map(packet => packet.speakerId));
+        }
+      }
       return;
     }
-    const packetsByMeeting = new Map<string, LiveVoicePacket[]>();
-    for (const packet of batch.packets) {
-      const packets = packetsByMeeting.get(packet.recordingId);
-      if (packets === undefined) {
-        packetsByMeeting.set(packet.recordingId, [packet]);
-      } else {
-        packets.push(packet);
-      }
-    }
+    const deadlineMs = this.clock.nowMilliseconds() + this.packetFlow.packetBackpressureTimeoutMs;
+    const packetsByMeeting = groupPacketsByMeeting(batch.packets);
     await Promise.all(
       [...packetsByMeeting].map(([recordingId, packets]) =>
-        this.recordingOperations.enqueue(recordingId, () =>
-          this.acceptPackets(recordingId, packets)
-        )
+        this.recordingOperations.enqueue(recordingId, async () => {
+          const initialization = this.meetings.get(recordingId)?.packetRecovery;
+          if (await waitForLivePacketRecovery(initialization, deadlineMs, this.clock, this.timer)) {
+            await acceptLivePackets(this.meetings.get(recordingId), packets, deadlineMs, this.dependencies.logger);
+          }
+        })
       ),
     );
   }
 
   public prepareForAuthoritativeFinal(recordingId: string): void {
-    if (this.closed) {
-      return;
-    }
+    if (this.closed) { return; }
     void this.recordingOperations.enqueue(recordingId, () => {
       this.finalizer.startTerminalFinish(recordingId, this.clock.nowMilliseconds());
       return Promise.resolve();
@@ -158,29 +178,28 @@ export class PlatformLiveMeetingRuntime {
     recordingId: string,
   ): Promise<void> {
     await this.recordingOperations.enqueue(recordingId, () =>
-      this.finalizer.finishRecording(recordingId, this.clock.nowMilliseconds())
+      this.finalizer.finishRecording(recordingId, this.clock.nowMilliseconds(), true)
     );
   }
 
-  public async close(): Promise<void> {
-    if (this.closePromise !== null) {
-      return this.closePromise;
+  public async close(signal?: AbortSignal): Promise<void> {
+    this.shutdownSignal ??= signal;
+    const cancel = (): void => {
+      for (const state of this.meetings.values()) { state.transcriptionFenceClosed = true; state.transcription.cancel(); }
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted === true) { cancel(); }
+    if (this.closePromise === null) {
+      this.closed = true;
+      this.timer.cancel(this.refreshTimer);
+      const nowMs = this.clock.nowMilliseconds();
+      const recordingIds = new Set([...this.meetings.keys(),
+        ...this.recordingOperations.pendingRecordingIds(), ...this.finalizer.pendingRecordingIds(nowMs)]);
+      this.closePromise = closeLiveMeetings({
+        endedAtMs: nowMs, finalizer: this.finalizer, recordingIds, recordingOperations: this.recordingOperations,
+      });
     }
-    this.closed = true;
-    this.timer.cancel(this.refreshTimer);
-    const nowMs = this.clock.nowMilliseconds();
-    const recordingIds = new Set([
-      ...this.meetings.keys(),
-      ...this.recordingOperations.pendingRecordingIds(),
-      ...this.finalizer.pendingRecordingIds(nowMs),
-    ]);
-    this.closePromise = closeLiveMeetings({
-      endedAtMs: nowMs,
-      finalizer: this.finalizer,
-      recordingIds,
-      recordingOperations: this.recordingOperations,
-    });
-    return this.closePromise;
+    try { await this.closePromise; } finally { signal?.removeEventListener("abort", cancel); }
   }
 
   /** Releases derived ownership without committing a terminal transition. */
@@ -197,10 +216,13 @@ export class PlatformLiveMeetingRuntime {
     return this.closePromise;
   }
 
-  private async start(event: LiveMeetingStartedEvent): Promise<void> {
+  private async start(event: LiveMeetingStartedEvent): Promise<{ recovery: Promise<void> | null } | undefined> {
     await this.finalizer.waitForColdFinish(event.recordingId);
-    if (this.meetings.has(event.recordingId)) {
-      return;
+    const existing = this.meetings.get(event.recordingId);
+    if (existing !== undefined) {
+      const recovery = existing.packetRecovery === null && !existing.finishing
+        ? initializeLivePacketRecovery(this.dependencies, existing) : existing.packetRecovery;
+      return { recovery };
     }
     const publicationTargetId = await event.publicationTarget.resolve();
     if (publicationTargetId === null) {
@@ -217,9 +239,7 @@ export class PlatformLiveMeetingRuntime {
       startedAtMs,
     });
     if (result.lifecycleStatus === "ended") {
-      this.dependencies.logger.info("Derived live meeting start reused after terminal commit", {
-        meetingId: event.recordingId,
-      });
+      this.dependencies.logger.info("Derived live meeting start reused after terminal commit", { meetingId: event.recordingId });
       return;
     }
     await registerFinalizedMemory(this.dependencies, event);
@@ -240,34 +260,16 @@ export class PlatformLiveMeetingRuntime {
     });
     state.projection.restoreFinalCaptions(result.finalizedTurns);
     this.meetings.set(state.meetingId, state);
+    if (this.shutdownSignal?.aborted === true) { state.transcriptionFenceClosed = true; state.transcription.cancel(); }
+    const recovery = initializeLivePacketRecovery(this.dependencies, state);
     this.dependencies.logger.info("Derived live meeting started", {
-      meetingId: state.meetingId,
-      reused: result.status === "reused",
+      meetingId: state.meetingId, reused: result.status === "reused",
     });
     const terminalEndTime = this.finalizer.rememberedEndTime(state.meetingId);
     if (terminalEndTime !== undefined) {
       await this.finalizer.beginFinish(state, terminalEndTime);
     }
-  }
-
-  private async acceptPackets(
-    recordingId: string,
-    packets: readonly LiveVoicePacket[],
-  ): Promise<void> {
-    const state = this.meetings.get(recordingId);
-    if (state === undefined || state.finishing) {
-      for (const packet of packets) {
-        this.dependencies.logger.debug("Live packet skipped without active derived meeting", {
-          meetingId: packet.recordingId,
-          speakerId: packet.speakerId,
-        });
-      }
-      return;
-    }
-    await state.transcription.accept({
-      format: { channelCount: 1, codec: "opus", sampleRateHz: 48_000 },
-      packets,
-    });
+    return { recovery };
   }
 
   private async acceptParticipant(
@@ -317,9 +319,7 @@ export class PlatformLiveMeetingRuntime {
     state.conversation?.observeSpeech(event, state.finishing);
     const turnId = event.isFinal ? stableLiveTranscriptTurnId(event) : undefined;
     state.projection.acceptTranscript(event, turnId, state.finishing);
-    if (!event.isFinal || turnId === undefined) {
-      return;
-    }
+    if (!event.isFinal || turnId === undefined) { return; }
     logFinalizedLiveTranscript({
       clock: this.clock,
       event,
@@ -363,18 +363,14 @@ export class PlatformLiveMeetingRuntime {
   private scheduleDueRefresh(state: ActiveLiveMeeting, nowMs: number): void {
     const projectionDue = state.projection.isDue(nowMs);
     const summaryDue = state.summary.isDue(nowMs);
-    if (state.finishing || state.refreshQueued || (!projectionDue && !summaryDue)) {
-      return;
-    }
+    if (state.finishing || state.refreshQueued || (!projectionDue && !summaryDue)) { return; }
     const projectionDueAtMs = state.projection.dueAtMilliseconds;
     const summaryDueAtMs = state.summary.dueAtMilliseconds;
     state.refreshQueued = true;
     state.conversation?.advance(false);
     this.enqueueDomain(state, async () => {
       try {
-        if (state.finishing) {
-          return;
-        }
+        if (state.finishing) { return; }
         if (projectionDue) {
           await this.refreshProjection(state, nowMs);
         }

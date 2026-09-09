@@ -48,7 +48,7 @@ integration events, application models, and domain events are distinct surfaces.
 ## External systems
 
 Craig, Discord, PostgreSQL, object storage, queues, STT, LLMs, telemetry, and the
-future Pipecat runtime are adapter or composition concerns. Core source must not
+optional Pipecat runtime are adapter or composition concerns. Core source must not
 branch on provider names.
 
 ## Enforcement
@@ -77,6 +77,27 @@ undeclared dependency, blocked export, or parser error is a failing gate.
 Ast-grep separately rejects ambient wall clock, environment, randomness, and
 timers in domain and application paths. TypeScript remains the type authority;
 Oxlint supplies fast and type-aware lint checks.
+
+The OSS STT test collector is owned by the existing Discord actor qualification
+boundary. Its native live session source is owned by `adapters.voicetext`; the
+optional append-only filesystem sink remains inside that adapter. Meeting Platform
+composition admits and closes the test journal. No application/domain port or
+hosted V10 contract changes are required. These files use the existing fail-closed
+root classifications; the adapter explicitly permits `node:fs` and `node:path`.
+
+The test-only post-call evidence tap lives in Platform composition and wraps
+existing consumer-owned transcription, summary and publishing ports. Its finite
+filesystem journal captures invocation identity and timestamps, not infrastructure
+request payloads. The actor OSS collection boundary consumes the retained native
+bytes. Native capture-to-parser integration tests live in the Platform test root.
+
+Recording ingress owns the private `live-delivery-index.ts` and
+`live-delivery-jsonl.ts` helpers in `packages/recording-ingress-adapter/src`.
+The accepted compact-cache decision uses adapter-local built-in `node:sqlite`
+for disposable payload-free identity/offset metadata, recreated under runtime
+spool ownership. JSONL remains the sole durable receipt authority. Recovery
+streams records; short synchronous cache transactions never span filesystem
+I/O. SQLite closes before spool ownership is released.
 
 ## Quality-campaign metadata boundary
 

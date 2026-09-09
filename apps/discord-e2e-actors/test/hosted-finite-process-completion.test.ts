@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { fixtureManifestV1Schema } from "../src/e2e-evidence.js";
 import { verifyHostedFiniteProcessCompletion } from
   "../src/hosted-finite-process-completion.js";
 import { retainedV8Evidence } from "./e2e-evidence-fixtures.js";
@@ -20,18 +21,26 @@ describe("hosted finite process completion", () => {
   it("correlates replay attestation completion to the pinned fixture manifest", async () => {
     const root = await mkdtemp(join(tmpdir(), "replay-attestation-completion-"));
     const fixtureManifestPath = join(root, "manifest.json");
-    await writeFile(fixtureManifestPath, await readFile(new URL("./fixtures/manifest.v1.json", import.meta.url)), {
+    const manifestBytes = await readFile(new URL("./fixtures/manifest.v1.json", import.meta.url));
+    const { fixtureSetId } = fixtureManifestV1Schema.parse(JSON.parse(manifestBytes.toString("utf8")));
+    await writeFile(fixtureManifestPath, manifestBytes, {
       mode: 0o600,
     });
-    await expect(verifyHostedFiniteProcessCompletion(JSON.stringify({
-      containerId: "a".repeat(64), fixtureSetId: "discord-meeting-ru-en-v6",
+    const completion = {
+      containerId: "a".repeat(64), fixtureSetId,
       imageId: `sha256:${"b".repeat(64)}`, kind: "replay-attestation-publisher-completion",
       recordingId: "recording-1", remoteAttestationPath: "/tmp/discord-e2e-attestations/run-1.json",
       runId: "run-1", sourceRevision: "c".repeat(40), status: "ready",
-    }), {
-      fixtureManifestPath, kind: "replay-attestation-publisher", recordingId: "recording-1",
+    };
+    const expected = {
+      fixtureManifestPath, kind: "replay-attestation-publisher" as const, recordingId: "recording-1",
       remoteAttestationPath: "/tmp/discord-e2e-attestations/run-1.json", runId: "run-1",
-    })).resolves.toMatchObject({ fixtureSetId: "discord-meeting-ru-en-v6", recordingId: "recording-1" });
+    };
+    await expect(verifyHostedFiniteProcessCompletion(JSON.stringify(completion), expected))
+      .resolves.toMatchObject({ fixtureSetId, recordingId: "recording-1" });
+    await expect(verifyHostedFiniteProcessCompletion(JSON.stringify({
+      ...completion, fixtureSetId: `${fixtureSetId}-mismatch`,
+    }), expected)).rejects.toThrow(/replay attestation fixture set ID correlation mismatch/u);
   });
   it("accepts actor completion only when stdout and retained artifact share exact coordinates", async () => {
     const source = retainedV8Evidence().actorRun;

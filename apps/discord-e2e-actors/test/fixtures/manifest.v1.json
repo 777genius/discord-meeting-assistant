@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "fixtureSetId": "discord-meeting-ru-en-v6",
+  "fixtureSetId": "discord-meeting-ru-en-v6-pipecat-rate120",
   "allowedBotSpeakerIds": [
     "1533877611258708230",
     "1533224474609057793",
@@ -79,8 +79,8 @@
       "sourcePath": "speaker-b.ru-en.txt",
       "sourceSha256": "d801c2754ee7fff93732425e08cca589b63bb9f5a0699d7c81b8ff7dc1afaf85",
       "audioPath": "speaker-b.ru-en.ogg",
-      "audioSha256": "45ee2668fb490ab03a7a453fee23eca286311b9bd5bdca268b604fc80edf2c2f",
-      "durationMs": 48361,
+      "audioSha256": "1e897e9a115703266446cd8dea2856e1f39fc9bae2399782aa0805847dcf4173",
+      "durationMs": 48918,
       "greetingLocale": "en",
       "greetingNameStatus": "known",
       "greetingSpokenToken": "Test B",

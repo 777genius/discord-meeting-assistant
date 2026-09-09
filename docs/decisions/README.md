@@ -29,7 +29,6 @@
 - [ADR-0020: Qualify complete action chains](0020-qualify-complete-action-chains.md)
 - [ADR-0021: Retain complete fragmented action evidence](0021-retain-complete-fragmented-action-evidence.md)
 - [ADR-0023: Backward-compatible readable segments in batch v2](0023-backward-compatible-readable-segments.md)
-- [ADR-0024: Possession-based recording playback](0024-possession-based-recording-playback.md)
 - [ADR-0025: Cumulative live summary and layered Discord evidence](0025-cumulative-live-summary-and-layered-discord-evidence.md)
 - [ADR-0027: Durable meeting source and actor identity](0027-durable-meeting-source-and-actor-identity.md)
 - [ADR-0028: Meeting Knowledge test ownership](0028-meeting-knowledge-test-ownership.md)
@@ -63,6 +62,8 @@
 - [ADR-0064: Composite retrieval authority fence and candidate isolation](0064-composite-retrieval-authority-fence.md)
 - [ADR-0065: Private quality budget-ledger lock adapter](0065-private-quality-budget-ledger-lock-adapter.md)
 - [ADR-0066: Bind qualification corpus cardinality to an authoritative generation](0066-authoritative-qualification-corpus-generation.md)
+- [ADR-0067: Two-application self-hosting topology](0067-two-application-self-hosting-topology.md)
+- [ADR-0068: Verified legacy recording compatibility](0068-verified-legacy-recording-compatibility.md)
 
 - [ADR-0069: Isolated real40 memory diagnostic](0069-isolated-real40-memory-diagnostic.md)
 
@@ -82,6 +83,7 @@
 
 ## Superseded
 
+- [ADR-0024: Possession-based recording playback](0024-possession-based-recording-playback.md)
 - [ADR-0052: Production-faithful meeting-memory qualification evidence](0052-production-faithful-meeting-memory-qualification.md)
 - [ADR-0013: Provider-neutral meeting source boundary](0013-provider-neutral-meeting-source-boundary.md)
 - [ADR-0022: Provider-neutral readable transcript segments](0022-provider-neutral-readable-transcript-segments.md)
@@ -90,3 +92,43 @@
 - [ADR-0033: Adaptive bounded current grounding](0033-adaptive-current-grounding.md)
 - [ADR-0058: Exact Craig hosted stack recovery](0058-exact-craig-hosted-stack-recovery.md)
 - [ADR-0050: Persisted Retrieval V2 serving binding and official SDK custody](0050-persisted-retrieval-v2-serving-binding.md)
+
+OSS STT native collection extends the existing Voicetext adapter and Platform
+composition, with qualification owned by `apps/discord-e2e-actors/src/oss-*`.
+This infrastructure/test composition reuses the public
+`decodeDiscordExternalPublicationId` API from `@discord-meeting/discord-adapter`
+for publication collection and verification. The actor package declares that runtime
+dependency, and its closed policy permits exactly `adapters.discord` and the public
+package; no deep imports or generic codec package are introduced.
+The native session journal is opt-in for the isolated TEST project, bounded,
+append-only, and excludes transport configuration and audio bytes. It is evidence
+input, never a standalone campaign PASS. See the [OSS runbook](../../infra/deployment/oss-discord-stt-campaign.md).
+
+Recording ingress owns the private `live-delivery-index.ts` and
+`live-delivery-jsonl.ts` helpers in `packages/recording-ingress-adapter/src`.
+The accepted compact-cache decision uses adapter-local built-in `node:sqlite`
+for disposable payload-free identity/offset metadata, recreated under runtime
+spool ownership. JSONL remains the sole durable receipt authority. Recovery
+streams records; short synchronous cache transactions never span filesystem
+I/O. SQLite closes before spool ownership is released.
+
+Durable live STT admission is owned by recording ingress in its existing delivery
+JSONL journal (`live-stt-journal.ts` and `live-stt-journal-contracts.ts`). Platform
+consumes a narrow port in `live-runtime/live-stt-durability-contracts.ts`; its
+attempt controller and composition mapper own provider ordering and translation.
+These files use the existing fail-closed adapter/live-runtime/composition roots,
+without a new package or dependency. Exclusive spool ownership serializes journal
+transitions. Fsynced intent precedes open, send and finalize; cold recovery fences
+unresolved effects and opened sessions lacking clean final output. Accepted
+receipts and close tombstones survive drained payloads and active cleanup. SQLite
+is disposable, bounded metadata only. Missing format markers disable legacy live
+admission while preserving authoritative recording and post-call recovery.
+
+Durable admission recovery reuses the journal's close timestamp for publication
+barriers while retaining strict validation of terminal lifecycle evidence. Epoch
+records carry one opaque spool-lifetime token, so recreating disposable metadata
+does not transfer ownership and the journal keeps no recording-ID owner map.
+Platform's durable recovery supplies a keyset cursor to the existing ingress
+pending-packet boundary: each read returns at most 256 eligible payloads, ordered
+by source time, and excludes closed recordings and fenced speakers before reading
+audio. These changes retain the existing source ownership/classifications.

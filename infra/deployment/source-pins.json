@@ -1,0 +1,12 @@
+{
+  "craigMeetingGateway": {
+    "gitUrl": "https://github.com/777genius/craig-meeting-gateway.git",
+    "gitRef": "7776b698f6bec26eff52cd383f4e5a7f3f429f42",
+    "revision": "7776b698f6bec26eff52cd383f4e5a7f3f429f42"
+  },
+  "voiceTextGateway": {
+    "gitUrl": "https://github.com/777genius/voicetext-gateway.git",
+    "gitRef": "3e0ede3ec9086a45bc026f43191a998f2682fd6e",
+    "revision": "3e0ede3ec9086a45bc026f43191a998f2682fd6e"
+  }
+}

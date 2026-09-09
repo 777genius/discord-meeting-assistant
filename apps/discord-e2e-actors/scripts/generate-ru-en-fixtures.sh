@@ -4,10 +4,29 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 package_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 fixture_dir="$package_dir/test/fixtures"
+# Experiments require a fresh destination; checked-in sources always stay inputs.
+# Example: DISCORD_E2E_FIXTURE_OUTPUT_DIR=/tmp/candidate-140 \
+#   DISCORD_E2E_TTS_PIPECAT_RATE=140 ./scripts/generate-ru-en-fixtures.sh
+output_dir=${DISCORD_E2E_FIXTURE_OUTPUT_DIR:-$fixture_dir}
 voice=${DISCORD_E2E_TTS_VOICE:-Milena}
 rate=${DISCORD_E2E_TTS_RATE:-130}
 english_voice=${DISCORD_E2E_TTS_ENGLISH_VOICE:-Daniel}
 english_rate=${DISCORD_E2E_TTS_ENGLISH_RATE:-150}
+
+pipecat_rate=${DISCORD_E2E_TTS_PIPECAT_RATE-$english_rate}
+# Match the bounded range lexically so oversized integers never reach shell arithmetic.
+case "$pipecat_rate" in
+  1[0-9][0-9]|2[0-4][0-9]|250) ;;
+  *)
+    echo "DISCORD_E2E_TTS_PIPECAT_RATE must be an integer from 100 to 250" >&2
+    exit 1
+    ;;
+esac
+if [ "${DISCORD_E2E_TTS_PIPECAT_RATE+x}" = x ] &&
+   [ -z "${DISCORD_E2E_FIXTURE_OUTPUT_DIR:-}" ]; then
+  echo "DISCORD_E2E_TTS_PIPECAT_RATE requires a fresh DISCORD_E2E_FIXTURE_OUTPUT_DIR" >&2
+  exit 1
+fi
 
 case "$rate" in
   ''|*[!0-9]*)
@@ -47,13 +66,25 @@ command -v perl >/dev/null 2>&1 || {
   exit 1
 }
 
+if [ -n "${DISCORD_E2E_FIXTURE_OUTPUT_DIR:-}" ]; then
+  # mkdir (without -p) rejects existing directories and symlinks before synthesis.
+  mkdir -- "$output_dir"
+fi
+
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/discord-e2e-fixtures.XXXXXX")
 trap 'rm -rf "$work_dir"' EXIT HUP INT TERM
 
+# Versioned, ordered TSV provenance for fresh candidates only. Segment positions
+# are one-based synthesis ordinals, not timestamps. No temporary paths or clock.
+provenance="$work_dir/generation.v1.tsv"
+printf 'generation-v1\n' > "$provenance"
 for speaker in speaker-a speaker-b; do
   source_file="$fixture_dir/$speaker.ru-en.txt"
-  aiff_file="$fixture_dir/$speaker.ru-en.aiff"
-  output_file="$fixture_dir/$speaker.ru-en.ogg"
+  aiff_file="$output_dir/$speaker.ru-en.aiff"
+  output_file="$output_dir/$speaker.ru-en.ogg"
+
+  source_hash=$(shasum -a 256 "$source_file" | awk '{print $1}')
+  printf 'source\t%s\t%s\n' "$speaker" "$source_hash" >> "$provenance"
 
   if [ "$speaker" = "speaker-b" ]; then
     segmented_file="$work_dir/$speaker.segments"
@@ -72,10 +103,15 @@ for speaker in speaker-a speaker-b; do
           segment="$segment."
           segment_voice=$english_voice
           segment_rate=$english_rate
+          case "$segment" in
+            'Pipecat assistant.') segment_rate=$pipecat_rate ;;
+          esac
           ;;
       esac
       segment_aiff="$work_dir/$speaker-$segment_number.aiff"
       segment_wav="$work_dir/$speaker-$segment_number.wav"
+      printf 'segment\t%s\t%s\t%s\t%s\t%s\n' \
+        "$speaker" "$segment_number" "$segment_voice" "$segment_rate" "$segment" >> "$provenance"
       say -v "$segment_voice" -r "$segment_rate" -o "$segment_aiff" "$segment"
       ffmpeg -hide_banner -loglevel error -y -i "$segment_aiff" \
         -af "apad=pad_dur=0.2" -ar 48000 -ac 1 -c:a pcm_s16le "$segment_wav"
@@ -84,6 +120,8 @@ for speaker in speaker-a speaker-b; do
     ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "$concat_file" \
       -c:a pcm_s16le "$aiff_file"
   else
+    printf 'segment\t%s\t1\t%s\t%s\t@source\n' \
+      "$speaker" "$voice" "$rate" >> "$provenance"
     say -v "$voice" -r "$rate" -f "$source_file" -o "$aiff_file"
   fi
   ffmpeg -hide_banner -loglevel error -y -i "$aiff_file" \
@@ -95,7 +133,13 @@ for speaker in speaker-a speaker-b; do
   duration=$(ffprobe -v error -show_entries format=duration \
     -of default=noprint_wrappers=1:nokey=1 "$output_file")
   hash=$(shasum -a 256 "$output_file" | awk '{print $1}')
+  printf 'audio\t%s\t%s\t%s\t%s\n' \
+    "$speaker" "$codec" "$duration" "$hash" >> "$provenance"
   echo "$speaker codec=$codec duration=$duration sha256=$hash"
 done
+
+if [ -n "${DISCORD_E2E_FIXTURE_OUTPUT_DIR:-}" ]; then
+  cp "$provenance" "$output_dir/generation.v1.tsv"
+fi
 
 echo "Pin the printed audio hashes in retained E2E evidence before verification."

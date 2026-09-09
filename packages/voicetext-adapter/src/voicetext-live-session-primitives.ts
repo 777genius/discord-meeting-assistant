@@ -2,8 +2,12 @@ import { createHash } from "node:crypto";
 
 import { VoicetextAdapterError } from "./errors.js";
 import type { VoicetextLivePacket } from "./voicetext-live-transcription-configuration.js";
+import type { VoicetextFinalizeComplete } from "./protocol.js";
+
+import type { VoicetextInboundFrame, VoicetextWebSocketConnection } from "./websocket-connector.js";
 
 const maximumOpusPacketBytes = 65_536;
+const maximumRememberedPacketIds = 4_096;
 
 export interface LiveSessionDeferred<Value> {
   readonly promise: Promise<Value>;
@@ -41,18 +45,74 @@ export function validateLiveSessionPacket(packet: VoicetextLivePacket): void {
   }
 }
 
+export function rememberLiveSessionPacketId(
+  packetIds: Set<string>,
+  packetIdOrder: string[],
+  packetId: string,
+): void {
+  packetIds.add(packetId);
+  packetIdOrder.push(packetId);
+  if (packetIdOrder.length > maximumRememberedPacketIds) {
+    const evicted = packetIdOrder.shift();
+    if (evicted !== undefined) {
+      packetIds.delete(evicted);
+    }
+  }
+}
+
+export function requireLiveSessionActive(state: string): void {
+  if (state !== "active") {
+    throw new VoicetextAdapterError("protocol_error", "Live session is not active", false);
+  }
+}
+
+export function validateLiveSessionFinalizeBoundary(
+  state: string,
+  waiter: LiveSessionDeferred<VoicetextFinalizeComplete> | undefined,
+  resultReceived: boolean,
+): asserts waiter is LiveSessionDeferred<VoicetextFinalizeComplete> {
+  if (state !== "finalizing" || waiter === undefined) {
+    throw new VoicetextAdapterError(
+      "protocol_error",
+      "Voicetext sent finalize_complete outside live finalization",
+      false,
+    );
+  }
+  if (resultReceived) {
+    throw new VoicetextAdapterError(
+      "protocol_error",
+      "Voicetext sent duplicate live finalize terminal evidence",
+      false,
+    );
+  }
+}
+
 export function validateLiveSessionFinalizeStatus(
-  status: "flushed" | "no_provider" | "timeout",
+  result: VoicetextFinalizeComplete,
   nextSequence: number,
 ): void {
-  if (status === "timeout") {
+  if (result.status === "flushed" && !result.sawResult) {
+    throw new VoicetextAdapterError(
+      "protocol_error",
+      "Voicetext live finalize reported flushed without provider result evidence",
+      false,
+    );
+  }
+  if (result.status === "no_provider" && result.sawResult) {
+    throw new VoicetextAdapterError(
+      "protocol_error",
+      "Voicetext live finalize reported provider evidence without a provider session",
+      false,
+    );
+  }
+  if (result.status === "timeout") {
     throw new VoicetextAdapterError(
       "provider_error",
       "Voicetext live finalize completed with timeout",
       true,
     );
   }
-  if (status === "no_provider" && nextSequence > 0) {
+  if (result.status === "no_provider" && nextSequence > 0) {
     throw new VoicetextAdapterError(
       "provider_error",
       "Voicetext did not create a provider session for acknowledged audio",
@@ -91,4 +151,22 @@ export function stableLiveSessionUuid(...parts: readonly string[]): string {
     "8" + hex.slice(17, 20),
     hex.slice(20),
   ].join("-");
+}
+
+export async function receiveLiveSessionFrame(
+  socket: VoicetextWebSocketConnection,
+  signal: AbortSignal,
+): Promise<VoicetextInboundFrame> {
+  signal.throwIfAborted();
+  const cancelled = createLiveSessionDeferred<never>();
+  const abort = () => { cancelled.reject(signal.reason); };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    // A receive fulfilled before cancellation wins and is fully processed before
+    // the pump settles. Otherwise abort bounds the join even if the transport
+    // ignores it. Frames delivered after that boundary are not received evidence.
+    return await Promise.race([socket.receive(signal), cancelled.promise]);
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
 }

@@ -1,9 +1,9 @@
+import { stableLiveSessionUuid } from "./voicetext-live-session-primitives.js";
 import {
   createVoicetextLiveOperationSignal,
   validateVoicetextLiveIdentity,
   validateVoicetextLiveTranscriptionOptions,
   type OpenVoicetextLiveSessionRequest,
-  type ValidatedVoicetextLiveTranscriptionOptions,
   type VoicetextLiveSession,
   type VoicetextLiveTranscriptionOptions,
 } from "./voicetext-live-transcription-configuration.js";
@@ -21,38 +21,39 @@ export type {
 } from "./voicetext-live-transcription-configuration.js";
 
 export class VoicetextLiveTranscriptionAdapter {
-  private readonly options: ValidatedVoicetextLiveTranscriptionOptions;
-
   public constructor(
-    options: VoicetextLiveTranscriptionOptions,
+    private readonly options: VoicetextLiveTranscriptionOptions,
     private readonly connector: VoicetextWebSocketConnector = new WsVoicetextWebSocketConnector(),
-  ) {
-    this.options = validateVoicetextLiveTranscriptionOptions(options);
-  }
+  ) {}
 
   public async openSession(
     request: OpenVoicetextLiveSessionRequest,
   ): Promise<VoicetextLiveSession> {
+    const options = validateVoicetextLiveTranscriptionOptions(this.options);
     validateVoicetextLiveIdentity(request.meetingId, "meetingId");
     validateVoicetextLiveIdentity(request.speakerId, "speakerId");
     validateVoicetextLiveIdentity(request.idempotencyKey, "idempotencyKey");
     request.signal?.throwIfAborted();
     const connectSignal = createVoicetextLiveOperationSignal(
       request.signal,
-      this.options.handshakeTimeoutMs,
+      options.handshakeTimeoutMs,
     );
+    const evidence = options.evidenceSink?.open();
+    evidence?.record({ type: "opening", meetingId: request.meetingId, speakerId: request.speakerId,
+      clientSessionId: stableLiveSessionUuid(request.idempotencyKey, request.meetingId, request.speakerId) });
     const socket = await this.connector.connect({
-      authorization: this.options.authorization,
-      endpoint: this.options.endpoint,
-      handshakeTimeoutMs: this.options.handshakeTimeoutMs,
-      maxInboundFrameBytes: this.options.maxInboundFrameBytes,
+      authorization: options.authorization,
+      endpoint: options.endpoint,
+      handshakeTimeoutMs: options.handshakeTimeoutMs,
+      maxInboundFrameBytes: options.maxInboundFrameBytes,
       signal: connectSignal,
-    });
-    const session = new LiveSession(socket, request, this.options);
+    }).catch((error: unknown) => { evidence?.record({ type: "failure" }); throw error; });
+    const session = new LiveSession(socket, request, options, evidence);
     try {
       await session.start();
       return session;
     } catch (error) {
+      evidence?.record({ type: "failure" });
       socket.terminate();
       throw error;
     }

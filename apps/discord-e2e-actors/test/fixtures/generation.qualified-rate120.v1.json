@@ -1,0 +1,33 @@
+{
+  "format": "lossless-tsv-lines-v1",
+  "originalSha256": "722ae08fc00e4ce37a70dae1cb33b32f281748d791084833a1459746af6fe10a",
+  "lines": [
+    "generation-v1\n",
+    "source\tspeaker-a\t5aa51fdfca1325cf5b78a35927f1a256989dffc5adcf50cd6d8e5c02b0493a44\n",
+    "segment\tspeaker-a\t1\tMilena\t130\t@source\n",
+    "audio\tspeaker-a\topus\t26.234500\tb9df6dc3f263a3b127ee7d7958909e015ff79e04761b790bd654828fa83331ba\n",
+    "source\tspeaker-b\td801c2754ee7fff93732425e08cca589b63bb9f5a0699d7c81b8ff7dc1afaf85\n",
+    "segment\tspeaker-b\t1\tMilena\t130\tЯ проверю \n",
+    "segment\tspeaker-b\t2\tDaniel\t150\tRedis queue.\n",
+    "segment\tspeaker-b\t3\tMilena\t130\t. Я лично проверю \n",
+    "segment\tspeaker-b\t4\tDaniel\t150\tidempotency key.\n",
+    "segment\tspeaker-b\t5\tMilena\t130\t. Это моя задача. Срок - до седьмого августа две тысячи двадцать шестого года. Результат я оставлю в \n",
+    "segment\tspeaker-b\t6\tDaniel\t150\tDiscord thread.\n",
+    "segment\tspeaker-b\t7\tMilena\t130\t. Повторяю термин - \n",
+    "segment\tspeaker-b\t8\tDaniel\t150\tDiscord thread.\n",
+    "segment\tspeaker-b\t9\tMilena\t130\t. \n",
+    "segment\tspeaker-b\t10\tDaniel\t150\tIdempotency key.\n",
+    "segment\tspeaker-b\t11\tMilena\t130\t проверю до седьмого августа две тысячи двадцать шестого года. Повторяю мою задачу - я проверю \n",
+    "segment\tspeaker-b\t12\tDaniel\t150\tRedis queue.\n",
+    "segment\tspeaker-b\t13\tMilena\t130\t и \n",
+    "segment\tspeaker-b\t14\tDaniel\t150\tidempotency key.\n",
+    "segment\tspeaker-b\t15\tMilena\t130\t до седьмого августа две тысячи двадцать шестого года. Результат оставлю в \n",
+    "segment\tspeaker-b\t16\tDaniel\t150\tDiscord thread.\n",
+    "segment\tspeaker-b\t17\tMilena\t130\t. Открытый вопрос - нужен ли \n",
+    "segment\tspeaker-b\t18\tDaniel\t120\tPipecat assistant.\n",
+    "segment\tspeaker-b\t19\tMilena\t130\t после первой версии? Повторяю термин - \n",
+    "segment\tspeaker-b\t20\tDaniel\t120\tPipecat assistant.\n",
+    "segment\tspeaker-b\t21\tMilena\t130\t.\n",
+    "audio\tspeaker-b\topus\t48.918417\t1e897e9a115703266446cd8dea2856e1f39fc9bae2399782aa0805847dcf4173\n"
+  ]
+}

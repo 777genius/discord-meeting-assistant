@@ -715,6 +715,7 @@ export class VirtualClock implements LiveRuntimeClock, LiveRuntimeTimer {
         next.dueAtMs += next.intervalMs;
       }
       next.callback();
+      await new Promise<void>(setImmediate);
       callbacks += 1;
       if (callbacks % 100 === 0) {
         await Promise.resolve();

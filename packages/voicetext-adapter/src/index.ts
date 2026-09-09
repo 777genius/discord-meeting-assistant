@@ -62,3 +62,6 @@ export type {
   VoicetextWebSocketConnectRequest,
 } from "./websocket-connector.js";
 export { WsVoicetextWebSocketConnector } from "./ws-websocket-connector.js";
+
+export { OssNativeEvidenceJournal, type OssNativeEvidenceSink, type OssSessionEvidence,
+  type OssSessionEvidenceEvent } from "./oss-native-evidence.js";

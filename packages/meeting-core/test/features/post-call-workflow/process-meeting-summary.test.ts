@@ -39,12 +39,18 @@ const recording = {
   recordingId: "recording-1",
   speakerAudio: [
     {
+      artifactRevision: "revision-a",
       audioLocator: "recordings/recording-1/speaker-a.flac",
+      checksumSha256: "a".repeat(64),
+      sizeBytes: 101,
       speakerId: "speaker-a",
       timelineOffsetMs: 0,
     },
     {
+      artifactRevision: "revision-b",
       audioLocator: "recordings/recording-1/speaker-b.flac",
+      checksumSha256: "b".repeat(64),
+      sizeBytes: 202,
       speakerId: "speaker-b",
       timelineOffsetMs: 900,
     },
@@ -270,6 +276,8 @@ describe("ProcessMeetingSummary", () => {
     });
 
     expect(transcriber.requests).toHaveLength(1);
+    expect(transcriber.requests[0]?.idempotencyKey).toContain("revision-a");
+    expect(transcriber.requests[0]?.idempotencyKey).toContain("a".repeat(64));
     expect(summarizer.requests).toHaveLength(1);
     expect(summarizer.requests[0]?.idempotencyKey).toContain(
       "evidence-summary:v3",

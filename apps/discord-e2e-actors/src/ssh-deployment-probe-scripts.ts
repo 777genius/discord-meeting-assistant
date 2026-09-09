@@ -333,7 +333,8 @@ import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-const [locator, expectedRecordingId] = process.argv.slice(1);
+const [rawIdentity, expectedRecordingId] = process.argv.slice(1);
+const identity = JSON.parse(rawIdentity);
 const secret = async (path) => (await readFile(path, "utf8")).trim();
 const client = new S3Client({
   credentials: {
@@ -346,15 +347,33 @@ const client = new S3Client({
 });
 const parseLocator = (value) => {
   const match = /^s3:\/\/([^/]+)\/(.+)$/u.exec(value);
-  if (!match || match[1] !== process.env.S3_BUCKET) throw new Error("locator outside configured bucket");
+  if (!match || match[1] !== process.env.S3_BUCKET) {
+    throw new Error("locator outside configured bucket");
+  }
   return { Bucket: match[1], Key: match[2] };
 };
-const get = async (value) => {
-  const response = await client.send(new GetObjectCommand(parseLocator(value)));
-  if (!response.Body) throw new Error("S3 object has no body");
-  return Buffer.from(await response.Body.transformToByteArray());
-};
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const get = async (expected) => {
+  const response = await client.send(new GetObjectCommand({
+    ...parseLocator(expected.locator),
+    ChecksumMode: "ENABLED",
+    VersionId: expected.revision,
+  }));
+  if (
+    !response.Body ||
+    response.VersionId !== expected.revision ||
+    response.ContentLength !== expected.sizeBytes ||
+    response.Metadata?.["artifact-sha256"] !== expected.checksumSha256 ||
+    response.Metadata?.["artifact-size-bytes"] !== String(expected.sizeBytes)
+  ) {
+    throw new Error("S3 object identity does not match the database snapshot");
+  }
+  const bytes = Buffer.from(await response.Body.transformToByteArray());
+  if (bytes.length !== expected.sizeBytes || digest(bytes) !== expected.checksumSha256) {
+    throw new Error("S3 object bytes do not match the database snapshot");
+  }
+  return bytes;
+};
 const durationMs = (bytes) => {
   let offset = 0;
   let maximum = 0n;
@@ -364,41 +383,72 @@ const durationMs = (bytes) => {
     }
     const count = bytes[offset + 26];
     let body = 0;
-    for (let index = 0; index < count; index += 1) body += bytes[offset + 27 + index];
+    for (let index = 0; index < count; index += 1) {
+      body += bytes[offset + 27 + index];
+    }
     const end = offset + 27 + count + body;
-    if (end > bytes.length) throw new Error("truncated Ogg track in S3");
+    if (end > bytes.length) {
+      throw new Error("truncated Ogg track in S3");
+    }
     const granule = bytes.readBigUInt64LE(offset + 6);
-    if (granule !== 0xffffffffffffffffn && granule > maximum) maximum = granule;
+    if (granule !== 0xffffffffffffffffn && granule > maximum) {
+      maximum = granule;
+    }
     offset = end;
   }
-  if (maximum === 0n) throw new Error("S3 Ogg track has no duration");
+  if (maximum === 0n) {
+    throw new Error("S3 Ogg track has no duration");
+  }
   return Math.round(Number(maximum) / 48);
 };
-const manifestBytes = await get(locator);
+const manifestBytes = await get({
+  checksumSha256: identity.manifestChecksumSha256,
+  locator: identity.manifestLocator,
+  revision: identity.manifestRevision,
+  sizeBytes: identity.manifestSizeBytes,
+});
 const manifest = JSON.parse(manifestBytes.toString("utf8"));
 if (manifest.recordingId !== expectedRecordingId || manifest.source?.kind !== "craig-original-multitrack") {
   throw new Error("S3 manifest is not the requested authoritative Craig recording");
 }
+const expectedBySpeaker = new Map(identity.speakerAudio.map((track) => [track.speakerId, track]));
+if (expectedBySpeaker.size !== identity.speakerAudio.length ||
+  new Set(manifest.tracks.map((track) => track.speakerId)).size !== manifest.tracks.length ||
+  manifest.tracks.length !== identity.speakerAudio.length) {
+  throw new Error("Authoritative track identity is not bijective");
+}
 const tracks = [];
 for (const declared of manifest.tracks) {
-  const bytes = await get(declared.locator);
-  const checksum = digest(bytes);
-  if (checksum !== declared.checksumSha256 || bytes.length !== declared.sizeBytes) {
-    throw new Error("S3 track bytes do not match authoritative manifest");
+  const expected = expectedBySpeaker.get(declared.speakerId);
+  if (!expected || declared.locator !== expected.audioLocator ||
+    declared.artifactRevision !== expected.artifactRevision ||
+    declared.checksumSha256 !== expected.checksumSha256 ||
+    declared.sizeBytes !== expected.sizeBytes ||
+    declared.timelineOffsetMs !== expected.timelineOffsetMs) {
+    throw new Error("S3 manifest track does not match the database snapshot");
   }
+  const bytes = await get({
+    checksumSha256: expected.checksumSha256,
+    locator: expected.audioLocator,
+    revision: expected.artifactRevision,
+    sizeBytes: expected.sizeBytes,
+  });
   tracks.push({
-    checksumSha256: checksum,
+    artifactRevision: expected.artifactRevision,
+    checksumSha256: expected.checksumSha256,
     durationMs: durationMs(bytes),
-    locator: declared.locator,
-    sizeBytes: bytes.length,
-    speakerId: declared.speakerId,
-    timelineOffsetMs: declared.timelineOffsetMs,
+    locator: expected.audioLocator,
+    sizeBytes: expected.sizeBytes,
+    speakerId: expected.speakerId,
+    timelineOffsetMs: expected.timelineOffsetMs,
   });
 }
 console.log(JSON.stringify({
   endedAt: manifest.endedAt,
-  manifestChecksumSha256: digest(manifestBytes),
-  manifestLocator: locator,
+  manifestChecksumSha256: identity.manifestChecksumSha256,
+  manifestLocator: identity.manifestLocator,
+  manifestRevision: identity.manifestRevision,
+  manifestSizeBytes: identity.manifestSizeBytes,
   recordingId: manifest.recordingId,
   sourceChecksumSha256: manifest.source.checksumSha256,
   startedAt: manifest.startedAt,
@@ -406,6 +456,7 @@ console.log(JSON.stringify({
 }));
 await client.destroy();
 `;
+
 
 const replayConnectionScript = String.raw`
 import { createHash } from "node:crypto";

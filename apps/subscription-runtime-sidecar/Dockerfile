@@ -6,6 +6,9 @@ COPY apps/subscription-runtime-sidecar/package.json apps/subscription-runtime-si
 COPY packages/subscription-runtime-adapter/package.json packages/subscription-runtime-adapter/package.json
 COPY packages/meeting-core/package.json packages/meeting-core/package.json
 RUN pnpm install --frozen-lockfile
+COPY packages/meeting-core ./packages/meeting-core
+COPY packages/subscription-runtime-adapter ./packages/subscription-runtime-adapter
+RUN pnpm --filter=@discord-meeting/subscription-runtime-sidecar... --if-present run build
 
 FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS runtime
 ARG SOURCE_REVISION
@@ -28,6 +31,8 @@ COPY packages/subscription-runtime-adapter/proto/agent_runtime.proto ./packages/
 COPY --chown=10001:10001 infra/subscription-runtime/audited-*.mjs /opt/subscription-runtime/
 COPY packages/subscription-runtime-adapter ./packages/subscription-runtime-adapter
 COPY packages/meeting-core ./packages/meeting-core
+COPY --from=dependencies /app/packages/meeting-core/dist ./packages/meeting-core/dist
+COPY --from=dependencies /app/packages/subscription-runtime-adapter/dist ./packages/subscription-runtime-adapter/dist
 COPY tsconfig.json ./tsconfig.json
 RUN chmod 0555 /opt/subscription-runtime/audited-xhigh-launcher.mjs \
     && chmod 0444 /opt/subscription-runtime/audited-codex-jsonl-bridge-output.mjs \

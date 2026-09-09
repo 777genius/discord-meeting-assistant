@@ -29,6 +29,10 @@ export interface ActiveLiveMeeting {
   readonly greetings: ParticipantGreetingBridge | undefined;
   readonly meetingId: string;
   readonly projection: LiveProjectionScheduler;
+  packetRecovery: Promise<void> | null;
+  packetDrain: Promise<void> | null;
+  packetDrainRequested: boolean;
+  packetDrainReady: boolean;
   refreshQueued: boolean;
   readonly startedAtMs: number;
   readonly summary: LiveSummaryScheduler;
@@ -102,7 +106,12 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
   const transcription = new SpeakerTranscriptionSessions({
     clock: input.clock,
     isMeetingFinishing: () => state.finishing,
+    ...(input.dependencies.pendingLiveSpeakerPackets === undefined ? {} : { pendingLiveSpeakerPackets: input.dependencies.pendingLiveSpeakerPackets }),
     logger: input.dependencies.logger,
+    ...(input.dependencies.liveSttDurability === undefined ? {} : { liveSttDurability: input.dependencies.liveSttDurability }),
+    ...(input.dependencies.markLivePacketDelivered === undefined ? {} : {
+      markLivePacketDelivered: input.dependencies.markLivePacketDelivered,
+    }),
     maximumQueuedPackets: input.packetFlow.maximumQueuedPacketsPerSpeaker,
     packetAdmission: input.packetAdmission,
     meetingId,
@@ -127,6 +136,10 @@ export function createActiveLiveMeeting(input: CreateActiveLiveMeetingInput): Ac
     greetings,
     meetingId,
     projection,
+    packetRecovery: null,
+    packetDrain: null,
+    packetDrainRequested: false,
+    packetDrainReady: false,
     refreshQueued: false,
     startedAtMs: input.startedAtMs,
     summary,

@@ -86,10 +86,13 @@ export const s3OutputSchema = z.object({
   endedAt: z.iso.datetime(),
   manifestChecksumSha256: z.string(),
   manifestLocator: z.string(),
+  manifestRevision: z.string(),
+  manifestSizeBytes: z.number().int().positive(),
   recordingId: z.string(),
   sourceChecksumSha256: z.string(),
   startedAt: z.iso.datetime(),
   tracks: z.array(z.object({
+    artifactRevision: z.string(),
     checksumSha256: z.string(),
     durationMs: z.number().int().positive(),
     locator: z.string(),

@@ -12,14 +12,19 @@ RUN apt-get update \
 
 FROM runtime-base AS build
 
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY --chown=10001:10001 . .
 # The mandatory PostgreSQL/Testcontainers qualification runs on the host/CI
 # before image construction; BuildKit intentionally has no Docker socket.
+# Platform tests import native collectors from the test-only actor workspace.
 RUN node vendor/infinity-context/prepare-official-sdk.mjs \
-  && pnpm install --frozen-lockfile --filter @discord-meeting/meeting-platform... \
-  && pnpm --filter @discord-meeting/infinity-context-adapter build \
-  && pnpm --filter @discord-meeting/meeting-platform check:image \
+  && pnpm install --frozen-lockfile --filter @discord-meeting/meeting-platform... --filter @discord-meeting/discord-e2e-actors... \
+  && pnpm --filter=@discord-meeting/meeting-platform... --if-present run build \
+  && VITEST_MAX_WORKERS=1 pnpm --filter @discord-meeting/meeting-platform check:image \
   && node vendor/infinity-context/prepare-official-sdk.mjs --cleanup-source \
   && test ! -e vendor/infinity-context/.upstream \
   && pnpm store prune

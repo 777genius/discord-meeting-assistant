@@ -41,6 +41,7 @@ export interface PostCallShutdownResources {
 }
 
 export interface MeetingPlatformShutdownResources extends PostCallShutdownResources {
+  readonly ossNativeEvidence?: { abort(): void; close(): Promise<void> };
   readonly conversationRuntime?: GrpcPipecatConversationRuntime;
   readonly craigPlayback?: {
     readonly gateway: CraigPlaybackGateway;
@@ -55,7 +56,7 @@ export interface MeetingPlatformShutdownResources extends PostCallShutdownResour
   readonly meetingKnowledge?: MeetingKnowledgeLocalFinalReplyRuntime;
   readonly pool: Pool;
   readonly recordings: CloseableRecordingIngress;
-  readonly runtimeTransport: GrpcSubscriptionRuntimeTransport;
+  readonly runtimeTransport?: GrpcSubscriptionRuntimeTransport;
   readonly s3: S3Client;
   readonly server: PlatformHttpHost;
 }
@@ -88,7 +89,7 @@ export async function closeMeetingPlatformResources(
   const timeoutMilliseconds = resolvePlatformShutdownTimeoutMilliseconds(
     input.shutdownTimeoutMilliseconds,
   );
-  const deadlineAtMilliseconds = Date.now() + timeoutMilliseconds;
+  const deadlineAtMilliseconds = performance.now() + timeoutMilliseconds;
   const failures: unknown[] = [];
   const postCallShutdown = observeRejection(closePostCallResources({
     outboxDispatcher: input.outboxDispatcher,
@@ -103,13 +104,6 @@ export async function closeMeetingPlatformResources(
   );
   collectSynchronousCloseFailure(failures, () => input.guildSetupHandler?.close());
   const httpShutdown = startOperation(() => input.server.close());
-  // Begin rejecting new ingress as soon as HTTP admission starts closing. The
-  // recording runtime drains already-admitted work before removing its marker.
-  // Starting this now lets the fsync complete even if post-call shutdown later
-  // consumes the shared deadline.
-  const recordingSpoolShutdown = observeRejection(
-    startOperation(() => input.recordings.close()),
-  );
   failures.push(...await collectFailures([
     awaitBounded(
       "platform HTTP host",
@@ -126,23 +120,32 @@ export async function closeMeetingPlatformResources(
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
+  const liveCancellation = new AbortController();
+  const liveShutdown = startOperation(() => input.live?.close(liveCancellation.signal));
+  const liveFailures = await collectFailures([
+    awaitBounded("derived live runtime", liveShutdown,
+      remainingShutdownMilliseconds(deadlineAtMilliseconds)),
+  ]);
+  failures.push(...liveFailures);
+  if (liveFailures.length > 0) { liveCancellation.abort(); }
+  // Cancellation fences new transcripts, but an admitted durable write cannot
+  // be revoked. A failed drain must retain dependencies for that continuation.
+  const liveDrained = liveFailures.length === 0;
   failures.push(...await collectFailures([
     awaitBounded(
       "Craig playback WebSocket",
       startOperation(() => input.craigPlayback?.webSocket.close()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
-    awaitBounded(
-      "derived live runtime",
-      startOperation(() => input.live?.close()),
-      remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
-    awaitBounded(
+    // HTTP admission is closed; live receipt callbacks must settle before the
+    // recording owner fences writes. Retain it when cancellation leaves work.
+    ...(liveDrained ? [awaitBounded(
       "recording ingress spool",
-      recordingSpoolShutdown,
+      startOperation(() => input.recordings.close()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
+    )] : []),
   ]));
+
   const meetingKnowledgeFailures = await collectFailures([
     awaitBounded(
       "Meeting Knowledge local final reply",
@@ -154,7 +157,7 @@ export async function closeMeetingPlatformResources(
   // A timed-out drain still owns Discord, transport, and PostgreSQL work. Keep
   // those dependencies alive and surface the failure instead of racing their
   // teardown against an operation that may complete after this function exits.
-  const meetingKnowledgeDrained = meetingKnowledgeFailures.length === 0;
+  const meetingKnowledgeDrained = meetingKnowledgeFailures.length === 0 && liveDrained;
   failures.push(...await collectFailures([
     awaitBounded(
       "historical memory reconciler",
@@ -171,15 +174,15 @@ export async function closeMeetingPlatformResources(
       startOperation(() => input.discord.destroy()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     )] : []),
-    awaitBounded(
+    ...(liveDrained ? [awaitBounded(
       "Pipecat conversation runtime",
       startOperation(() => input.conversationRuntime?.close()),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
-    ),
+    )] : []),
     ...(meetingKnowledgeDrained ? [awaitBounded(
       "subscription runtime transport",
       startOperation(() => {
-        input.runtimeTransport.close();
+        input.runtimeTransport?.close();
       }),
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     )] : []),
@@ -201,11 +204,27 @@ export async function closeMeetingPlatformResources(
       remainingShutdownMilliseconds(deadlineAtMilliseconds),
     ),
   ]));
+  // Only successful producer and dependency drains may authorize capture closure.
+  // A rejected or timed-out writer remains a shutdown failure, never a PASS.
+  if (failures.length === 0 && input.ossNativeEvidence) {
+    if (remainingShutdownMilliseconds(deadlineAtMilliseconds) === 0) {
+      failures.push(new Error("No shutdown time remains for OSS native evidence"));
+    } else {
+      failures.push(...await collectFailures([
+        awaitBounded(
+          "OSS native evidence",
+          startOperation(() => input.ossNativeEvidence!.close()),
+          remainingShutdownMilliseconds(deadlineAtMilliseconds),
+        ),
+      ]));
+    }
+  }
+  if (failures.length > 0) { input.ossNativeEvidence?.abort(); }
   throwIfShutdownIncomplete(failures, "Meeting platform shutdown was incomplete");
 }
 
 function remainingShutdownMilliseconds(deadlineAtMilliseconds: number): number {
-  return Math.max(0, deadlineAtMilliseconds - Date.now());
+  return Math.max(0, deadlineAtMilliseconds - performance.now());
 }
 
 async function awaitBounded(

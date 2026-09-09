@@ -1,8 +1,136 @@
-# Voicetext adapter
+# VoiceText adapter
 
-The adapter uploads Deepgram-compatible mono `pcm_s16le` audio through Voicetext
-protocol v2. Uploads are ACK-driven and paced to `224000` bytes/second by
-default, below the backend's `256000` bytes/second token-bucket rate.
+This package is a client for a separately deployed VoiceText-compatible
+speech-to-text service. It contains no provider backend or provider SDK, and
+Meeting Platform gives it only the gateway URL, machine bearer token, and
+explicit profile.
+
+Batch and live profiles are independent:
+
+- batch: `deepgram-nova-3` or `elevenlabs-scribe-v2`;
+- live: `deepgram-nova-3` or `elevenlabs-scribe-v2-realtime`.
+
+The canonical batch HTTP contract and response validation live in
+[`voicetext-batch-client.ts`](src/voicetext-batch-client.ts). Profile identities
+live in [`voicetext-batch-contract.ts`](src/voicetext-batch-contract.ts). The
+live WebSocket messages and exact provider/model readiness fence live in
+[`protocol.ts`](src/protocol.ts) and
+[`voicetext-live-transcription-configuration.ts`](src/voicetext-live-transcription-configuration.ts).
+
+The service must authenticate the bearer token, preserve idempotency, return
+the selected contract/provider/model identity, and implement the bounded batch
+and live schemas. The separate OSS Rust VoiceText Gateway is a compatible
+backend. Its [Compose overlay](../../infra/deployment/compose.voicetext-gateway.yaml)
+uses a checksum-verified Git context; this repository does not claim a released
+gateway image. Follow the [self-host quick start](../../infra/deployment/voicetext-gateway.md#provision-secrets-and-profiles)
+for mounted user-owned provider keys and the shared machine token; no private
+VoiceText backend is required. Each omitted selector independently defaults to
+Deepgram. Invalid profiles fail startup; missing selected-provider credentials
+fail closed without provider fallback. Deepgram batch uses v2, ElevenLabs batch
+uses v3, and live uses v2 with native provider/model identities.
+Private SaaS adoption is deferred to the bounded compatibility follow-up in that
+quick start. Pipecat STT is future/unimplemented; optional Pipecat conversation
+and TTS do not supply this package's STT backend.
+
+## Qualification boundaries
+
+The [root-verified native campaign results](../../infra/deployment/voicetext-gateway.md#implemented-profile-mapping-and-qualification-status)
+record four profiles on historical gateway `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b`
+with one 26-second synthetic RU/EN fixture. This narrow provider-fixture
+qualification is separate from the providerless suite and the canary contract
+below. Native WER/CER thresholds are 0.35/0.25; Discord retains 0.35/0.20.
+Broad language/acoustic coverage and all mixed combinations are unqualified;
+recognition languages depend on the provider and model, and `multi` does not
+guarantee language coverage. Ukrainian is not voice-qualified. For Discord
+qualification, locate the original trusted receipt and compare its exact
+collector, Platform, gateway and image identities using the
+[receipt applicability procedure](../../infra/deployment/oss-discord-stt-campaign.md#locate-and-interpret-a-trusted-receipt).
+A source-change audit or passing contract suite adds no acoustic qualification.
+
+The default package suite is providerless. Its in-process contract gateway
+drives the production `FetchVoicetextBatchClient` and production live session
+for every configured profile. It proves client encoding, response parsing, ACK
+pacing, finalization, and ordered close without contacting a speech provider.
+The fake gateway deliberately returns `synthetic speech`; that result is contract
+evidence only and can never create provider qualification evidence.
+
+## Historical provider-canary contract
+
+The checked-in [canary source](test/voicetext-gateway-provider-canary.e2e.test.ts)
+hard-pins gateway `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b`. This is a historical
+compatibility contract, not a universal current gateway requirement. The
+[OSS quickstart](../../infra/deployment/voicetext-gateway.md) builds
+`3e0ede3ec9086a45bc026f43191a998f2682fd6e`; the invocation below does not qualify
+that revision. Do not replace the compatibility hash without reviewed evidence.
+For Discord qualification, use the separately authorized
+[OSS Discord campaign procedure](../../infra/deployment/oss-discord-stt-campaign.md#exact-target-and-configuration).
+No current-revision provider-canary invocation is established here; it requires
+separate compatibility review and retained evidence.
+
+A separate provider canary sends the real Opus speech packets extracted from the
+pinned `apps/discord-e2e-actors/test/fixtures/speaker-a.ru-en.ogg` fixture
+(SHA-256 `8e29a933ef95eaf1f149b150ff123f90a3276847fcd4941ccb6c55b24561b9d8`).
+It selects one matched profile pair per run:
+
+- `deepgram`: `deepgram-nova-3` batch and live;
+- `elevenlabs`: `elevenlabs-scribe-v2` batch and
+  `elevenlabs-scribe-v2-realtime` live.
+
+The canary is skipped by normal local and CI tests. `test:gateway-provider-canary`
+sets `VOICETEXT_GATEWAY_PROVIDER_CANARY_REQUIRED=1`, so every remaining input is
+mandatory and absence fails before any network request. The canary requires:
+
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_HTTP_ORIGIN`
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_WS_ORIGIN`
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_TOKEN`
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_PROFILE` (`deepgram` or `elevenlabs`)
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_FIXTURE`
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_RUN_ID`
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_IDENTITY_FILE`
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_EXPECTED_IDENTITY_SHA256`
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_EXPECTED_TREE`
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_EXPECTED_IMAGE_DIGEST`
+- `VOICETEXT_GATEWAY_PROVIDER_CANARY_RECEIPT`
+
+The identity file is a create-only, same-owner, non-symlink mode-0400
+observation from the approved deployment probe, not an operator claim copied
+from Compose. Schema
+`voicetext-gateway-running-identity` v1 binds the run ID, exact HTTP/WS origins,
+running container ID, image ID, full repository image digest, pinned gateway
+commit `550ec217b3b549d7719aaa4a412d9ecbaf0a2f4b`, its Git tree, source repository,
+and observation time. Its `identitySha256` is the SHA-256 of canonical JSON after
+recursively sorting object keys and omitting that field. The independently
+reviewed digest, commit, tree, image digest, origins, and run ID must all match
+before the canary reads the fixture or makes a gateway request. The file is
+read and verified again after provider work.
+
+For both batch and live, a pass requires non-empty provider-derived text, all
+five checked-in fixture terms, ordered positive timestamps bounded by fixture
+duration plus 10 seconds, and rejection of the fake gateway text. Batch must
+return one identical idempotent result. Live sends all 1,312 extracted speech
+packets in real time; every send must be ACKed and `finalize()` must receive a
+valid provider-result terminal before ordered close.
+
+Only then does the test create (never replace) the mode-0600
+`voicetext-gateway-provider-canary-receipt` v1 at
+`VOICETEXT_GATEWAY_PROVIDER_CANARY_RECEIPT`. The receipt binds the complete
+running identity and its digest, fixture digest/duration/packet count, exact
+profile pair, expected-term digest, batch job and transcript digest/timestamps,
+live transcript digest/timestamps, ACK count, finalization, run ID, and its own
+canonical digest. An existing or partially retained path fails closed.
+
+A passing receipt qualifies only the named profile pair, pinned fixture terms,
+gateway commit/tree/image, and run. It does not qualify a language, general
+acoustic quality, another provider/model, another image, or private-guild
+acceptance. Within this historical contract, each profile pair requires its
+own run; do not infer English, Russian, Ukrainian, or any other language coverage
+from the fixture or contract value `multi`. Provider and Discord execution require the
+separately approved credentialed environment.
+
+The legacy streaming-final adapter uploads Deepgram-compatible mono `pcm_s16le`
+audio through VoiceText protocol v2. Uploads are ACK-driven and paced to
+`224000` bytes/second by default, below the backend's `256000` bytes/second
+token-bucket rate.
 
 ## Memory boundary
 

@@ -16,7 +16,7 @@ interface PlatformSecrets {
   readonly redisUrl: string;
   readonly s3AccessKeyId: string;
   readonly s3SecretAccessKey: string;
-  readonly subscriptionRuntimeToken: string;
+  readonly subscriptionRuntimeToken?: string;
   readonly voicetextServiceToken?: string;
 }
 
@@ -88,7 +88,8 @@ export interface PlatformConfig {
   /** SHA-256 over the canonical Git tree listing embedded at build time. */
   readonly sourceTreeSha256?: string;
   readonly speaches: { readonly baseUrl: string; readonly model: string };
-  readonly subscriptionRuntime: {
+  readonly summaryProvider?: "transcript-outline" | "subscription-runtime";
+  readonly subscriptionRuntime?: {
     readonly address: string;
     readonly launcherSha256: string;
   };
@@ -108,6 +109,7 @@ export interface PlatformConfig {
     readonly batchMaxConcurrentMeetings: number;
     readonly batchProfile: "deepgram-nova-3" | "elevenlabs-scribe-v2";
     readonly liveMaxConcurrentSessions: number;
+    readonly liveEnabled?: boolean;
     readonly livePacketBackpressureTimeoutMs: number;
     readonly liveProfile: "deepgram-nova-3" | "elevenlabs-scribe-v2-realtime";
     readonly webSocketUrl: string;

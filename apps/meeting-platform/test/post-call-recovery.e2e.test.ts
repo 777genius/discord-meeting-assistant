@@ -391,7 +391,10 @@ function initialMeeting(): MeetingSnapshot {
       manifestLocator: "recordings/recovery-e2e/manifest.json",
       recordingId: "recording-recovery-e2e",
       speakerAudio: [{
+        artifactRevision: "version-1",
         audioLocator: "recordings/recovery-e2e/speaker-a.ogg",
+        checksumSha256: "a".repeat(64),
+        sizeBytes: 27,
         speakerId: "speaker-a",
         timelineOffsetMs: 0,
       }],

@@ -1,4 +1,4 @@
-import type { DatabaseObservation, S3RecordingEvidence } from
+import type { DatabaseObservation, DeploymentEvidenceProbe, S3RecordingEvidence } from
   "./e2e-retained-evidence-contracts.js";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -195,7 +195,7 @@ export class SshHostedServiceLevelRawProbe {
   }
 
   async collectS3(
-    manifestLocator: string,
+    recording: Parameters<DeploymentEvidenceProbe["collectS3"]>[0],
     recordingId: string,
   ): Promise<S3RecordingEvidence> {
     const output = await this.#commands.runCompose(this.#settings, "meeting-platform", [
@@ -203,7 +203,7 @@ export class SshHostedServiceLevelRawProbe {
       "--input-type=module",
       "-e",
       s3EvidenceScript,
-      manifestLocator,
+      JSON.stringify(recording),
       correlationId.parse(recordingId),
     ]);
     return s3OutputSchema.parse(parseLastJsonLine(output));

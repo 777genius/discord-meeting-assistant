@@ -197,6 +197,10 @@ export class SpeakerPacketFlowControl {
 
   public cancel(): void {
     this.abortController.abort();
+    this.wakeAdmissionWaiters();
+  }
+
+  public wakeAdmissionWaiters(): void {
     const waiters = this.capacityWaiters.splice(0);
     for (const waiter of waiters) {
       waiter.wake();
@@ -212,6 +216,11 @@ export class SourceTimelinePacer {
     private readonly clock: LiveRuntimeClock = systemLiveRuntimeClock,
     private readonly timer: LiveRuntimeTimer = systemLiveRuntimeTimer,
   ) {}
+
+  public packetWaitMs(meetingStartedAtMs: number, relativeTimeMs: number): number {
+    return Math.max(0, meetingStartedAtMs + relativeTimeMs - maximumLivePacketLeadMs
+      - this.clock.nowMilliseconds(), this.nextPermittedPacketAtMs - this.clock.nowMilliseconds());
+  }
 
   public async waitForPacketTime(
     meetingStartedAtMs: number,
@@ -269,4 +278,24 @@ async function waitForLivePacketTime(
   timerPort.cancel(timer);
   signal.removeEventListener("abort", onAbort);
   return readyToSend && !signal.aborted;
+}
+
+/** Relative timers bound each phase; only finite admitted packet progress renews drain. */
+export async function superviseLiveWork(
+  work: Promise<void>, budgetMs: number, timer: LiveRuntimeTimer,
+  supervision: {
+    readonly cancel: () => void;
+    readonly setRenewal?: (renew: ((budgetMs: number) => void) | undefined) => void;
+  },
+): Promise<void> {
+  let timeout = timer.schedule(budgetMs, supervision.cancel);
+  supervision.setRenewal?.((nextBudgetMs) => {
+    timer.cancel(timeout);
+    timeout = timer.schedule(nextBudgetMs, supervision.cancel);
+  });
+  try { await work; }
+  finally {
+    supervision.setRenewal?.(undefined);
+    timer.cancel(timeout);
+  }
 }
