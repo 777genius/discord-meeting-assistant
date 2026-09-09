@@ -154,8 +154,9 @@ Pipecat conversation profile is optional, default-off, and non-core. A
 Pipecat-to-VoiceText provider adapter is future/unimplemented; it is not part of
 this gateway or the core OSS meeting topology.
 
-The adapter and gateway contract checks do not establish private-guild
-acceptance. Claim Discord qualification only for profiles and identities
+Real Discord acceptance remains PENDING for a deployment until its trusted receipt
+proves all required scenarios. The adapter and gateway contract checks do not establish
+private-guild acceptance; that remains pending until the deployment has that receipt. Claim Discord qualification only for profiles and identities
 supported by an original trusted campaign receipt; follow the
 [receipt lookup and applicability procedure](oss-discord-stt-campaign.md#locate-and-interpret-a-trusted-receipt).
 
