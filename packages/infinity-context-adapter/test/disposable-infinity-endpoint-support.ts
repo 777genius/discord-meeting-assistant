@@ -151,3 +151,16 @@ export function notFound(): HttpResponse {
 export function envelope(data: JsonValue): HttpResponse {
   return json(200, { data });
 }
+
+/** Retrieval V2 uses internal IDs; ingested documents retain external references. */
+export function matchesRetrievalScope(
+  document: StoredDocument,
+  scope: Readonly<Record<string, unknown>>,
+  space: Readonly<Record<string, unknown>> | undefined,
+  memoryScope: Readonly<Record<string, unknown>> | undefined,
+): boolean {
+  return document.processed && document.status === "active" &&
+    space?.id === string(scope.space_id) &&
+    memoryScope?.space_id === string(scope.space_id) &&
+    memoryScope?.id === string(scope.memory_scope_id);
+}

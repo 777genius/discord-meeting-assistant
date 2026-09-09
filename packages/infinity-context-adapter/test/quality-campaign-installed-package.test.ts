@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { createHash, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:https";
 import { createRequire } from "node:module";
@@ -15,7 +14,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { artifactAttemptIdentity, attemptIdentity,
   type QualityCampaignRelease } from "../src/quality-campaign/index.js";
-import { retrievalV2CapabilityFingerprint } from "../src/infinity-context-retrieval-v2.js";
+import { packedScopeHttpFixture, sdkQualificationCapability, sdkRetrievalResponse } from
+  "./quality-campaign-installed-http-fixture.js";
 import { recoverProductionCanonicalOutcome } from
   "../src/quality-campaign/production-canonical-execution-evidence.js";
 import { assertInstalledManifest, assertInstalledTokenizer } from "./quality-campaign-installed-tokenizer-fixture.js";
@@ -85,6 +85,7 @@ describe("packed production quality-campaign entrypoint", () => {
         stderr: "" });
     expect(fixture.providerRequests()).toBe(0);
     expect(fixture.retrievalRequests()).toBeGreaterThan(0);
+    fixture.scopeRequests(fixture.retrievalRequests());
     expect(await readFile(executeStatusPath, "utf8")).toMatch(/"status":"outcome_unknown"/u);
     const selectedReads = JSON.parse(await readFile(fixture.postgresAuditPath, "utf8")) as string[];
     expect(selectedReads.length).toBeGreaterThan(0);
@@ -140,6 +141,7 @@ describe("packed production quality-campaign entrypoint", () => {
         locatorId: fixture.selectedLocator })], selectedTurns: [], status: "failed",
     })));
     expect(fixture.retrievalRequests()).toBe(4);
+    fixture.scopeRequests(4);
     expect(fixture.answerRequests()).toHaveLength(beforeMismatch);
     expect(attempts[0]!.attemptId).not.toBe(attempts[1]!.attemptId);
     const requests = fixture.answerRequests();
@@ -175,6 +177,7 @@ describe("packed production quality-campaign entrypoint", () => {
       actorKeyProfileId: "discord-infinity-actor-key.v1:wrong" })).rejects.toThrow(/signature/u);
     expect(fixture.answerRequests()).toEqual([]);
     expect(fixture.retrievalRequests()).toBe(0);
+    fixture.scopeRequests(0);
     expect(fixture.providerRequests()).toBe(0);
   });
 
@@ -379,12 +382,14 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string,
   let release: unknown; let reviewEvidence: unknown = {};
   let providerSigner: ReturnType<typeof localSigner> | undefined;
   const memory = canonicalMemoryFixture();
+  const scopes = packedScopeHttpFixture(memory.plan.topology);
   const capability = sdkQualificationCapability();
   const retrievalSuccess = sdkRetrievalResponse(memory.selectedLocator, capability);
   const tls = await localHttpsFixture();
   const childEnvironment = { ...process.env, NODE_EXTRA_CA_CERTS: tls.certificatePath };
   const server = createServer({ cert: tls.certificate, key: tls.privateKey },
-    (request, response) => {if (request.url === "/release") {
+    (request, response) => {if (scopes.serve(request, response)) { return; }
+    if (request.url === "/release") {
     observedReleaseRequests += 1; response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(release)); return;} if (request.url === "/review") {
     request.resume(); request.on("end", () => {response.writeHead(200,
@@ -395,7 +400,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string,
       response.end(JSON.stringify({ context: { retrieval: capability } })); return;
     }
     if (request.url === "/v1/context/retrieve") {
-      observedRetrievalRequests += 1; request.resume();
+      observedRetrievalRequests += 1; scopes.observeRetrieval(request); request.resume();
       request.on("end", () => {
         if (observedRetrievalRequests > successfulRetrievalLimit) {response.destroy(); return;}
         response.writeHead(200, { "content-type": "application/json" });
@@ -598,7 +603,7 @@ async function createPackedPreflightFixture(root: string, consumerRoot: string,
     campaignRootSha256: mainRootSha256, questionDigestSha256: firstQuestion.questionDigestSha256,
     questionId: firstQuestion.questionId, releaseRootSha256, repetition: 1,
     spendReservationSha256: sha256(spendDocuments[0]!) });
-  return { async replaceTopologyProfile(actorKeyProfileId: string,
+  return { scopeRequests: scopes.assertReads, async replaceTopologyProfile(actorKeyProfileId: string,
     schemaVersion = "meeting_knowledge.quality_scope_topology.v2") {
     const document = JSON.parse(await readFile(topologyPath, "utf8")) as
       { payload: Record<string, unknown> };
@@ -675,37 +680,6 @@ function roleSeparatedAuxiliaryPaths(root: string) {return {
   cleanup: join(root, "cleanup-plan.json"), holdoutCleanup: join(root, "holdout-cleanup-plan.json"),
   holdoutInput: join(root, "holdout-input.json") } as const;}
 
-
-function sdkFixture(name: "capability" | "success"): Record<string, unknown> {
-  return JSON.parse(readFileSync(require.resolve(
-    `@infinity-context/sdk/fixtures/context_retrieval_v2/${name}.json`), "utf8")) as
-    Record<string, unknown>;
-}
-
-function sdkQualificationCapability(): Record<string, unknown> {
-  const capability = sdkFixture("capability");
-  capability.profile_id = `locator-v2-full-${String(capability.index_profile_digest)}`;
-  capability.capability_fingerprint = retrievalV2CapabilityFingerprint(capability);
-  return capability;
-}
-
-function sdkRetrievalResponse(locator: string,
-  capability: Record<string, unknown>): Record<string, unknown> {
-  const fixture = sdkFixture("success");
-  const candidate = (fixture.candidates as Record<string, unknown>[])[0]!;
-  const direct: Record<string, unknown> = structuredClone({ ...candidate, locator, neighbors: [] });
-  Object.assign(direct, { actor_matched_weight_micros: 0, actor_requested_weight_micros: 0,
-    matched_query_ids: ["original-question"], preference_boost_micros: 0,
-    preference_score_micros: 0, rerank_score_picos: direct.base_score_picos,
-    source_matched_weight_micros: 0, source_requested_weight_micros: 0,
-    time_matched_weight_micros: 0, time_requested_weight_micros: 0 });
-  direct.contributions = (direct.contributions as Record<string, unknown>[]).map((value) =>
-    ({ ...value, query_id: "original-question" }));
-  return structuredClone({ ...fixture, capability_fingerprint: capability.capability_fingerprint,
-    profile_id: capability.profile_id, applied_bounds: { candidate_limit: 100,
-    deadline_ms: 2_000, neighbor_radius: 0, response_byte_limit: 16_384, result_limit: 10,
-    returned_neighbors: 0, returned_seeds: 1 }, candidates: [direct] });
-}
 
 async function startPackedGroundedAnswerRuntime(launcherSha256: string, forceRepair: boolean) {
   const definition = protoLoader.loadSync(fileURLToPath(new URL(

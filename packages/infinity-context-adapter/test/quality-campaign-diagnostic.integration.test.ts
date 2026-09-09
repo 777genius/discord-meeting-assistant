@@ -80,7 +80,18 @@ describe("nonqualifying diagnostic concrete boundaries", () => {
       const packet = { questionId: "synthetic-q1", questionText: "When is Project Cedar launch?", locale: "en" as const,
         scopeTopologyReference: "diagnostic:scope" };
       const options = { attemptId: `sqv4-${"a".repeat(64)}`, signal: new AbortController().signal };
+      const beforeRetrieval = http.endpoint.requests.length;
       const result = await chain.retrieval.retrieve(packet, options);
+      const retrievalRequests = http.endpoint.requests.slice(beforeRetrieval);
+      expect(retrievalRequests.filter(({ path }) => path === "/v1/spaces" || path === "/v1/memory-scopes"))
+        .toEqual([expect.objectContaining({ method: "GET", path: "/v1/spaces", query: "?limit=100" }),
+          expect.objectContaining({ method: "GET", path: "/v1/memory-scopes", query: "?space_id=space-1&limit=100" })]);
+      expect(retrievalRequests.filter(({ path }) => path === "/v1/context/retrieve"))
+        .toEqual([expect.objectContaining({ method: "POST", body: expect.objectContaining({
+          scope: { space_id: "space-1", memory_scope_id: "scope-1", thread_id: null },
+        }) })]);
+      expect(plan.topology.spaceSlug).not.toBe("space-1");
+      expect(plan.topology.roomScopeExternalRef).not.toBe("scope-1");
       if (result.status !== "completed") { throw new Error(`synthetic retrieval failed: ${result.reason}`); }
       expect(result.candidates.length).toBeGreaterThan(0);
       const locators = result.candidates.map(candidate => candidate.locatorId);
