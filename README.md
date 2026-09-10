@@ -15,8 +15,12 @@ Add live captions, AI summaries and voice answers when you need them.
 - **Adds optional extras:** live captions, AI notes, voice answers, meeting memory and recording playback.
 
 The default setup includes a transcript and a simple turn-count outline.
-AI features and playback need extra configuration; follow the [feature guides](docs/optional-features.md). Original recordings remain
-available if transcription or publishing fails.
+AI summaries and voice answers build from the public
+[`777genius/ar`](https://github.com/777genius/ar) source, but still require
+operator-owned authorized Codex subscription sessions and account-pool setup.
+Playback also needs extra configuration; follow the
+[feature guides](docs/optional-features.md). Original recordings remain available
+if transcription or publishing fails.
 
 ## Get started
 
