@@ -81,3 +81,13 @@ export { measureQualificationModelInput } from
   "./quality-campaign/qualification-contract.js";
 
 export { InfinityRetrievalScopeResolution } from "./infinity-retrieval-scope-resolution.js";
+
+export {
+  InfinityContextRetrievalV3Adapter,
+  retrievalV3CapabilityFingerprint,
+  type InfinityContextRetrievalV3Binding,
+  type InfinityContextRetrievalV3Config,
+  type InfinityContextRetrievalV3Request,
+  type InfinityContextRetrievalV3Observation,
+  type InfinityContextRetrievalV3ExactExchange,
+} from "./infinity-context-retrieval-v3.js";
