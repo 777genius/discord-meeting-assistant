@@ -1,7 +1,8 @@
 ![Botik: voice meetings, transcripts and action items](docs/assets/botik-cover.webp)
 
-# Botik - Meeting Assistant for Discord
+# Botik - Self-hosted Meeting Assistant for Discord
 
+Run Botik on your own server with your own Discord bots and provider credentials.
 Record Discord meetings and get a transcript with speaker names and timestamps.
 Add live captions, AI summaries and voice answers when you need them.
 
@@ -14,7 +15,7 @@ Add live captions, AI summaries and voice answers when you need them.
 - **Adds optional extras:** live captions, AI notes, voice answers, meeting memory and recording playback.
 
 The default setup includes a transcript and a simple turn-count outline.
-AI features and playback need extra configuration. Original recordings remain
+AI features and playback need extra configuration; follow the [feature guides](docs/optional-features.md). Original recordings remain
 available if transcription or publishing fails.
 
 ## Get started
@@ -25,6 +26,7 @@ to choose your voice channel and where results appear.
 
 ## Learn more
 
+- [Self-hosting scenarios and configuration](docs/self-hosting/README.md)
 - [Speech providers and language support](docs/speech-providers.md)
 - [Tested capabilities and limitations](infra/deployment/oss-acceptance.md)
 - [Development](docs/development.md)
