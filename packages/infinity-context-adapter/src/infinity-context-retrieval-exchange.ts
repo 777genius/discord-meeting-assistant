@@ -27,7 +27,7 @@ export class ExactRetrievalExchangeTransport implements HttpTransport {
   } | null = null;
   #exchange: InfinityContextRetrievalV2ExactExchange | null = null;
 
-  public constructor(contract: RetrievalContract = "context-retrieval.v2") {
+  public constructor(contract: unknown = "context-retrieval.v2") {
     if (contract !== "context-retrieval.v2" && contract !== "context-retrieval.v3") {
       throw new Error("Unsupported Infinity retrieval capture contract");
     }

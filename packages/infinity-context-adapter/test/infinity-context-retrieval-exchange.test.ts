@@ -28,7 +28,7 @@ describe("exact retrieval exchange capture", () => {
       retryPolicy: { maxAttempts: 1 } });
     await client.system.capabilities();
     await transport.send(request(routes["context-retrieval.v2"][1], "POST"));
-    expect(String(fetch.mock.calls[0]?.[0])).toBe("https://memory.test/v1/capabilities");
+    expect(fetchUrl(fetch.mock.calls[0]?.[0])).toBe("https://memory.test/v1/capabilities");
     const exchange = transport.takeRetrievalExchange();
     expect(Object.keys(exchange).toSorted()).toEqual([
       "capabilityRequestBytes", "capabilityResponseBytes", "requestBytes", "responseBytes",
@@ -56,7 +56,7 @@ describe("exact retrieval exchange capture", () => {
       const exchange = take(transport);
       expect(exchange.capabilityResponseBytes).toEqual(capabilityBytes);
       expect(exchange.responseBytes).toEqual(responseBytes);
-      expect(fetch.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([capability, retrieval]);
+      expect(fetch.mock.calls.map(([url]) => new URL(fetchUrl(url)).pathname)).toEqual([capability, retrieval]);
       expect(fetch.mock.calls[1]?.[1]?.body).toEqual(exchange.requestBytes);
       if (contract === "context-retrieval.v3") {
         expect(exchange).toMatchObject({ contractVersion: contract, capabilityRoute: capability, retrievalRoute: retrieval });
@@ -201,4 +201,13 @@ describe("exact retrieval exchange capture", () => {
       expect(() => transport.takeRetrievalExchange()).toThrow(/not captured/u);
     }
   });
+});
+
+function fetchUrl(input: globalThis.Request | URL | string | undefined): string {
+  if (input === undefined) {throw new Error("Missing fetch request");}
+  return input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+}
+
+it.each([null, 3, {}, "context-retrieval.v4"])("rejects unsupported runtime capture contract %j", (contract) => {
+  expect(() => new ExactRetrievalExchangeTransport(contract)).toThrow("Unsupported Infinity retrieval capture contract");
 });

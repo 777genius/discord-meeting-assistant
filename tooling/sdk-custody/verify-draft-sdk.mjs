@@ -1,3 +1,6 @@
+// @ts-check
+/// <reference types="node" />
+/// <reference lib="es2024" />
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -7,41 +10,50 @@ const SCOPE = "Observed mutable draft; downloaded bytes match this build. Not pu
 const MANIFEST_NAME = "infinity-context-sdk-release-manifest.json";
 const IDENTITY_PATH = "dist/sdk-artifact-identity.json";
 const MAX_METADATA = 10 * 1024 * 1024;
+/** @param {import("node:crypto").BinaryLike} bytes */
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
+/** @param {boolean} condition @param {string} label @returns {asserts condition} */
 function requireMatch(condition, label) {
   if (!condition) {throw new Error(`Draft SDK custody: ${label}`);}
 }
+/** @param {unknown} value @param {string[]} keys @param {string} label @returns {asserts value is Record<string, unknown>} */
 function exactKeys(value, keys, label) {
   requireMatch(value !== null && typeof value === "object" && !Array.isArray(value) &&
     isDeepStrictEqual(Object.keys(value).toSorted(), [...keys].toSorted()), `${label} fields`);
 }
+/** @param {unknown} actual @param {unknown} expected @param {string} label */
 function equal(actual, expected, label) {
   requireMatch(isDeepStrictEqual(actual, expected), `${label} mismatch`);
 }
+/** @param {unknown} value @returns {string} */
 function canonical(value) {
-  if (Array.isArray(value)) {return `[${value.map(canonical).join(",")}]`;}
+  if (Array.isArray(value)) {return `[${/** @type {unknown[]} */ (value).map(canonical).join(",")}]`;}
   if (value !== null && typeof value === "object") {
-    return `{${Object.keys(value).toSorted().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+    return `{${Object.keys(value).toSorted().map((key) => `${JSON.stringify(key)}:${canonical(/** @type {Record<string, unknown>} */ (value)[key])}`).join(",")}}`;
   }
   requireMatch(typeof value !== "number" || Number.isSafeInteger(value), "unsafe JSON number");
   return JSON.stringify(value);
 }
+/** @param {Buffer} bytes @param {string} label @param {boolean} canonicalRequired @returns {unknown} */
 function parse(bytes, label, canonicalRequired = false) {
   requireMatch(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= MAX_METADATA, `${label} bytes`);
   const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  /** @type {unknown} */
   const value = JSON.parse(text);
   // JSON.parse alone silently accepts duplicate keys. Tokenize only after it
   // has validated syntax, keeping strings (including escaped keys) intact.
   const tokens = text.match(/"(?:[^"\\]|\\.)*"|[{}[\]:,]/gu) ?? [];
+  /** @type {(Set<string> | null)[]} */
   const objects = [];
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
+  for (const [index, token] of tokens.entries()) {
     if (token === "{") {objects.push(new Set());}
     else if (token === "[") {objects.push(null);}
     else if (token === "}" || token === "]") {objects.pop();}
     else if (token.startsWith('"') && tokens[index + 1] === ":") {
+      /** @type {unknown} */
       const key = JSON.parse(token);
+      requireMatch(typeof key === "string", `${label} key`);
       const keys = objects.at(-1);
       requireMatch(keys !== null && keys !== undefined && !keys.has(key), `${label} duplicate key`);
       keys.add(key);
@@ -52,17 +64,20 @@ function parse(bytes, label, canonicalRequired = false) {
   }
   return value;
 }
+/** @param {Buffer} bytes @param {unknown} pin @param {string} label */
 function digestPin(bytes, pin, label) {
   requireMatch(typeof pin === "string" && /^[0-9a-f]{64}$/u.test(pin), `${label} trusted SHA256`);
   equal(sha256(bytes), pin, `${label} SHA256`);
 }
+/** @param {unknown} value @param {string} label @returns {asserts value is number} */
 function positive(value, label) {
-  requireMatch(Number.isSafeInteger(value) && value > 0, label);
+  requireMatch(typeof value === "number" && Number.isSafeInteger(value) && value > 0, label);
 }
+/** @param {unknown} value @param {string} label @returns {asserts value is {path: string, sha256_hex: string}[]} */
 function inventory(value, label) {
   requireMatch(Array.isArray(value) && value.length > 0 && value.length <= 4096, label);
   let previous = "";
-  for (const entry of value) {
+  for (const entry of /** @type {unknown[]} */ (value)) {
     exactKeys(entry, ["path", "sha256_hex"], label);
     requireMatch(typeof entry.path === "string" && /^[A-Za-z0-9_./-]+$/u.test(entry.path) &&
       entry.path.split("/").every((part) => part !== "" && part !== "." && part !== "..") &&
@@ -83,6 +98,7 @@ function inventory(value, label) {
  * source reproducibility, public distribution, or an immutable attestation.
  * Receipt run IDs are strings; manifest run IDs are positive safe integers.
  */
+/** @param {unknown} expected */
 function verifyTrustedIdentity(expected) {
   exactKeys(expected, [
     "kind", "repository", "packageName", "packageVersion", "sourceCommit", "sourceTree",
@@ -91,11 +107,12 @@ function verifyTrustedIdentity(expected) {
     "manifestSha256", "receiptSha256", "packageManifestSha256", "packageLockSha256",
   ], "trusted identity");
   equal(expected.kind, "draft-qualification", "trusted evidence kind");
-  equal(expected.repository, "777genius/infinity-context", "trusted repository");
+  requireMatch(expected.repository === "777genius/infinity-context", "trusted repository mismatch");
   equal(expected.packageName, "@infinity-context/sdk", "trusted package");
   requireMatch(typeof expected.packageVersion === "string" && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(expected.packageVersion), "trusted version");
-  const [major, minor, patch] = expected.packageVersion.split(".").map(Number);
+  const [major = 0, minor = 0, patch = 0] = expected.packageVersion.split(".").map(Number);
   requireMatch(major > 0 || minor > 2 || (minor === 2 && patch >= 1), "producer minimum version");
+  requireMatch(typeof expected.sourceCommit === "string", "trusted sourceCommit");
   for (const field of ["sourceCommit", "sourceTree", "tagObject"]) {
     requireMatch(typeof expected[field] === "string" && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(expected[field]) &&
       expected[field].length === expected.sourceCommit.length, `trusted ${field}`);
@@ -110,11 +127,16 @@ function verifyTrustedIdentity(expected) {
     (expected.observedDraftUrl === `${urlBase}${tag}` ||
       (expected.observedDraftUrl.startsWith(`${urlBase}untagged-`) &&
         /^[0-9a-f]{20}$/u.test(expected.observedDraftUrl.slice(`${urlBase}untagged-`.length)))), "trusted draft URL");
-  return { tag, artifactName };
+  return { tag, artifactName, expected, repository: expected.repository };
 }
 
-export function verifyDraftSdkCustody({ tarball, manifestBytes, receiptBytes, packageLockBytes }, expected) {
-  const { tag, artifactName } = verifyTrustedIdentity(expected);
+/**
+ * @param {{tarball: Buffer, manifestBytes: Buffer, receiptBytes: Buffer, packageLockBytes: Buffer}} inputs
+ * @param {unknown} [trustedExpected]
+ * @returns {Readonly<Record<string, unknown> & {kind: "draft-qualification", evidenceScope: string, immutableAttestationVerified: false, publicDistributionVerified: false}>}
+ */
+export function verifyDraftSdkCustody({ tarball, manifestBytes, receiptBytes, packageLockBytes }, trustedExpected) {
+  const { tag, artifactName, expected, repository: trustedRepository } = verifyTrustedIdentity(trustedExpected);
   requireMatch(Buffer.isBuffer(tarball) && tarball.length > 0 && tarball.length <= 100 * 1024 * 1024, "tarball bytes");
   digestPin(tarball, expected.tarballSha256, "tarball");
   equal(`sha512-${createHash("sha512").update(tarball).digest("base64")}`, expected.tarballIntegrity, "tarball SRI");
@@ -123,6 +145,7 @@ export function verifyDraftSdkCustody({ tarball, manifestBytes, receiptBytes, pa
   digestPin(packageLockBytes, expected.packageLockSha256, "package lock");
   const manifest = parse(manifestBytes, "manifest", true);
   const receipt = parse(receiptBytes, "receipt");
+  requireRecord(manifest, "manifest");
   // jq emits pretty JSON; comparing the complete value closes every receipt and
   // asset field. Exact receipt-byte pinning also prevents duplicate-key rewrites.
   equal(receipt, {
@@ -138,22 +161,29 @@ export function verifyDraftSdkCustody({ tarball, manifestBytes, receiptBytes, pa
   }, "draft receipt");
   // Read only exact members to stdout from the already hashed buffer. Never
   // unpack an untrusted archive to disk or execute anything from the package.
+  /** @param {string} path */
   const member = (path) => execFileSync("tar", ["-xzOf", "-", `package/${path}`], {
     input: tarball, maxBuffer: MAX_METADATA, timeout: 10_000, stdio: ["pipe", "pipe", "pipe"],
   });
   const packageBytes = member("package.json");
   digestPin(packageBytes, expected.packageManifestSha256, "package manifest");
   const pkg = parse(packageBytes, "package manifest");
+  requireRecord(pkg, "package manifest");
   equal(pkg.name, expected.packageName, "packed package name");
   equal(pkg.version, expected.packageVersion, "packed package version");
-  const repositoryUrl = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
+  const repository = pkg.repository;
+  if (typeof repository !== "string") {requireRecord(repository, "packed repository");}
+  const repositoryUrl = typeof repository === "string" ? repository : repository.url;
   requireMatch(typeof repositoryUrl === "string", "packed repository");
-  equal(repositoryUrl.replace(/^git\+https:\/\//u, "https://").replace(/\.git$/u, ""), `https://github.com/${expected.repository}`, "packed repository");
+  equal(repositoryUrl.replace(/^git\+https:\/\//u, "https://").replace(/\.git$/u, ""), `https://github.com/${trustedRepository}`, "packed repository");
   const lock = parse(packageLockBytes, "package lock");
+  requireRecord(lock, "package lock");
+  requireRecord(lock.packages, "lock packages");
+  requireRecord(lock.packages[""], "lock root");
   equal(lock.name, expected.packageName, "lock package name");
   equal(lock.version, expected.packageVersion, "lock version");
-  equal(lock.packages?.[""]?.name, expected.packageName, "lock root name");
-  equal(lock.packages?.[""]?.version, expected.packageVersion, "lock root version");
+  equal(lock.packages[""].name, expected.packageName, "lock root name");
+  equal(lock.packages[""].version, expected.packageVersion, "lock root version");
   const identityBytes = member(IDENTITY_PATH);
   const identity = parse(identityBytes, "packed identity", true);
   exactKeys(identity, ["files", "package_name", "package_version", "schema_version", "source_commit", "source_git_tree_oid"], "packed identity");
@@ -181,14 +211,19 @@ export function verifyDraftSdkCustody({ tarball, manifestBytes, receiptBytes, pa
     build_workflow_sha256_hex: expected.workflowSha256,
     contract_fixture_inventory: manifest.contract_fixture_inventory,
     contract_fixture_inventory_sha256_hex: sha256(Buffer.from(canonical(manifest.contract_fixture_inventory))),
-    git_object_format: expected.sourceCommit.length === 40 ? "sha1" : "sha256", node_version: "24.18.0",
+    git_object_format: typeof expected.sourceCommit === "string" && expected.sourceCommit.length === 40 ? "sha1" : "sha256", node_version: "24.18.0",
     package_lock_sha256_hex: expected.packageLockSha256, package_name: expected.packageName,
     package_version: expected.packageVersion, release_tag: tag, repository: expected.repository,
-    repository_url: `https://github.com/${expected.repository}`, schema_version: "infinity-context-typescript-sdk-release.v1",
+    repository_url: `https://github.com/${trustedRepository}`, schema_version: "infinity-context-typescript-sdk-release.v1",
     source_commit: expected.sourceCommit, source_git_tree_oid: expected.sourceTree, tag_object_oid: expected.tagObject,
   }, "release manifest");
   return Object.freeze({
     kind: "draft-qualification", evidenceScope: SCOPE, immutableAttestationVerified: false,
     publicDistributionVerified: false, ...expected,
   });
+}
+
+/** @param {unknown} value @param {string} label @returns {asserts value is Record<string, unknown>} */
+function requireRecord(value, label) {
+  requireMatch(value !== null && typeof value === "object" && !Array.isArray(value), `${label} object`);
 }

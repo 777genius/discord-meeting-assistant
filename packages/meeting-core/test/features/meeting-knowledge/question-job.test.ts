@@ -4,6 +4,7 @@ import {
   MeetingKnowledgeInvariantError,
   QuestionBinding,
   selectRetrievalBinding,
+  validateFocusedLocatorRetrievalV3Request,
   type FocusedLocatorRetrievalV3RequestSnapshot,
   canTransitionQuestionJob,
   questionBindingsEqual,
@@ -136,7 +137,7 @@ it("compares V3 selectors, full source generations and budgets in durable Questi
     }).toSnapshot(),
   });
   const original = bind(request);
-  expect(questionBindingsEqual(original, bind(JSON.parse(JSON.stringify(request))))).toBe(true);
+  expect(questionBindingsEqual(original, bind(validateFocusedLocatorRetrievalV3Request(JSON.parse(JSON.stringify(request)))))).toBe(true);
   for (const changed of [
     { ...request, scope: { ...request.scope, thread: { mode: "exact" as const, id: null } } },
     { ...request, scope: { ...request.scope, thread: { mode: "exact" as const, id: "thread" } } },

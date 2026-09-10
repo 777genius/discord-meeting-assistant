@@ -424,17 +424,29 @@ describe("V3 persisted question recovery", () => {
     const binding = v3({ mode: "any" });
     const hash = questionAdmissionBindingHash(binding);
     expect(questionAdmissionBindingHash(v3({ mode: "exact", id: null }))).not.toBe(hash);
-    const modified = JSON.parse(JSON.stringify(binding));
-    modified.retrievalBinding.request.filters.sourceGenerations[1].projectionGeneration = "stale";
+    const modified: unknown = JSON.parse(JSON.stringify(binding));
+    const retrieval = jsonRecord(jsonRecord(modified).retrievalBinding);
+    const filters = jsonRecord(jsonRecord(retrieval.request).filters);
+    const generations = filters.sourceGenerations;
+    if (!Array.isArray(generations)) {throw new Error("Expected source generations");}
+    const entries: unknown[] = generations;
+    jsonRecord(entries[1]).projectionGeneration = "stale";
     expect(() => decodePersistedQuestionBinding(modified, hash)).toThrow();
     expect(decodePersistedQuestionRecovery({ binding: modified, bindingHash: hash,
       groundingPlan: null, questionText: "Question?" }).status).toBe("incompatible");
   });
 
   it("does not manufacture V3 composite authority during recovery", () => {
-    const binding = JSON.parse(JSON.stringify(v3({ mode: "any" })));
-    delete binding.retrievalBinding.compositeProfile;
+    const binding: unknown = JSON.parse(JSON.stringify(v3({ mode: "any" })));
+    delete jsonRecord(jsonRecord(binding).retrievalBinding).compositeProfile;
     expect(decodePersistedQuestionRecovery({ binding, bindingHash: "a".repeat(64),
       groundingPlan: null, questionText: "Question?" }).status).toBe("incompatible");
   });
 });
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Expected JSON object fixture");
+  }
+  return value as Record<string, unknown>;
+}

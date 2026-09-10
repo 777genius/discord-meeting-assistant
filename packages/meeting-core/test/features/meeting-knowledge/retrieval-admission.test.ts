@@ -129,7 +129,7 @@ describe("Retrieval V3 durable admission", () => {
     if (binding.request?.schemaVersion !== 3) {throw new Error("V3 request lost");}
     expect(Object.isFrozen(binding.request.scope.thread)).toBe(true);
     input.scope.spaceId = "mutated-space";
-    expect(binding.request?.scope.spaceId).toBe("space-1");
+    expect(binding.request.scope.spaceId).toBe("space-1");
     expect(admit(JSON.parse(JSON.stringify(binding.request))).toSnapshot())
       .toEqual(binding.toSnapshot());
   });

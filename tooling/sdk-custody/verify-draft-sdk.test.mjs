@@ -1,3 +1,6 @@
+// @ts-check
+/// <reference types="node" />
+/// <reference lib="es2024" />
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -9,12 +12,23 @@ import { verifyDraftSdkCustody } from "./verify-draft-sdk.mjs";
 
 // Entirely synthetic test-only package and identities. No upstream build,
 // installation, GitHub access, or actual draft qualification occurs here.
+/** @typedef {{path: string, sha256_hex: string, extra?: boolean}} InventoryEntry */
+/** @typedef {{name: string, sha256: string, byte_length: number, id: number, attestation_verified?: boolean}} Asset */
+/** @typedef {Record<string, unknown> & {assets: Asset[]}} Receipt */
+/** @typedef {Record<string, unknown> & {contract_fixture_inventory: InventoryEntry[]}} Manifest */
+/** @typedef {{pkg: {name: string, version: string, repository: {type: string, url: string}, files: string[]}, lock: {name: string, version: string, lockfileVersion: number, packages: {"": {name: string, version: string}}}, identity: {schema_version: string, package_name: string, package_version: string, source_commit: string, source_git_tree_oid: string, files: InventoryEntry[], extra?: boolean}}} PackageFixture */
+/** @typedef {{expected: Record<string, unknown>, manifest: Manifest, receipt: Receipt, inputs: {tarball: Buffer, packageLockBytes: Buffer, manifestBytes: Buffer, receiptBytes: Buffer}}} Fixture */
+/** @param {import("node:crypto").BinaryLike} bytes */
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const canonical = (value) => Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
+/** @param {unknown} value @returns {string} */
+const canonical = (value) => Array.isArray(value) ? `[${/** @type {unknown[]} */ (value).map(canonical).join(",")}]`
   : value !== null && typeof value === "object"
-    ? `{${Object.keys(value).toSorted().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    ? `{${Object.keys(value).toSorted().map((key) => `${JSON.stringify(key)}:${canonical(/** @type {Record<string, unknown>} */ (value)[key])}`).join(",")}}`
     : JSON.stringify(value);
+/** @param {unknown} value */
 const bytes = (value) => Buffer.from(`${canonical(value)}\n`);
+
+/** @param {(value: PackageFixture) => void} modifyPackage @returns {Fixture} */
 
 function fixture(modifyPackage = () => {}) {
   const expected = {
@@ -29,6 +43,7 @@ function fixture(modifyPackage = () => {}) {
     repository: { type: "git", url: "git+https://github.com/777genius/infinity-context.git" }, files: ["dist"] };
   const lock = { name: pkg.name, version: pkg.version, lockfileVersion: 3,
     packages: { "": { name: pkg.name, version: pkg.version } } };
+  /** @type {PackageFixture["identity"]} */
   const identity = { schema_version: "infinity-context-typescript-sdk-artifact-identity.v1",
     package_name: pkg.name, package_version: pkg.version, source_commit: expected.sourceCommit,
     source_git_tree_oid: expected.sourceTree,
@@ -38,7 +53,9 @@ function fixture(modifyPackage = () => {}) {
   const packageBytes = bytes(pkg);
   // Normally producer hashes the final package manifest; preserve deliberate
   // inventory tampering while accommodating metadata identity test mutations.
-  identity.files.find((entry) => entry.path === "package.json").sha256_hex = sha(packageBytes);
+  const packageEntry = identity.files.find((entry) => entry.path === "package.json");
+  assert.ok(packageEntry);
+  packageEntry.sha256_hex = sha(packageBytes);
   const identityBytes = bytes(identity);
   const root = mkdtempSync(resolve(tmpdir(), "synthetic-sdk-draft-test-"));
   let tarball;
@@ -51,19 +68,19 @@ function fixture(modifyPackage = () => {}) {
       "package/package.json", "package/dist/sdk-artifact-identity.json", "package/dist/index.js"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
   const packageLockBytes = bytes(lock);
-  Object.assign(expected, {
+  const pinnedExpected = { ...expected,
     tarballSha256: sha(tarball), tarballIntegrity: `sha512-${createHash("sha512").update(tarball).digest("base64")}`,
     packageManifestSha256: sha(packageBytes), packageLockSha256: sha(packageLockBytes),
-  });
+  };
   const inventory = [{ path: "src/index.ts", sha256_hex: sha("synthetic test-only source") }];
   const manifest = {
     artifact_byte_length: tarball.length, artifact_name: "infinity-context-sdk-0.3.0.tgz",
-    artifact_identity_sha256_hex: sha(identityBytes), artifact_sha256_hex: expected.tarballSha256,
-    artifact_sri_sha512: expected.tarballIntegrity, build_profile: "node24-npm-ci-pack-once.v1",
+    artifact_identity_sha256_hex: sha(identityBytes), artifact_sha256_hex: pinnedExpected.tarballSha256,
+    artifact_sri_sha512: pinnedExpected.tarballIntegrity, build_profile: "node24-npm-ci-pack-once.v1",
     build_workflow_path: ".github/workflows/typescript-sdk-release.yml",
     build_workflow_run_attempt: 1, build_workflow_run_id: 123, build_workflow_sha256_hex: expected.workflowSha256,
     contract_fixture_inventory: inventory, contract_fixture_inventory_sha256_hex: sha(Buffer.from(canonical(inventory))),
-    git_object_format: "sha1", node_version: "24.18.0", package_lock_sha256_hex: expected.packageLockSha256,
+    git_object_format: "sha1", node_version: "24.18.0", package_lock_sha256_hex: pinnedExpected.packageLockSha256,
     package_name: pkg.name, package_version: "0.3.0", release_tag: "sdk-v0.3.0",
     repository: expected.repository, repository_url: "https://github.com/777genius/infinity-context",
     schema_version: "infinity-context-typescript-sdk-release.v1",
@@ -76,28 +93,33 @@ function fixture(modifyPackage = () => {}) {
     repository: expected.repository, source_commit: expected.sourceCommit, tag_object: expected.tagObject,
     workflow_sha256: expected.workflowSha256, run_id: "123", run_attempt: "1", release_id: 456,
     release_tag: "sdk-v0.3.0", observed_draft_url: expected.observedDraftUrl,
-    assets: [{ name: manifest.artifact_name, sha256: expected.tarballSha256, byte_length: tarball.length, id: 789 },
+    assets: [{ name: manifest.artifact_name, sha256: pinnedExpected.tarballSha256, byte_length: tarball.length, id: 789 },
       { name: "infinity-context-sdk-release-manifest.json", sha256: "", byte_length: 0, id: 790 }],
   };
-  const result = { expected, manifest, receipt, inputs: { tarball, packageLockBytes } };
+  const result = { expected: { ...pinnedExpected, manifestSha256: "", receiptSha256: "" }, manifest, receipt,
+    inputs: { tarball, packageLockBytes, manifestBytes: Buffer.alloc(0), receiptBytes: Buffer.alloc(0) } };
   repinEvidence(result);
   return result;
 }
 // For semantic negatives, pin the mutated evidence bytes deliberately. This
 // proves cross-bindings reject even a newly observed but inconsistent bundle.
+/** @param {Fixture} f */
 function repinEvidence(f) {
   f.inputs.manifestBytes = bytes(f.manifest);
   f.expected.manifestSha256 = sha(f.inputs.manifestBytes);
-  Object.assign(f.receipt.assets[1], { sha256: f.expected.manifestSha256, byte_length: f.inputs.manifestBytes.length });
+  const manifestAsset = at(f.receipt.assets, 1);
+  Object.assign(manifestAsset, { sha256: f.expected.manifestSha256, byte_length: f.inputs.manifestBytes.length });
   repinReceipt(f);
 }
+/** @param {Fixture} f */
 function repinReceipt(f) {
   f.inputs.receiptBytes = Buffer.from(`${JSON.stringify(f.receipt, null, 2)}\n`);
   f.expected.receiptSha256 = sha(f.inputs.receiptBytes);
 }
+/** @param {Fixture} f */
 const verify = (f) => verifyDraftSdkCustody(f.inputs, f.expected);
 
-test("synthetic draft verifies exact producer semantics without immutable/public claims", () => {
+await test("synthetic draft verifies exact producer semantics without immutable/public claims", () => {
   const f = fixture();
   const result = verify(f);
   assert.equal(result.kind, "draft-qualification");
@@ -107,15 +129,15 @@ test("synthetic draft verifies exact producer semantics without immutable/public
   assert.ok(Object.isFrozen(result));
   assert.throws(() => verifyDraftSdkCustody(f.inputs), /trusted identity/);
 });
-test("exact tagged draft URL is supported", () => {
+await test("exact tagged draft URL is supported", () => {
   const f = fixture();
   f.expected.observedDraftUrl = "https://github.com/777genius/infinity-context/releases/tag/sdk-v0.3.0";
   f.receipt.observed_draft_url = f.expected.observedDraftUrl;
   repinReceipt(f);
   verify(f);
 });
-for (const field of ["tarball", "manifestBytes", "receiptBytes", "packageLockBytes"]) {
-  test(`changed pinned ${field} rejected`, () => {
+for (const field of /** @type {const} */ (["tarball", "manifestBytes", "receiptBytes", "packageLockBytes"])) {
+  await test(`changed pinned ${field} rejected`, () => {
     const f = fixture();
     f.inputs[field] = Buffer.concat([f.inputs[field], Buffer.from(" ")]);
     assert.throws(() => verify(f), /SHA256 mismatch/);
@@ -128,7 +150,7 @@ for (const [field, value] of Object.entries({
   tarballAssetId: 791, manifestAssetId: 791, tarballIntegrity: "sha512-wrong",
   packageManifestSha256: "4".repeat(64),
 })) {
-  test(`independent trusted ${field} cannot be replaced by self-assertion`, () => {
+  await test(`independent trusted ${field} cannot be replaced by self-assertion`, () => {
     const f = fixture(); f.expected[field] = value;
     assert.throws(() => verify(f), /Draft SDK custody/);
   });
@@ -141,22 +163,22 @@ for (const [field, value] of Object.entries({
   release_tag: "sdk-v0.2.4", observed_draft_url: "https://github.com/foreign/repository/releases/tag/sdk-v0.3.0",
   unexpected: false,
 })) {
-  test(`receipt rejects mixed/unknown ${field} despite fresh byte pin`, () => {
+  await test(`receipt rejects mixed/unknown ${field} despite fresh byte pin`, () => {
     const f = fixture(); f.receipt[field] = value; repinReceipt(f);
     assert.throws(() => verify(f), /draft receipt mismatch/);
   });
 }
-for (const mutate of [
-  (r) => { r.assets[0].name = "foreign.tgz"; },
-  (r) => { r.assets[0].sha256 = "4".repeat(64); },
-  (r) => { r.assets[0].byte_length += 1; },
-  (r) => { r.assets[0].id = r.assets[1].id; },
-  (r) => { r.assets[0].attestation_verified = true; },
-  (r) => { r.assets[1].sha256 = "4".repeat(64); },
-  (r) => { r.assets.push(r.assets[0]); },
+for (const mutate of /** @type {((r: Receipt) => void)[]} */ ([
+  (r) => { at(r.assets, 0).name = "foreign.tgz"; },
+  (r) => { at(r.assets, 0).sha256 = "4".repeat(64); },
+  (r) => { at(r.assets, 0).byte_length += 1; },
+  (r) => { at(r.assets, 0).id = at(r.assets, 1).id; },
+  (r) => { at(r.assets, 0).attestation_verified = true; },
+  (r) => { at(r.assets, 1).sha256 = "4".repeat(64); },
+  (r) => { r.assets.push(at(r.assets, 0)); },
   (r) => { r.assets.pop(); },
-]) {
-  test("receipt asset substitution/unknown field rejected", () => {
+])) {
+  await test("receipt asset substitution/unknown field rejected", () => {
     const f = fixture(); mutate(f.receipt); repinReceipt(f);
     assert.throws(() => verify(f), /draft receipt mismatch/);
   });
@@ -173,30 +195,30 @@ for (const [field, value] of Object.entries({
   build_profile: "local-build", node_version: "22.0.0", git_object_format: "sha256",
   contract_fixture_inventory_sha256_hex: "4".repeat(64), unexpected: false,
 })) {
-  test(`manifest rejects mixed/unknown ${field} with matching receipt and fresh pins`, () => {
+  await test(`manifest rejects mixed/unknown ${field} with matching receipt and fresh pins`, () => {
     const f = fixture(); f.manifest[field] = value; repinEvidence(f);
     assert.throws(() => verify(f), /release manifest mismatch/);
   });
 }
-for (const mutate of [
+for (const mutate of /** @type {((value: PackageFixture) => void)[]} */ ([
   ({ identity }) => { identity.source_commit = "4".repeat(40); },
   ({ identity }) => { identity.source_git_tree_oid = "4".repeat(40); },
   ({ identity }) => { identity.schema_version = "unknown"; },
   ({ identity }) => { identity.extra = true; },
-  ({ identity }) => { identity.files[0].sha256_hex = "4".repeat(64); },
-  ({ identity }) => { identity.files[0].path = "../escape"; },
+  ({ identity }) => { at(identity.files, 0).sha256_hex = "4".repeat(64); },
+  ({ identity }) => { at(identity.files, 0).path = "../escape"; },
   ({ pkg }) => { pkg.name = "@foreign/sdk"; },
   ({ pkg }) => { pkg.version = "0.2.4"; },
   ({ pkg }) => { pkg.repository.url = "https://github.com/foreign/repository"; },
   ({ lock }) => { lock.name = "@foreign/sdk"; },
   ({ lock }) => { lock.version = "0.2.4"; },
   ({ lock }) => { lock.packages[""].version = "0.2.4"; },
-]) {
-  test("packed metadata/lock/inventory mismatch rejected even when tarball repinned", () => {
+])) {
+  await test("packed metadata/lock/inventory mismatch rejected even when tarball repinned", () => {
     assert.throws(() => verify(fixture(mutate)), /Draft SDK custody/);
   });
 }
-test("unchanged published preparer verifies retained 0.2.4 and rejects draft option", () => {
+await test("unchanged published preparer verifies retained 0.2.4 and rejects draft option", () => {
   const script = new URL("../../vendor/infinity-context/prepare-official-sdk.mjs", import.meta.url);
   assert.match(execFileSync(process.execPath, [script.pathname, "--verify-only"], { encoding: "utf8" }), /0.2.4 immutable package verified offline/);
   assert.throws(() => execFileSync(process.execPath, [script.pathname, "--draft"], { stdio: "pipe" }), /Command failed/);
@@ -205,13 +227,13 @@ test("unchanged published preparer verifies retained 0.2.4 and rejects draft opt
   assert.doesNotMatch(source, /draft-qualification|0\.3\.0/);
 });
 
-test("duplicate receipt keys rejected even when the bytes are repinned", () => {
+await test("duplicate receipt keys rejected even when the bytes are repinned", () => {
   const f = fixture();
   f.inputs.receiptBytes = Buffer.from(f.inputs.receiptBytes.toString().replace('"run_id": "123",', '"run_id": "foreign", "run_id": "123",'));
   f.expected.receiptSha256 = sha(f.inputs.receiptBytes);
   assert.throws(() => verify(f), /duplicate key/);
 });
-test("unknown future draft schema and missing fields fail closed", () => {
+await test("unknown future draft schema and missing fields fail closed", () => {
   const f = fixture();
   f.receipt.schema_version = "infinity-context-typescript-sdk-draft-qualification.v2";
   repinReceipt(f);
@@ -219,17 +241,51 @@ test("unknown future draft schema and missing fields fail closed", () => {
   delete f.expected.receiptSha256;
   assert.throws(() => verify(f), /trusted identity fields/);
 });
-for (const mutate of [
+for (const mutate of /** @type {((f: Fixture) => void)[]} */ ([
   (f) => { f.expected.runId = Number.MAX_SAFE_INTEGER + 1; },
   (f) => { f.expected.runId = "123"; },
   (f) => { f.expected.runAttempt = 0; },
-  (f) => { f.expected.observedDraftUrl += "/suffix"; },
+  (f) => {
+    assert.equal(typeof f.expected.observedDraftUrl, "string");
+    f.expected.observedDraftUrl += "/suffix";
+  },
   (f) => { f.expected.extra = true; },
-  (f) => { f.manifest.contract_fixture_inventory[0].extra = true; repinEvidence(f); },
-  (f) => { f.manifest.contract_fixture_inventory[0].path = "../source.ts"; repinEvidence(f); },
-]) {
-  test("malformed trusted identity or nested manifest inventory fails closed", () => {
+  (f) => { at(f.manifest.contract_fixture_inventory, 0).extra = true; repinEvidence(f); },
+  (f) => { at(f.manifest.contract_fixture_inventory, 0).path = "../source.ts"; repinEvidence(f); },
+])) {
+  await test("malformed trusted identity or nested manifest inventory fails closed", () => {
     const f = fixture(); mutate(f);
     assert.throws(() => verify(f), /Draft SDK custody/);
+  });
+}
+
+/** @template T @param {T[]} values @param {number} index @returns {T} */
+function at(values, index) {
+  const value = values[index];
+  assert.ok(value !== undefined);
+  return value;
+}
+
+for (const mutate of /** @type {((value: PackageFixture) => void)[]} */ ([
+  ({ pkg }) => { Object.assign(pkg, { repository: null }); },
+  ({ lock }) => { Object.assign(lock, { packages: [] }); },
+  ({ lock }) => { Object.assign(lock.packages, { "": null }); },
+])) {
+  await test("malformed package repository or lock object stays malformed and fails closed", () => {
+    assert.throws(() => verify(fixture(mutate)), /Draft SDK custody/);
+  });
+}
+
+for (const [original, duplicate] of /** @type {[string, string][]} */ ([
+  ['"run_id": "123",', '"run\\u005fid": "foreign", "run_id": "123",'],
+  ['"id": 789', '"\\u0069d": 790, "id": 789'],
+])) {
+  await test("escaped duplicate keys fail closed at root and inside asset arrays", () => {
+    const f = fixture();
+    const text = f.inputs.receiptBytes.toString();
+    assert.ok(text.includes(original));
+    f.inputs.receiptBytes = Buffer.from(text.replace(original, duplicate));
+    f.expected.receiptSha256 = sha(f.inputs.receiptBytes);
+    assert.throws(() => verify(f), /duplicate key/);
   });
 }
