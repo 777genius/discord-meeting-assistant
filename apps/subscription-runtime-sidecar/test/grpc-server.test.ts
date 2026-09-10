@@ -163,7 +163,7 @@ describe("authenticated agent runtime gRPC handlers", () => {
     const executor: SidecarExecutorPort = {
       checkHealth: async () => ({
         runtimeEngine: "subscription-runtime-app-server",
-        runtimeVersion: "0.1.0-main.27",
+        runtimeVersion: "0.1.0-main.28",
         status: "serving",
         warningCodes: [],
       }),
@@ -310,7 +310,7 @@ class CompletedExecutor implements SidecarExecutorPort {
         reasoningEffort: "low",
         requestId: incrementalCanonicalRequest.runId,
         runtimeEngine: "subscription-runtime-app-server",
-        runtimePackageVersion: "0.1.0-main.27",
+        runtimePackageVersion: "0.1.0-main.28",
         schemaVersion: 1,
         selectedOutputKind: "structured_output",
         selectedOutputSha256: "c".repeat(64),
@@ -332,7 +332,7 @@ class CompletedExecutor implements SidecarExecutorPort {
   public async checkHealth() {
     return {
       runtimeEngine: "subscription-runtime-app-server",
-      runtimeVersion: "0.1.0-main.27",
+      runtimeVersion: "0.1.0-main.28",
       status: "serving" as const,
       warningCodes: [],
     };
@@ -364,7 +364,7 @@ class FailedWithUsageExecutor implements SidecarExecutorPort {
   public async checkHealth() {
     return {
       runtimeEngine: "subscription-runtime-app-server",
-      runtimeVersion: "0.1.0-main.27",
+      runtimeVersion: "0.1.0-main.28",
       status: "serving" as const,
       warningCodes: [],
     };
@@ -383,7 +383,7 @@ class PartialTelemetryExecutor implements SidecarExecutorPort {
         reasoningEffort: "low",
         requestId: incrementalCanonicalRequest.runId,
         runtimeEngine: "subscription-runtime-app-server",
-        runtimePackageVersion: "0.1.0-main.27",
+        runtimePackageVersion: "0.1.0-main.28",
         schemaVersion: 1,
         selectedOutputKind: "structured_output",
         selectedOutputSha256: "c".repeat(64),
@@ -416,7 +416,7 @@ class PartialTelemetryExecutor implements SidecarExecutorPort {
   public async checkHealth() {
     return {
       runtimeEngine: "subscription-runtime-app-server",
-      runtimeVersion: "0.1.0-main.27",
+      runtimeVersion: "0.1.0-main.28",
       status: "serving" as const,
       warningCodes: [],
     };
@@ -445,7 +445,7 @@ class CountingExecutor implements SidecarExecutorPort {
     this.healthChecks += 1;
     return {
       runtimeEngine: "subscription-runtime-app-server",
-      runtimeVersion: "0.1.0-main.27",
+      runtimeVersion: "0.1.0-main.28",
       status: "serving" as const,
       warningCodes: [],
     };

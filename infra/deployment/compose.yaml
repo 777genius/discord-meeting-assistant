@@ -151,7 +151,11 @@ services:
   subscription-runtime-sidecar:
     profiles: [hosted-summary]
     build:
+      additional_contexts:
+        subscription_runtime_source: "https://github.com/777genius/ar.git?ref=83a7329f4383b05ac5c39356b79f82f029182d42&checksum=83a7329f4383b05ac5c39356b79f82f029182d42"
       args:
+        BUILDKIT_SYNTAX: docker/dockerfile:1.18@sha256:dabfc0969b935b2080555ace70ee69a5261af8a8f1b4df97b9e7fbcf6722eddf
+        SUBSCRIPTION_RUNTIME_SOURCE_REVISION: 83a7329f4383b05ac5c39356b79f82f029182d42
         SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
       context: ../../.build/docker-context
       dockerfile: apps/subscription-runtime-sidecar/Dockerfile
@@ -167,7 +171,7 @@ services:
       SUBSCRIPTION_RUNTIME_DISABLE_TOOLS: "1"
       SUBSCRIPTION_RUNTIME_EXECUTION_PROFILE: stateless-completion
       SUBSCRIPTION_RUNTIME_EXPECTED_LAUNCHER_SHA256: ${SUBSCRIPTION_RUNTIME_LAUNCHER_SHA256:-unconfigured}
-      SUBSCRIPTION_RUNTIME_EXPECTED_PACKAGE_VERSION: 0.1.0-main.27
+      SUBSCRIPTION_RUNTIME_EXPECTED_PACKAGE_VERSION: 0.1.0-main.28
       SUBSCRIPTION_RUNTIME_GRPC_BIND: 0.0.0.0:50052
       SUBSCRIPTION_RUNTIME_ISOLATED_CWD: /run/discord-meeting-subscription-runtime/workspace
       SUBSCRIPTION_RUNTIME_LAUNCHER_PATH: /opt/subscription-runtime/audited-xhigh-launcher.mjs
@@ -181,7 +185,6 @@ services:
       SUBSCRIPTION_RUNTIME_STATE_ROOT: /var/lib/subscription-runtime
       PATH: /app/apps/subscription-runtime-sidecar/node_modules/.bin:/opt/subscription-runtime/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     volumes:
-      - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/installation/node_modules:/opt/subscription-runtime/node_modules:ro
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/auth-pool:/run/subscription-runtime-auth:ro
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/runtime/state:/var/lib/subscription-runtime
       - ${DEPLOY_ROOT:?set DEPLOY_ROOT}/secrets/runtime:/run/subscription-runtime-secrets:ro

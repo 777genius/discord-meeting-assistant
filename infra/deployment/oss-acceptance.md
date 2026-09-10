@@ -10,6 +10,9 @@ Rich generated summaries and spoken answers are separate optional capabilities.
 
 Start with the [Compose installation](oss-meeting-topology.md). The test VM,
 Canary controller and hosted development workers are not application prerequisites.
+The [2026-09-10 fresh-install observation](../../docs/self-hosting/verified-install.md)
+records installation time, memory, recording size and provider usage for one
+public-source deployment without extending those measurements into guarantees.
 
 ## Verified Discord campaign
 

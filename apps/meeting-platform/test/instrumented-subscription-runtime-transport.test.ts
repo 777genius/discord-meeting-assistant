@@ -95,7 +95,7 @@ function completedResult(): CompletedRuntimeTaskResult {
       reasoningEffort: "medium",
       requestId: "runtime-request-1",
       runtimeEngine: "subscription-runtime-app-server",
-      runtimePackageVersion: "0.1.0-main.27",
+      runtimePackageVersion: "0.1.0-main.28",
       schemaVersion: 1,
       selectedOutputKind: "structured_output",
       selectedOutputSha256: "c".repeat(64),
@@ -557,7 +557,7 @@ describe("instrumented subscription runtime safety", () => {
     const logger = observability();
     const health = {
       runtimeEngine: "subscription-runtime-app-server",
-      runtimeVersion: "0.1.0-main.27",
+      runtimeVersion: "0.1.0-main.28",
       status: "serving",
       warningCodes: [],
     } as const;

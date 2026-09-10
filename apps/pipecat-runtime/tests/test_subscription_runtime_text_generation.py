@@ -597,7 +597,7 @@ def _attested_completed_response(
             model="gpt-5.6-luna",
             reasoning_effort="low",
             runtime_engine="subscription-runtime-app-server",
-            runtime_package_version="0.1.0-main.27",
+            runtime_package_version="0.1.0-main.28",
             launcher_sha256="a" * 64,
             selected_output_kind=contract.AGENT_RUNTIME_SELECTED_OUTPUT_KIND_STRUCTURED_OUTPUT,
             selected_output_sha256=_sha256(structured),

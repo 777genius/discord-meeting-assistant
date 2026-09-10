@@ -11,9 +11,9 @@ separate [serving restrictions](meeting-memory.md).
 ## 1. Meet the prerequisites
 
 Complete the base installation and [AI runtime prerequisites](ai-summaries.md),
-including the private package, authorized account pool, service token and digest.
-The command below enables both summaries and voice. A public-repository-only
-installation without that private runtime cannot complete this scenario.
+including the source-built runtime package, authorized account pool, service token and digest.
+The command below enables both summaries and voice. The sidecar image builds
+the runtime from pinned public source; authorized account access is still required.
 
 Create `secrets/platform/conversation-runtime-token` with an independent random
 bearer, owner `10001:10001`, mode `0400`. Create `secrets/pipecat` with owner

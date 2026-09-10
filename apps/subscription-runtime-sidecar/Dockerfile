@@ -1,3 +1,16 @@
+# syntax=docker/dockerfile:1.18@sha256:dabfc0969b935b2080555ace70ee69a5261af8a8f1b4df97b9e7fbcf6722eddf
+FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS runtime-source-build
+WORKDIR /source
+COPY --from=subscription_runtime_source / /source/
+RUN npm ci --ignore-scripts --registry=https://registry.npmjs.org \
+    && npm run build \
+    && npm pack --ignore-scripts --pack-destination /tmp
+RUN node -e 'const p=require("./package.json"); if(p.name!=="@vioxen/subscription-runtime" || p.version!=="0.1.0-main.28") process.exit(1)'
+RUN npm ci --omit=dev --ignore-scripts --registry=https://registry.npmjs.org \
+    && mkdir -p /opt/subscription-runtime/node_modules/@vioxen/subscription-runtime \
+    && cp -a node_modules/. /opt/subscription-runtime/node_modules/ \
+    && tar -xzf /tmp/vioxen-subscription-runtime-0.1.0-main.28.tgz --strip-components=1 -C /opt/subscription-runtime/node_modules/@vioxen/subscription-runtime
+
 FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS dependencies
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11.18.0 --activate
@@ -12,6 +25,9 @@ RUN pnpm --filter=@discord-meeting/subscription-runtime-sidecar... --if-present 
 
 FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS runtime
 ARG SOURCE_REVISION
+ARG SUBSCRIPTION_RUNTIME_SOURCE_REVISION
+LABEL io.botik.subscription-runtime.source="https://github.com/777genius/ar" \
+      io.botik.subscription-runtime.revision="${SUBSCRIPTION_RUNTIME_SOURCE_REVISION}"
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
 RUN printf '%s' "${SOURCE_REVISION}" \
   | grep -Eq '^([0-9a-f]{40}|[0-9a-f]{64})$'
@@ -23,6 +39,7 @@ ENV NODE_ENV=production \
     SSL_CERT_DIR=/etc/ssl/certs \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 WORKDIR /app
+COPY --from=runtime-source-build /opt/subscription-runtime/node_modules /opt/subscription-runtime/node_modules
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=dependencies /app/apps/subscription-runtime-sidecar/node_modules ./apps/subscription-runtime-sidecar/node_modules
 COPY --from=dependencies /app/packages/subscription-runtime-adapter/node_modules ./packages/subscription-runtime-adapter/node_modules

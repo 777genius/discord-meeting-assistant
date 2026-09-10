@@ -9,15 +9,17 @@ summarization. Live incremental generation additionally needs live transcription
 ## Before you start
 
 Complete the base installation and verify a transcript first. Generation uses
-the private Subscription Runtime sidecar and operator-owned authorized Codex
+the isolated Subscription Runtime sidecar and operator-owned authorized Codex
 subscription sessions. It does not accept an OpenAI API key as a substitute.
 
-**External prerequisite:** the repository does not ship the private
-`@vioxen/subscription-runtime@0.1.0-main.27` artifact or a public installation
-workflow for obtaining it. You must already have authorized access to that exact
-package, its complete Linux-compatible dependency tree and a supported host
-account inventory. Without these, stop at the base transcription setup; this
-optional scenario cannot currently be completed from the public repository alone.
+The sidecar builds `@vioxen/subscription-runtime@0.1.0-main.28` from the
+public [777genius/ar source](https://github.com/777genius/ar), pinned by full
+Git SHA and checksum in `infra/deployment/source-pins.json`. BuildKit fetches
+that additional source context, builds and packs it, and includes its locked
+production dependencies in the immutable image. No private package token or
+host-installed runtime package is required. Use Docker Compose 2.17+ and a
+BuildKit version supporting Dockerfile 1.18 Git URL queries (Buildx 0.28+).
+Authorized subscription accounts and a supported host inventory remain required.
 The word `hosted-summary` names a Compose profile, not a hosted Botik service
 provided to users.
 
@@ -27,7 +29,6 @@ Under your `DEPLOY_ROOT`, prepare:
 
 | Path | Content / access |
 | --- | --- |
-| `runtime/installation/node_modules` | Exact runtime package and complete dependencies; readable by UID 10001, mounted read-only |
 | `runtime/auth-pool` | Immutable opaque account generation and `pool.json`; UID 10001, directory 0700, auth files 0400 |
 | `runtime/state` | Writable runtime state; UID 10001, directory 0700 |
 | `secrets/runtime/local-encryption-key` | Exactly 32 random bytes encoded as base64; UID 10001, mode 0400 |
@@ -40,9 +41,8 @@ Keep parent directories traversable by the service owner. The reservation manife
 must be a regular non-symlink private file (mode `0400`).
 
 Use `openssl rand -base64 32` for the encryption key, not a hexadecimal string.
-Keep private installation/auth directories outside other projects. The image
-already ships the audited launcher; do not copy older launcher modules into the
-persistent installation mount.
+Keep private auth directories outside other projects. Runtime packages and the
+audited launcher are image-owned; never overlay them with a host mount.
 
 ## 2. Materialize authorized accounts
 
@@ -146,5 +146,4 @@ Stop Platform and the sidecar before removing generation. Remove the summary
 overlay/profile from the deployment command, restore
 `SUMMARY_PROVIDER=transcript-outline`, and redeploy the base stack. Do not stop
 the sidecar while voice answers or another enabled feature still depends on it.
-Preserve originals, databases and runtime state. Roll back sidecar image, package
-mount layout, policy and admitted digest together, using a schema-compatible release.
+Preserve originals, databases and runtime state. Roll back sidecar image, source pin, policy and admitted digest together, using a schema-compatible release.

@@ -14,6 +14,8 @@ Compose `2.24.4+`, and Buildx `0.28.0+`. The build uses pinned Git sources and
 container digests from the repository. It needs outbound access to source and
 package registries; running the bot needs access to Discord and your providers.
 There is no published binary/container release assumed by this guide.
+See the [measured fresh installation](verified-install.md) for one observed
+build time, memory peak, recording size and speech-provider usage.
 
 ```sh
 node --version

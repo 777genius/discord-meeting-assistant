@@ -30,6 +30,8 @@ Commands are based on the repository's Compose files and configuration. The
 Discord and provider scenarios actually tested. A documented configuration is
 not evidence that every optional combination has passed a fresh installation
 or provider-backed test. Each optional guide states its prerequisites and limits.
+See the [measured fresh installation](verified-install.md) for one exact host,
+configuration and result.
 
 Use a separate private test guild and synthetic audio for your first verification.
 The qualification controller and hosted development workers are not application

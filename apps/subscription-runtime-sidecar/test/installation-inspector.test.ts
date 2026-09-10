@@ -49,7 +49,7 @@ describe("FileInstallationInspector", () => {
       manifestPath,
       JSON.stringify({
         name: "@vioxen/subscription-runtime",
-        version: "0.1.0-main.27",
+        version: "0.1.0-main.28",
       }),
     );
     const expectedLauncherSha256 = createAuditedLauncherBundleSha256([
@@ -70,7 +70,7 @@ describe("FileInstallationInspector", () => {
       launcherSha256: expectedLauncherSha256,
       packageManifestRealpath: await realpath(manifestPath),
       packageRootRealpath: await realpath(installationRoot),
-      runtimePackageVersion: "0.1.0-main.27",
+      runtimePackageVersion: "0.1.0-main.28",
     });
 
     await writeFile(launcherPath, `${launcher}// changed\n`);
