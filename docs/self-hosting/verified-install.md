@@ -28,13 +28,33 @@ One sequential synthetic meeting completed without a manual queue replay:
 - the base `transcript-outline` summary was used, so no AI account or LLM usage
   was consumed.
 
-The optional Subscription Runtime image was also built separately without being
-started. BuildKit fetched public source from
+The optional Subscription Runtime image was first built separately. BuildKit fetched public source from
 [`777genius/ar`](https://github.com/777genius/ar) at exact revision
 `83a7329f4383b05ac5c39356b79f82f029182d42`. The image contained
 `@vioxen/subscription-runtime@0.1.0-main.28`, had no private registry/build secret,
-and had no host mount over `/opt`. An authorized Codex subscription account pool
-is still required to run AI summaries or voice answers.
+and had no host mount over `/opt`.
+
+## AI summary follow-up
+
+A second synthetic meeting exercised the optional AI path with an authorized
+Codex subscription account. The platform processed 29 transcript turns from two
+speaker tracks. The public `777genius/ar` runtime invoked `gpt-5.6-sol` through
+Codex CLI 0.153.3 and produced the Russian summary `Релиз и проверка очереди`.
+Botik then published that result to the private Discord results channel.
+
+Both `summaryStage` and `publicationStage` completed on their first application
+attempt. The retained Discord receipt is
+`discord:v2:channel:1533228891827736657:message:1547571444546801795`.
+The summary overview described the discussed release, Redis queue and
+idempotency checks, and Pipecat follow-up. Empty decisions and action items were
+correct for the recognized transcript.
+
+The follow-up used platform revision
+`f1cc6c5476ddcbbe4e9f4bc43744b801c3bf434c` and sidecar revision
+`7a6230fedb0b493d02aa5b17f87a00380bb3cf9c`. It also verified that an unavailable
+conversation-profile prewarm no longer prevents the independent final-summary
+profile from serving requests. An authorized Codex subscription account pool is
+still required for this optional mode.
 
 ## Measurements
 
@@ -44,6 +64,8 @@ is still required to run AI summaries or voice answers.
 | Successful verified full build phase | 12 min 30 sec |
 | Recovered edge build plus Compose create/health | 34.7 sec |
 | Optional public-source AI sidecar build | 4 min 23 sec |
+| AI follow-up transcription | 1.176 sec for 29 turns |
+| AI summary plus Discord publication after transcription | 3 min 15 sec |
 | Highest sampled stack memory during installation | 837 MiB |
 | Successful meeting sampled stack peak | 706 MiB |
 | Platform container cgroup peak | 281 MiB |
