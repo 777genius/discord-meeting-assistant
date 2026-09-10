@@ -11,8 +11,13 @@
 
 ## Run Botik
 
+- [Self-hosting scenarios](self-hosting/README.md): detailed setup by feature.
+- [Operations and backups](self-hosting/operations.md).
+- [Troubleshooting](self-hosting/troubleshooting.md).
+
 - [Installation and backups](../infra/deployment/oss-meeting-topology.md).
 - [Speech gateway configuration](../infra/deployment/voicetext-gateway.md).
+- [Optional features](optional-features.md): AI summaries, voice answers, memory and playback.
 - [Deployment options](../infra/deployment/README.md).
 - [Greeting ledger retention](operations/greeting-ledger-retention.md).
 - [Meeting memory retrieval baseline](operations/meeting-memory-retrieval-baseline.md).
