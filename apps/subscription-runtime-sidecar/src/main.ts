@@ -64,6 +64,11 @@ async function bootstrap(): Promise<void> {
   });
   const server = await startPreparedSidecar({
     disposePreparedRuntime: async () => persistentRunner.dispose(),
+    onPrepareFailure: (error: unknown) => {
+      process.stderr.write(
+        `Subscription runtime prewarm degraded: ${safeErrorMessage(error)}\n`,
+      );
+    },
     prepareRuntime: async () => {
       const result = await persistentRunner.prewarmAccounts(
         {
@@ -111,9 +116,13 @@ async function bootstrap(): Promise<void> {
 }
 
 void bootstrap().catch((error: unknown) => {
-  const reason = error instanceof Error
-    ? error.message.replaceAll(/[\r\n]+/gu, " ").slice(0, 1_000)
-    : "unknown startup failure";
+  const reason = safeErrorMessage(error);
   process.stderr.write(`Subscription runtime sidecar failed to start: ${reason}\n`);
   process.exitCode = 1;
 });
+
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message.replaceAll(/[\r\n]+/gu, " ").slice(0, 1_000)
+    : "unknown startup failure";
+}

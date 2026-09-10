@@ -35,4 +35,26 @@ describe("startPreparedSidecar", () => {
     ).resolves.toBe(server);
     expect(disposePreparedRuntime).not.toHaveBeenCalled();
   });
+
+  it("starts the server when optional runtime preparation is unavailable", async () => {
+    const prepareFailure = new Error("conversation prewarm unavailable");
+    const onPrepareFailure = vi.fn();
+    const startServer = vi.fn(async () => ({ started: true }));
+    const disposePreparedRuntime = vi.fn(async () => {});
+
+    await expect(
+      startPreparedSidecar({
+        disposePreparedRuntime,
+        onPrepareFailure,
+        prepareRuntime: async () => {
+          throw prepareFailure;
+        },
+        startServer,
+      }),
+    ).resolves.toEqual({ started: true });
+
+    expect(onPrepareFailure).toHaveBeenCalledWith(prepareFailure);
+    expect(startServer).toHaveBeenCalledOnce();
+    expect(disposePreparedRuntime).not.toHaveBeenCalled();
+  });
 });
