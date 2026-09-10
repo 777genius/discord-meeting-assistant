@@ -26,7 +26,7 @@ catalog:
   bullmq: 5.81.3
   confusables: 1.1.1
   discord.js: 14.27.0
-  fastify: 5.11.2
+  fastify: 5.12.3
   fast-check: 4.9.0
   knip: 6.31.0
   nx: 23.1.1
@@ -38,7 +38,7 @@ catalog:
   testcontainers: 12.0.4
   tsx: 4.23.1
   typescript: 7.0.2
-  vitest: 4.1.10
+  vitest: 4.1.11
   ws: 8.21.1
   yaml: 2.9.0
   zod: 4.4.3
@@ -62,3 +62,11 @@ allowBuilds:
 
 overrides:
   "@infinity-context/sdk": "file:vendor/infinity-context/artifacts/infinity-context-sdk-0.2.4.tgz"
+  # Keep security fixes within each consumer's compatible major; node-pre-gyp's
+  # tar 6 is unmaintained and uses the extraction API retained by tar 7.
+  "@discordjs/node-pre-gyp>tar": 7.5.22
+  "brace-expansion@>=4.0.0 <5.0.9": 5.0.9
+  "fast-uri@3": 3.1.7
+  "fast-uri@4": 4.1.4
+  "nanoid@3": 3.3.18
+  "smol-toml@1": 1.8.0
