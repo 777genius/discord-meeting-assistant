@@ -12,7 +12,7 @@ import { verifyDraftSdkCustody } from "./verify-draft-sdk.mjs";
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const canonical = (value) => Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
   : value !== null && typeof value === "object"
-    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    ? `{${Object.keys(value).toSorted().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
     : JSON.stringify(value);
 const bytes = (value) => Buffer.from(`${canonical(value)}\n`);
 
@@ -197,7 +197,7 @@ for (const mutate of [
   });
 }
 test("unchanged published preparer verifies retained 0.2.4 and rejects draft option", () => {
-  const script = new URL("./prepare-official-sdk.mjs", import.meta.url);
+  const script = new URL("../../vendor/infinity-context/prepare-official-sdk.mjs", import.meta.url);
   assert.match(execFileSync(process.execPath, [script.pathname, "--verify-only"], { encoding: "utf8" }), /0.2.4 immutable package verified offline/);
   assert.throws(() => execFileSync(process.execPath, [script.pathname, "--draft"], { stdio: "pipe" }), /Command failed/);
   const source = readFileSync(new URL("../../packages/infinity-context-adapter/src/infinity-sdk-provenance.ts", import.meta.url), "utf8");

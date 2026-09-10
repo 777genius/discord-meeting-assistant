@@ -10,19 +10,19 @@ const MAX_METADATA = 10 * 1024 * 1024;
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 function requireMatch(condition, label) {
-  if (!condition) throw new Error(`Draft SDK custody: ${label}`);
+  if (!condition) {throw new Error(`Draft SDK custody: ${label}`);}
 }
 function exactKeys(value, keys, label) {
   requireMatch(value !== null && typeof value === "object" && !Array.isArray(value) &&
-    isDeepStrictEqual(Object.keys(value).sort(), [...keys].sort()), `${label} fields`);
+    isDeepStrictEqual(Object.keys(value).toSorted(), [...keys].toSorted()), `${label} fields`);
 }
 function equal(actual, expected, label) {
   requireMatch(isDeepStrictEqual(actual, expected), `${label} mismatch`);
 }
 function canonical(value) {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (Array.isArray(value)) {return `[${value.map(canonical).join(",")}]`;}
   if (value !== null && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+    return `{${Object.keys(value).toSorted().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
   }
   requireMatch(typeof value !== "number" || Number.isSafeInteger(value), "unsafe JSON number");
   return JSON.stringify(value);
@@ -33,13 +33,13 @@ function parse(bytes, label, canonicalRequired = false) {
   const value = JSON.parse(text);
   // JSON.parse alone silently accepts duplicate keys. Tokenize only after it
   // has validated syntax, keeping strings (including escaped keys) intact.
-  const tokens = text.match(/"(?:[^"\\]|\\.)*"|[{}\[\]:,]/gu) ?? [];
+  const tokens = text.match(/"(?:[^"\\]|\\.)*"|[{}[\]:,]/gu) ?? [];
   const objects = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    if (token === "{") objects.push(new Set());
-    else if (token === "[") objects.push(null);
-    else if (token === "}" || token === "]") objects.pop();
+    if (token === "{") {objects.push(new Set());}
+    else if (token === "[") {objects.push(null);}
+    else if (token === "}" || token === "]") {objects.pop();}
     else if (token.startsWith('"') && tokens[index + 1] === ":") {
       const key = JSON.parse(token);
       const keys = objects.at(-1);
@@ -83,7 +83,7 @@ function inventory(value, label) {
  * source reproducibility, public distribution, or an immutable attestation.
  * Receipt run IDs are strings; manifest run IDs are positive safe integers.
  */
-export function verifyDraftSdkCustody({ tarball, manifestBytes, receiptBytes, packageLockBytes }, expected) {
+function verifyTrustedIdentity(expected) {
   exactKeys(expected, [
     "kind", "repository", "packageName", "packageVersion", "sourceCommit", "sourceTree",
     "tagObject", "workflowSha256", "runId", "runAttempt", "releaseId", "observedDraftUrl",
@@ -101,7 +101,7 @@ export function verifyDraftSdkCustody({ tarball, manifestBytes, receiptBytes, pa
       expected[field].length === expected.sourceCommit.length, `trusted ${field}`);
   }
   requireMatch(typeof expected.workflowSha256 === "string" && /^[0-9a-f]{64}$/u.test(expected.workflowSha256), "trusted workflow");
-  for (const field of ["runId", "runAttempt", "releaseId", "tarballAssetId", "manifestAssetId"]) positive(expected[field], `trusted ${field}`);
+  for (const field of ["runId", "runAttempt", "releaseId", "tarballAssetId", "manifestAssetId"]) {positive(expected[field], `trusted ${field}`);}
   requireMatch(expected.tarballAssetId !== expected.manifestAssetId, "distinct asset IDs");
   const tag = `sdk-v${expected.packageVersion}`;
   const artifactName = `infinity-context-sdk-${expected.packageVersion}.tgz`;
@@ -110,6 +110,11 @@ export function verifyDraftSdkCustody({ tarball, manifestBytes, receiptBytes, pa
     (expected.observedDraftUrl === `${urlBase}${tag}` ||
       (expected.observedDraftUrl.startsWith(`${urlBase}untagged-`) &&
         /^[0-9a-f]{20}$/u.test(expected.observedDraftUrl.slice(`${urlBase}untagged-`.length)))), "trusted draft URL");
+  return { tag, artifactName };
+}
+
+export function verifyDraftSdkCustody({ tarball, manifestBytes, receiptBytes, packageLockBytes }, expected) {
+  const { tag, artifactName } = verifyTrustedIdentity(expected);
   requireMatch(Buffer.isBuffer(tarball) && tarball.length > 0 && tarball.length <= 100 * 1024 * 1024, "tarball bytes");
   digestPin(tarball, expected.tarballSha256, "tarball");
   equal(`sha512-${createHash("sha512").update(tarball).digest("base64")}`, expected.tarballIntegrity, "tarball SRI");
