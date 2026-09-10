@@ -20,7 +20,7 @@ available if transcription or publishing fails.
 
 ## Get started
 
-Self-host Botik with two Discord bots and a speech provider key.
+Self-host Botik with two user-owned Discord applications and a speech provider key.
 Follow the [setup guide](docs/getting-started.md), then run `/setup-voice-bot`
 to choose your voice channel and where results appear.
 
@@ -31,3 +31,8 @@ to choose your voice channel and where results appear.
 - [Tested capabilities and limitations](infra/deployment/oss-acceptance.md)
 - [Development](docs/development.md)
 - [Architecture](docs/architecture/overview.md)
+
+## License
+
+[Apache License 2.0](LICENSE). Third-party attributions are listed in
+[NOTICE](NOTICE).

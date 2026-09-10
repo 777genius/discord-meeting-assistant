@@ -340,3 +340,24 @@ test("readiness-gates Meeting Platform on versioned object storage bootstrap", a
   assert.match(bootstrap, /PutBucketVersioningCommand/u);
   assert.match(bootstrap, /object storage did not return an immutable version ID/u);
 });
+
+test("runtime source pin rejects substitution and executable mounts", async () => {
+  const { assertRuntimeSource } = await import("./run-verified-compose.mjs");
+  const pins = JSON.parse(await deploymentFile("source-pins.json"));
+  const pin = pins.subscriptionRuntime;
+  const service = {
+    build: {
+      additional_contexts: { subscription_runtime_source: `${pin.gitUrl}?ref=${pin.gitRef}&checksum=${pin.revision}` },
+      args: { SUBSCRIPTION_RUNTIME_SOURCE_REVISION: pin.revision },
+    },
+    environment: { SUBSCRIPTION_RUNTIME_EXPECTED_PACKAGE_VERSION: pin.packageVersion },
+    volumes: [{ target: "/run/subscription-runtime-auth" }],
+  };
+  const rendered = { services: { "subscription-runtime-sidecar": service } };
+  assert.doesNotThrow(() => assertRuntimeSource(rendered, pin));
+  service.build.additional_contexts.subscription_runtime_source = `${pin.gitUrl}?ref=main`;
+  assert.throws(() => assertRuntimeSource(rendered, pin), /runtime Git source/u);
+  service.build.additional_contexts.subscription_runtime_source = `${pin.gitUrl}?ref=${pin.gitRef}&checksum=${pin.revision}`;
+  service.volumes.push({ target: "/opt/subscription-runtime/node_modules" });
+  assert.throws(() => assertRuntimeSource(rendered, pin), /image-owned runtime code/u);
+});

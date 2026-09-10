@@ -93,7 +93,7 @@ describe("SubscriptionRuntimeExecutor execution profiles and output", () => {
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
       runtimeEngine: "subscription-runtime-app-server",
-      runtimePackageVersion: "0.1.0-main.27",
+      runtimePackageVersion: "0.1.0-main.28",
     });
     expect(capturedRequest).toEqual(canonicalRequest);
     expect(inspections).toBe(2);

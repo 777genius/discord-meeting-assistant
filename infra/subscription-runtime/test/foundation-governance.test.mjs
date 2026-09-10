@@ -88,7 +88,7 @@ test("deploys the audited launcher with the sidecar image", async () => {
     sidecar,
     /runtime\/installation:\/opt\/subscription-runtime:ro/u,
   );
-  assert.match(
+  assert.doesNotMatch(
     sidecar,
     /runtime\/installation\/node_modules:\/opt\/subscription-runtime\/node_modules:ro/u,
   );

@@ -1,0 +1,16 @@
+Botik - Self-hosted Meeting Assistant for Discord
+Copyright 2026 777genius
+
+This product includes third-party software. License and attribution files kept
+inside third-party source and asset directories remain applicable to those
+components.
+
+The bundled paraphrase-multilingual-MiniLM-L12-v2 tokenizer assets preserve
+their Apache License 2.0 text and NOTICE under
+packages/infinity-context-adapter/assets/paraphrase-multilingual-minilm-l12-v2-e8f8c211/.
+
+The immutable Infinity Context SDK archives under vendor/infinity-context are
+retained byte-for-byte for reproducible builds. The reviewed upstream SDK source
+for version 0.2.4 at commit 40704f193008f98c52ede93b68a44349907dd2cd is
+licensed under the Apache License 2.0. Earlier retained evidence versions are
+historical build inputs and do not establish a separate license claim here.

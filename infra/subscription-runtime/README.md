@@ -71,7 +71,7 @@ regular, non-symlink files with mode `0400`.
 
 The immutable sidecar image must:
 
-1. pin `@vioxen/subscription-runtime` to `0.1.0-main.27` and verify both the
+1. pin `@vioxen/subscription-runtime` to `0.1.0-main.28` and verify both the
    package version and the complete admitted audited-launcher bundle SHA-256 before
    every execution;
 2. admit `discord_meeting.summary.generate` only with
@@ -122,7 +122,7 @@ completion. Failed retained workers are disposed and prewarmed again on the
 next request. Every turn stays stateless, and Subscription Runtime continues to
 own app-server execution, session/cache safety, and packaged exec fallback. The audited launcher wraps
 only the admitted `codexBinaryPath` on that fallback and observes
-`codex exec --json` JSONL `turn.completed` events. It keeps the private runtime
+`codex exec --json` JSONL `turn.completed` events. It keeps the runtime
 worker responsible for auth custody and disabled-tool policy. Codex supplies
 measured input, cached input, output, and reasoning-output tokens in that event;
 it does not supply cache-write input or total. Those four classes are returned

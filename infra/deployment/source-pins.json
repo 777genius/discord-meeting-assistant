@@ -8,5 +8,12 @@
     "gitUrl": "https://github.com/777genius/voicetext-gateway.git",
     "gitRef": "3e0ede3ec9086a45bc026f43191a998f2682fd6e",
     "revision": "3e0ede3ec9086a45bc026f43191a998f2682fd6e"
+  },
+  "subscriptionRuntime": {
+    "gitUrl": "https://github.com/777genius/ar.git",
+    "gitRef": "cf6e3e618b388e8dbefe608c3a2cd5a24be2c01c",
+    "revision": "cf6e3e618b388e8dbefe608c3a2cd5a24be2c01c",
+    "packageName": "@vioxen/subscription-runtime",
+    "packageVersion": "0.1.0-main.28"
   }
 }

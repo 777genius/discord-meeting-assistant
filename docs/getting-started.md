@@ -14,7 +14,7 @@ may charge for usage.
    [voice answers](self-hosting/voice-answers.md) or [recording playback](self-hosting/recording-playback.md) as needed.
 
 The base result is a full transcript with speaker names and timestamps plus a
-turn-count outline. AI generation needs an additional private runtime artifact;
+turn-count outline. AI generation needs an additional public source-built runtime image;
 [meeting memory](self-hosting/meeting-memory.md) has separate serving gates.
 Read each feature's prerequisites before choosing it.
 

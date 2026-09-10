@@ -34,15 +34,15 @@ into an existing slot. Account names and the host inventory path stay outside
 Compose and the application. Reserved accounts must be removed from every
 other project's candidate manifest before the new sidecar starts.
 
-The audited launcher modules ship inside the immutable sidecar image.
-`${DEPLOY_ROOT}/runtime/installation` supplies only the exact pinned
-`@vioxen/subscription-runtime` package tree. Do not copy launcher modules into
-that persistent directory: keeping policy code in the image prevents a fresh
-application release from silently reusing an older admission policy.
-Roll back across this ownership cutover by restoring the previous Compose file,
-full-installation mount, launcher path, image, and digest together before
-starting the old sidecar. An old image cannot use the new `node_modules`-only
-mount because it does not contain the image-owned launcher.
+The audited launcher and runtime package ship inside the immutable sidecar image.
+The public `777genius/ar` Git source is pinned by full SHA and checksum in
+`source-pins.json` and Compose's `subscription_runtime_source` additional context.
+The build verifies package name/version, compiles and packs the source, and
+includes production dependencies from its lockfile. No private registry token or
+runtime installation mount is needed. The verified wrapper rejects source drift
+and mounts over image-owned `/opt` code. Roll back image, source pin, policy and
+admitted launcher digest together. Account custody and six purpose policies remain
+unchanged.
 
 PostgreSQL migrations are owned by the one-shot `postgres-migrations` service,
 not by PostgreSQL init hooks. It acquires an advisory lock, applies every
