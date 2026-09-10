@@ -7,7 +7,6 @@ import type {
 import type { FocusedRetrievalAudit, RehydratedEvidenceTurn } from
   "../../domain/grounding-plan.js";
 export type {
-  FocusedLocatorRetrievalV2ProviderBinding,
   FocusedLocatorRetrievalV2RequestSnapshot,
   FocusedLocatorRetrievalV3RequestSnapshot,
   FocusedLocatorRetrievalRequestSnapshot,

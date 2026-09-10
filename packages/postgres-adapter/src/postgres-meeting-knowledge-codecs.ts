@@ -145,7 +145,7 @@ export const retrievalV2RequestSchema = z.object({
   }).strict(),
 }).strict();
 
-export const retrievalV3RequestSchema = retrievalV2RequestSchema.extend({
+const retrievalV3RequestSchema = retrievalV2RequestSchema.extend({
   binding: retrievalV2RequestSchema.shape.binding.extend({
     contractVersion: z.literal("context-retrieval.v3"), }).strict(),
   schemaVersion: z.literal(3),
