@@ -70,7 +70,10 @@ composition change, not just more values in `.env`.
 
 Until the gates are satisfied, advertise recording/transcription and separately
 configured conversation, not generally available long-term meeting memory.
-Indexing and deletion can continue while answer serving is unavailable.
+Indexing can continue while answer serving is unavailable only when indexing is
+enabled and projection qualification succeeds. Failed provider qualification
+disables indexing. Deletion remains separately eligible, but remote work still
+requires a reachable, transport-qualified provider.
 
 ## Verification and rollback
 

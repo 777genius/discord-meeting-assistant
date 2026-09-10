@@ -11,6 +11,11 @@ In the Discord Developer Portal, create two official applications you own:
 | Publication bot | Commands, captions and final results | `DISCORD_PUBLICATION_APPLICATION_ID` |
 | Craig recording bot | Joining voice and retaining recordings | `DISCORD_CRAIG_APPLICATION_ID` |
 
+These are operator-facing Compose variables. Compose maps
+`DISCORD_PUBLICATION_APPLICATION_ID` to both `DISCORD_APPLICATION_ID` and
+`DISCORD_BOTIK_APPLICATION_ID` inside Platform; do not replace the external
+variable with either internal name.
+
 Copy each application's ID from its application settings. Create/reset each
 bot token as needed and store it in its [designated secret file](storage-and-secrets.md).
 An application ID, client secret and bot token are different values. Do not use

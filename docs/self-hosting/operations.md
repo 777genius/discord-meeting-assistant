@@ -60,7 +60,8 @@ At minimum, preserve:
 - remaining database, Redis, object-storage, spool and TLS directories for a
   consistent full deployment recovery;
 - external environment, secrets, operator overlays, proxy configuration and
-  optional runtime auth/state/package provenance;
+  optional runtime auth/state and the complete `runtime/installation` package
+  tree, including owners and modes, together with its package provenance;
 - deployed source SHA, image revision labels and
   `.build/meeting-platform-build-provenance.json` from the matching build.
 
@@ -71,8 +72,14 @@ A backup is not proven until a restore is exercised.
 
 Use a new isolated destination and private test identities. Do not run restored
 production tokens against the same guild while the original stack is active.
-Restore data and credentials with the recorded numeric owners, use compatible
-image/database versions and rebuild from the recorded source if needed. Keep
+Restore data and database/internal credentials with the recorded numeric owners.
+Before starting any recovery application service, replace both Discord bot tokens,
+application/channel IDs and external provider credentials with dedicated private
+test values. In particular, replace `secrets/platform/discord-sut-token`, which
+Platform reads on startup through `DISCORD_TOKEN_FILE`. Do not activate restored
+production auth pools in a test instance. Keep outbound access blocked until
+these substitutions are complete. Use compatible image/database versions and
+rebuild from the recorded source if needed. Keep
 original source pins and migration checks; do not edit migration receipts.
 
 Validate service health, database state and recording availability before any

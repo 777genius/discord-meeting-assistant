@@ -10,7 +10,7 @@ remove credentials, private transcript text and recording links before sharing.
 | Symptom | Check | Next action |
 | --- | --- | --- |
 | Wrapper rejects dirty checkout | `git status --porcelain` | Put configuration outside Git; deploy from a clean clone instead of deleting work |
-| Revision/application identity rejected | The three exact literal fields in `/secure/botik.env` | Set the checkout's full HEAD and two distinct numeric application IDs, once each and unquoted |
+| Revision/application identity rejected | `MEETING_PLATFORM_SOURCE_REVISION`, `DISCORD_PUBLICATION_APPLICATION_ID`, `DISCORD_CRAIG_APPLICATION_ID` in `/secure/botik.env` | Set the checkout's full HEAD and two distinct numeric application IDs, once each and unquoted |
 | Compose says source tree is missing during inspection | `MEETING_PLATFORM_SOURCE_TREE` in the inspection shell | Use the helper; builds must still go through the verified wrapper |
 | Port 80/443 already allocated | Existing host proxy/listeners | Integrate the intended proxy; do not start competing edges |
 | TLS/edge never healthy | Public DNS, port reachability, `voicetext-edge` logs | Correct DNS/routing and certificate access; do not disable TLS validation |

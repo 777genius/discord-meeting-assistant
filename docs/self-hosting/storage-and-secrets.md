@@ -101,6 +101,15 @@ keys. The two Platform S3 files must match these values:
 }
 ```
 
+The current Compose stack shares these credentials between bucket bootstrap and
+Platform. `Admin` permits bootstrap to create the bucket; normal application
+object access does not itself justify administrative access. This is a limitation
+of the supplied deployment: a compromised Platform credential has broad access
+to this dedicated storage service. Do not reuse it for another project or a
+shared S3 service. Separating bootstrap and runtime identities requires separate
+secret mounts/environment wiring in an operator overlay and is not achieved by
+changing this JSON alone.
+
 This identity belongs to the project's private object-storage service. Do not
 publish the S3 port or make the bucket public. `object-storage-bootstrap` creates
 `meeting-artifacts`; the application uses the `recordings/` prefix.
