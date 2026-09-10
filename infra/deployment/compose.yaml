@@ -152,10 +152,10 @@ services:
     profiles: [hosted-summary]
     build:
       additional_contexts:
-        subscription_runtime_source: "https://github.com/777genius/ar.git?ref=cf6e3e618b388e8dbefe608c3a2cd5a24be2c01c&checksum=cf6e3e618b388e8dbefe608c3a2cd5a24be2c01c"
+        subscription_runtime_source: "https://github.com/777genius/ar.git?ref=83a7329f4383b05ac5c39356b79f82f029182d42&checksum=83a7329f4383b05ac5c39356b79f82f029182d42"
       args:
         BUILDKIT_SYNTAX: docker/dockerfile:1.18@sha256:dabfc0969b935b2080555ace70ee69a5261af8a8f1b4df97b9e7fbcf6722eddf
-        SUBSCRIPTION_RUNTIME_SOURCE_REVISION: cf6e3e618b388e8dbefe608c3a2cd5a24be2c01c
+        SUBSCRIPTION_RUNTIME_SOURCE_REVISION: 83a7329f4383b05ac5c39356b79f82f029182d42
         SOURCE_REVISION: ${MEETING_PLATFORM_SOURCE_REVISION:?set exact clean-checkout source revision}
       context: ../../.build/docker-context
       dockerfile: apps/subscription-runtime-sidecar/Dockerfile

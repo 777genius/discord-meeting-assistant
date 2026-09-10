@@ -31,6 +31,7 @@ to choose your voice channel and where results appear.
 - [Tested capabilities and limitations](infra/deployment/oss-acceptance.md)
 - [Development](docs/development.md)
 - [Architecture](docs/architecture/overview.md)
+- [Security policy](SECURITY.md)
 
 ## License
 
