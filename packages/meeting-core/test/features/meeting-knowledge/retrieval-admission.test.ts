@@ -104,3 +104,67 @@ describe("Retrieval V2-only admission", () => {
     expect(sameFocusedLocatorRetrievalV2Value(request, reordered)).toBe(true);
   });
 });
+
+// V3 grows the independently versioned durable binding; V2 remains exact/null.
+describe("Retrieval V3 durable admission", () => {
+  const base = selectRetrievalBinding({ questionId: "question-v3",
+    retrievalV2Request: request, rollout }).toSnapshot();
+  const v3Request = (thread: { mode: "any" } | { mode: "exact"; id: string | null }) => ({
+    ...structuredClone(request),
+    binding: { ...request.binding, contractVersion: "context-retrieval.v3" },
+    schemaVersion: 3,
+    scope: { memoryScopeId: "scope-1", spaceId: "space-1", thread },
+  });
+  const admit = (value: unknown) => RetrievalBinding.create({
+    ...base, request: value, retrievalPath: "infinity_locator_v3",
+  } as unknown as Parameters<typeof RetrievalBinding.create>[0]);
+
+  it.each([{ mode: "any" }, { mode: "exact", id: "thread-1" },
+    { mode: "exact", id: null }] as const)("preserves and freezes selector %j", (thread) => {
+    const input = v3Request(thread);
+    const binding = admit(input);
+    expect(binding.toSnapshot()).toMatchObject({ request: input,
+      retrievalPath: "infinity_locator_v3" });
+    expect(Object.isFrozen(binding.request?.scope)).toBe(true);
+    if (binding.request?.schemaVersion !== 3) {throw new Error("V3 request lost");}
+    expect(Object.isFrozen(binding.request.scope.thread)).toBe(true);
+    input.scope.spaceId = "mutated-space";
+    expect(binding.request?.scope.spaceId).toBe("space-1");
+    expect(admit(JSON.parse(JSON.stringify(binding.request))).toSnapshot())
+      .toEqual(binding.toSnapshot());
+  });
+
+  it.each([
+    {}, { mode: "any", id: null }, { mode: "exact" },
+    { mode: "all" }, { mode: "exact", id: "" },
+    { mode: "exact", id: null, extra: true },
+  ])("rejects non-contract selectors %j", (thread) => {
+    const input = v3Request({ mode: "any" });
+    expect(() => admit({ ...input, scope: { ...input.scope, thread } })).toThrow();
+  });
+
+  it("rejects mixed version, contract and scope shapes", () => {
+    const input = v3Request({ mode: "any" });
+    for (const invalid of [
+      { ...input, schemaVersion: 2 },
+      { ...input, binding: request.binding },
+      { ...input, scope: request.scope },
+      { ...input, scope: { ...input.scope, threadId: null } },
+      { ...input, extra: true },
+      { ...input, filters: { ...input.filters, sourceGenerations: [] } },
+    ]) {
+      expect(() => admit(invalid)).toThrow();
+    }
+    expect(() => RetrievalBinding.create({ ...base, request: input } as unknown as
+      Parameters<typeof RetrievalBinding.create>[0])).toThrow();
+  });
+
+  it("retains the V2 exact-null control without interpreting it as any", () => {
+    const snapshot = RetrievalBinding.create(base).toSnapshot();
+    expect(snapshot).toEqual(base);
+    if (snapshot.retrievalPath !== "infinity_locator_v2") {throw new Error("V2 path lost");}
+    expect(snapshot.request.scope).toEqual({ memoryScopeId: "scope-1",
+      spaceId: "space-1", threadId: null });
+    expect(snapshot.request.schemaVersion).toBe(2);
+  });
+});

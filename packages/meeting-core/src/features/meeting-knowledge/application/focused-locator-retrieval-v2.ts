@@ -1,5 +1,8 @@
-import { resolveFocusedRetrievalScope } from "./focused-locator-retrieval-v2-scope.js";
-import { compareRetrievalV2Utf8, retrievalV2ConsumerEvidenceByteLimit,
+import { resolveFocusedRetrievalScope, historicalSnapshotMatchesScope } from "./focused-locator-retrieval-v2-scope.js";
+import { compareRetrievalV2Utf8, retrievalV2ConsumerEvidenceByteLimit, isLocatorRetrievalBinding,
+  validateFocusedLocatorRetrievalV3Request,
+  type FocusedLocatorRetrievalRequestSnapshot,
+  type FocusedLocatorRetrievalV3RequestSnapshot,
   type RetrievalBindingSnapshot } from
   "../domain/retrieval-admission.js";
 import type { FocusedMemoryReference } from
@@ -13,9 +16,9 @@ import { boundedRetrievalQuery, classifyRelativeTimeFilter,
   redactRetrievalQueryIdentities } from
   "./focused-locator-retrieval-v2-query.js";
 import type { FocusedHistoricalEvidenceV2Port,
-  FocusedLocatorRetrievalV2ProviderBinding,
   FocusedRetrievalScopeResolutionPort,
   FocusedRetrievalScopeResolutionEffects,
+  FocusedLocatorRetrievalPreparation,
   FocusedLocatorRetrievalV2Preparation,
   FocusedLocatorRetrievalV2RequestSnapshot } from
   "./ports/focused-locator-retrieval-v2.js";
@@ -28,11 +31,11 @@ import type { FocusedMemoryRetrievalPort,
   "./ports/final-reply.js";
 import { decodeFocusedMemoryRetrievalResult } from
   "./ports/focused-memory-contract.js";
-import { HistoricalFocusedLocatorRetrievalV2 } from
+import { HistoricalFocusedLocatorRetrievalV2, HistoricalFocusedLocatorRetrievalV3 } from
   "./focused-locator-historical-rehydration-v2.js";
 import { deduplicateEvidenceTurns } from "./grounded-question-internals.js";
 
-export { HistoricalFocusedLocatorRetrievalV2 } from
+export { HistoricalFocusedLocatorRetrievalV2, HistoricalFocusedLocatorRetrievalV3 } from
   "./focused-locator-historical-rehydration-v2.js";
 export interface FocusedLocatorRetrievalV2Policy {
   readonly candidateLimit: number;
@@ -53,13 +56,14 @@ FocusedLocatorRetrievalV2Policy = Object.freeze({
   resultLimit: 10,
   version: "meeting-knowledge.locator-retrieval.v2",
 });
-export class PrepareFocusedLocatorRetrievalV2Request {
+abstract class PrepareFocusedLocatorRetrievalRequest<T extends FocusedLocatorRetrievalRequestSnapshot> {
+  protected abstract readonly contractVersion: T["binding"]["contractVersion"];
   public constructor(
     private readonly dependencies: {
       readonly ids: HistoricalOpaqueIdPort;
       readonly scopeResolution?: FocusedRetrievalScopeResolutionPort;
       readonly identitySkeletons?: IdentitySkeletonPortV1;
-      readonly providerBinding: FocusedLocatorRetrievalV2ProviderBinding;
+      readonly providerBinding: T["binding"];
       readonly actorReferences?: RetrievalActorReferenceAuthorityV1;
       readonly servingAuthorized?: () => boolean;
       readonly speakerAliases?: readonly RetrievalActorAliasOwnerV1[];
@@ -78,20 +82,15 @@ export class PrepareFocusedLocatorRetrievalV2Request {
     readonly roomId: string;
     readonly scopeId: string;
     readonly signal?: AbortSignal;
-  }): Promise<FocusedLocatorRetrievalV2Preparation> {
+  }): Promise<FocusedLocatorRetrievalPreparation<T>> {
     input.signal?.throwIfAborted();
-    if (this.dependencies.servingAuthorized?.() === false) {
-      return unavailablePreparation("serving_not_authorized");
-    }
+    if (this.dependencies.providerBinding.contractVersion !== this.contractVersion) {throw new TypeError("Retrieval contract mismatch");}
+    if (this.dependencies.servingAuthorized?.() === false) {return unavailablePreparation("serving_not_authorized");}
     const aliases = this.dependencies.speakerAliases ?? [];
     const skeletons = this.dependencies.identitySkeletons;
-    if (speakerFilterIsDenied(input.question, aliases, skeletons)) {
-      return unavailablePreparation("retrieval_filter_denied");
-    }
+    if (speakerFilterIsDenied(input.question, aliases, skeletons)) {return unavailablePreparation("retrieval_filter_denied");}
     const timeFilter = classifyRelativeTimeFilter(input.question);
-    if (timeFilter.status === "denied") {
-      return unavailablePreparation("retrieval_filter_denied");
-    }
+    if (timeFilter.status === "denied") {return unavailablePreparation("retrieval_filter_denied");}
     const requestedActorKeys = new Set([
       ...resolveRequestedActorKeys(input.question, aliases, skeletons),
       ...(this.dependencies.actorReferences?.actorKeysForQuestion(input.question) ?? []),
@@ -99,15 +98,9 @@ export class PrepareFocusedLocatorRetrievalV2Request {
     const snapshot = await this.loadSnapshot(input);
     if (snapshot.status !== "current") { return snapshot; }
     const plans = snapshot.entries;
-    if (plans.length === 0) {
-      return Object.freeze({ reason: "no_history_or_index", status: "empty" });
-    }
-    if (plans.length > this.policy.maximumSources) {
-      return unavailablePreparation("historical_authority_overflow");
-    }
-    if (this.dependencies.servingAuthorized?.() === false) {
-      return unavailablePreparation("serving_not_authorized");
-    }
+    if (plans.length === 0) {return Object.freeze({ reason: "no_history_or_index", status: "empty" });}
+    if (plans.length > this.policy.maximumSources) {return unavailablePreparation("historical_authority_overflow");}
+    if (this.dependencies.servingAuthorized?.() === false) {return unavailablePreparation("serving_not_authorized");}
     const topology = buildHistoricalRoomTopology(
       input.scopeId,
       input.roomId,
@@ -118,22 +111,16 @@ export class PrepareFocusedLocatorRetrievalV2Request {
       aliases,
       skeletons,
     ));
-    if (query.length === 0) {
-      return unavailablePreparation("query_not_admitted");
-    }
+    if (query.length === 0) {return unavailablePreparation("query_not_admitted");}
     const actorKeys = Object.freeze([...requestedActorKeys]
       .toSorted(compareRetrievalV2Utf8));
     const relativeTimeInterval = timeFilter.status === "valid"
       ? timeFilter.interval : null;
     const scope = await resolveFocusedRetrievalScope(this.dependencies.scopeResolution, input, topology);
-    if (scope === null) {
-      return unavailablePreparation("scope_resolution_unavailable");
-    }
-    const request = preparedRequest({
+    if (scope === null) {return unavailablePreparation("scope_resolution_unavailable");}
+    const common = {
       binding: Object.freeze({ ...this.dependencies.providerBinding,
-        requiredProviderLanes: Object.freeze([
-          ...this.dependencies.providerBinding.requiredProviderLanes,
-        ]) }),
+        requiredProviderLanes: Object.freeze([...this.dependencies.providerBinding.requiredProviderLanes]) }),
       budgets: Object.freeze({
         candidateLimit: this.policy.candidateLimit,
         deadlineMs: this.policy.deadlineMs,
@@ -176,7 +163,14 @@ export class PrepareFocusedLocatorRetrievalV2Request {
         timeInterval: null,
         timeWeightMicros: null,
       }),
-    });
+    };
+    const versioned = this.dependencies.providerBinding.contractVersion === "context-retrieval.v3"
+      ? validateFocusedLocatorRetrievalV3Request({ ...common, schemaVersion: 3,
+          scope: { memoryScopeId: scope.memoryScopeId, spaceId: scope.spaceId,
+            thread: { mode: "any" } } })
+      : common;
+    // Build the status-bearing object before freezing; validation never grants scope authority.
+    const request = preparedRequest({ ...versioned } as T);
     try { scope.bind(request); } catch {
       return unavailablePreparation("scope_resolution_unavailable");
     }
@@ -184,20 +178,17 @@ export class PrepareFocusedLocatorRetrievalV2Request {
   }
 
   private async loadSnapshot(
-    input: Parameters<PrepareFocusedLocatorRetrievalV2Request["prepare"]>[0],
+    input: Parameters<PrepareFocusedLocatorRetrievalRequest<T>["prepare"]>[0],
   ) {
     const snapshotPort = this.dependencies.snapshot ?? this.dependencies.store;
-    if (snapshotPort === undefined) {
-      return unavailablePreparation("historical_authority_unavailable");
-    }
+    if (snapshotPort === undefined) {return unavailablePreparation("historical_authority_unavailable");}
     const snapshot = await snapshotPort.loadRoomAuthoritySnapshot({
       maximumSources: this.policy.maximumSources,
       pageSize: Math.min(25, this.policy.maximumSources),
-      roomId: input.roomId,
-      scopeId: input.scopeId,
+      roomId: input.roomId, scopeId: input.scopeId,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
-    if (snapshot.status !== "current") {
+    if (!historicalSnapshotMatchesScope(snapshot, input, this.dependencies.providerBinding.contractVersion)) {
       return unavailablePreparation(snapshot.status === "overflow"
         ? "historical_authority_overflow"
         : "historical_authority_unavailable");
@@ -208,10 +199,16 @@ export class PrepareFocusedLocatorRetrievalV2Request {
 
 }
 
-function preparedRequest(
-  request: FocusedLocatorRetrievalV2RequestSnapshot,
-): Extract<FocusedLocatorRetrievalV2Preparation, { readonly status: "prepared" }> {
-  const result = request as FocusedLocatorRetrievalV2RequestSnapshot & {
+export class PrepareFocusedLocatorRetrievalV2Request extends
+  PrepareFocusedLocatorRetrievalRequest<FocusedLocatorRetrievalV2RequestSnapshot> { protected readonly contractVersion = "context-retrieval.v2"; }
+
+export class PrepareFocusedLocatorRetrievalV3Request extends
+  PrepareFocusedLocatorRetrievalRequest<FocusedLocatorRetrievalV3RequestSnapshot> { protected readonly contractVersion = "context-retrieval.v3"; }
+
+function preparedRequest<T extends FocusedLocatorRetrievalRequestSnapshot>(
+  request: T,
+): T & { readonly status: "prepared" } {
+  const result = request as T & {
     readonly status: "prepared";
   };
   Object.defineProperty(result, "status", {
@@ -240,10 +237,12 @@ function speakerFilterIsDenied(
     hasAmbiguousRequestedActorAlias(question, aliases, skeletons);
 }
 
-export class FocusedHistoricalEvidenceV2 implements FocusedHistoricalEvidenceV2Port {
+class FocusedHistoricalEvidence<T extends FocusedLocatorRetrievalRequestSnapshot> implements FocusedHistoricalEvidenceV2Port {
   public constructor(private readonly dependencies: {
-    readonly admission: PrepareFocusedLocatorRetrievalV2Request;
-    readonly retrieval: HistoricalFocusedLocatorRetrievalV2;
+    readonly admission: { prepare(input: Parameters<PrepareFocusedLocatorRetrievalV2Request["prepare"]>[0]):
+      Promise<FocusedLocatorRetrievalPreparation<T>> };
+    readonly retrieval: { retrieveEvidence(input: Omit<Parameters<HistoricalFocusedLocatorRetrievalV2["retrieveEvidence"]>[0], "request"> &
+      { readonly request: T }): ReturnType<HistoricalFocusedLocatorRetrievalV2["retrieveEvidence"]> };
   }) {}
 
   public async retrieve(
@@ -253,8 +252,7 @@ export class FocusedHistoricalEvidenceV2 implements FocusedHistoricalEvidenceV2P
     const request = await this.dependencies.admission.prepare({
       currentMeetingId: input.currentMeetingId,
       question: input.question,
-      roomId: input.roomId,
-      scopeId: input.scopeId,
+      roomId: input.roomId, scopeId: input.scopeId,
       signal: input.signal,
     });
     if (request.status === "unavailable") {
@@ -269,8 +267,7 @@ export class FocusedHistoricalEvidenceV2 implements FocusedHistoricalEvidenceV2P
       authorizationPrincipalRef: input.authorizationPrincipalRef,
       currentMeetingId: input.currentMeetingId,
       request,
-      roomId: input.roomId,
-      scopeId: input.scopeId,
+      roomId: input.roomId, scopeId: input.scopeId,
       signal: input.signal,
     });
     if (result.status !== "current") {return result;}
@@ -286,17 +283,24 @@ export class FocusedHistoricalEvidenceV2 implements FocusedHistoricalEvidenceV2P
   }
 }
 
-export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrievalPort {
+export class FocusedHistoricalEvidenceV2 extends FocusedHistoricalEvidence<FocusedLocatorRetrievalV2RequestSnapshot> {}
+export class FocusedHistoricalEvidenceV3 extends FocusedHistoricalEvidence<FocusedLocatorRetrievalV3RequestSnapshot> {}
+
+class PersistedFocusedMemoryRetrieval implements FocusedMemoryRetrievalPort {
   public constructor(private readonly dependencies: {
     readonly current: FocusedMemoryRetrievalPort;
-    readonly historical: HistoricalFocusedLocatorRetrievalV2;
-  }) {}
+  } & (
+    | { readonly retrievalPath: "infinity_locator_v2";
+        readonly historical: HistoricalFocusedLocatorRetrievalV2 }
+    | { readonly retrievalPath: "infinity_locator_v3";
+        readonly historical: HistoricalFocusedLocatorRetrievalV3 }
+  )) {}
 
   public async retrieve(input: Parameters<FocusedMemoryRetrievalPort["retrieve"]>[0]):
   Promise<FocusedMemoryRetrievalResult> {
     input.signal?.throwIfAborted();
     const binding = input.retrievalBinding;
-    if (binding?.retrievalPath !== "infinity_locator_v2" ||
+    if (!isLocatorRetrievalBinding(binding) ||
       input.authorizationPrincipalRef === undefined) {
       return unavailable();
     }
@@ -307,36 +311,33 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
     };
     const [currentLane, historicalLane] = await settleWithAbort(Promise.allSettled([
       invoke(() => this.dependencies.current.retrieve(input)),
-      invoke(() => this.dependencies.historical.retrieve({
-        authorizationPrincipalRef,
-        currentMeetingId: input.meetingId,
-        request: binding.request,
-        roomId: input.roomId,
-        scopeId: input.scopeId,
-        ...(input.signal === undefined ? {} : { signal: input.signal }),
-      })),
+      invoke(async () => {
+        const dependencies = this.dependencies;
+        const scope = { authorizationPrincipalRef, currentMeetingId: input.meetingId,
+          roomId: input.roomId, scopeId: input.scopeId,
+          ...(input.signal === undefined ? {} : { signal: input.signal }) };
+        if (binding.retrievalPath === "infinity_locator_v3" &&
+          dependencies.retrievalPath === "infinity_locator_v3") {
+          return dependencies.historical.retrieve({ ...scope, request: binding.request });
+        }
+        if (binding.retrievalPath === "infinity_locator_v2" &&
+          dependencies.retrievalPath === "infinity_locator_v2") {
+          return dependencies.historical.retrieve({ ...scope, request: binding.request });
+        }
+        return unavailable();
+      }),
     ]), input.signal);
-    const current = currentLane.status === "fulfilled"
-      ? decodeLane(currentLane.value)
-      : null;
-    const historical = historicalLane.status === "fulfilled"
-      ? decodeLane(historicalLane.value)
-      : null;
-    if (current === null || historical === null) {
-      return unavailable();
-    }
+    const current = currentLane.status === "fulfilled" ? decodeLane(currentLane.value) : null;
+    const historical = historicalLane.status === "fulfilled" ? decodeLane(historicalLane.value) : null;
+    if (current === null || historical === null) {return unavailable();}
     // The local lane owns the bound current authority. Its explicit stale or
     // pending result cannot be repaired with historical evidence.
-    if (current.status === "stale" || current.status === "pending") {
-      return current;
-    }
+    if (current.status === "stale" || current.status === "pending") {return current;}
     if (historical.status !== "current" ||
       (current.status !== "current" && current.status !== "low_coverage")) {
       return unavailable();
     }
-    if (current.authorityGeneration !== input.expectedAuthorityGeneration) {
-      return unavailable();
-    }
+    if (current.authorityGeneration !== input.expectedAuthorityGeneration) {return unavailable();}
     const maximum = Math.min(input.maximumCandidates, 256);
     // Local low coverage is established only after the current adapter's
     // authority fence. It contributes no candidates; it does not erase valid
@@ -368,6 +369,19 @@ export class PersistedFocusedMemoryRetrievalV2 implements FocusedMemoryRetrieval
   }
 }
 
+export class PersistedFocusedMemoryRetrievalV2 extends PersistedFocusedMemoryRetrieval {
+  public constructor(dependencies: { readonly current: FocusedMemoryRetrievalPort;
+    readonly historical: HistoricalFocusedLocatorRetrievalV2 }) {
+    super({ ...dependencies, retrievalPath: "infinity_locator_v2" });
+  }
+}
+export class PersistedFocusedMemoryRetrievalV3 extends PersistedFocusedMemoryRetrieval {
+  public constructor(dependencies: { readonly current: FocusedMemoryRetrievalPort;
+    readonly historical: HistoricalFocusedLocatorRetrievalV3 }) {
+    super({ ...dependencies, retrievalPath: "infinity_locator_v3" });
+  }
+}
+
 function interleave(current: readonly FocusedMemoryReference[], historical: readonly FocusedMemoryReference[], maximum: number): readonly FocusedMemoryReference[] {
   const currentLane = dedupe(current);
   const currentIds = new Set(currentLane.map(canonicalKey));
@@ -391,11 +405,7 @@ function dedupe(references: readonly FocusedMemoryReference[]): FocusedMemoryRef
 }
 
 function decodeLane(value: unknown): FocusedMemoryRetrievalResult | null {
-  try {
-    return decodeFocusedMemoryRetrievalResult(value);
-  } catch {
-    return null;
-  }
+  try { return decodeFocusedMemoryRetrievalResult(value); } catch { return null; }
 }
 
 async function settleWithAbort<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {

@@ -12,6 +12,7 @@ import { classifyRequestedSpeakerFilter, type IdentitySkeletonPortV1,
 import type {
   FinalReplyEvidencePort,
   FocusedLocatorRetrievalV2AdmissionPort,
+  FocusedLocatorRetrievalAdmissionPort,
   LocalFinalReplyPolicy,
   QuestionAdmissionCommitPort,
   QuestionAuthorizationObservation,
@@ -56,6 +57,7 @@ interface CurrentFinalReplyRetrievalOptions {
     readonly identitySkeletons?: IdentitySkeletonPortV1;
   };
   readonly retrievalV2Admission?: FocusedLocatorRetrievalV2AdmissionPort;
+  readonly retrievalAdmission?: FocusedLocatorRetrievalAdmissionPort;
 }
 
 function authorizedForBinding(
@@ -78,7 +80,7 @@ export class AdmitCurrentFinalReply {
   private readonly canonicalSpeakerFilters?: CurrentFinalReplyRetrievalOptions[
     "canonicalSpeakerFilters"
   ];
-  private readonly retrievalV2Admission: FocusedLocatorRetrievalV2AdmissionPort |
+  private readonly retrievalV2Admission: FocusedLocatorRetrievalAdmissionPort |
     undefined;
 
   public constructor(
@@ -89,7 +91,10 @@ export class AdmitCurrentFinalReply {
     options: CurrentFinalReplyRetrievalOptions = {},
   ) {
     this.canonicalSpeakerFilters = options.canonicalSpeakerFilters;
-    this.retrievalV2Admission = options.retrievalV2Admission;
+    if (options.retrievalAdmission !== undefined && options.retrievalV2Admission !== undefined) {
+      throw new TypeError("Retrieval admission must select exactly one contract");
+    }
+    this.retrievalV2Admission = options.retrievalAdmission ?? options.retrievalV2Admission;
   }
 
   public async execute(
@@ -210,7 +215,7 @@ export class AdmitCurrentFinalReply {
         }),
         originalQuestion: questionText,
         questionId,
-        retrievalV2Request: retrievalV2Request ?? null,
+        retrievalRequest: retrievalV2Request ?? null,
         rollout: this.policy.retrievalAdmission,
       }).toSnapshot(),
       roomId: current.roomId,
@@ -230,7 +235,7 @@ export class AdmitCurrentFinalReply {
 
 function retrievalRequest(
   preparation: Extract<Awaited<ReturnType<
-    NonNullable<FocusedLocatorRetrievalV2AdmissionPort>["prepare"]
+    NonNullable<FocusedLocatorRetrievalAdmissionPort>["prepare"]
   >>, { readonly status: "prepared" }>,
 ) {
   const { status: _status, ...request } = preparation;
@@ -249,7 +254,7 @@ function retrievalFiltersDenied(
 
 function retrievalPreparationRejection(
   preparation: Awaited<ReturnType<
-    NonNullable<FocusedLocatorRetrievalV2AdmissionPort>["prepare"]
+    NonNullable<FocusedLocatorRetrievalAdmissionPort>["prepare"]
   >> | undefined,
   requestedSpeakerIds: readonly string[],
 ): AdmitCurrentFinalReplyResult | null {

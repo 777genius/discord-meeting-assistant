@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   MeetingKnowledgeInvariantError,
   QuestionBinding,
+  selectRetrievalBinding,
+  type FocusedLocatorRetrievalV3RequestSnapshot,
   canTransitionQuestionJob,
   questionBindingsEqual,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
+
+import { retrievalV2Request } from "./retrieval-v2-application-fixtures.test.js";
 
 const bindingInput = {
   authorizationDigest: "a".repeat(64),
@@ -116,4 +120,29 @@ describe("QuestionJob vocabulary and immutable binding", () => {
     expect(canTransitionQuestionJob("ready", "running")).toBe(false);
     expect(canTransitionQuestionJob("queued", "ready")).toBe(false);
   });
+});
+
+
+it("compares V3 selectors, full source generations and budgets in durable QuestionBinding equality", () => {
+  const request: FocusedLocatorRetrievalV3RequestSnapshot = { ...retrievalV2Request,
+    schemaVersion: 3, binding: { ...retrievalV2Request.binding, contractVersion: "context-retrieval.v3" },
+    scope: { memoryScopeId: "scope-internal", spaceId: "space-internal", thread: { mode: "any" } },
+  };
+  const bind = (value: FocusedLocatorRetrievalV3RequestSnapshot) => QuestionBinding.create({
+    ...bindingInput, bindingProtocolVersion: 2,
+    retrievalBinding: selectRetrievalBinding({ questionId: bindingInput.questionId,
+      retrievalRequest: value, rollout: { cutoverEpoch: "v3-opt-in",
+        infinityProfileFingerprint: "e".repeat(64), localProfileFingerprint: "f".repeat(64) },
+    }).toSnapshot(),
+  });
+  const original = bind(request);
+  expect(questionBindingsEqual(original, bind(JSON.parse(JSON.stringify(request))))).toBe(true);
+  for (const changed of [
+    { ...request, scope: { ...request.scope, thread: { mode: "exact" as const, id: null } } },
+    { ...request, scope: { ...request.scope, thread: { mode: "exact" as const, id: "thread" } } },
+    { ...request, filters: { ...request.filters, sourceGenerations: request.filters.sourceGenerations.map(
+      (pair) => ({ ...pair, projectionGeneration: "changed-generation" })) } },
+    { ...request, budgets: { ...request.budgets, resultLimit: 1 } },
+    { ...request, binding: { ...request.binding, capabilityFingerprint: "7".repeat(64) } },
+  ]) { expect(questionBindingsEqual(original, bind(changed))).toBe(false); }
 });

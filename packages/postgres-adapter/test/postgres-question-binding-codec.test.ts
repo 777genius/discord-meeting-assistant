@@ -393,3 +393,48 @@ interface MutableRetrievalRequest {
   };
   queries: Array<Record<string, unknown>>;
 }
+
+describe("V3 persisted question recovery", () => {
+  const v3 = (thread: { mode: "any" } | { mode: "exact"; id: string | null }) =>
+    QuestionBinding.create({ ...legacyInput, bindingProtocolVersion: 2,
+      retrievalBinding: { ...retrievalBinding, retrievalPath: "infinity_locator_v3",
+        request: { ...retrievalBinding.request, schemaVersion: 3,
+          binding: { ...retrievalBinding.request.binding, contractVersion: "context-retrieval.v3" },
+          scope: { memoryScopeId: "scope-opaque", spaceId: "space-opaque", thread },
+          filters: { ...retrievalBinding.request.filters, sourceGenerations: [
+            { sourceKey: "source-1", projectionGeneration: "generation-1" },
+            { sourceKey: "source-2", projectionGeneration: "generation-2" },
+          ] },
+        } },
+    }).toSnapshot();
+
+  it.each([{ mode: "any" }, { mode: "exact", id: null },
+    { mode: "exact", id: "thread-1" }] as const)("recovers exact V3 selector %j", (thread) => {
+    const binding = v3(thread);
+    const bindingHash = questionAdmissionBindingHash(binding);
+    const serialized: unknown = JSON.parse(JSON.stringify(binding));
+    expect(decodePersistedQuestionBinding(serialized, bindingHash)).toEqual(binding);
+    expect(decodePersistedQuestionRecovery({ binding: serialized, bindingHash,
+      groundingPlan: null, questionText: "Question?" })).toEqual({
+      binding, groundingPlan: null, migration: "current", status: "decoded",
+    });
+  });
+
+  it("binds selector and complete source-generation vector to durable hash", () => {
+    const binding = v3({ mode: "any" });
+    const hash = questionAdmissionBindingHash(binding);
+    expect(questionAdmissionBindingHash(v3({ mode: "exact", id: null }))).not.toBe(hash);
+    const modified = JSON.parse(JSON.stringify(binding));
+    modified.retrievalBinding.request.filters.sourceGenerations[1].projectionGeneration = "stale";
+    expect(() => decodePersistedQuestionBinding(modified, hash)).toThrow();
+    expect(decodePersistedQuestionRecovery({ binding: modified, bindingHash: hash,
+      groundingPlan: null, questionText: "Question?" }).status).toBe("incompatible");
+  });
+
+  it("does not manufacture V3 composite authority during recovery", () => {
+    const binding = JSON.parse(JSON.stringify(v3({ mode: "any" })));
+    delete binding.retrievalBinding.compositeProfile;
+    expect(decodePersistedQuestionRecovery({ binding, bindingHash: "a".repeat(64),
+      groundingPlan: null, questionText: "Question?" }).status).toBe("incompatible");
+  });
+});

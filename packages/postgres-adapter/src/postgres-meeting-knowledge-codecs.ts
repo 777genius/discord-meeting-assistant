@@ -145,38 +145,40 @@ export const retrievalV2RequestSchema = z.object({
   }).strict(),
 }).strict();
 
-export const retrievalBindingSchema = z.object({
+export const retrievalV3RequestSchema = retrievalV2RequestSchema.extend({
+  binding: retrievalV2RequestSchema.shape.binding.extend({
+    contractVersion: z.literal("context-retrieval.v3"), }).strict(),
+  schemaVersion: z.literal(3),
+  scope: z.object({ memoryScopeId: z.string(), spaceId: z.string(),
+    thread: z.discriminatedUnion("mode", [
+      z.object({ mode: z.literal("any") }).strict(),
+      z.object({ mode: z.literal("exact"), id: z.string().nullable() }).strict(),
+    ]),
+  }).strict(),
+}).strict();
+
+const retrievalBindingBaseSchema = z.object({
   canonicalEvidenceFilters: canonicalEvidenceFiltersSchema,
   cutoverEpoch: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/u),
-  localCurrentIdentity: localCurrentIdentitySchema,
-  originalQuestion: boundedText.max(2_000),
-  profileFingerprint: sha256Schema,
-  provenanceSchemaVersion: z.literal(1),
-  retrievalPath: z.enum([
-    "canonical_local_exact_lexical_v1",
-    "infinity_locator_v1",
-    "legacy_downstream_v1",
-  ]),
-}).strict().or(z.object({
-  canonicalEvidenceFilters: canonicalEvidenceFiltersSchema,
+  localCurrentIdentity: localCurrentIdentitySchema, originalQuestion: boundedText.max(2_000),
+  profileFingerprint: sha256Schema, provenanceSchemaVersion: z.literal(1),
+}).strict();
+export const retrievalBindingSchema = retrievalBindingBaseSchema.extend({
+  retrievalPath: z.enum(["canonical_local_exact_lexical_v1", "infinity_locator_v1", "legacy_downstream_v1"]),
+}).strict().or(retrievalBindingBaseSchema.extend({
   compositeProfile: compositeProfileSchema,
-  cutoverEpoch: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/u),
-  localCurrentIdentity: localCurrentIdentitySchema,
-  originalQuestion: boundedText.max(2_000),
-  profileFingerprint: sha256Schema,
-  provenanceSchemaVersion: z.literal(1),
-  request: retrievalV2RequestSchema,
-  retrievalPath: z.literal("infinity_locator_v2"),
+  request: retrievalV2RequestSchema, retrievalPath: z.literal("infinity_locator_v2"),
+}).strict()).or(retrievalBindingBaseSchema.extend({
+  compositeProfile: compositeProfileSchema,
+  request: retrievalV3RequestSchema, retrievalPath: z.literal("infinity_locator_v3"),
 }).strict());
 
 const legacyQuestionBindingSchema = questionBindingBaseSchema.strict();
 const currentQuestionBindingSchema = questionBindingBaseSchema.extend({
-  bindingProtocolVersion: z.literal(2),
-  retrievalBinding: retrievalBindingSchema,
+  bindingProtocolVersion: z.literal(2), retrievalBinding: retrievalBindingSchema,
 }).strict();
 const questionBindingSchema = z.union([
-  currentQuestionBindingSchema,
-  legacyQuestionBindingSchema,
+  currentQuestionBindingSchema, legacyQuestionBindingSchema,
 ]);
 
 export const groundingEvidenceSchema = z.object({

@@ -1,12 +1,16 @@
 import { QuestionBinding, type QuestionBindingSnapshot } from "../../domain/question-job.js";
 import type {
   FocusedLocatorRetrievalV2RequestSnapshot,
+  FocusedLocatorRetrievalV3RequestSnapshot,
+  FocusedLocatorRetrievalRequestSnapshot,
 } from "../../domain/retrieval-admission.js";
 import type { FocusedRetrievalAudit, RehydratedEvidenceTurn } from
   "../../domain/grounding-plan.js";
 export type {
   FocusedLocatorRetrievalV2ProviderBinding,
   FocusedLocatorRetrievalV2RequestSnapshot,
+  FocusedLocatorRetrievalV3RequestSnapshot,
+  FocusedLocatorRetrievalRequestSnapshot,
 } from "../../domain/retrieval-admission.js";
 
 export interface FocusedLocatorRetrievalV2Candidate {
@@ -29,9 +33,14 @@ export type FocusedLocatorRetrievalV2Result =
  * Consumer-owned locator-only boundary. Provider text, citations, metadata and
  * authorization assertions cannot cross it.
  */
-export interface FocusedLocatorRetrievalV2Port {
+export interface FocusedLocatorRetrievalV2Port extends
+  FocusedLocatorRetrievalPort<FocusedLocatorRetrievalV2RequestSnapshot> {}
+export interface FocusedLocatorRetrievalV3Port extends
+  FocusedLocatorRetrievalPort<FocusedLocatorRetrievalV3RequestSnapshot> {}
+export interface FocusedLocatorRetrievalPort<T extends FocusedLocatorRetrievalRequestSnapshot =
+  FocusedLocatorRetrievalRequestSnapshot> {
   retrieve(
-    request: FocusedLocatorRetrievalV2RequestSnapshot,
+    request: T,
     options?: { readonly signal?: AbortSignal },
   ): Promise<FocusedLocatorRetrievalV2Result>;
 }
@@ -76,8 +85,11 @@ export interface FocusedHistoricalEvidenceV2Port {
   }): Promise<FocusedHistoricalEvidenceV2Result>;
 }
 
-export type FocusedLocatorRetrievalV2Preparation =
-  | (FocusedLocatorRetrievalV2RequestSnapshot & { readonly status: "prepared" })
+export type FocusedLocatorRetrievalV2Preparation = FocusedLocatorRetrievalPreparation<FocusedLocatorRetrievalV2RequestSnapshot>;
+export type FocusedLocatorRetrievalV3Preparation = FocusedLocatorRetrievalPreparation<FocusedLocatorRetrievalV3RequestSnapshot>;
+export type FocusedLocatorRetrievalPreparation<T extends FocusedLocatorRetrievalRequestSnapshot =
+  FocusedLocatorRetrievalRequestSnapshot> =
+  | (T & { readonly status: "prepared" })
   | {
       readonly reason: "no_history_or_index";
       readonly status: "empty";
@@ -102,11 +114,11 @@ export type FocusedLocatorRetrievalV2PreparationUnavailableReason =
  * request ownership. Later resolutions must never invalidate existing bindings.
  */
 export interface FocusedRetrievalScopeResolutionPort {
-  matches(input: { readonly request: FocusedLocatorRetrievalV2RequestSnapshot;
+  matches(input: { readonly request: FocusedLocatorRetrievalRequestSnapshot;
     readonly spaceSlug: string; readonly roomScopeExternalRef: string;
     readonly spaceId: string; readonly memoryScopeId: string }): boolean;
   /** Recheck current topology against IDs already sealed by the local worker. */
-  matchesPersisted?(input: { readonly request: FocusedLocatorRetrievalV2RequestSnapshot;
+  matchesPersisted?(input: { readonly request: FocusedLocatorRetrievalRequestSnapshot;
     readonly spaceSlug: string; readonly roomScopeExternalRef: string;
     readonly signal?: AbortSignal }): Promise<boolean>;
   resolve(input: {
@@ -118,7 +130,7 @@ export interface FocusedRetrievalScopeResolutionPort {
     | { readonly status: "resolved"; readonly spaceId: string;
         readonly memoryScopeId: string;
         /** Bind exactly one immutable request by identity; never serialized. */
-        bind(request: FocusedLocatorRetrievalV2RequestSnapshot): void }
+        bind(request: FocusedLocatorRetrievalRequestSnapshot): void }
     | { readonly status: "unavailable" }
   >;
 }
@@ -139,7 +151,8 @@ const persistedScopes = new WeakMap<object, readonly [string, string, string]>()
 export function prepareValidatedPersistedRetrievalScope(binding: QuestionBindingSnapshot): void {
   QuestionBinding.create(binding);
   const retrieval = binding.retrievalBinding;
-  if (retrieval?.retrievalPath !== "infinity_locator_v2") { return; }
+  if (retrieval?.retrievalPath !== "infinity_locator_v2" &&
+    retrieval?.retrievalPath !== "infinity_locator_v3") { return; }
   if (!Object.isFrozen(retrieval.request) || !Object.isFrozen(retrieval.request.scope)) {
     throw new TypeError("Persisted worker request must be immutable");
   }
@@ -151,7 +164,7 @@ export function prepareValidatedPersistedRetrievalScope(binding: QuestionBinding
 }
 
 export function validatedPersistedRetrievalScopeMatches(input: {
-  readonly request: FocusedLocatorRetrievalV2RequestSnapshot;
+  readonly request: FocusedLocatorRetrievalRequestSnapshot;
   readonly scopeId: string; readonly roomId: string;
 }): boolean | undefined {
   const scope = persistedScopes.get(input.request);

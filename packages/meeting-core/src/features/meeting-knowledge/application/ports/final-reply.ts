@@ -13,7 +13,7 @@ import type {
 } from "../../domain/grounding-plan.js";
 import type { RetrievalAdmissionRollout, RetrievalBindingSnapshot } from
   "../../domain/retrieval-admission.js";
-import type { FocusedLocatorRetrievalV2Preparation } from
+import type { FocusedLocatorRetrievalV2Preparation, FocusedLocatorRetrievalV3Preparation, FocusedLocatorRetrievalPreparation } from
   "./focused-locator-retrieval-v2.js";
 import type { QuestionBindingSnapshot, QuestionJobState } from "../../domain/question-job.js";
 
@@ -255,14 +255,15 @@ export interface QuestionAdmissionCommitPort {
   }): Promise<readonly string[]>;
 }
 
-export interface FocusedLocatorRetrievalV2AdmissionPort {
+export interface FocusedLocatorRetrievalV2AdmissionPort extends
+  FocusedLocatorRetrievalAdmissionPort<FocusedLocatorRetrievalV2Preparation> {}
+export interface FocusedLocatorRetrievalV3AdmissionPort extends FocusedLocatorRetrievalAdmissionPort<FocusedLocatorRetrievalV3Preparation> {}
+export interface FocusedLocatorRetrievalAdmissionPort<T extends FocusedLocatorRetrievalPreparation =
+  FocusedLocatorRetrievalPreparation> {
   prepare(input: {
-    readonly currentMeetingId: string;
-    readonly question: string;
-    readonly roomId: string;
-    readonly scopeId: string;
-    readonly signal?: AbortSignal;
-  }): Promise<FocusedLocatorRetrievalV2Preparation>;
+    readonly currentMeetingId: string; readonly question: string;
+    readonly roomId: string; readonly scopeId: string; readonly signal?: AbortSignal;
+  }): Promise<T>;
 }
 
 export type QuestionJobTerminalOutcome =

@@ -24,8 +24,8 @@ export function isComposedLocalBinding(
   if (isLegacyQuestionBinding(binding)) {
     return false;
   }
-  const expectedFingerprint = binding.retrievalBinding.retrievalPath ===
-      "infinity_locator_v2"
+  const expectedFingerprint = (binding.retrievalBinding.retrievalPath === "infinity_locator_v2" ||
+      binding.retrievalBinding.retrievalPath === "infinity_locator_v3")
     ? policy.retrievalAdmission.compositeProfileFingerprint
     : binding.retrievalBinding.retrievalPath ===
         "canonical_local_exact_lexical_v1"
@@ -80,7 +80,8 @@ export async function prepareFocusedEvidence(input: {
   readonly turns: Parameters<typeof prepareSelectedFocusedEvidence>[0]["turns"];
 }) {
   const retrievalBinding = input.binding.retrievalBinding;
-  return retrievalBinding?.retrievalPath === "infinity_locator_v2"
+  return (retrievalBinding?.retrievalPath === "infinity_locator_v2" ||
+    retrievalBinding?.retrievalPath === "infinity_locator_v3")
     ? await preparePersistedRetrievalV2Evidence({
         authorityGeneration: input.authorityGeneration,
         binding: input.binding,
