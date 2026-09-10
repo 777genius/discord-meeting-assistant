@@ -8,6 +8,8 @@
 - [Examples](preview.md): summaries, transcripts and playback.
 - [Speech providers](speech-providers.md): batch, live and languages.
 - [Tested capabilities and limitations](../infra/deployment/oss-acceptance.md).
+- [Measured fresh installation](self-hosting/verified-install.md): time, memory,
+  recording size and speech usage from the latest private test run.
 
 ## Run Botik
 
