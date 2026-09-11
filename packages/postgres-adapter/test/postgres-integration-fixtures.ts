@@ -29,6 +29,7 @@ import {
 } from "vitest";
 
 import { PostgresMigrationRunner } from "../src/index.js";
+import { closePostgresPool } from "./postgres-pool-cleanup.js";
 
 const POSTGRES_IMAGE = "postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
 const POSTGRES_PORT = 5432;
@@ -91,7 +92,9 @@ export function usePostgresIntegrationDatabase(): void {
   });
 
   afterAll(async () => {
-    await pool?.end();
+    if (pool !== undefined) {
+      await closePostgresPool(pool);
+    }
     await container?.stop();
   }, POSTGRES_CONTAINER_CLEANUP_TIMEOUT_MS);
 }
