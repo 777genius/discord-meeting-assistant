@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,8 +18,138 @@ concurrency:
 
 jobs:
   check:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
+        with:
+          version: 11.18.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: node vendor/infinity-context/prepare-official-sdk.mjs
+      - run: pnpm install --frozen-lockfile
+      - name: Build workspace package boundaries
+        run: pnpm --recursive --if-present run build
+      - name: Run fast static and architecture checks
+        run: pnpm run check:fast
+      - name: Run package unit and contract checks
+        run: >-
+          pnpm --recursive
+          --filter './packages/**'
+          --filter '!@discord-meeting/infinity-context-adapter'
+          --filter '!@discord-meeting/postgres-adapter'
+          --if-present run check
+
+  infinity-integration:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: changes
+        name: Detect Infinity boundary changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
+            .github/workflows/quality.yml \
+            package.json \
+            pnpm-lock.yaml \
+            pnpm-workspace.yaml \
+            vendor/infinity-context \
+            packages/infinity-context-adapter \
+            packages/meeting-core \
+            packages/postgres-adapter \
+            packages/subscription-runtime-adapter; then
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changes.outputs.required == 'true'
+        uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
+        with:
+          version: 11.18.0
+      - if: steps.changes.outputs.required == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - if: steps.changes.outputs.required == 'true'
+        run: node vendor/infinity-context/prepare-official-sdk.mjs
+      - if: steps.changes.outputs.required == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.changes.outputs.required == 'true'
+        name: Build Infinity dependency closure
+        run: >-
+          pnpm --filter @discord-meeting/infinity-context-adapter...
+          --if-present run build
+      - if: steps.changes.outputs.required == 'true'
+        name: Run full Infinity adapter checks
+        run: pnpm --filter @discord-meeting/infinity-context-adapter run check
+
+  postgres-integration:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: changes
+        name: Detect PostgreSQL boundary changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
+            .github/workflows/quality.yml \
+            package.json \
+            pnpm-lock.yaml \
+            pnpm-workspace.yaml \
+            packages/meeting-core \
+            packages/meeting-routing-core \
+            packages/postgres-adapter; then
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changes.outputs.required == 'true'
+        uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
+        with:
+          version: 11.18.0
+      - if: steps.changes.outputs.required == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - if: steps.changes.outputs.required == 'true'
+        run: node vendor/infinity-context/prepare-official-sdk.mjs
+      - if: steps.changes.outputs.required == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.changes.outputs.required == 'true'
+        name: Build PostgreSQL dependency closure
+        run: >-
+          pnpm --filter @discord-meeting/postgres-adapter...
+          --if-present run build
+      - if: steps.changes.outputs.required == 'true'
+        name: Run full PostgreSQL adapter checks
+        run: pnpm --filter @discord-meeting/postgres-adapter run check
+
+  full-check:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
