@@ -1,0 +1,29 @@
+{
+  "schema_version": "infinity-context-typescript-sdk-draft-qualification.v1",
+  "release_state": "draft",
+  "immutable_attestation_verified": false,
+  "evidence_scope": "Observed mutable draft; downloaded bytes match this build. Not public distribution or immutable attestation.",
+  "repository": "777genius/infinity-context",
+  "source_commit": "9e06b31c7e07d158ead3e0b4ba34b5371c8913f2",
+  "tag_object": "3c01df8763dd861a071ed0ea7b99497100c17e7e",
+  "workflow_sha256": "73aa9dd34d226c5078992e38c9cb0f71019db483ea8700c8b0d5b45ec4785b9a",
+  "run_id": "34694085607",
+  "run_attempt": "1",
+  "release_id": 387566804,
+  "release_tag": "sdk-v0.3.1",
+  "observed_draft_url": "https://github.com/777genius/infinity-context/releases/tag/untagged-fe30bbdd87755fb454ac",
+  "assets": [
+    {
+      "name": "infinity-context-sdk-0.3.1.tgz",
+      "sha256": "d114011260e0e332e640601989dabb06e71f0d6865be1cef6e270bc9c6359d36",
+      "byte_length": 716038,
+      "id": 559244170
+    },
+    {
+      "name": "infinity-context-sdk-release-manifest.json",
+      "sha256": "e61109dbbf2496a710a2ac50ee95d1a76768c8eea25b3c671e0dd1ade9a27bd3",
+      "byte_length": 11656,
+      "id": 559244182
+    }
+  ]
+}

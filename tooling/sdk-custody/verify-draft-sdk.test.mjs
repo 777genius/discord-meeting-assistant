@@ -218,13 +218,18 @@ for (const mutate of /** @type {((value: PackageFixture) => void)[]} */ ([
     assert.throws(() => verify(fixture(mutate)), /Draft SDK custody/);
   });
 }
-await test("unchanged published preparer verifies retained 0.2.4 and rejects draft option", () => {
+await test("offline preparer keeps immutable 0.2.4 evidence distinct from the 0.3.1 draft", () => {
   const script = new URL("../../vendor/infinity-context/prepare-official-sdk.mjs", import.meta.url);
-  assert.match(execFileSync(process.execPath, [script.pathname, "--verify-only"], { encoding: "utf8" }), /0.2.4 immutable package verified offline/);
+  const output = execFileSync(process.execPath, [script.pathname, "--verify-only"], { encoding: "utf8" });
+  assert.match(output, /0.2.4 historical immutable package verified offline/);
+  assert.match(output, /0.3.1 mutable UNPUBLISHED draft qualification verified offline/);
+  assert.match(output, /immutable\/public attestation false/);
   assert.throws(() => execFileSync(process.execPath, [script.pathname, "--draft"], { stdio: "pipe" }), /Command failed/);
   const source = readFileSync(new URL("../../packages/infinity-context-adapter/src/infinity-sdk-provenance.ts", import.meta.url), "utf8");
   assert.match(source, /packageVersion: "0.2.4"/);
-  assert.doesNotMatch(source, /draft-qualification|0\.3\.0/);
+  assert.match(source, /packageVersion: "0.3.1"/);
+  assert.match(source, /evidenceKind: "draft-qualification"/);
+  assert.match(source, /immutableAttestationVerified: false/);
 });
 
 await test("duplicate receipt keys rejected even when the bytes are repinned", () => {

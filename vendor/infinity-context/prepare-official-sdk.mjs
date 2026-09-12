@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { verifyDraftSdkCustody } from "../../tooling/sdk-custody/verify-draft-sdk.mjs";
+
 const provenance = Object.freeze({
   packageManifestSha256: "218762d671873968552ce568ae1a87bb651e5ca5017db4f6b2953252aa7ae67e",
   packageName: "@infinity-context/sdk",
@@ -44,6 +46,28 @@ const releaseReceiptPath = resolve(
   vendorRoot,
   "artifacts/infinity-context-sdk-0.2.4-release-verification-receipt.json",
 );
+const draftPackagePath = resolve(
+  vendorRoot,
+  "artifacts/infinity-context-sdk-0.3.1.tgz",
+);
+const draftManifestPath = resolve(
+  vendorRoot,
+  "artifacts/infinity-context-sdk-0.3.1-release-manifest.json",
+);
+const draftReceiptPath = resolve(
+  vendorRoot,
+  "artifacts/infinity-context-sdk-0.3.1-draft-qualification-receipt.json",
+);
+const draftSourceLockPath = resolve(
+  vendorRoot,
+  "artifacts/infinity-context-sdk-0.3.1-source-package-lock.json",
+);
+const draftTrustedIntakePath = resolve(
+  vendorRoot,
+  "artifacts/infinity-context-sdk-0.3.1-trusted-intake.json",
+);
+const draftTrustedIntakeSha256 =
+  "ae033120569e8655457a28c9fc10e3c91718a92bcd6e9e9c1e102bfef23f25f8";
 
 function digest(algorithm, bytes, encoding) {
   return createHash(algorithm).update(bytes).digest(encoding);
@@ -121,7 +145,20 @@ if (
   throw new Error("Retained Infinity Context SDK release evidence verification failed");
 }
 
+const draftTrustedIntakeBytes = readFileSync(draftTrustedIntakePath);
+if (digest("sha256", draftTrustedIntakeBytes, "hex") !== draftTrustedIntakeSha256) {
+  throw new Error("Retained Infinity Context SDK draft trusted-intake verification failed");
+}
+const draft = verifyDraftSdkCustody({
+  manifestBytes: readFileSync(draftManifestPath),
+  packageLockBytes: readFileSync(draftSourceLockPath),
+  receiptBytes: readFileSync(draftReceiptPath),
+  tarball: readFileSync(draftPackagePath),
+}, JSON.parse(draftTrustedIntakeBytes.toString("utf8")));
+
 process.stdout.write(
-  `Infinity Context SDK ${provenance.packageVersion} immutable package verified offline ` +
-    `(reviewed source ${provenance.reviewedSourceCommit}).\n`,
+  `Infinity Context SDK ${provenance.packageVersion} historical immutable package verified offline ` +
+    `(reviewed source ${provenance.reviewedSourceCommit}).\n` +
+  `Infinity Context SDK ${draft.packageVersion} mutable UNPUBLISHED draft qualification verified offline ` +
+    `(reviewed source ${draft.sourceCommit}; immutable/public attestation false).\n`,
 );

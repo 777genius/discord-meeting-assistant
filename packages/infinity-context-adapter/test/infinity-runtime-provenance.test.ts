@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   INFINITY_CONTEXT_PRODUCTION_QUALIFICATION,
   INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE,
+  INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE,
   INFINITY_CONTEXT_SDK_PROVENANCE,
   PINNED_MULTILINGUAL_MINILM_TOKENIZER_PROFILE,
   InfinityContextActivationError,
@@ -87,6 +88,21 @@ describe("Infinity Context official SDK provenance", () => {
   const repositoryRoot = new URL("../../../", import.meta.url);
   const retainedDigest = (path: string): string =>
     "sha256:" + createHash("sha256").update(readFileSync(new URL(path, repositoryRoot))).digest("hex");
+  const canonical = (value: unknown): string => {
+    if (Array.isArray(value)) {
+      return `[${value.map(canonical).join(",")}]`;
+    }
+    if (value !== null && typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record).sort().map((key) =>
+        `${JSON.stringify(key)}:${canonical(record[key])}`).join(",")}}`;
+    }
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined) {
+      throw new Error("SDK artifact inventory is not JSON");
+    }
+    return encoded;
+  };
 
   it("loads the exact official package through ESM, CJS, and advisory-search types", async () => {
     const esm = await import("@infinity-context/sdk");
@@ -107,10 +123,12 @@ describe("Infinity Context official SDK provenance", () => {
       fileURLToPath(new URL("../../../vendor/infinity-context/prepare-official-sdk.mjs", import.meta.url)),
       "--verify-only",
     ], { encoding: "utf8" });
-    expect(output).toContain("SDK 0.2.4 immutable package verified offline");
+    expect(output).toContain("SDK 0.2.4 historical immutable package verified offline");
+    expect(output).toContain("SDK 0.3.1 mutable UNPUBLISHED draft qualification verified offline");
+    expect(output).toContain("immutable/public attestation false");
   });
 
-  it("binds the single default Retrieval SDK at 0.2.4", () => {
+  it("keeps the genuine 0.2.4 release bound to historical production and Retrieval V2", () => {
     expect(INFINITY_CONTEXT_SDK_PROVENANCE).toMatchObject({
       archiveSha256: "9b6bd230ae59e73af02039a1fbef4d7e06fc112419adf265229ea05c4b8ae366",
       commit: "40704f193008f98c52ede93b68a44349907dd2cd",
@@ -161,6 +179,66 @@ describe("Infinity Context official SDK provenance", () => {
       .toBe(`sha256:${INFINITY_CONTEXT_SDK_PROVENANCE.releaseManifestSha256}`);
     expect(retainedDigest(INFINITY_CONTEXT_SDK_PROVENANCE.releaseVerificationReceiptPath))
       .toBe(`sha256:${INFINITY_CONTEXT_SDK_PROVENANCE.releaseVerificationReceiptSha256}`);
+  });
+
+  it("binds the installed Retrieval V3 draft and every generated identity member", () => {
+    const provenance = INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE;
+    expect(provenance).toMatchObject({
+      evidenceKind: "draft-qualification",
+      immutableAttestationVerified: false,
+      packageName: "@infinity-context/sdk",
+      packageVersion: "0.3.1",
+      publicDistributionVerified: false,
+      qualificationScope: "test-only",
+      releaseState: "draft",
+    });
+    const packagePath = fileURLToPath(new URL(`../../../${provenance.packageTarballPath}`,
+      import.meta.url));
+    const tarball = readFileSync(packagePath);
+    expect(createHash("sha256").update(tarball).digest("hex"))
+      .toBe(provenance.packageTarballSha256);
+    expect(`sha512-${createHash("sha512").update(tarball).digest("base64")}`)
+      .toBe(provenance.packageTarballIntegrity);
+    const identityBytes = execFileSync("tar", ["-xzOf", packagePath,
+      `package/${provenance.artifactIdentityPath}`]);
+    expect(createHash("sha256").update(identityBytes).digest("hex"))
+      .toBe(provenance.artifactIdentitySha256);
+    const identity = JSON.parse(identityBytes.toString("utf8")) as {
+      readonly files: readonly { readonly path: string; readonly sha256_hex: string }[];
+      readonly package_version: string;
+    };
+    expect(identity.package_version).toBe(provenance.packageVersion);
+    expect(createHash("sha256").update(canonical(identity.files)).digest("hex"))
+      .toBe(provenance.artifactInventorySha256);
+    expect(identity.files.length).toBeGreaterThan(0);
+    for (const member of identity.files) {
+      const bytes = execFileSync("tar", ["-xzOf", packagePath, `package/${member.path}`]);
+      expect(createHash("sha256").update(bytes).digest("hex"), member.path)
+        .toBe(member.sha256_hex);
+    }
+    for (const path of [provenance.releaseManifestPath,
+      provenance.draftQualificationReceiptPath, provenance.sourcePackageLockPath,
+      provenance.trustedIntakePath] as const) {
+      expect(retainedDigest(path)).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    }
+    expect(retainedDigest(provenance.releaseManifestPath))
+      .toBe(`sha256:${provenance.releaseManifestSha256}`);
+    expect(retainedDigest(provenance.draftQualificationReceiptPath))
+      .toBe(`sha256:${provenance.draftQualificationReceiptSha256}`);
+    expect(retainedDigest(provenance.sourcePackageLockPath))
+      .toBe(`sha256:${provenance.sourcePackageLockSha256}`);
+    expect(retainedDigest(provenance.trustedIntakePath))
+      .toBe(`sha256:${provenance.trustedIntakeSha256}`);
+  });
+
+  it("does not let V3 draft provenance satisfy immutable production admission", () => {
+    expect(() => assertInfinityContextActivation({
+      ...productionActivation,
+      immutablePackageIntegrity:
+        INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.packageTarballIntegrity,
+      sdkCommit: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.reviewedSourceCommit,
+      sdkTree: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.reviewedSourceTree,
+    })).toThrow(/does not match the reviewed SDK source/u);
   });
 
   it("binds the composite exact-head and retained predecessor qualification evidence", () => {

@@ -1,0 +1,22 @@
+{
+  "kind": "draft-qualification",
+  "repository": "777genius/infinity-context",
+  "packageName": "@infinity-context/sdk",
+  "packageVersion": "0.3.1",
+  "sourceCommit": "9e06b31c7e07d158ead3e0b4ba34b5371c8913f2",
+  "sourceTree": "73f7c05a7c86c9dbd7516f1ed5ec9851550c7194",
+  "tagObject": "3c01df8763dd861a071ed0ea7b99497100c17e7e",
+  "workflowSha256": "73aa9dd34d226c5078992e38c9cb0f71019db483ea8700c8b0d5b45ec4785b9a",
+  "runId": 34694085607,
+  "runAttempt": 1,
+  "releaseId": 387566804,
+  "observedDraftUrl": "https://github.com/777genius/infinity-context/releases/tag/untagged-fe30bbdd87755fb454ac",
+  "tarballAssetId": 559244170,
+  "manifestAssetId": 559244182,
+  "tarballSha256": "d114011260e0e332e640601989dabb06e71f0d6865be1cef6e270bc9c6359d36",
+  "tarballIntegrity": "sha512-EFbnOq2Gb+Jtc7XEa1oExD62iyqsqvAetjr9U8I2AI6WaUuXFRRZN40AeHsl0QgotUvNQUWeJ9K5U6cQm8hlSg==",
+  "manifestSha256": "e61109dbbf2496a710a2ac50ee95d1a76768c8eea25b3c671e0dd1ade9a27bd3",
+  "receiptSha256": "a0f47aa7ce79ce98f2060ebff4ad03393b74c7e2db743e9fec19538781ce1184",
+  "packageManifestSha256": "678af743fc2e6ebb6eeb5db45f64f34c79e919584b77f5d140f2ceca142bd281",
+  "packageLockSha256": "aeda55622617573fee6cfe5d954a153569d8849dbf8bcedddc72dfa0ebc4634b"
+}

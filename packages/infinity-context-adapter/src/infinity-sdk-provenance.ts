@@ -70,3 +70,46 @@ export const INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE = Object.freeze({
   packageVersion: "0.2.4",
   reviewedSourceCommit: "40704f193008f98c52ede93b68a44349907dd2cd",
 });
+
+/**
+ * Exact test-only package identity for Retrieval V3 draft qualification.
+ *
+ * This observed draft is mutable and unpublished. It is not an immutable
+ * release and cannot satisfy the production release-admission gate above.
+ */
+export const INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE = Object.freeze({
+  artifactIdentityPath: "dist/sdk-artifact-identity.json",
+  artifactIdentitySha256: "dc6192ad62a624f9749ba45ed184d476a5164f048af7e250729d3a3764a05948",
+  artifactInventorySha256: "ff7767fac031d6b442b897a344d9483aec7a39744b97d769242b612b7447f01f",
+  draftQualificationReceiptPath:
+    "vendor/infinity-context/artifacts/infinity-context-sdk-0.3.1-draft-qualification-receipt.json",
+  draftQualificationReceiptSha256:
+    "a0f47aa7ce79ce98f2060ebff4ad03393b74c7e2db743e9fec19538781ce1184",
+  evidenceKind: "draft-qualification",
+  evidenceScope:
+    "Observed mutable draft; downloaded bytes match this build. Not public distribution or immutable attestation.",
+  immutableAttestationVerified: false,
+  packageTarballIntegrity:
+    "sha512-EFbnOq2Gb+Jtc7XEa1oExD62iyqsqvAetjr9U8I2AI6WaUuXFRRZN40AeHsl0QgotUvNQUWeJ9K5U6cQm8hlSg==",
+  packageManifestSha256: "678af743fc2e6ebb6eeb5db45f64f34c79e919584b77f5d140f2ceca142bd281",
+  packageName: "@infinity-context/sdk",
+  packageTarballPath: "vendor/infinity-context/artifacts/infinity-context-sdk-0.3.1.tgz",
+  packageTarballSha256: "d114011260e0e332e640601989dabb06e71f0d6865be1cef6e270bc9c6359d36",
+  packageVersion: "0.3.1",
+  publicDistributionVerified: false,
+  qualificationScope: "test-only",
+  releaseManifestPath:
+    "vendor/infinity-context/artifacts/infinity-context-sdk-0.3.1-release-manifest.json",
+  releaseManifestSha256: "e61109dbbf2496a710a2ac50ee95d1a76768c8eea25b3c671e0dd1ade9a27bd3",
+  releaseState: "draft",
+  releaseTag: "sdk-v0.3.1",
+  releaseTagObject: "3c01df8763dd861a071ed0ea7b99497100c17e7e",
+  reviewedSourceCommit: "9e06b31c7e07d158ead3e0b4ba34b5371c8913f2",
+  reviewedSourceTree: "73f7c05a7c86c9dbd7516f1ed5ec9851550c7194",
+  sourcePackageLockPath:
+    "vendor/infinity-context/artifacts/infinity-context-sdk-0.3.1-source-package-lock.json",
+  sourcePackageLockSha256: "aeda55622617573fee6cfe5d954a153569d8849dbf8bcedddc72dfa0ebc4634b",
+  trustedIntakePath:
+    "vendor/infinity-context/artifacts/infinity-context-sdk-0.3.1-trusted-intake.json",
+  trustedIntakeSha256: "ae033120569e8655457a28c9fc10e3c91718a92bcd6e9e9c1e102bfef23f25f8",
+});

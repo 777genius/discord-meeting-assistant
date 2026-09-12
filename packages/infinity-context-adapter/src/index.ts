@@ -19,7 +19,10 @@ export {
   type InfinityContextRetrievalV2Config,
   type InfinityContextRetrievalV2Request,
 } from "./infinity-context-retrieval-v2.js";
-export { INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE } from "./infinity-sdk-provenance.js";
+export {
+  INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE,
+  INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE,
+} from "./infinity-sdk-provenance.js";
 export {
   INFINITY_CONTEXT_SDK_PROVENANCE,
   InfinityContextActivationError,
