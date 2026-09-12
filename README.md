@@ -20,6 +20,10 @@ summary, and answers questions on that summary.
 - **Publishes a summary** with action items, then answers questions on it.
 - **Optional:** voice answers in the call and recording playback.
 
+Speech-to-text is tested on Deepgram and ElevenLabs. You can also use a local
+model, such as Whisper. For AI answers, you can use an API, a subscription, or
+a local model.
+
 The default setup includes a transcript and a simple turn-count outline.
 AI summaries and voice answers build from the public
 [`777genius/ar`](https://github.com/777genius/ar) source, but still require
