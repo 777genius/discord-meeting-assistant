@@ -101,7 +101,7 @@ function canonicalFingerprintValue(value: unknown): unknown {
     .map(([key, nested]) => [key, canonicalFingerprintValue(nested)]));
 }
 
-function requestFrom(input: InfinityContextRetrievalV3Request): RetrieveContextV3Input {
+export function retrievalV3InputFromSnapshot(input: InfinityContextRetrievalV3Request): RetrieveContextV3Input {
   const request: RetrieveContextV3Input = {
     bounds: {
       candidateLimit: input.budgets.candidateLimit,
@@ -124,12 +124,13 @@ function requestFrom(input: InfinityContextRetrievalV3Request): RetrieveContextV
   return request;
 }
 
-function locatorCandidates(
+export function retrievalV3LocatorCandidates(
   candidates: Awaited<ReturnType<InfinityContextClient["context"]["retrieveV3"]>>["candidates"],
   binding: InfinityContextRetrievalV3Binding,
   requestDigest: string,
 ): readonly FocusedLocatorRetrievalV2Candidate[] {
-  return Object.freeze(candidates.map((candidate) => {
+  return Object.freeze(candidates.map((candidate, index) => {
+    // Consumer rank binds fused response order; provider minima may tie or decrease.
     const canonicalResult = {
       contributions: candidate.contributions.map((contribution) => ({
         contributionScorePicos: contribution.contribution_score_picos,
@@ -141,7 +142,7 @@ function locatorCandidates(
       })),
       fusedScore: candidate.fused_score,
       locator: candidate.locator,
-      providerRank: candidate.provider_rank,
+      providerRank: index + 1,
     };
     return Object.freeze({ locator: candidate.locator,
       retrievalProvenance: Object.freeze({
@@ -161,7 +162,7 @@ function locatorCandidates(
         profileId: binding.profileId,
       }),
       locator: candidate.locator,
-      providerRank: candidate.provider_rank,
+      providerRank: index + 1,
       requestDigest,
       responseDigest: createHash("sha256").update(
         JSON.stringify(canonicalFingerprintValue(canonicalResult)), "utf8",
@@ -233,7 +234,7 @@ implements FocusedLocatorRetrievalV3Port {
       try {
         assertDeepFrozen(input);
         input = validateFocusedLocatorRetrievalV3Request(input);
-        request = requestFrom(input);
+        request = retrievalV3InputFromSnapshot(input);
       } catch {
         return unqualified("memory.context_retrieval_contract_invalid");
       }
@@ -310,7 +311,7 @@ implements FocusedLocatorRetrievalV3Port {
           return unqualified(providerReason(response));
         }
         return Object.freeze({
-          candidates: locatorCandidates(
+          candidates: retrievalV3LocatorCandidates(
             response.candidates,
             input.binding,
             createHash("sha256").update(

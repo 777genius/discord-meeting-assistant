@@ -7,7 +7,7 @@ export type SemanticQualityV4ArtifactKind = "adjudication" | "answer" | "evidenc
   "capability_response" |
   "original_model_input" | "original_provider_request" | "original_provider_response" |
   "repair_model_input" | "repair_provider_request" | "repair_provider_response" |
-  "raw_outcome" | "response_runtime" | "retrieval_request" | "retrieval_response" |
+  "raw_outcome" | "response_runtime" | "retrieval_request" | "retrieval_response" | "retrieval_binding" |
   "scope_resolution_observation" | "retrieval_observation" | "selected_canonical_turns";
 
 export interface SemanticQualityV4ArtifactReceipt {

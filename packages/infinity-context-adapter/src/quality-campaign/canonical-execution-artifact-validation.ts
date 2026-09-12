@@ -1,16 +1,26 @@
-import type { FocusedLocatorRetrievalV2RequestSnapshot } from
+import { validateFocusedLocatorRetrievalV3Request,
+  type FocusedLocatorRetrievalRequestSnapshot, type FocusedLocatorRetrievalV3RequestSnapshot } from
   "@discord-meeting/meeting-core/meeting-knowledge";
+import { InfinityContextClient, decodeRetrievalV3Capability, retrievalV3RequestPayload,
+  type RetrievalV3Capability } from "@infinity-context/sdk";
+import { retrievalV3InputFromSnapshot, retrievalV3LocatorCandidates,
+  retrievalV3CapabilityFingerprint } from "../infinity-context-retrieval-v3.js";
+import type { InfinityContextRetrievalV3ExactExchange } from "../infinity-context-retrieval-exchange.js";
+import type { QualificationExecutionPacket, QualificationRetrievalCandidate } from
+  "./execute-admitted-qualification-question.js";
+import { validateQualificationExecutionPacket } from "./qualification-corpus-packets.js";
+import type { DiagnosticQuestion } from "./diagnostic-manifest.js";
 import { createHash } from "node:crypto";
 
 import type { SemanticQualityV4ArtifactKind, SemanticQualityV4ArtifactReceipt } from
   "./canonical-metadata-contract.js";
-import { canonicalJson } from "./canonical.js";
+import { canonicalJson, safeId } from "./canonical.js";
 
 export type { SemanticQualityV4ArtifactKind, SemanticQualityV4ArtifactReceipt } from
   "./canonical-metadata-contract.js";
 export { validateCanonicalScopeResolutionObservation } from "./canonical-metadata-contract.js";
 
-export interface CanonicalRetrievalObservationArtifact {
+interface CanonicalRetrievalObservationArtifactCommon {
   readonly attemptId: string;
   readonly capabilityAndRetrievalLatencyUs: number;
   readonly capabilityBytes: number;
@@ -20,8 +30,60 @@ export interface CanonicalRetrievalObservationArtifact {
   readonly responseBytes: number;
   readonly responseSha256: string;
   readonly routeLatencyUs: number;
-  readonly schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v1";
 }
+
+export type CanonicalRetrievalObservationArtifact =
+  CanonicalRetrievalObservationArtifactCommon & ({
+    readonly schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v1";
+  } | {
+    readonly schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v2";
+    readonly contractVersion: "context-retrieval.v3";
+    readonly capabilityRoute: "/v1/context/retrieve-v3/capability";
+    readonly retrievalRoute: "/v1/context/retrieve-v3";
+    readonly capabilitySemantics: "bare_descriptor";
+  });
+
+interface CanonicalRetrievalObservationCommon {
+  readonly capabilityAndRetrievalLatencyUs: number;
+  readonly capabilityBytes: number;
+  readonly capabilitySha256: string;
+  readonly requestBytes: number;
+  readonly requestSha256: string;
+  readonly responseBytes: number;
+  readonly responseSha256: string;
+  readonly routeLatencyUs: number;
+}
+
+type CanonicalRetrievalObservationInput = CanonicalRetrievalObservationCommon & ({
+  readonly schemaVersion?: never;
+  readonly exchangeSource?: never;
+  readonly contractVersion?: never;
+  readonly capabilityRoute?: never;
+  readonly retrievalRoute?: never;
+} | {
+  readonly schemaVersion: 2;
+  readonly exchangeSource: "exact_transport" | "injected_transport_projection";
+  readonly contractVersion: "context-retrieval.v3";
+  readonly capabilityRoute: "/v1/context/retrieve-v3/capability";
+  readonly retrievalRoute: "/v1/context/retrieve-v3";
+});
+
+type CanonicalRetrievalExchangeInput = {
+  readonly capabilityRequestBytes: Uint8Array;
+  readonly capabilityResponseBytes: Uint8Array;
+  readonly requestBytes: Uint8Array;
+  readonly responseBytes: Uint8Array;
+} & ({
+  readonly schemaVersion?: never;
+  readonly contractVersion?: never;
+  readonly capabilityRoute?: never;
+  readonly retrievalRoute?: never;
+} | {
+  readonly schemaVersion: 2;
+  readonly contractVersion: "context-retrieval.v3";
+  readonly capabilityRoute: "/v1/context/retrieve-v3/capability";
+  readonly retrievalRoute: "/v1/context/retrieve-v3";
+});
 
 export interface SemanticQualityV4ArtifactEnvelope {
   readonly algorithm: "A256GCM";
@@ -46,24 +108,27 @@ const artifactKinds = new Set<unknown>([
   "capability_response", "evidence", "original_model_input", "original_provider_request",
   "original_provider_response", "repair_model_input", "repair_provider_request",
   "repair_provider_response", "raw_outcome", "response_runtime", "retrieval_request",
-  "retrieval_response", "scope_resolution_observation", "retrieval_observation", "selected_canonical_turns",
+  "retrieval_response", "retrieval_binding", "scope_resolution_observation", "retrieval_observation", "selected_canonical_turns",
 ]);
 
 export function validateCanonicalRetrievalObservation(input: {
   readonly attemptId: string;
-  readonly exchange: { readonly capabilityRequestBytes: Uint8Array;
-    readonly capabilityResponseBytes: Uint8Array; readonly requestBytes: Uint8Array;
-    readonly responseBytes: Uint8Array };
-  readonly observation: { readonly capabilityAndRetrievalLatencyUs: number;
-    readonly capabilityBytes: number; readonly capabilitySha256: string;
-    readonly requestBytes: number; readonly requestSha256: string;
-    readonly responseBytes: number; readonly responseSha256: string;
-    readonly routeLatencyUs: number } | null;
+  readonly exchange: CanonicalRetrievalExchangeInput;
+  readonly observation: CanonicalRetrievalObservationInput | null;
 }): CanonicalRetrievalObservationArtifact {
   if (input.observation === null) {
     throw new Error("canonical retrieval observation is absent");
   }
   const observation = input.observation;
+  const v3 = observation.schemaVersion === 2 || input.exchange.schemaVersion === 2;
+  if (v3 && (observation.schemaVersion !== 2 || input.exchange.schemaVersion !== 2 ||
+    observation.exchangeSource !== "exact_transport" ||
+    [observation, input.exchange].some(value => value.contractVersion !== "context-retrieval.v3" ||
+      value.capabilityRoute !== "/v1/context/retrieve-v3/capability" ||
+      value.retrievalRoute !== "/v1/context/retrieve-v3") ||
+    input.exchange.capabilityRequestBytes.byteLength !== 0)) {
+    throw new Error("canonical V3 route or exact transport pairing is invalid");
+  }
   if (!attemptPattern.test(input.attemptId)) {
     throw new Error("canonical retrieval observation attempt is invalid");
   }
@@ -74,9 +139,11 @@ export function validateCanonicalRetrievalObservation(input: {
   }
   let canonicalCapabilityBytes: Uint8Array;
   try {
-    canonicalCapabilityBytes = new TextEncoder().encode(canonicalJson(JSON.parse(
+    const descriptor = JSON.parse(
       new TextDecoder("utf-8", { fatal: true }).decode(input.exchange.capabilityResponseBytes),
-    ) as unknown));
+    ) as unknown;
+    if (v3) { decodeRetrievalV3Capability(descriptor); }
+    canonicalCapabilityBytes = new TextEncoder().encode(v3 ? custodyJson(descriptor) : canonicalJson(descriptor));
   } catch {
     throw new Error("canonical retrieval observation does not match exact exchange");
   }
@@ -89,14 +156,20 @@ export function validateCanonicalRetrievalObservation(input: {
     size !== bytes.byteLength || !isDigest(expectedDigest) || sha256(bytes) !== expectedDigest)) {
     throw new Error("canonical retrieval observation does not match exact exchange");
   }
-  return Object.freeze({ attemptId: input.attemptId,
+  const common = { attemptId: input.attemptId,
     capabilityAndRetrievalLatencyUs: observation.capabilityAndRetrievalLatencyUs,
     capabilityBytes: observation.capabilityBytes,
     capabilitySha256: observation.capabilitySha256,
     requestBytes: observation.requestBytes, requestSha256: observation.requestSha256,
     responseBytes: observation.responseBytes, responseSha256: observation.responseSha256,
-    routeLatencyUs: observation.routeLatencyUs,
-    schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v1" });
+    routeLatencyUs: observation.routeLatencyUs };
+  return v3 ? Object.freeze({ ...common,
+      schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v2" as const,
+      contractVersion: "context-retrieval.v3" as const,
+      capabilityRoute: "/v1/context/retrieve-v3/capability" as const,
+      retrievalRoute: "/v1/context/retrieve-v3" as const,
+      capabilitySemantics: "bare_descriptor" as const }) : Object.freeze({ ...common,
+      schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v1" as const });
 }
 
 function sha256(value: Uint8Array): string {
@@ -167,7 +240,7 @@ export function validateSemanticQualityV4ArtifactReceipt(
   return value as unknown as SemanticQualityV4ArtifactReceipt;
 }
 
-export function assertCanonicalRequest(request: FocusedLocatorRetrievalV2RequestSnapshot,
+export function assertCanonicalRequest(request: FocusedLocatorRetrievalRequestSnapshot,
   question: string): void {
   if (request.budgets.candidateLimit !== 100 || request.budgets.resultLimit !== 10 ||
     !Object.is(request.budgets.neighborRadius, 0) ||
@@ -179,4 +252,174 @@ export function assertCanonicalRequest(request: FocusedLocatorRetrievalV2Request
     originalQuery.query.length === 0) {
     throw new Error("qualification request violates Meeting Knowledge ownership");
   }
+}
+
+/** Float-preserving UTF-8 key ordering, matching the V3 adapter's candidate preimage. */
+export function custodyJson(value: unknown): string {
+  function ordered(item: unknown): unknown {
+    if (Array.isArray(item)) {return item.map(ordered);}
+    if (item !== null && typeof item === "object") {
+      return Object.fromEntries(Object.entries(item).toSorted(([a], [b]) =>
+        Buffer.compare(Buffer.from(a), Buffer.from(b))).map(([key, nested]) => [key, ordered(nested)]));
+    }
+    if (typeof item === "number" && !Number.isFinite(item)) {throw new Error("non-finite custody value");}
+    if (item === undefined) {throw new Error("undefined custody value");}
+    return item;
+  }
+  return JSON.stringify(ordered(value));
+}
+export function custodyDigest(value: unknown): string {
+  return sha256(new TextEncoder().encode(custodyJson(value)));
+}
+export function freezeCustody<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const nested of Object.values(value)) {freezeCustody(nested);}
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export interface CanonicalRetrievalBindingV1 {
+  readonly schemaVersion: "meeting_knowledge.canonical_retrieval_binding.v1";
+  readonly attemptId: string;
+  readonly packet: QualificationExecutionPacket | DiagnosticQuestion;
+  readonly topology: { readonly scopeId: string; readonly roomId: string; readonly currentMeetingId: string };
+  readonly diagnosticPlanSha256: string | null;
+  readonly request: FocusedLocatorRetrievalV3RequestSnapshot;
+  readonly snapshotSha256: string;
+  readonly officialPayloadSha256: string;
+  readonly rawRequestSha256: string;
+  readonly rawResponseSha256: string;
+  readonly rawCapabilitySha256: string;
+  readonly descriptorSha256: string;
+  readonly descriptor: RetrievalV3Capability;
+  readonly contractVersion: "context-retrieval.v3";
+  readonly capabilityRoute: "/v1/context/retrieve-v3/capability";
+  readonly retrievalRoute: "/v1/context/retrieve-v3";
+  readonly candidateProjectionSha256: string;
+  readonly candidates: readonly QualificationRetrievalCandidate[];
+  readonly providerStatus: "available" | "unavailable" | "unqualified" | "invalid_response";
+}
+
+/** Replays only retained bytes through official SDK decoding/preflight. No network transport exists. */
+export async function createCanonicalRetrievalBinding(input: {
+  readonly attemptId: string; readonly packet: QualificationExecutionPacket | DiagnosticQuestion;
+  readonly topology: CanonicalRetrievalBindingV1["topology"];
+  readonly diagnosticPlanSha256: string | null;
+  readonly request: FocusedLocatorRetrievalV3RequestSnapshot;
+  readonly exchange: InfinityContextRetrievalV3ExactExchange;
+}): Promise<CanonicalRetrievalBindingV1> {
+  if (!attemptPattern.test(input.attemptId)) {throw new Error("retrieval binding attempt is invalid");}
+  const packet = validateCustodyPacket(input.packet);
+  if (!isPlainRecord(input.topology) || !hasExactKeys(input.topology,
+    ["scopeId", "roomId", "currentMeetingId"]) ||
+    [input.topology.scopeId, input.topology.roomId, input.topology.currentMeetingId]
+      .some(value => typeof value !== "string" || value.length === 0) ||
+    input.diagnosticPlanSha256 !== null && !/^[a-f0-9]{64}$/u.test(input.diagnosticPlanSha256)) {
+    throw new Error("retrieval binding packet or topology is invalid");
+  }
+  const request = validateFocusedLocatorRetrievalV3Request(input.request);
+  assertCanonicalRequest(request, packet.questionText);
+  if (request.scope.thread.mode !== "any" ||
+    (input.diagnosticPlanSha256 !== null && request.filters.sourceGenerations.length !== 1) ||
+    request.budgets.deadlineMs !== 2000 || request.budgets.evidenceByteLimit !== 16000 ||
+    request.budgets.responseByteLimit !== 16384) {
+    throw new Error("V3 canonical custody requires any-selector, diagnostic single-source, and fixed budgets");
+  }
+  const exchange = input.exchange;
+  if (exchange.schemaVersion !== 2 || exchange.contractVersion !== "context-retrieval.v3" ||
+    exchange.capabilityRoute !== "/v1/context/retrieve-v3/capability" ||
+    exchange.retrievalRoute !== "/v1/context/retrieve-v3" || exchange.capabilityRequestBytes.byteLength !== 0) {
+    throw new Error("V3 retrieval binding route pairing is invalid");
+  }
+  const sdkInput = retrievalV3InputFromSnapshot(request);
+  const payload = retrievalV3RequestPayload(sdkInput);
+  const expectedBytes = new TextEncoder().encode(JSON.stringify(payload));
+  if (!Buffer.from(expectedBytes).equals(exchange.requestBytes)) {
+    throw new Error("V3 raw request is not the official frozen payload");
+  }
+  // The public SDK lacks a standalone V3 capability byte decoder. This isolated
+  // in-memory transport uses its public method, preserving duplicate-key/integer
+  // token validation and fingerprint checks without rewriting descriptor bytes.
+  const client = new InfinityContextClient({ baseUrl: "https://retained.invalid", retryPolicy: { maxAttempts: 1 },
+    transport: { send: async request => {
+      if (request.method !== "GET" || request.url.pathname !== exchange.capabilityRoute) {
+        throw new Error("retained descriptor decoder cannot issue provider effects");
+      }
+      return { status: 200, headers: new Headers(), body: new Uint8Array(exchange.capabilityResponseBytes) };
+    } } });
+  const descriptor = await client.context.retrievalV3Capability({ timeoutMs: 2000 });
+  if (descriptor.capability_fingerprint !== request.binding.capabilityFingerprint ||
+    descriptor.service_revision !== request.binding.serviceRevision ||
+    descriptor.profile_id !== request.binding.profileId ||
+    descriptor.index_profile_digest !== request.binding.indexProfileDigest ||
+    retrievalV3CapabilityFingerprint(descriptor as unknown as Record<string, unknown>) !== descriptor.capability_fingerprint ||
+    custodyJson(descriptor.required_provider_lanes) !== custodyJson(request.binding.requiredProviderLanes) ||
+    descriptor.provider_lanes.some(lane => request.binding.requiredProviderLanes.includes(lane.provider_id) &&
+      (!lane.healthy || !lane.profile_qualified))) {
+    throw new Error("V3 retained descriptor differs from frozen pins");
+  }
+  const { decodeRetrieveContextV3ResponseBytes } = await import("@infinity-context/sdk");
+  let providerStatus: CanonicalRetrievalBindingV1["providerStatus"] = "invalid_response";
+  let candidates: readonly QualificationRetrievalCandidate[] = [];
+  try {
+    const response = decodeRetrieveContextV3ResponseBytes(exchange.responseBytes, payload, descriptor);
+    if (response.candidates.some(candidate => !request.filters.sourceGenerations.some(pair =>
+      pair.sourceKey === candidate.source_key))) {throw new Error("unadmitted source");}
+    providerStatus = response.status;
+    if (response.status === "available") {
+      candidates = retrievalV3LocatorCandidates(response.candidates, request.binding, custodyDigest(request))
+        .map(candidate => ({ locatorId: candidate.locator,
+          contributions: candidate.retrievalProvenance.contributions,
+          fusedScore: candidate.retrievalProvenance.fusedScore,
+          providerRank: candidate.retrievalProvenance.providerRank }));
+    }
+  } catch { /* Malformed raw bytes remain failed evidence, never an omitted outcome. */ }
+  return freezeCustody({ schemaVersion: "meeting_knowledge.canonical_retrieval_binding.v1",
+    attemptId: input.attemptId, packet: structuredClone(packet), topology: structuredClone(input.topology),
+    diagnosticPlanSha256: input.diagnosticPlanSha256, request,
+    snapshotSha256: custodyDigest(request), officialPayloadSha256: custodyDigest(payload),
+    rawRequestSha256: sha256(exchange.requestBytes), rawResponseSha256: sha256(exchange.responseBytes),
+    rawCapabilitySha256: sha256(exchange.capabilityResponseBytes), descriptorSha256: custodyDigest(descriptor),
+    descriptor, contractVersion: "context-retrieval.v3", capabilityRoute: exchange.capabilityRoute,
+    retrievalRoute: exchange.retrievalRoute, candidateProjectionSha256: custodyDigest(candidates),
+    candidates, providerStatus });
+}
+
+/** Exact-key reconstruction rejects a re-signed projection unless every retained byte agrees. */
+export async function validateCanonicalRetrievalBinding(value: unknown, expected: {
+  readonly attemptId: string; readonly packet: QualificationExecutionPacket | DiagnosticQuestion;
+  readonly topology: CanonicalRetrievalBindingV1["topology"];
+  readonly diagnosticPlanSha256: string | null;
+  readonly exchange: InfinityContextRetrievalV3ExactExchange;
+}): Promise<CanonicalRetrievalBindingV1> {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["schemaVersion", "attemptId", "packet", "topology",
+    "diagnosticPlanSha256", "request", "snapshotSha256", "officialPayloadSha256", "rawRequestSha256",
+    "rawResponseSha256", "rawCapabilitySha256", "descriptorSha256", "descriptor", "contractVersion",
+    "capabilityRoute", "retrievalRoute", "candidateProjectionSha256", "candidates", "providerStatus"])) {
+    throw new Error("retrieval binding has an invalid shape");
+  }
+  const reconstructed = await createCanonicalRetrievalBinding({ ...expected,
+    request: validateFocusedLocatorRetrievalV3Request(value.request) });
+  if (custodyJson(value) !== custodyJson(reconstructed)) {
+    throw new Error("retrieval binding is substituted or inconsistent with retained bytes");
+  }
+  return reconstructed;
+}
+
+function validateCustodyPacket(value: QualificationExecutionPacket | DiagnosticQuestion):
+QualificationExecutionPacket | DiagnosticQuestion {
+  if ("source" in value) {return validateQualificationExecutionPacket(value);}
+  if (!isPlainRecord(value) || !hasExactKeys(value,
+    ["locale", "questionId", "questionText", "scopeTopologyReference"]) ||
+    !["en", "mixed", "ru"].includes(String(value.locale)) ||
+    [value.questionId, value.questionText, value.scopeTopologyReference]
+      .some(item => typeof item !== "string" || item.length === 0) ||
+    Buffer.byteLength(String(value.questionText), "utf8") > 8000) {
+    throw new Error("diagnostic retrieval binding packet is invalid");
+  }
+  return Object.freeze({ locale: value.locale as DiagnosticQuestion["locale"],
+    questionId: safeId(value.questionId, "diagnostic custody question"),
+    questionText: String(value.questionText), scopeTopologyReference:
+      safeId(value.scopeTopologyReference, "diagnostic custody scope reference") });
 }

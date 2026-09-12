@@ -8,6 +8,7 @@ export interface InfinityContextRetrievalV2ExactExchange {
 }
 
 export interface InfinityContextRetrievalV3ExactExchange extends InfinityContextRetrievalV2ExactExchange {
+  readonly schemaVersion: 2;
   readonly contractVersion: "context-retrieval.v3";
   readonly capabilityRoute: "/v1/context/retrieve-v3/capability";
   readonly retrievalRoute: "/v1/context/retrieve-v3";
@@ -93,7 +94,7 @@ export class ExactRetrievalExchangeTransport implements HttpTransport {
     if (this.#contract !== "context-retrieval.v3") {
       throw new Error("V3 exchange requested from V2 capture");
     }
-    return Object.freeze({ ...exchange, contractVersion: "context-retrieval.v3",
+    return Object.freeze({ ...exchange, schemaVersion: 2, contractVersion: "context-retrieval.v3",
       capabilityRoute: "/v1/context/retrieve-v3/capability", retrievalRoute: "/v1/context/retrieve-v3" });
   }
 
