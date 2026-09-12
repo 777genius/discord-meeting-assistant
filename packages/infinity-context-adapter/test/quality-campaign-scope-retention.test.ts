@@ -13,6 +13,27 @@ import { scopeObservation, scopeObservationCustody } from "./quality-campaign-sc
 const digest = (value: string) => value.repeat(64);
 
 describe("authenticated scope retention and durable budget", () => {
+  it("keeps unavailable metadata attempts and their unknown read in the denominator", async () => {
+    const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+      campaignRootSha256: digest("a"), releaseRootSha256: digest("b"),
+      questionDigestSha256: digest("c"), questionId: "q-1", repetition: 1,
+      spendReservationSha256: digest("d") });
+    const observation = { schemaVersion: "meeting_knowledge.scope_resolution.v1",
+      status: "unavailable", reads: [{ kind: "scope_spaces", requestSha256: digest("e"),
+        responseBytes: 0, responseSha256: null, status: "outcome_unknown" }] };
+    const retained = await verifyCanonicalScopeRetention([identity], {
+      readScopeObservation: async () => ({ observation, receipt: { algorithm: "A256GCM",
+        artifactKind: "scope_resolution_observation", attemptId: identity.attemptId,
+        envelopeSha256: digest("f"), plaintextSha256: digest("1"),
+        rootBindingSha256: identity.campaignRootSha256,
+        schemaVersion: "meeting_knowledge.semantic_quality_artifact_receipt.v1",
+        sizeBytes: 256, storeIdentitySha256: digest("2") } }) });
+    expect(retained.expectedSpendClaims).toHaveLength(1);
+    expect(retained.expectedSpendClaims[0]).toMatchObject({
+      identity: { callKind: "capability", callOrdinal: 1 },
+      requestDigestSha256: digest("e") });
+  });
+
   it("reconstructs ordinals 1/2 exactly once and accounts for real durable claims across restart", async () => {
     const reservations = ([1, 2, 3] as const).map<VerifiedSpendReservation>((repetition) => ({
       signerKeyId: "synthetic-budget-authority", signatureBase64: "AA==",

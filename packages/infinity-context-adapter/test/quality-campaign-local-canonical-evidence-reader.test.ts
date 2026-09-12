@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { knowledgeAnswerExchangeInventorySha256 } from
+  "@discord-meeting/subscription-runtime-adapter";
 
+import { absentAnswerRequestIntentBytes, absentAnswerRequestIntentSha256 } from
+  "../src/quality-campaign/canonical-answer-artifact-validation.js";
 import { canonicalJson, sha256 as canonicalSha256 } from
   "../src/quality-campaign/canonical.js";
 import { attemptIdentity } from "../src/quality-campaign/execution.js";
@@ -133,7 +137,75 @@ describe("production local canonical evidence reader", () => {
     await expect(foreignKind.reader.verify({ attempts: [foreignKind.projection],
       campaignRootSha256 })).rejects.toThrow("foreign or substituted");
   });
+
+  it.each(["empty", "unavailable"] as const)(
+    "retains an authenticated pre-retrieval %s failure without fake transport exchanges",
+    async (status) => {
+      const fixture = await earlyFailureFixture(status);
+      await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
+        .resolves.toMatchObject({ inventorySha256: expect.stringMatching(/^[a-f0-9]{64}$/u) });
+      await expect(fixture.reader.verify({ attempts: [{ ...fixture.projection,
+        terminalAnswerRequestSha256: "0".repeat(64) }], campaignRootSha256 }))
+        .rejects.toThrow("unprepared answer intent differs");
+      await fixture.evidence.audit.seal({ attemptId: fixture.projection.attemptId,
+        kind: "capability_request", plaintext: new Uint8Array() });
+      await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
+        .rejects.toThrow("contains unopened artifacts");
+    });
+
+  it("rejects non-empty metadata substituted into an empty pre-retrieval branch", async () => {
+    const fixture = await earlyFailureFixture("empty", [{ kind: "scope_spaces",
+      requestSha256: "1".repeat(64), responseBytes: 0, responseSha256: null,
+      status: "failed" }]);
+    await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
+      .rejects.toThrow("canonical scope resolution observation is incomplete");
+  });
 });
+
+async function earlyFailureFixture(status: "empty" | "unavailable",
+  reads: readonly unknown[] = status === "unavailable" ? [{ kind: "scope_spaces",
+    requestSha256: "1".repeat(64), responseBytes: 0, responseSha256: null,
+    status: "failed" }] : []) {
+  const packet = { ...executionPacket,
+    schemaVersion: "meeting_knowledge.qualification_execution_packet.v2" as const,
+    scopeTopologyDocumentSha256: "9".repeat(64), scopeTopologyGeneration: "generation-1" };
+  const earlyIdentity = attemptIdentity({ callKind: "answer", callOrdinal: 0, campaignRootSha256,
+    questionDigestSha256: canonicalSha256(packet), questionId: packet.questionId,
+    releaseRootSha256: "d".repeat(64), repetition: 1,
+    spendReservationSha256: "e".repeat(64) });
+  const root = await mkdtemp(join(tmpdir(), "canonical-early-reader-"));
+  const artifactRoot = join(root, "artifacts");
+  const artifactKey = new Uint8Array(32).fill(7);
+  const evidence = createProductionCanonicalExecutionEvidence({ answerJournalRoot:
+    join(root, "answer"), artifactKey, artifactKeyId: "synthetic-key", artifactRoot,
+    attemptId: earlyIdentity.attemptId, questionId: packet.questionId, repetition: 1,
+    retrievalJournalRoot: join(root, "retrieval"), rootBindingSha256: campaignRootSha256 });
+  const reason = `request_${status}`;
+  const outcome = { citations: [], claims: [], rawRetrievalResponseSha256: null,
+    reason, retrievalCandidates: [], selectedTurns: [], status: "failed" as const };
+  for (const [kind, plaintext] of [
+    ["scope_resolution_observation", bytes(canonicalJson({ reads,
+      schemaVersion: "meeting_knowledge.scope_resolution.v1", status }))],
+    ["answer_request_intent", absentAnswerRequestIntentBytes(earlyIdentity.attemptId, reason)],
+    ["answer_normalized_outcome", bytes(JSON.stringify(outcome))],
+  ] as const) {
+    await evidence.audit.seal({ attemptId: earlyIdentity.attemptId, kind, plaintext });
+  }
+  const topology = { currentMeetingId: "synthetic-meeting", roomId: "synthetic-room",
+    scopeId: "synthetic-scope", memoryScopeId: "internal-memory-scope", spaceId: "internal-space",
+    topologyDocumentSha256: packet.scopeTopologyDocumentSha256,
+    topologyGeneration: packet.scopeTopologyGeneration };
+  const reader = createProductionLocalCanonicalEvidenceReader({ artifactKey,
+    artifactKeyId: "synthetic-key", artifactRoot, topology: { resolve: async () => topology } });
+  return { evidence, reader, projection: { answerAbstained: false, attemptId: earlyIdentity.attemptId,
+    campaignRootSha256, capabilityRequestSha256: "1".repeat(64),
+    capabilityResponseSha256: "2".repeat(64), citationLocatorIds: [],
+    diagnosticCustody: null, evidenceLocatorIds: [], evidenceTurnIds: [], executionPacket: packet,
+    identity: earlyIdentity, rankedLocatorIds: [], retrievalLatencyUs: 0,
+    retrievalRequestSha256: "3".repeat(64), retrievalResponseSha256: "4".repeat(64),
+    terminalAnswerRequestSha256: absentAnswerRequestIntentSha256(earlyIdentity.attemptId, reason),
+    terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([]), topology: null } };
+}
 
 async function localFixture(options: { readonly extraObservationKey?: boolean;
   readonly scopeStatus?: string; readonly scopeReadStatus?: string; readonly scopeValue?: unknown;

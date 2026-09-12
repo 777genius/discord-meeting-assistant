@@ -1,6 +1,7 @@
 import { digest, exactRecord } from "./canonical.js";
 
 export type SemanticQualityV4ArtifactKind = "adjudication" | "answer" | "evidence" |
+  "answer_request_intent" |
   "answer_normalized_outcome" | "answer_original_model_surface" |
   "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
   "answer_repair_request" | "answer_repair_response" | "capability_request" |
@@ -51,6 +52,7 @@ export function validateCanonicalScopeResolutionObservation(value: unknown) {
       responseBytes: Number(read.responseBytes), status: String(read.status) });
   });
   if (reads.some((read, index) => index < reads.length - 1 && read.status !== "received") ||
+    record.status === "empty" && reads.length !== 0 ||
     record.status === "prepared" && (reads.length !== 2 ||
       reads.some((read) => read.status !== "received"))) {
     throw new Error("canonical scope resolution observation is incomplete");

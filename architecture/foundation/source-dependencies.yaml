@@ -322,6 +322,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-artifact-validation.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical-artifact-envelope-validation.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical-answer-artifact-validation.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-pre-retrieval-artifact-validation.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-evidence-port.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-canonical-retrieval-port.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-evidence-store.ts

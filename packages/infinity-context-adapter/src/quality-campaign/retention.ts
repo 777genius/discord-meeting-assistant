@@ -36,7 +36,7 @@ export async function verifyCanonicalScopeRetention(identities: readonly Attempt
     }
     const { observation, receipt } = await custody.readScopeObservation(identity);
     const scope = validateCanonicalScopeResolutionObservation(observation);
-    if (scope.status !== "prepared" || receipt.artifactKind !== "scope_resolution_observation" ||
+    if (receipt.artifactKind !== "scope_resolution_observation" ||
       receipt.attemptId !== identity.attemptId || receipt.rootBindingSha256 !== identity.campaignRootSha256 ||
       !Number.isSafeInteger(receipt.sizeBytes) || receipt.sizeBytes < 1 || receipt.sizeBytes > 4096) {
       throw new Error("scope retention observation is unknown, foreign, or oversized");

@@ -485,8 +485,7 @@ it.each([[1, 1], [2, 1]])("binds fused order for raw provider ranks %j", async (
 it("reconstructs V3 frozen binding with separate byte, snapshot and projection identities", async () => {
   const { createCanonicalRetrievalBinding, validateCanonicalRetrievalBinding } = await import(
     "../src/quality-campaign/canonical-execution-artifact-validation.js");
-  const input = await custodyFixture();
-  const binding = await createCanonicalRetrievalBinding(input);
+  const input = await custodyFixture(); const binding = await createCanonicalRetrievalBinding(input);
   expect(binding.providerStatus).toBe("available");
   expect(binding.candidates[0]?.providerRank).toBe(1);
   expect(binding.rawRequestSha256).not.toBe(binding.snapshotSha256);
@@ -561,12 +560,13 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     serializeSubscriptionRuntimeTaskRequest, stableSubscriptionRuntimeId } =
     await import("@discord-meeting/subscription-runtime-adapter");
   const { sha256: canonicalSha256 } = await import("../src/quality-campaign/canonical.js");
+  const answerIntent = await import(
+    "../src/quality-campaign/canonical-answer-artifact-validation.js");
   const { attemptIdentity } = await import("../src/quality-campaign/execution.js");
   const input = await custodyFixture();
   const binding = await createCanonicalRetrievalBinding(input);
   const root = await mkdtemp(path.join(tmpdir(), "canonical-v3-reader-"));
-  const artifactRoot = path.join(root, "artifacts");
-  const artifactKey = new Uint8Array(32).fill(7);
+  const artifactRoot = path.join(root, "artifacts"); const artifactKey = new Uint8Array(32).fill(7);
   const campaignRootSha256 = "c".repeat(64);
   const evidence = createProductionCanonicalExecutionEvidence({ answerJournalRoot: path.join(root, "answer"),
     artifactKey, artifactKeyId: "synthetic-key", artifactRoot, attemptId: input.attemptId,
@@ -618,6 +618,8 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
         requestSha256: "1".repeat(64), responseSha256: "2".repeat(64), responseBytes: 12,
         status: "received" })) }))],
     ["selected_canonical_turns", new TextEncoder().encode(JSON.stringify([turn]))],
+    ["answer_request_intent", answerIntent.preparedAnswerRequestIntentBytes(
+      input.attemptId, answerRequest)],
     ["answer_original_model_surface", answerSurface(answerRequest)],
     ["answer_original_request", serializeSubscriptionRuntimeTaskRequest(answerRequest)],
     ["answer_original_response", answerResponse],
@@ -657,8 +659,8 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     await expect(reader.verify({ attempts: [substituted], campaignRootSha256 })).rejects.toThrow();
   }
   const receipt = (kind: string) => path.join(artifactRoot, "receipts", input.attemptId, `${kind}.json`);
-  for (const kind of ["retrieval_binding", "selected_canonical_turns", "answer_original_request",
-    "answer_original_response", "answer_original_model_surface"] as const) {
+  for (const kind of ["retrieval_binding", "selected_canonical_turns", "answer_request_intent",
+    "answer_original_request", "answer_original_response", "answer_original_model_surface"] as const) {
     const retained = artifactPlaintexts.find(([candidate]) => candidate === kind)![1];
     await unlink(receipt(kind));
     await expect(reader.verify({ attempts: [projection], campaignRootSha256 })).rejects.toThrow();
@@ -707,8 +709,7 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
       requestBytes: serializeSubscriptionRuntimeTaskRequest(repairRequest),
       responseBytes: repairResponse }]) };
   await expect(reader.verify({ attempts: [repairProjection], campaignRootSha256 })).resolves.toBeDefined();
-  const originalPath = receipt("answer_original_request");
-  const repairPath = receipt("answer_repair_request");
+  const originalPath = receipt("answer_original_request"); const repairPath = receipt("answer_repair_request");
   const temporaryPath = `${originalPath}.swap`;
   await rename(originalPath, temporaryPath); await rename(repairPath, originalPath);
   await rename(temporaryPath, repairPath);
@@ -739,9 +740,18 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     plaintext: new TextEncoder().encode(JSON.stringify(zeroEvidenceOutcome)) });
   const noModelProjection = { ...projection, answerAbstained: true,
     citationLocatorIds: [], evidenceLocatorIds: [], evidenceTurnIds: [],
+    terminalAnswerRequestSha256: answerIntent.absentAnswerRequestIntentSha256(input.attemptId,
+      "zero_admissible_evidence"),
     terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([]) };
+  await unlink(receipt("answer_request_intent"));
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_request_intent",
+    plaintext: answerIntent.absentAnswerRequestIntentBytes(
+      input.attemptId, "zero_admissible_evidence") });
   await expect(reader.verify({ attempts: [noModelProjection], campaignRootSha256 }))
     .resolves.toBeDefined();
+  await expect(reader.verify({ attempts: [{ ...noModelProjection,
+    terminalAnswerRequestSha256: "0".repeat(64) }], campaignRootSha256 }))
+    .rejects.toThrow("unprepared answer intent differs");
 
   for (const kind of ["selected_canonical_turns", "answer_normalized_outcome"] as const) {
     await unlink(receipt(kind));
@@ -749,9 +759,15 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
   await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
   const failedOutcome = { ...zeroEvidenceOutcome, reason: "evidence_rehydration_failed",
     status: "failed" as const };
+  await unlink(receipt("answer_request_intent"));
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_request_intent",
+    plaintext: answerIntent.absentAnswerRequestIntentBytes(
+      input.attemptId, "evidence_rehydration_failed") });
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
     plaintext: new TextEncoder().encode(JSON.stringify(failedOutcome)) });
-  await expect(reader.verify({ attempts: [{ ...noModelProjection, answerAbstained: false }],
+  await expect(reader.verify({ attempts: [{ ...noModelProjection, answerAbstained: false,
+    terminalAnswerRequestSha256: answerIntent.absentAnswerRequestIntentSha256(input.attemptId,
+      "evidence_rehydration_failed") }],
     campaignRootSha256 })).resolves.toBeDefined();
 });
 

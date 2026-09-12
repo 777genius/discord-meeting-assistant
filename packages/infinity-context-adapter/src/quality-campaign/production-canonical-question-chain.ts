@@ -42,6 +42,8 @@ import type { QualificationScopeTopology, QualificationScopeTopologyPort } from
   "./production-ports.js";
 import { createCanonicalEvidencePort } from "./production-canonical-evidence-port.js";
 import { createCanonicalRetrievalPort } from "./production-canonical-retrieval-port.js";
+import { absentAnswerRequestIntentBytes, preparedAnswerRequestIntentBytes } from
+  "./canonical-answer-artifact-validation.js";
 
 export { createProductionCanonicalExecutionEvidence } from
   "./production-canonical-execution-evidence.js";
@@ -60,7 +62,8 @@ export interface QualificationCreateOnlyJournalPort {
 
 export interface QualificationEncryptedAuditPort {
   seal(input: { readonly attemptId: string;
-    readonly kind: "answer_normalized_outcome" | "answer_original_model_surface" |
+    readonly kind: "answer_normalized_outcome" | "answer_request_intent" |
+      "answer_original_model_surface" |
       "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
       "answer_repair_request" | "answer_repair_response" | "capability_request" |
       "capability_response" | "retrieval_request" | "retrieval_response" |
@@ -148,6 +151,10 @@ function createCanonicalQuestionEngine(input: CanonicalEngineInput) {
   const answer = createAnswerPort(input, state);
   const outcome: QualificationQuestionOutcomePort = Object.freeze({
     record: async (attemptId: string, value: QualificationQuestionOutcome) => {
+      if (value.selectedTurns.length === 0) {
+        await input.audit.seal({ attemptId, kind: "answer_request_intent",
+          plaintext: absentAnswerRequestIntentBytes(attemptId, value.reason) });
+      }
       await input.audit.seal({ attemptId, kind: "answer_normalized_outcome",
         plaintext: utf8Json(value) });
       state.delete(attemptId);
@@ -180,6 +187,8 @@ function createAnswerPort(input: CanonicalEngineInput,
     const groundedRequest = { attemptId, binding: execution.binding,
       locale: request.locale, plan, question: request.questionText };
     const prepared = input.answer.prepare(groundedRequest);
+    await input.audit.seal({ attemptId, kind: "answer_request_intent",
+      plaintext: preparedAnswerRequestIntentBytes(attemptId, prepared.request) });
     const payloadSha256 = sha256Json({ effectKind: "answer", request: prepared.request });
     await input.spend.reserve({ effectKind: "answer", payloadSha256,
       requestedEncryptedBytes: 16_000, requestedTokens: 2_048 });

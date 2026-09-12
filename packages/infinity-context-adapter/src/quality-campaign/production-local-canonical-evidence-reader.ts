@@ -16,10 +16,14 @@ import { decodeQualificationQuestionOutcome } from
   "./execute-admitted-qualification-question.js";
 import type { MainCanonicalEvidenceProjection, MainCanonicalEvidenceVerificationPort,
   QualificationScopeTopology, QualificationScopeTopologyPort } from "./production-ports.js";
-import { assertExpectedAttempt, verifyAnswerArtifacts } from
+import { assertExpectedAttempt, verifyAnswerArtifacts, verifyAnswerRequestIntent } from
   "./canonical-answer-artifact-validation.js";
+import { assertCanonicalOutcomeProjection, verifyPreRetrievalFailureProjection } from
+  "./canonical-pre-retrieval-artifact-validation.js";
 
-const REQUIRED_V1_KINDS = Object.freeze(["capability_request", "capability_response",
+const INITIAL_KINDS = Object.freeze(["scope_resolution_observation",
+  "answer_normalized_outcome"] as const satisfies readonly SemanticQualityV4ArtifactKind[]);
+const REQUIRED_RETRIEVAL_KINDS = Object.freeze(["capability_request", "capability_response",
   "retrieval_request", "retrieval_response", "retrieval_observation", "scope_resolution_observation",
   "answer_normalized_outcome"] as const satisfies readonly SemanticQualityV4ArtifactKind[]);
 
@@ -89,26 +93,61 @@ async function verifyAttempt(artifactRoot: string, artifactKey: Uint8Array,
 Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
   const source = { artifactRoot, artifactKey, artifactKeyId, expected, resolveTopology };
   const opened = await openRequiredArtifacts(source);
-  const validated = validateBaseArtifacts(opened, expected);
+  const scope = decodeScopeObservation(opened.get("scope_resolution_observation")!.plaintext);
+  const outcome = decodeOutcome(opened.get("answer_normalized_outcome")!.plaintext);
+  if (scope.status !== "prepared") {
+    await verifyPreRetrievalFailure(opened, source, scope, outcome);
+    assertCanonicalOutcomeProjection(outcome, expected);
+    return [...opened.values()].map(({ receipt }) => receipt);
+  }
+  for (const kind of REQUIRED_RETRIEVAL_KINDS) {
+    if (!opened.has(kind)) {await openArtifact(opened, kind, source);}
+  }
+  const validated = validateBaseArtifacts(opened, expected, outcome);
   if (validated.v3Exchange !== null) {
     await verifyV3Artifacts(opened, source, validated.outcome, validated.v3Exchange);
   }
-  assertOutcomeProjection(validated.outcome, expected);
+  assertCanonicalOutcomeProjection(validated.outcome, expected);
   return [...opened.values()].map(({ receipt }) => receipt);
 }
 
 async function openRequiredArtifacts(source: AttemptVerificationSource): Promise<OpenedArtifacts> {
   const opened: OpenedArtifacts = new Map();
-  for (const kind of REQUIRED_V1_KINDS) {
+  for (const kind of INITIAL_KINDS) {
     await openArtifact(opened, kind, source);
   }
   return opened;
 }
 
+async function verifyPreRetrievalFailure(opened: OpenedArtifacts,
+  source: AttemptVerificationSource,
+  scope: ReturnType<typeof validateCanonicalScopeResolutionObservation>,
+  outcome: ReturnType<typeof decodeQualificationQuestionOutcome>): Promise<void> {
+  const { expected } = source;
+  await verifyPreRetrievalFailureProjection({ expected, outcome,
+    resolveTopology: source.resolveTopology, scope });
+  await openArtifact(opened, "answer_request_intent", source);
+  const intent = verifyAnswerRequestIntent(opened.get("answer_request_intent")!.plaintext,
+    expected, outcome, null);
+  if (intent.prepared) {
+    throw new Error("pre-retrieval failure cannot contain a prepared answer intent");
+  }
+  if (knowledgeAnswerExchangeInventorySha256([]) !== expected.terminalAnswerResponseSha256) {
+    throw new Error("pre-retrieval answer exchange inventory is not empty");
+  }
+  await assertClosedV3ReceiptInventory(source.artifactRoot, expected.attemptId, [...opened.keys()]);
+}
+
+function decodeOutcome(bytes: Uint8Array) {
+  const outcome = decodeQualificationQuestionOutcome(parseJson(bytes, "answer normalized outcome"));
+  assertExactOutcomeRecords(outcome);
+  return outcome;
+}
+
 function validateBaseArtifacts(opened: OpenedArtifacts,
-  expected: MainCanonicalEvidenceProjection) {
-  const bytes = (kind: typeof REQUIRED_V1_KINDS[number]) => opened.get(kind)!.plaintext;
-  decodeScopeObservation(bytes("scope_resolution_observation"));
+  expected: MainCanonicalEvidenceProjection,
+  outcome: ReturnType<typeof decodeQualificationQuestionOutcome>) {
+  const bytes = (kind: typeof REQUIRED_RETRIEVAL_KINDS[number]) => opened.get(kind)!.plaintext;
   const hashes = [
     ["capability request", bytes("capability_request"), expected.capabilityRequestSha256],
     ["capability response", bytes("capability_response"), expected.capabilityResponseSha256],
@@ -146,9 +185,6 @@ function validateBaseArtifacts(opened: OpenedArtifacts,
   if (observation.capabilityAndRetrievalLatencyUs !== expected.retrievalLatencyUs) {
     throw new Error("external retrieval latency differs from measured canonical SDK operation");
   }
-  const outcome = decodeQualificationQuestionOutcome(parseJson(
-    bytes("answer_normalized_outcome"), "answer normalized outcome"));
-  assertExactOutcomeRecords(outcome);
   if ((outcome.status === "abstained") !== expected.answerAbstained ||
     (outcome.rawRetrievalResponseSha256 !== observation.responseSha256 &&
       !(outcome.status === "failed" && outcome.rawRetrievalResponseSha256 === null))) {
@@ -220,6 +256,13 @@ async function verifyV3Artifacts(opened: OpenedArtifacts, source: AttemptVerific
   const answerInventory = await openAnswerInventory(opened, expected, source.artifactRoot,
     source.artifactKey, source.artifactKeyId);
   assertAnswerInventory(outcome, answerInventory.originalPresent);
+  await openArtifact(opened, "answer_request_intent", source);
+  const answerIntent = verifyAnswerRequestIntent(
+    opened.get("answer_request_intent")!.plaintext, expected, outcome,
+    binding.request.filters.sourceGenerations[0]!.projectionGeneration);
+  if (answerIntent.prepared !== (outcome.selectedTurns.length > 0)) {
+    throw new Error("answer request intent differs from the normalized branch");
+  }
   if (answerInventory.originalPresent) {
     await verifyAnswerArtifacts(opened, expected, outcome,
       binding.request.filters.sourceGenerations[0]!.projectionGeneration,
@@ -239,22 +282,6 @@ function assertAnswerInventory(outcome: ReturnType<typeof decodeQualificationQue
   if (modelRequired && !originalPresent || outcome.reason === "zero_admissible_evidence" &&
     (outcome.status !== "abstained" || outcome.selectedTurns.length !== 0 || originalPresent)) {
     throw new Error("canonical V3 answer branch inventory differs from normalized outcome");
-  }
-}
-
-function assertOutcomeProjection(outcome: ReturnType<typeof decodeQualificationQuestionOutcome>,
-  expected: MainCanonicalEvidenceProjection): void {
-  const ranked = outcome.retrievalCandidates.map(({ locatorId }) => locatorId);
-  const evidenceLocators = outcome.selectedTurns.map(({ sourceLocatorId }) => sourceLocatorId);
-  const turnIds = outcome.selectedTurns.map(({ turnId }) => turnId);
-  const byTurn = new Map(outcome.selectedTurns.map((turn) => [turn.turnId, turn.sourceLocatorId]));
-  const citationLocators = outcome.citations.map((turnId) => byTurn.get(turnId));
-  if (citationLocators.some((value) => value === undefined) ||
-    canonicalJson(ranked) !== canonicalJson(expected.rankedLocatorIds) ||
-    canonicalJson(evidenceLocators) !== canonicalJson(expected.evidenceLocatorIds) ||
-    canonicalJson(turnIds) !== canonicalJson(expected.evidenceTurnIds) ||
-    canonicalJson(citationLocators) !== canonicalJson(expected.citationLocatorIds)) {
-    throw new Error("canonical outcome locators or turns differ from external evidence");
   }
 }
 
@@ -313,12 +340,8 @@ function decodeScopeObservation(bytes: Uint8Array) {
   if (bytes.byteLength > 1024) {
     throw new Error("canonical scope resolution observation exceeds its byte bound");
   }
-  const scope = validateCanonicalScopeResolutionObservation(JSON.parse(
+  return validateCanonicalScopeResolutionObservation(JSON.parse(
     new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown);
-  if (scope.status !== "prepared") {
-    throw new Error("canonical scope resolution observation is not prepared");
-  }
-  return scope;
 }
 
 async function mapBounded<T, U>(values: readonly T[], concurrency: number,

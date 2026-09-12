@@ -225,7 +225,7 @@ describe("canonical execution evidence durability", () => {
           "spend:capability", "spend:retrieval", "journal:reserve", "http:capability",
           "http:retrieval", "seal:capability_request", "seal:capability_response",
           "seal:retrieval_request", "seal:retrieval_response", "seal:retrieval_observation",
-          "journal:failed", "seal:answer_normalized_outcome",
+          "journal:failed", "seal:answer_request_intent", "seal:answer_normalized_outcome",
         ]);
         expect(fixture.answerCalls()).toBe(0);
       } finally {
