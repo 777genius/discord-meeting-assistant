@@ -238,7 +238,7 @@ describe("Infinity Context official SDK provenance", () => {
         INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.packageTarballIntegrity,
       sdkCommit: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.reviewedSourceCommit,
       sdkTree: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.reviewedSourceTree,
-    })).toThrow(/does not match the reviewed SDK source/u);
+    })).toThrow(/Infinity SDK provenance does not match the reviewed source/u);
   });
 
   it("binds the composite exact-head and retained predecessor qualification evidence", () => {
