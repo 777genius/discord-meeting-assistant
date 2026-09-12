@@ -902,7 +902,7 @@ it("keeps generic V3 retrieval custody multi-source while diagnostic custody rem
 });
 
 it("requires and reconstructs the V3 retrieval binding in retained local evidence", async () => {
-  const { mkdtemp, unlink } = await import("node:fs/promises");
+  const { mkdtemp, rename, unlink } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const { createCanonicalRetrievalBinding, custodyJson } = await import(
@@ -911,6 +911,13 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     "../src/quality-campaign/production-canonical-execution-evidence.js");
   const { createProductionLocalCanonicalEvidenceReader } = await import(
     "../src/quality-campaign/production-local-canonical-evidence-reader.js");
+  const { createFocusedRetrievalGroundingPlan } = await import(
+    "@discord-meeting/meeting-core/meeting-knowledge");
+  const { buildSubscriptionRuntimeKnowledgeAnswerRequest, serializeSubscriptionRuntimeTaskRequest,
+    stableSubscriptionRuntimeId } =
+    await import("@discord-meeting/subscription-runtime-adapter");
+  const { sha256: canonicalSha256 } = await import("../src/quality-campaign/canonical.js");
+  const { attemptIdentity } = await import("../src/quality-campaign/execution.js");
   const input = await custodyFixture();
   const binding = await createCanonicalRetrievalBinding(input);
   const root = await mkdtemp(join(tmpdir(), "canonical-v3-reader-"));
@@ -936,7 +943,30 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
   const outcome = { citations: [turn.turnId], claims: ["Approved."],
     rawRetrievalResponseSha256: binding.rawResponseSha256,
     retrievalCandidates: binding.candidates, selectedTurns: [turn], status: "answered" };
-  for (const [kind, plaintext] of [
+  const answerBinding = { canonicalEvidenceHash: canonicalSha256([turn.turnHash]),
+    memoryGeneration: input.request.filters.sourceGenerations[0]!.projectionGeneration,
+    transcriptVersion: 1 };
+  const plan = createFocusedRetrievalGroundingPlan({ authorityGeneration:
+    answerBinding.memoryGeneration, coverage: "sufficient", humanActorIds: [turn.speakerId],
+    turns: [turn] });
+  const answerRequest = buildSubscriptionRuntimeKnowledgeAnswerRequest({ attemptId: input.attemptId,
+    binding: answerBinding, locale: input.packet.locale, plan, question: input.packet.questionText }, {
+    isolatedCwd: "/run/discord-meeting-subscription-runtime/workspace", maxOutputTokens: 2048,
+    timeoutMs: 180000 });
+  const repairRunId = stableSubscriptionRuntimeId("knowledge-answer-provider-output-repair",
+    answerRequest.runId);
+  const repairRequest = { ...answerRequest, context: { ...answerRequest.context,
+    correlationId: repairRunId }, runId: repairRunId,
+    task: { ...answerRequest.task, systemPrompt: [
+    answerRequest.task.systemPrompt,
+    "A previous generation failed strict output validation. Regenerate once from the original supplied question and evidence and obey every schema bound exactly.",
+    "In particular, claims=[] with status=answered is forbidden. Decide answerability before emitting claims: for an answerable question populate claims with at least one concise supported claim and its direct evidenceIds, then emit status=answered; otherwise keep claims=[] and emit insufficient_evidence or not_a_question.",
+  ].join(" ") } };
+  const surface = (request: typeof answerRequest) => new TextEncoder().encode([
+    request.task.systemPrompt, request.task.prompt,
+    JSON.stringify(request.task.controls.outputSchema)].join("\n"));
+  const answerResponse = new TextEncoder().encode("synthetic-grpc-response");
+  const artifactPlaintexts = [
     ["capability_request", input.exchange.capabilityRequestBytes],
     ["capability_response", input.exchange.capabilityResponseBytes],
     ["retrieval_request", input.exchange.requestBytes], ["retrieval_response", input.exchange.responseBytes],
@@ -947,21 +977,96 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
       reads: ["scope_spaces", "scope_memory_scopes"].map(kind => ({ kind,
         requestSha256: "1".repeat(64), responseSha256: "2".repeat(64), responseBytes: 12,
         status: "received" })) }))],
+    ["selected_canonical_turns", new TextEncoder().encode(JSON.stringify([turn]))],
+    ["answer_original_model_surface", surface(answerRequest)],
+    ["answer_original_request", serializeSubscriptionRuntimeTaskRequest(answerRequest)],
+    ["answer_original_response", answerResponse],
+    ["answer_repair_model_surface", surface(repairRequest as typeof answerRequest)],
     ["answer_normalized_outcome", new TextEncoder().encode(JSON.stringify(outcome))],
-  ] as const) { await evidence.audit.seal({ attemptId: input.attemptId, kind, plaintext }); }
+  ] as const;
+  for (const [kind, plaintext] of artifactPlaintexts) {
+    await evidence.audit.seal({ attemptId: input.attemptId, kind, plaintext });
+  }
   const reader = createProductionLocalCanonicalEvidenceReader({ artifactKey,
     artifactKeyId: "synthetic-key", artifactRoot });
+  const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0, campaignRootSha256,
+    questionDigestSha256: canonicalSha256(input.packet), questionId: input.packet.questionId,
+    releaseRootSha256: "e".repeat(64), repetition: 1,
+    spendReservationSha256: "f".repeat(64) });
+  expect(identity.attemptId).toBe(input.attemptId);
   const projection = { answerAbstained: false, attemptId: input.attemptId, campaignRootSha256,
     capabilityRequestSha256: sha(input.exchange.capabilityRequestBytes),
     capabilityResponseSha256: sha(input.exchange.capabilityResponseBytes),
     citationLocatorIds: [turn.sourceLocatorId], evidenceLocatorIds: [turn.sourceLocatorId],
     evidenceTurnIds: [turn.turnId], rankedLocatorIds: binding.candidates.map(value => value.locatorId),
+    diagnosticCustody: input.diagnosticCustody, executionPacket: input.packet, identity,
     retrievalLatencyUs: 12, retrievalRequestSha256: binding.rawRequestSha256,
-    retrievalResponseSha256: binding.rawResponseSha256 };
+    retrievalResponseSha256: binding.rawResponseSha256,
+    terminalAnswerRequestSha256: canonicalSha256({ effectKind: "answer", request: answerRequest }),
+    terminalAnswerResponseSha256: sha(answerResponse), topology: input.topology };
   await expect(reader.verify({ attempts: [projection], campaignRootSha256 })).resolves.toMatchObject({
     inventorySha256: expect.stringMatching(/^[a-f0-9]{64}$/u) });
-  await unlink(join(artifactRoot, "receipts", input.attemptId, "retrieval_binding.json"));
+  for (const substituted of [
+    { ...projection, executionPacket: { ...projection.executionPacket, locale: "ru" as const } },
+    { ...projection, topology: { ...projection.topology, roomId: "substituted-room" } },
+    { ...projection, diagnosticCustody: { ...projection.diagnosticCustody!,
+      appliedDocumentIds: { "document-1": "substituted-remote" } } },
+  ]) {
+    await expect(reader.verify({ attempts: [substituted], campaignRootSha256 })).rejects.toThrow();
+  }
+  const receipt = (kind: string) => join(artifactRoot, "receipts", input.attemptId, `${kind}.json`);
+  for (const kind of ["retrieval_binding", "selected_canonical_turns", "answer_original_request",
+    "answer_original_response", "answer_original_model_surface", "answer_repair_model_surface"] as const) {
+    const retained = artifactPlaintexts.find(([candidate]) => candidate === kind)![1];
+    await unlink(receipt(kind));
+    await expect(reader.verify({ attempts: [projection], campaignRootSha256 })).rejects.toThrow();
+    await evidence.audit.seal({ attemptId: input.attemptId, kind, plaintext: retained });
+  }
+  const canonicalBinding = custodyJson(binding);
+  const hostileBindings = [
+    ["same duplicate", canonicalBinding.replace(`"attemptId":"${input.attemptId}"`,
+      `"attemptId":"${input.attemptId}","attemptId":"${input.attemptId}"`),
+    ], ["conflicting duplicate", canonicalBinding.replace(`"attemptId":"${input.attemptId}"`,
+      `"attemptId":"foreign","attemptId":"${input.attemptId}"`),
+    ], ["unsafe integer", canonicalBinding.replace('"providerRank":1',
+      '"providerRank":9007199254740993,"providerRank":1'),
+    ], ["noncanonical number", canonicalBinding.replace('"providerRank":1', '"providerRank":1.0')],
+    ["BOM", `\uFEFF${canonicalBinding}`],
+    ["trailing byte", `${canonicalBinding}\n`],
+  ] as const;
+  for (const [label, hostile] of hostileBindings) {
+    expect(hostile).not.toBe(canonicalBinding);
+    await unlink(receipt("retrieval_binding"));
+    await evidence.audit.seal({ attemptId: input.attemptId, kind: "retrieval_binding",
+      plaintext: new TextEncoder().encode(hostile) });
+    let rejected = false;
+    try {await reader.verify({ attempts: [projection], campaignRootSha256 });}
+    catch {rejected = true;}
+    expect(rejected, label).toBe(true);
+  }
+  await unlink(receipt("retrieval_binding"));
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "retrieval_binding",
+    plaintext: new Uint8Array([0xff]) });
   await expect(reader.verify({ attempts: [projection], campaignRootSha256 })).rejects.toThrow();
+  await unlink(receipt("retrieval_binding"));
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "retrieval_binding",
+    plaintext: new TextEncoder().encode(canonicalBinding) });
+  const repairResponse = new TextEncoder().encode("synthetic-repair-grpc-response");
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_repair_request",
+    plaintext: serializeSubscriptionRuntimeTaskRequest(repairRequest as typeof answerRequest) });
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_repair_response",
+    plaintext: repairResponse });
+  const repairProjection = { ...projection, terminalAnswerResponseSha256: sha(Buffer.concat([
+    Buffer.from(answerResponse), Buffer.from(repairResponse)])) };
+  await expect(reader.verify({ attempts: [repairProjection], campaignRootSha256 })).resolves.toBeDefined();
+  const originalPath = receipt("answer_original_request");
+  const repairPath = receipt("answer_repair_request");
+  const temporaryPath = `${originalPath}.swap`;
+  await rename(originalPath, temporaryPath); await rename(repairPath, originalPath);
+  await rename(temporaryPath, repairPath);
+  await expect(reader.verify({ attempts: [repairProjection], campaignRootSha256 })).rejects.toThrow();
+  await rename(originalPath, temporaryPath); await rename(repairPath, originalPath);
+  await rename(temporaryPath, repairPath);
 });
 
 it("rejects mixed routes, request bytes, and hostile bare descriptor bytes", async () => {
@@ -985,12 +1090,27 @@ async function custodyFixture() {
   const snapshot = request({ budgets: { ...request().budgets, deadlineMs: 2000 } });
   const raw = response();
   (raw.applied_bounds as Record<string, unknown>).deadline_ms = 2000;
+  const packet = { locale: "en" as const, questionId: "q1",
+      questionText: snapshot.queries[0]!.query,
+      scopeTopologyReference: "signed:one", source: "automatic" as const };
+  const { sha256 } = await import("../src/quality-campaign/canonical.js");
+  const { attemptIdentity } = await import("../src/quality-campaign/execution.js");
+  const campaignRootSha256 = "c".repeat(64);
+  const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0, campaignRootSha256,
+    questionDigestSha256: sha256(packet), questionId: packet.questionId,
+    releaseRootSha256: "e".repeat(64), repetition: 1,
+    spendReservationSha256: "f".repeat(64) });
+  const diagnosticCustody = { frozenPlan: { plan: "frozen" },
+    appliedDocumentIds: { "document-1": "remote-1" } };
+  const { custodyDigest } = await import(
+    "../src/quality-campaign/canonical-execution-artifact-validation.js");
   return {
-    attemptId: `sqv4-${"a".repeat(64)}`,
-    packet: { locale: "en" as const, questionId: "q1", questionText: "What was approved?",
-      scopeTopologyReference: "signed:one", source: "automatic" as const },
+    attemptId: identity.attemptId,
+    packet,
     topology: { scopeId: "scope1", roomId: "room1", currentMeetingId: "meeting1" },
-    diagnosticPlanSha256: "b".repeat(64), request: snapshot,
+    diagnosticCustody,
+    diagnosticPlanSha256: custodyDigest({ plan: diagnosticCustody.frozenPlan,
+      remoteDocumentIds: diagnosticCustody.appliedDocumentIds }), request: snapshot,
     exchange: { schemaVersion: 2 as const, contractVersion: "context-retrieval.v3" as const,
       capabilityRoute: "/v1/context/retrieve-v3/capability" as const,
       retrievalRoute: "/v1/context/retrieve-v3" as const,

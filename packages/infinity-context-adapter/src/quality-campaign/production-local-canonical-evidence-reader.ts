@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
 
-import { canonicalJson, digest, exactRecord } from "./canonical.js";
-import { custodyJson, validateCanonicalRetrievalBinding, validateCanonicalRetrievalObservation,
+import { createFocusedRetrievalGroundingPlan } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
+import { buildSubscriptionRuntimeKnowledgeAnswerRequest, serializeSubscriptionRuntimeTaskRequest,
+  stableSubscriptionRuntimeId, subscriptionRuntimeTranscriptVersionFromRequestBytes } from
+  "@discord-meeting/subscription-runtime-adapter";
+
+import { canonicalJson, digest, exactRecord, sha256 as canonicalSha256 } from "./canonical.js";
+import { custodyDigest, custodyJson, validateCanonicalRetrievalBinding, validateCanonicalRetrievalObservation,
   validateCanonicalScopeResolutionObservation,
   type SemanticQualityV4ArtifactKind, type SemanticQualityV4ArtifactReceipt } from
   "./canonical-execution-artifact-validation.js";
@@ -11,19 +19,39 @@ import { decodeQualificationQuestionOutcome } from
   "./execute-admitted-qualification-question.js";
 import type { MainCanonicalEvidenceProjection, MainCanonicalEvidenceVerificationPort } from
   "./production-ports.js";
+import { attemptIdentity } from "./execution.js";
+import type { QualificationScopeTopologyPort } from "./production-canonical-question-chain.js";
 
 const REQUIRED_V1_KINDS = Object.freeze(["capability_request", "capability_response",
   "retrieval_request", "retrieval_response", "retrieval_observation", "scope_resolution_observation",
   "answer_normalized_outcome"] as const satisfies readonly SemanticQualityV4ArtifactKind[]);
+const REQUIRED_V3_ANSWER_KINDS = Object.freeze(["selected_canonical_turns",
+  "answer_original_model_surface", "answer_original_request", "answer_original_response",
+  "answer_repair_model_surface"] as const satisfies readonly SemanticQualityV4ArtifactKind[]);
 
 /** Read-only authentication of artifacts emitted by the installed main canonical SDK chain. */
 export function createProductionLocalCanonicalEvidenceReader(input: { readonly artifactKey: Uint8Array;
-  readonly artifactKeyId: string; readonly artifactRoot: string }): MainCanonicalEvidenceVerificationPort {
+  readonly artifactKeyId: string; readonly artifactRoot: string;
+  readonly topology?: QualificationScopeTopologyPort | (() => Promise<QualificationScopeTopologyPort>) }):
+MainCanonicalEvidenceVerificationPort {
   if (input.artifactKey.byteLength !== 32 || input.artifactKeyId.trim() === "") {
     throw new Error("canonical artifact key is invalid");
   }
   const key = new Uint8Array(input.artifactKey);
-  return Object.freeze({ readScopeObservation: async (identity: Parameters<
+  let topologyAdmission: Promise<QualificationScopeTopologyPort> | undefined;
+  return Object.freeze({ project: async (projection: Parameters<
+    MainCanonicalEvidenceVerificationPort["project"]>[0]) => {
+    if (input.topology === undefined) {
+      throw new Error("canonical evidence topology admission is unavailable");
+    }
+    topologyAdmission ??= typeof input.topology === "function" ? input.topology() :
+      Promise.resolve(input.topology);
+    const topology = await (await topologyAdmission).resolve(
+      projection.executionPacket.scopeTopologyReference,
+      projection.executionPacket.questionId);
+    return Object.freeze({ ...projection, topology: Object.freeze({ ...topology }),
+      diagnosticCustody: null });
+  }, readScopeObservation: async (identity: Parameters<
     MainCanonicalEvidenceVerificationPort["readScopeObservation"]>[0]) => {
     const opened = await readProductionCanonicalArtifact({ artifactKey: key,
       artifactKeyId: input.artifactKeyId, artifactRoot: input.artifactRoot,
@@ -133,16 +161,22 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
   const byTurn = new Map(outcome.selectedTurns.map((turn) => [turn.turnId, turn.sourceLocatorId]));
   const citationLocators = outcome.citations.map((turnId) => byTurn.get(turnId));
   if (v3) {
+    assertExpectedAttempt(expected);
     const retained = await readProductionCanonicalArtifact({ artifactKey, artifactKeyId, artifactRoot,
       attemptId: expected.attemptId, kind: "retrieval_binding",
       rootBindingSha256: expected.campaignRootSha256 });
     opened.set("retrieval_binding", retained);
-    const bindingValue = parseJson(retained.plaintext, "canonical retrieval binding") as Record<string, unknown>;
+    const bindingValue = parseCanonicalCustodyJson(retained.plaintext,
+      "canonical retrieval binding") as Record<string, unknown>;
+    const diagnosticPlanSha256 = expected.diagnosticCustody === null ? null : custodyDigest({
+      plan: expected.diagnosticCustody.frozenPlan,
+      remoteDocumentIds: expected.diagnosticCustody.appliedDocumentIds,
+    });
     const binding = await validateCanonicalRetrievalBinding(bindingValue, {
       attemptId: expected.attemptId,
-      packet: bindingValue.packet as Parameters<typeof validateCanonicalRetrievalBinding>[1]["packet"],
-      topology: bindingValue.topology as Parameters<typeof validateCanonicalRetrievalBinding>[1]["topology"],
-      diagnosticPlanSha256: bindingValue.diagnosticPlanSha256 as string | null,
+      packet: expected.executionPacket,
+      topology: expected.topology,
+      diagnosticPlanSha256,
       exchange: v3Exchange! });
     if (binding.providerStatus !== "available" ||
       binding.rawCapabilitySha256 !== expected.capabilityResponseSha256 ||
@@ -151,6 +185,16 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
       custodyJson(binding.candidates) !== custodyJson(outcome.retrievalCandidates)) {
       throw new Error("canonical V3 retrieval binding differs from retained outcome inventory");
     }
+    for (const kind of REQUIRED_V3_ANSWER_KINDS) {
+      const artifact = await readProductionCanonicalArtifact({ artifactKey, artifactKeyId,
+        artifactRoot, attemptId: expected.attemptId, kind,
+        rootBindingSha256: expected.campaignRootSha256 });
+      opened.set(kind, artifact);
+    }
+    await verifyAnswerArtifacts(opened, expected, outcome, artifactRoot, artifactKey,
+      artifactKeyId, binding.request.filters.sourceGenerations[0]!.projectionGeneration);
+    await assertClosedV3ReceiptInventory(artifactRoot, expected.attemptId,
+      [...opened.keys()]);
   }
   if (citationLocators.some((value) => value === undefined) ||
     canonicalJson(ranked) !== canonicalJson(expected.rankedLocatorIds) ||
@@ -160,6 +204,126 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
     throw new Error("canonical outcome locators or turns differ from external evidence");
   }
   return [...opened.values()].map(({ receipt }) => receipt);
+}
+
+function assertExpectedAttempt(expected: MainCanonicalEvidenceProjection): void {
+  const { attemptId: ignored, ...identityInput } = expected.identity;
+  const reconstructed = attemptIdentity(identityInput);
+  if (reconstructed.attemptId !== expected.attemptId || expected.identity.callKind !== "answer" ||
+    expected.identity.callOrdinal !== 0 || expected.identity.questionId !==
+      expected.executionPacket.questionId || expected.identity.questionDigestSha256 !==
+      canonicalSha256(expected.executionPacket) || expected.executionPacket.locale.trim() === "" ||
+    expected.executionPacket.questionText.trim() === "") {
+    throw new Error("local canonical attempt differs from independently admitted execution");
+  }
+}
+
+async function verifyAnswerArtifacts(opened: Map<SemanticQualityV4ArtifactKind, Awaited<ReturnType<
+  typeof readProductionCanonicalArtifact>>>, expected: MainCanonicalEvidenceProjection,
+  outcome: ReturnType<typeof decodeQualificationQuestionOutcome>, artifactRoot: string,
+  artifactKey: Uint8Array, artifactKeyId: string, memoryGeneration: string): Promise<void> {
+  const artifactBytes = (kind: SemanticQualityV4ArtifactKind) => opened.get(kind)!.plaintext;
+  const selected = parseJson(artifactBytes("selected_canonical_turns"),
+    "selected canonical turns");
+  if (canonicalJson(selected) !== canonicalJson(outcome.selectedTurns)) {
+    throw new Error("selected canonical turns differ from the normalized outcome");
+  }
+  const reconstructed = reconstructAnswerRequest(expected, outcome,
+    subscriptionRuntimeTranscriptVersionFromRequestBytes(artifactBytes("answer_original_request")),
+    memoryGeneration);
+  if (!Buffer.from(serializeSubscriptionRuntimeTaskRequest(reconstructed)).equals(
+    artifactBytes("answer_original_request"))) {
+    throw new Error("original answer request differs from independently reconstructed evidence");
+  }
+  assertModelSurface(reconstructed, artifactBytes("answer_original_model_surface"), "original");
+  if (canonicalSha256({ effectKind: "answer", request: reconstructed }) !==
+    expected.terminalAnswerRequestSha256) {
+    throw new Error("original answer request differs from external terminal evidence");
+  }
+  const repairPresent = await openConditionalRepair(opened, expected, artifactRoot, artifactKey,
+    artifactKeyId);
+  if (repairPresent) {
+    const repairRequest = repairRequestFrom(reconstructed);
+    if (!Buffer.from(serializeSubscriptionRuntimeTaskRequest(repairRequest)).equals(
+      artifactBytes("answer_repair_request"))) {
+      throw new Error("repair answer request is substituted or swapped with original");
+    }
+    assertModelSurface(repairRequest, artifactBytes("answer_repair_model_surface"), "repair");
+  } else {
+    const preparedRepairSurface = repairRequestFrom(reconstructed);
+    assertModelSurface(preparedRepairSurface, artifactBytes("answer_repair_model_surface"),
+      "prepared repair");
+  }
+  const responses = [artifactBytes("answer_original_response"),
+    ...(repairPresent ? [artifactBytes("answer_repair_response")] : [])];
+  if (sha256Bytes(Buffer.concat(responses.map(value => Buffer.from(value)))) !==
+    expected.terminalAnswerResponseSha256) {
+    throw new Error("answer response bytes differ from external terminal evidence");
+  }
+}
+
+function reconstructAnswerRequest(expected: MainCanonicalEvidenceProjection,
+  outcome: ReturnType<typeof decodeQualificationQuestionOutcome>, transcriptVersion: number,
+  memoryGeneration: string) {
+  const binding = { canonicalEvidenceHash: canonicalSha256(
+      outcome.selectedTurns.map(({ turnHash }) => turnHash)),
+    memoryGeneration,
+    transcriptVersion };
+  const plan = createFocusedRetrievalGroundingPlan({ authorityGeneration: binding.memoryGeneration,
+    coverage: "sufficient", humanActorIds: [...new Set(outcome.selectedTurns.map(({ speakerId }) => speakerId))],
+    turns: outcome.selectedTurns });
+  return buildSubscriptionRuntimeKnowledgeAnswerRequest({ attemptId: expected.attemptId, binding,
+    locale: expected.executionPacket.locale, plan, question: expected.executionPacket.questionText }, {
+    isolatedCwd: "/run/discord-meeting-subscription-runtime/workspace",
+    maxOutputTokens: 2_048, timeoutMs: 180_000 });
+}
+
+function assertModelSurface(request: ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest>,
+  retained: Uint8Array,
+  label: string): void {
+  const expected = [request.task.systemPrompt, request.task.prompt,
+    JSON.stringify(request.task.controls.outputSchema)].join("\n");
+  if (new TextDecoder("utf-8", { fatal: true }).decode(retained) !== expected) {
+    throw new Error(`${label} answer model surface is substituted`);
+  }
+}
+
+function repairRequestFrom(original: ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest>):
+ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest> {
+  const runId = stableSubscriptionRuntimeId("knowledge-answer-provider-output-repair",
+    String(original.runId));
+  return { ...original, context: { ...original.context, correlationId: runId }, runId,
+    task: { ...original.task, systemPrompt: [original.task.systemPrompt,
+      "A previous generation failed strict output validation. Regenerate once from the original supplied question and evidence and obey every schema bound exactly.",
+      "In particular, claims=[] with status=answered is forbidden. Decide answerability before emitting claims: for an answerable question populate claims with at least one concise supported claim and its direct evidenceIds, then emit status=answered; otherwise keep claims=[] and emit insufficient_evidence or not_a_question.",
+    ].join(" ") } };
+}
+
+async function openConditionalRepair(opened: Map<SemanticQualityV4ArtifactKind, Awaited<ReturnType<
+  typeof readProductionCanonicalArtifact>>>, expected: MainCanonicalEvidenceProjection,
+  artifactRoot: string, artifactKey: Uint8Array, artifactKeyId: string): Promise<boolean> {
+  const receiptNames = await readdir(join(artifactRoot, "receipts", expected.attemptId));
+  const kinds = ["answer_repair_request", "answer_repair_response"] as const;
+  const present = kinds.map(kind => receiptNames.includes(`${kind}.json`));
+  if (present[0] !== present[1]) {
+    throw new Error("repair answer artifact inventory is incomplete");
+  }
+  if (!present[0]) {return false;}
+  for (const kind of kinds) {
+    opened.set(kind, await readProductionCanonicalArtifact({ artifactKey, artifactKeyId,
+      artifactRoot, attemptId: expected.attemptId, kind,
+      rootBindingSha256: expected.campaignRootSha256 }));
+  }
+  return true;
+}
+
+async function assertClosedV3ReceiptInventory(artifactRoot: string, attemptId: string,
+  kinds: readonly SemanticQualityV4ArtifactKind[]): Promise<void> {
+  const actual = (await readdir(join(artifactRoot, "receipts", attemptId))).toSorted();
+  const expected = kinds.map(kind => `${kind}.json`).toSorted();
+  if (canonicalJson(actual) !== canonicalJson(expected)) {
+    throw new Error("canonical V3 receipt inventory is incomplete or contains unopened artifacts");
+  }
 }
 
 function decodeScopeObservation(bytes: Uint8Array) {
@@ -213,6 +377,16 @@ function assertExactOutcomeRecords(outcome: ReturnType<typeof decodeQualificatio
 function parseJson(bytes: Uint8Array, label: string): unknown {
   try {return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;}
   catch (error) {throw new Error(`${label} is invalid`, { cause: error });}
+}
+function parseCanonicalCustodyJson(bytes: Uint8Array, label: string): unknown {
+  let text: string;
+  let value: unknown;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    value = JSON.parse(text) as unknown;
+    if (text !== custodyJson(value)) {throw new Error("noncanonical custody plaintext");}
+  } catch (error) {throw new Error(`${label} is invalid or noncanonical`, { cause: error });}
+  return value;
 }
 function numberField(record: Readonly<Record<string, unknown>>, key: string): number {
   const value = record[key];

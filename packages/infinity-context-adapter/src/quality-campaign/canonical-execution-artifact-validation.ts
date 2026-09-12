@@ -249,7 +249,7 @@ export function assertCanonicalRequest(request: FocusedLocatorRetrievalRequestSn
   }
   const [originalQuery] = request.queries;
   if (originalQuery === undefined || originalQuery.queryId !== "original-question" ||
-    originalQuery.query.length === 0) {
+    originalQuery.query !== question) {
     throw new Error("qualification request violates Meeting Knowledge ownership");
   }
 }
@@ -262,7 +262,10 @@ export function custodyJson(value: unknown): string {
       return Object.fromEntries(Object.entries(item).toSorted(([a], [b]) =>
         Buffer.compare(Buffer.from(a), Buffer.from(b))).map(([key, nested]) => [key, ordered(nested)]));
     }
-    if (typeof item === "number" && !Number.isFinite(item)) {throw new Error("non-finite custody value");}
+    if (typeof item === "number" && (!Number.isFinite(item) ||
+      (Number.isInteger(item) && !Number.isSafeInteger(item)))) {
+      throw new Error("non-finite or unsafe-integer custody value");
+    }
     if (item === undefined) {throw new Error("undefined custody value");}
     return item;
   }

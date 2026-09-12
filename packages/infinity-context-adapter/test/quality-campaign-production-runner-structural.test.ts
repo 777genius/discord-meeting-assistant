@@ -932,7 +932,10 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         questionReviewReceipts: [{}, {}], repetitionEvidence: [] };})() },
     holdoutProvider: { answer: holdoutExchange, capability: holdoutExchange,
       resultAuthority: input.holdoutProvider, retrieval: holdoutExchange },
-    mainCanonicalEvidence: { ...scopeObservationCustody(), verify: async ({ attempts, campaignRootSha256 }) => ({
+    mainCanonicalEvidence: { ...scopeObservationCustody(), project: async (projection) => ({
+      ...projection, diagnosticCustody: null, topology: { currentMeetingId: "synthetic-meeting",
+        roomId: "synthetic-room", scopeId: "synthetic-scope" } }),
+    verify: async ({ attempts, campaignRootSha256 }) => ({
       inventorySha256: sha256({ attempts, campaignRootSha256,
         localInventoryRevision,
         schemaVersion: "synthetic.local_canonical_inventory.v1" }) }) },

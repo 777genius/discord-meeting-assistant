@@ -12,6 +12,8 @@ export {
   assertGrpcQualifiedGroundedAnswerAdapter,
   createGrpcQualifiedGroundedAnswerAdapter,
   GrpcSubscriptionRuntimeTransport,
+  serializeSubscriptionRuntimeTaskRequest,
+  subscriptionRuntimeTranscriptVersionFromRequestBytes,
 } from "./grpc-transport.js";
 export { fromGrpcTaskResponse, toGrpcTaskRequest } from
   "./subscription-runtime-grpc-mapping.js";

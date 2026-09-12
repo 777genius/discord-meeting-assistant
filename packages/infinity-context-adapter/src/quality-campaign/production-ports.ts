@@ -6,6 +6,9 @@ import type { ExactCampaignEvidence } from "./production-evidence.js";
 import type { QualificationQuestionExecutorFactoryPort } from
   "./execute-admitted-qualification-question.js";
 import type { PROTECTED_SOURCE_KINDS } from "./cleanup-evidence.js";
+import type { AttemptIdentity } from "./execution.js";
+import type { QualificationExecutionPacket } from "./execute-admitted-qualification-question.js";
+import type { QualificationScopeTopology } from "./production-canonical-question-chain.js";
 
 export interface CampaignCallContext {
   readonly deadlineEpochMs: number;
@@ -93,6 +96,8 @@ export interface MainCanonicalEvidenceProjection {
   readonly campaignRootSha256: string;
   readonly capabilityRequestSha256: string;
   readonly capabilityResponseSha256: string;
+  /** Independently authenticated execution input; never reconstructed from a retained binding. */
+  readonly executionPacket: QualificationExecutionPacket;
   readonly citationLocatorIds: readonly string[];
   readonly evidenceLocatorIds: readonly string[];
   readonly evidenceTurnIds: readonly string[];
@@ -100,6 +105,13 @@ export interface MainCanonicalEvidenceProjection {
   readonly retrievalLatencyUs: number;
   readonly retrievalRequestSha256: string;
   readonly retrievalResponseSha256: string;
+  readonly terminalAnswerRequestSha256: string;
+  readonly terminalAnswerResponseSha256: string;
+  readonly identity: AttemptIdentity;
+  readonly topology: QualificationScopeTopology;
+  /** Present only for diagnostic attempts and reconstructed from the frozen plan and applied receipt. */
+  readonly diagnosticCustody: { readonly appliedDocumentIds: Readonly<Record<string, string>>;
+    readonly frozenPlan: unknown } | null;
 }
 
 export interface VerifiedMainCanonicalEvidence {
@@ -108,6 +120,8 @@ export interface VerifiedMainCanonicalEvidence {
 
 /** Consumer-owned local proof boundary; no corpus, gold, or adjudication facts cross it. */
 export interface MainCanonicalEvidenceVerificationPort extends CanonicalScopeObservationPort {
+  project(input: Omit<MainCanonicalEvidenceProjection, "diagnosticCustody" | "topology">):
+    Promise<MainCanonicalEvidenceProjection>;
   verify(input: { readonly attempts: readonly MainCanonicalEvidenceProjection[];
     readonly campaignRootSha256: string }): Promise<VerifiedMainCanonicalEvidence>;
 }

@@ -59,18 +59,7 @@ export class GrpcSubscriptionRuntimeTransport
     if (options.serviceToken.trim().length < 16) {
       throw new Error("Subscription runtime service token is too short");
     }
-    const definition = loadSync(
-      fileURLToPath(new URL("../proto/agent_runtime.proto", import.meta.url)),
-      {
-        defaults: true,
-        enums: String,
-        keepCase: false,
-        longs: String,
-        oneofs: true,
-      },
-    );
-    const root = loadPackageDefinition(definition) as Record<string, unknown>;
-    const service = readNestedService(root);
+    const service = loadAgentRuntimeService();
     this.#runAgentTaskDefinition = readRunAgentTaskDefinition(service);
     this.#client = new service(
       options.address,
@@ -141,6 +130,36 @@ export class GrpcSubscriptionRuntimeTransport
     );
     return fromGrpcTaskResponse(response);
   }
+}
+
+/** Deterministic provider-free replay of the exact unary request serializer used in production. */
+export function serializeSubscriptionRuntimeTaskRequest(
+  request: SubscriptionRuntimeAgentTaskRequest,
+): Uint8Array {
+  const service = loadAgentRuntimeService();
+  return Uint8Array.from(readRunAgentTaskDefinition(service).requestSerialize(
+    toGrpcTaskRequest(request)));
+}
+
+/** Reads only the generation field needed to replay a retained answer binding. */
+export function subscriptionRuntimeTranscriptVersionFromRequestBytes(bytes: Uint8Array): number {
+  const decoded = readRunAgentTaskDefinition(loadAgentRuntimeService())
+    .requestDeserialize(Buffer.from(bytes)) as Record<string, unknown>;
+  const metadata = recordValue(decoded.metadata, "retained task request metadata");
+  const value = metadata.transcriptVersion;
+  const version = typeof value === "string" ? Number(value) : value;
+  if (!Number.isSafeInteger(version) || Number(version) < 0) {
+    throw new Error("retained task request transcript version is invalid");
+  }
+  return Number(version);
+}
+
+function loadAgentRuntimeService(): ServiceClientConstructor {
+  const definition = loadSync(
+    fileURLToPath(new URL("../proto/agent_runtime.proto", import.meta.url)),
+    { defaults: true, enums: String, keepCase: false, longs: String, oneofs: true },
+  );
+  return readNestedService(loadPackageDefinition(definition) as Record<string, unknown>);
 }
 
 interface MutableWireCapture {

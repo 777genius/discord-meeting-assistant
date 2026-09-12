@@ -1,10 +1,12 @@
 import type { CampaignQuestion } from "./admission.js";
 import { canonicalJson, sha256 } from "./canonical.js";
 import { attemptIdentity } from "./execution.js";
+import type { QualificationExecutionPacket } from "./execute-admitted-qualification-question.js";
 import type { QualityCampaignProductionPorts } from "./production-ports.js";
 
 interface ExecutionEvidenceInput {
   readonly campaignRootSha256: string; readonly deadlineEpochMs: number;
+  readonly executionPackets?: readonly QualificationExecutionPacket[];
   readonly ports: Pick<QualityCampaignProductionPorts, "evidence" | "evidenceCustody" |
     "mainCanonicalEvidence">; readonly questions: readonly CampaignQuestion[];
   readonly releaseRootSha256: string;
@@ -13,21 +15,37 @@ interface ExecutionEvidenceInput {
 
 export async function loadMainExecutionEvidence(input: ExecutionEvidenceInput) {
   const externalEvidence = await loadExecutionEvidence(input, "main");
-  const attempts = externalEvidence.outcomes.map((outcome) => {
+  if (input.executionPackets === undefined) {
+    throw new Error("independently admitted execution packet inventory is absent");
+  }
+  const packets = new Map(input.executionPackets.map(packet => [packet.questionId, packet]));
+  if (packets.size !== input.executionPackets.length) {
+    throw new Error("independently admitted execution packet inventory is duplicated");
+  }
+  const attempts = await Promise.all(externalEvidence.outcomes.map(async (outcome) => {
     const capability = terminal(outcome, "capability");
     const retrieval = terminal(outcome, "retrieval");
-    return Object.freeze({ answerAbstained: outcome.answerAbstained,
+    const answer = terminal(outcome, "answer");
+    const packet = packets.get(outcome.questionId);
+    if (packet === undefined || sha256(packet) !== outcome.identity.questionDigestSha256) {
+      throw new Error("externally authenticated outcome lacks its admitted execution packet");
+    }
+    return await input.ports.mainCanonicalEvidence.project({ answerAbstained: outcome.answerAbstained,
       attemptId: outcome.attemptId, campaignRootSha256: outcome.campaignRootSha256,
       capabilityRequestSha256: capability.requestDigestSha256,
       capabilityResponseSha256: capability.resultEnvelopeDigestSha256,
       citationLocatorIds: outcome.citationLocatorDigests,
       evidenceLocatorIds: outcome.evidenceLocatorDigests,
       evidenceTurnIds: outcome.evidenceTurnIds,
+      executionPacket: packet,
+      identity: outcome.identity,
       rankedLocatorIds: outcome.rankedLocatorDigests,
       retrievalLatencyUs: outcome.retrievalLatencyUs,
       retrievalRequestSha256: retrieval.requestDigestSha256,
-      retrievalResponseSha256: retrieval.resultEnvelopeDigestSha256 });
-  });
+      retrievalResponseSha256: retrieval.resultEnvelopeDigestSha256,
+      terminalAnswerRequestSha256: answer.requestDigestSha256,
+      terminalAnswerResponseSha256: answer.resultEnvelopeDigestSha256 });
+  }));
   const localEvidence = await input.ports.mainCanonicalEvidence.verify({ attempts,
     campaignRootSha256: input.campaignRootSha256 });
   return Object.freeze({ externalEvidence, localEvidence });
@@ -38,7 +56,7 @@ export async function loadHoldoutExecutionEvidence(input: ExecutionEvidenceInput
 }
 
 function terminal(outcome: Awaited<ReturnType<typeof loadExecutionEvidence>>["outcomes"][number],
-  kind: "capability" | "retrieval") {
+  kind: "answer" | "capability" | "retrieval") {
   const matches = outcome.terminalChain.filter((item) => item.callKind === kind);
   if (matches.length !== 1) {throw new Error(`external ${kind} terminal evidence is incomplete`);}
   return matches[0]!;

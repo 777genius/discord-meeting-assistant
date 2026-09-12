@@ -56,6 +56,19 @@ export interface ProductionCanonicalExecutionConnectionConfiguration {
   readonly topologyPath: string;
 }
 
+/** Opens the same signed topology authority for retained verification without trusting binding bytes. */
+export async function loadProductionCanonicalEvidenceTopology(
+  config: ProductionCanonicalExecutionConnectionConfiguration,
+): Promise<QualificationScopeTopologyPort> {
+  const [topologyValue, topologyPublicKeyPem] = await Promise.all([
+    readJson(config.topologyPath, "scope topology"),
+    readQualityCampaignText(absolute(config.topologyAuthority.publicKeyPath,
+      "scope topology authority key"), "scope topology authority key", 16_384),
+  ]);
+  return topologyResolver(decodeTopology(topologyValue, config.topologyAuthority.keyId,
+    topologyPublicKeyPem, config.actorKeyProfileId));
+}
+
 interface ScopeTopologyDocument {
   readonly actorKeyProfileId: string;
   readonly entries: readonly { readonly currentMeetingId: string; readonly questionId: string;

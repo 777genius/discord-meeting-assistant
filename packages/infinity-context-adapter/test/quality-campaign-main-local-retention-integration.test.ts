@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { canonicalJson } from "../src/quality-campaign/canonical.js";
+import { canonicalJson, sha256 } from "../src/quality-campaign/canonical.js";
 import { attemptIdentity } from "../src/quality-campaign/execution.js";
 import { createProductionCanonicalExecutionEvidence } from
   "../src/quality-campaign/production-canonical-execution-evidence.js";
@@ -26,7 +26,9 @@ describe("main external/local retention binding", () => {
       const artifactRoot = join(root, "artifacts"); const artifactKey = new Uint8Array(32).fill(3);
       const campaignRootSha256 = "a".repeat(64); const releaseRootSha256 = "b".repeat(64);
       const locator = "c".repeat(64);
-      const question = { locale: "en" as const, questionDigestSha256: "d".repeat(64),
+      const packet = { locale: "en" as const, questionId: "q-1", questionText: "Question?",
+        scopeTopologyReference: "signed:q-1", source: "independent_review" as const };
+      const question = { locale: "en" as const, questionDigestSha256: sha256(packet),
         questionId: "q-1", rubricDigestSha256: "e".repeat(64),
         source: "independent_review" as const };
       const spendReservationSha256ByRepetition = { 1: "1".repeat(64), 2: "2".repeat(64),
@@ -95,8 +97,10 @@ describe("main external/local retention binding", () => {
           main: async () => ({ envelopeBytes: bytes("external"), signedReceipt: {} }) },
         evidenceCustody: { open: async () => externalEvidence }, mainCanonicalEvidence:
           createProductionLocalCanonicalEvidenceReader({ artifactKey,
-            artifactKeyId: "synthetic-key", artifactRoot }) },
-      questions: [question], releaseRootSha256, spendReservationSha256ByRepetition });
+            artifactKeyId: "synthetic-key", artifactRoot, topology: { resolve: async () => ({
+              currentMeetingId: "meeting-1", roomId: "room-1", scopeId: "scope-1" }) } }) },
+      executionPackets: [packet], questions: [question], releaseRootSha256,
+      spendReservationSha256ByRepetition });
       const receipt = retentionCheckpointReceipt(campaignRootSha256, { inventorySha256:
         "8".repeat(64), metricsSha256ByRepetition: {} }, loaded.localEvidence.inventorySha256);
       expect(loaded.externalEvidence).toBe(externalEvidence);

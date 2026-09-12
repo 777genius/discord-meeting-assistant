@@ -4,7 +4,8 @@ import { digest, exactRecord, safeId } from "./canonical.js";
 import { assertAttemptIdentity, attemptIdentity, type AttemptIdentity,
   type ProviderExchangePort } from "./execution.js";
 import { createLocalEvidenceCustody } from "./production-evidence-custody.js";
-import { createProductionCanonicalExecutorFactory, validateLegacyHistoricalPublicTrust,
+import { createProductionCanonicalExecutorFactory, loadProductionCanonicalEvidenceTopology,
+  validateLegacyHistoricalPublicTrust,
   type ProductionCanonicalExecutionConnectionConfiguration } from
   "./production-canonical-executor-factory.js";
 import { createProductionLocalCanonicalEvidenceReader } from
@@ -83,7 +84,8 @@ Promise<QualityCampaignProductionPorts> {
   const mainCanonicalEvidence = createProductionLocalCanonicalEvidenceReader({ artifactKey:
     decodeAesKey(await readQualityCampaignText(absolute(config.canonicalExecution.artifactKeyPath),
       "canonical artifact key", 16_384)), artifactKeyId: config.canonicalExecution.artifactKeyId,
-  artifactRoot: config.canonicalExecution.artifactRoot });
+  artifactRoot: config.canonicalExecution.artifactRoot, topology: async () =>
+    await loadProductionCanonicalEvidenceTopology(config.canonicalExecution) });
   let canonicalFactory: Promise<Awaited<ReturnType<
     typeof createProductionCanonicalExecutorFactory>>> | undefined;
   return Object.freeze({
