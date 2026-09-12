@@ -5,8 +5,6 @@ import type {
   GroundedAnswerMeasurement,
   SpeakerAliasMapV1,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import { createHash } from "node:crypto";
-
 import {
   type AttestationExpectation,
   verifySubscriptionRuntimeAttestation,
@@ -17,7 +15,16 @@ import {
   type KnowledgeAnswerRequestOptions,
 } from "./knowledge-answer-request-mapper.js";
 import { providerKnowledgeAnswerSchema } from "./provider-knowledge-schema.js";
-import { stableSubscriptionRuntimeId } from "./stable-id.js";
+import {
+  knowledgeAnswerExchangeInventorySha256,
+} from "./knowledge-answer-exchange-inventory.js";
+import {
+  assertKnowledgeAnswerInputBound,
+  knowledgeAnswerInputSurface,
+  measureKnowledgeAnswerModelInputs,
+  providerOutputRepairRequest,
+  type KnowledgeAnswerExactInputMeasurement,
+} from "./knowledge-answer-request-preparation.js";
 import {
   validateAttestationExpectation,
 } from "./summary-adapter-options.js";
@@ -32,21 +39,17 @@ import {
 
 const defaultIsolatedCwd = "/run/discord-meeting-subscription-runtime/workspace";
 const defaultTimeoutMs = 180_000;
-export const knowledgeAnswerMaximumModelInputBytes = 16_000;
-
-export interface KnowledgeAnswerExactInputMeasurement {
-  readonly maximumModelInputBytes: number;
-  readonly original: KnowledgeAnswerModelInputSurfaceMeasurement;
-  readonly repair: KnowledgeAnswerModelInputSurfaceMeasurement;
-}
-
-export interface KnowledgeAnswerModelInputSurfaceMeasurement {
-  /** Exact UTF-8 bytes of systemPrompt + LF + prompt + LF + output schema JSON. */
-  readonly fullInputBytes: number;
-  readonly outputSchemaBytes: number;
-  readonly systemPromptBytes: number;
-  readonly userPromptBytes: number;
-}
+export {
+  knowledgeAnswerExchangeInventory,
+  knowledgeAnswerExchangeInventorySha256,
+  type KnowledgeAnswerExchangeInventoryV2,
+} from "./knowledge-answer-exchange-inventory.js";
+export {
+  knowledgeAnswerMaximumModelInputBytes,
+  measureKnowledgeAnswerModelInputs,
+  type KnowledgeAnswerExactInputMeasurement,
+  type KnowledgeAnswerModelInputSurfaceMeasurement,
+} from "./knowledge-answer-request-preparation.js";
 
 export interface PreparedKnowledgeAnswerRuntimeRequest {
   readonly exactInput: KnowledgeAnswerExactInputMeasurement;
@@ -66,41 +69,6 @@ export interface KnowledgeAnswerQualificationObservation {
   readonly runtimeReceiptSha256: string;
 }
 
-export interface KnowledgeAnswerExchangeInventoryV2 {
-  readonly schemaVersion: "discord_meeting.knowledge_answer_exchange_inventory.v2";
-  readonly exchanges: readonly {
-    readonly callOrdinal: "original" | "repair";
-    readonly requestSha256: string;
-    readonly responseSha256: string;
-  }[];
-}
-
-/** Authenticates exchange occurrence and each request/response boundary independently. */
-export function knowledgeAnswerExchangeInventory(
-  exchanges: readonly { readonly callOrdinal: "original" | "repair";
-    readonly requestBytes: Uint8Array; readonly responseBytes: Uint8Array }[],
-): KnowledgeAnswerExchangeInventoryV2 {
-  if (exchanges.length > 2 || exchanges.some((exchange, index) =>
-    exchange.callOrdinal !== (index === 0 ? "original" : "repair"))) {
-    throw new Error("knowledge answer exchange inventory is unordered or invalid");
-  }
-  return Object.freeze({
-    schemaVersion: "discord_meeting.knowledge_answer_exchange_inventory.v2",
-    exchanges: Object.freeze(exchanges.map((exchange) => Object.freeze({
-      callOrdinal: exchange.callOrdinal,
-      requestSha256: createHash("sha256").update(exchange.requestBytes).digest("hex"),
-      responseSha256: createHash("sha256").update(exchange.responseBytes).digest("hex"),
-    }))),
-  });
-}
-
-export function knowledgeAnswerExchangeInventorySha256(
-  exchanges: readonly { readonly callOrdinal: "original" | "repair";
-    readonly requestBytes: Uint8Array; readonly responseBytes: Uint8Array }[],
-): string {
-  return createHash("sha256").update(JSON.stringify(
-    knowledgeAnswerExchangeInventory(exchanges)), "utf8").digest("hex");
-}
 export interface KnowledgeAnswerProviderExchange {
   readonly identity: KnowledgeAnswerProviderExchangeIdentity;
   readonly requestBytes: Uint8Array;
@@ -196,7 +164,7 @@ export class SubscriptionRuntimeGroundedAnswerAdapter
     const prepared = this.prepare(request);
     const runtimeRequest = prepared.request;
     const exactInput = prepared.exactInput;
-    const input = inputSurface(runtimeRequest);
+    const input = knowledgeAnswerInputSurface(runtimeRequest);
     const inputTokens = this.tokenCounter.countInputTokens(input);
     if (!Number.isSafeInteger(inputTokens) || inputTokens < 1) {
       throw new Error("knowledge input token counter returned an invalid measurement");
@@ -320,8 +288,8 @@ export class SubscriptionRuntimeGroundedAnswerAdapter
     const exactInput = measureKnowledgeAnswerModelInputs(runtimeRequest);
     assertKnowledgeAnswerInputBound(exactInput);
     return Object.freeze({ exactInput, modelInputs: Object.freeze({
-      original: inputSurface(runtimeRequest),
-      repair: inputSurface(providerOutputRepairRequest(runtimeRequest)) }),
+      original: knowledgeAnswerInputSurface(runtimeRequest),
+      repair: knowledgeAnswerInputSurface(providerOutputRepairRequest(runtimeRequest)) }),
     request: runtimeRequest });
   }
 
@@ -362,77 +330,6 @@ function providerExchangeIdentity(
       policyVersion: request.task.metadata.policyVersion,
       reasoningEffort: request.task.controls.reasoningEffort,
     }) });
-}
-
-function providerOutputRepairRequest(
-  request: ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest>,
-): ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest> {
-  const runId = stableSubscriptionRuntimeId(
-    "knowledge-answer-provider-output-repair",
-    request.runId,
-  );
-  return {
-    ...request,
-    context: {
-      ...request.context,
-      correlationId: runId,
-    },
-    runId,
-    task: {
-      ...request.task,
-      systemPrompt: [
-        request.task.systemPrompt,
-        "A previous generation failed strict output validation. Regenerate once from the original supplied question and evidence and obey every schema bound exactly.",
-        "In particular, claims=[] with status=answered is forbidden. Decide answerability before emitting claims: for an answerable question populate claims with at least one concise supported claim and its direct evidenceIds, then emit status=answered; otherwise keep claims=[] and emit insufficient_evidence or not_a_question.",
-      ].join(" "),
-    },
-  };
-}
-
-function inputSurface(
-  request: ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest>,
-): string {
-  return [
-    request.task.systemPrompt,
-    request.task.prompt,
-    JSON.stringify(request.task.controls.outputSchema),
-  ].join("\n");
-}
-
-export function measureKnowledgeAnswerModelInputs(
-  request: ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest>,
-): KnowledgeAnswerExactInputMeasurement {
-  const original = measureInputSurface(request);
-  const repair = measureInputSurface(providerOutputRepairRequest(request));
-  return Object.freeze({
-    maximumModelInputBytes: Math.max(original.fullInputBytes, repair.fullInputBytes),
-    original,
-    repair,
-  });
-}
-
-function measureInputSurface(
-  request: ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest>,
-): KnowledgeAnswerModelInputSurfaceMeasurement {
-  const encoder = new TextEncoder();
-  const outputSchema = JSON.stringify(request.task.controls.outputSchema);
-  return Object.freeze({
-    fullInputBytes: encoder.encode(inputSurface(request)).byteLength,
-    outputSchemaBytes: encoder.encode(outputSchema).byteLength,
-    systemPromptBytes: encoder.encode(request.task.systemPrompt).byteLength,
-    userPromptBytes: encoder.encode(request.task.prompt).byteLength,
-  });
-}
-
-function assertKnowledgeAnswerInputBound(
-  measurement: KnowledgeAnswerExactInputMeasurement,
-): void {
-  if (
-    measurement.original.fullInputBytes > knowledgeAnswerMaximumModelInputBytes ||
-    measurement.repair.fullInputBytes > knowledgeAnswerMaximumModelInputBytes
-  ) {
-    throw new Error("knowledge answer model input exceeds the qualified 16000-byte bound");
-  }
 }
 
 function invalidOutput(code: string): GroundedAnswerGenerationResult {

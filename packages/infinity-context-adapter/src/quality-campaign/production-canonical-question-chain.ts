@@ -4,7 +4,6 @@ import {
   createFocusedRetrievalGroundingPlan,
   PrepareFocusedLocatorRetrievalV2Request, PrepareFocusedLocatorRetrievalV3Request,
   type FocusedLocatorRetrievalRequestSnapshot,
-  rehydrateHistoricalBlock,
   type GroundedAnswerGenerationBinding,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
@@ -12,7 +11,6 @@ import {
   type PostgresDiagnosticFinalEvidence,
   assertConstructedPostgresHistoricalEvidenceAuthority,
   assertConstructedPostgresHistoricalMemoryStore,
-  canonicalFinalReplyTurnHash,
   PostgresHistoricalEvidenceAuthority,
   PostgresHistoricalMemoryStore,
 } from "@discord-meeting/postgres-adapter";
@@ -26,18 +24,12 @@ import { assertConstructedHmacHistoricalOpaqueIds,
   type HmacHistoricalOpaqueIds } from "../hmac-historical-ids.js";
 import { InfinityContextRetrievalV3Adapter } from "../infinity-context-retrieval-v3.js";
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
-import type { InfinityContextRetrievalV2ExactExchange, InfinityContextRetrievalV3ExactExchange } from
-  "../infinity-context-retrieval-exchange.js";
 import { DiagnosticFrozenStore, assertDiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
 import type { DiagnosticQuestion } from "./diagnostic-manifest.js";
-import { canonicalJson } from "./canonical.js";
-import { assertCanonicalRequest, createCanonicalRetrievalBinding, custodyDigest, custodyJson, freezeCustody,
-  type CanonicalRetrievalBindingV1, validateCanonicalRetrievalObservation,
-  validateCanonicalScopeResolutionObservation } from
+import type { CanonicalRetrievalBindingV1 } from
   "./canonical-execution-artifact-validation.js";
 import type {
   QualificationCanonicalTurn,
-  QualificationExecutionPacket,
   QualificationQuestionExecutionContext,
   QualificationExternalEffectReservationPort,
   QualificationQuestionOutcome,
@@ -48,6 +40,8 @@ import type {
 } from "./execute-admitted-qualification-question.js";
 import type { QualificationScopeTopology, QualificationScopeTopologyPort } from
   "./production-ports.js";
+import { createCanonicalEvidencePort } from "./production-canonical-evidence-port.js";
+import { createCanonicalRetrievalPort } from "./production-canonical-retrieval-port.js";
 
 export { createProductionCanonicalExecutionEvidence } from
   "./production-canonical-execution-evidence.js";
@@ -74,7 +68,7 @@ export interface QualificationEncryptedAuditPort {
     readonly plaintext: Uint8Array }): Promise<void>;
 }
 
-interface ProductionCanonicalQuestionChainInput {
+export interface ProductionCanonicalQuestionChainInput {
   readonly answer: SubscriptionRuntimeGroundedAnswerAdapter;
   readonly audit: QualificationEncryptedAuditPort;
   readonly evidenceAuthority: PostgresHistoricalEvidenceAuthority;
@@ -87,7 +81,7 @@ interface ProductionCanonicalQuestionChainInput {
   readonly topology: QualificationScopeTopologyPort;
 }
 
-interface CanonicalQuestionExecution {
+export interface CanonicalQuestionExecution {
   readonly binding: GroundedAnswerGenerationBinding | null;
   readonly request: FocusedLocatorRetrievalRequestSnapshot;
   readonly retrievalBinding: CanonicalRetrievalBindingV1 | null;
@@ -97,7 +91,7 @@ interface CanonicalQuestionExecution {
   readonly turns: readonly QualificationCanonicalTurn[];
 }
 
-type CanonicalQuestionState = Map<string, CanonicalQuestionExecution>;
+export type CanonicalQuestionState = Map<string, CanonicalQuestionExecution>;
 
 export function createProductionCanonicalQuestionChain(
   input: ProductionCanonicalQuestionChainInput,
@@ -116,7 +110,7 @@ export function createProductionCanonicalQuestionChain(
   return createCanonicalQuestionEngine(input);
 }
 
-interface CanonicalEngineInput extends Omit<ProductionCanonicalQuestionChainInput,
+export interface CanonicalEngineInput extends Omit<ProductionCanonicalQuestionChainInput,
   "store" | "evidenceAuthority"> {
   readonly diagnostic?: true;
   readonly store: Pick<PostgresHistoricalMemoryStore, "findCurrentCandidates" | "isCurrentGeneration">;
@@ -149,150 +143,8 @@ function isConcreteRetrievalPair(input: Pick<ProductionCanonicalQuestionChainInp
 
 function createCanonicalQuestionEngine(input: CanonicalEngineInput) {
   const state: CanonicalQuestionState = new Map();
-
-  const retrieval = Object.freeze({
-    retrieve: async (packet: DiagnosticQuestion,
-      options: QualificationQuestionExecutionContext) => {
-      packet = freezeCustody(structuredClone(packet));
-      const qualificationPacket = "source" in packet ?
-        packet as QualificationExecutionPacket : null;
-      const topologyBinding = qualificationPacket?.schemaVersion ===
-        "meeting_knowledge.qualification_execution_packet.v2" ? {
-          topologyDocumentSha256: qualificationPacket.scopeTopologyDocumentSha256,
-          topologyGeneration: qualificationPacket.scopeTopologyGeneration,
-        } : undefined;
-      const topology = freezeCustody(structuredClone(await input.topology.resolve(
-        packet.scopeTopologyReference, packet.questionId, topologyBinding)));
-      const scopeReads: { readonly kind: string; readonly requestSha256: string;
-        readonly responseSha256: string | null; readonly responseBytes: number;
-        readonly status: string }[] = [];
-      let prepared: Awaited<ReturnType<ProductionCanonicalQuestionChainInput["preparer"]["prepare"]>> | undefined;
-      try { prepared = await input.preparer.prepare({ ...topology, question: packet.questionText,
-        signal: options.signal, scopeResolutionEffects: {
-          beforeRead: async ({ kind, requestSha256 }) => {
-            await input.spend.reserve({ effectKind: kind, payloadSha256: requestSha256,
-              requestedEncryptedBytes: 2048, requestedTokens: 1 });
-            scopeReads.push({ kind, requestSha256, responseSha256: null,
-              responseBytes: 0, status: "outcome_unknown" });
-          },
-          observe: async (observation) => {
-            const index = scopeReads.findIndex(({ kind }) => kind === observation.kind);
-            if (index < 0 || scopeReads[index]!.requestSha256 !== observation.requestSha256 ||
-              scopeReads[index]!.status !== "outcome_unknown") {
-              throw new Error("Unreserved or duplicate scope metadata effect");
-            }
-            scopeReads[index] = observation;
-          },
-        } });
-      } finally {
-        const observation = { schemaVersion: "meeting_knowledge.scope_resolution.v1",
-          status: prepared?.status ?? "interrupted", reads: scopeReads };
-        if (observation.status === "prepared") { validateCanonicalScopeResolutionObservation(observation); }
-        await input.audit.seal({ attemptId: options.attemptId, kind: "scope_resolution_observation",
-          plaintext: utf8(canonicalJson(observation)) });
-      }
-      if (prepared.status !== "prepared") {
-        return { reason: `request_${prepared.status}`, status: "failed" as const };
-      }
-      assertCanonicalRequest(prepared, packet.questionText);
-      const attemptId = options.attemptId;
-      const payloadSha256 = sha256Json({ effectKind: "retrieval", request: prepared });
-      await input.spend.reserve({ effectKind: "capability",
-        payloadSha256: sha256Json({ effectKind: "capability", request: prepared }),
-        requestedEncryptedBytes: 16_000, requestedTokens: 1 });
-      await input.spend.reserve({ effectKind: "retrieval", payloadSha256,
-        requestedEncryptedBytes: 16_000, requestedTokens: 1 });
-      await input.journal.reserve({ attemptId, payloadSha256, phase: "retrieval" });
-      let result;
-      try {
-        if (prepared.schemaVersion === 3 && input.retrieval instanceof InfinityContextRetrievalV3Adapter) {
-          result = await input.retrieval.retrieve(prepared, options);
-        } else if (prepared.schemaVersion === 2 && input.retrieval instanceof InfinityContextRetrievalV2Adapter) {
-          result = await input.retrieval.retrieve(prepared, options);
-        } else {throw new Error("mixed canonical retrieval pair");}
-      }
-      catch (error) {
-        await input.journal.terminal({ attemptId, payloadSha256: sha256Json({
-          reason: "retrieval_external_effect_unknown" }), phase: "retrieval",
-          state: "outcome_unknown" });
-        throw error;
-      }
-      let exchange;
-      let observation;
-      let exactExchangeError: unknown;
-      let observationError: unknown;
-      try {exchange = input.retrieval.takeExactExchange();}
-      catch (error) {exactExchangeError = error;}
-      try {observation = input.retrieval.takeObservation();}
-      catch (error) {observationError = error;}
-      if (exchange === undefined) {
-        await input.journal.terminal({ attemptId, payloadSha256: sha256Json({
-          providerFailureCode: result.status === "available" ? null : result.code,
-          reason: "retrieval_external_effect_unknown",
-          telemetryEvidence: observationError === undefined ? "present" : "missing_or_invalid",
-        }), phase: "retrieval", state: "outcome_unknown" });
-        throw new Error("retrieval external effect is unknown and terminal", {
-          cause: exactExchangeError,
-        });
-      }
-      let retrievalBinding: CanonicalRetrievalBindingV1 | null = null;
-      try {
-        await sealRetrievalExchange(input.audit, attemptId, exchange);
-        if (prepared.schemaVersion === 3) {
-          if (!isV3ExactExchange(exchange)) {
-            throw new Error("V3 exchange binding missing");
-          }
-          retrievalBinding = await createCanonicalRetrievalBinding({ attemptId, packet, topology,
-            diagnosticPlanSha256: input.store instanceof DiagnosticFrozenStore ?
-              custodyDigest({ plan: input.store.plan, remoteDocumentIds: input.store.remoteDocumentIds }) : null,
-            request: prepared, exchange });
-          await input.audit.seal({ attemptId, kind: "retrieval_binding",
-            plaintext: utf8(custodyJson(retrievalBinding)) });
-          const projected = result.status === "available" ? result.candidates.map(candidate => ({
-            contributions: candidate.retrievalProvenance.contributions,
-            fusedScore: candidate.retrievalProvenance.fusedScore, locatorId: candidate.locator,
-            providerRank: candidate.retrievalProvenance.providerRank })) : [];
-          if ((result.status === "available") !== (retrievalBinding.providerStatus === "available") ||
-            custodyDigest(projected) !== retrievalBinding.candidateProjectionSha256) {
-            throw new Error("V3 candidate inventory differs from official bytes");
-          }
-        }
-        if (observation === undefined) {throw observationError;}
-        const telemetry = validateCanonicalRetrievalObservation({ attemptId, exchange,
-          observation });
-        await input.audit.seal({ attemptId, kind: "retrieval_observation",
-          plaintext: utf8(canonicalJson(telemetry)) });
-      }
-      catch {
-        const failureReason = result.status === "available" ?
-          "retrieval_observation_evidence_invalid" : result.code;
-        await input.journal.terminal({ attemptId, payloadSha256: sha256Json({
-          reason: failureReason, telemetryEvidence: "missing_or_invalid" }), phase: "retrieval",
-        state: "failed" });
-        return { reason: failureReason, status: "failed" as const };
-      }
-      await input.journal.terminal({ attemptId, payloadSha256: sha256Json({ result,
-        responseSha256: createHash("sha256").update(exchange.responseBytes).digest("hex") }),
-        phase: "retrieval",
-        state: result.status === "available" ? "succeeded" : "failed" });
-      if (result.status !== "available") {
-        return { reason: result.code, status: "failed" as const };
-      }
-      state.set(options.attemptId, { binding: null, packet, topology, turns: [],
-        request: freezeCustody(structuredClone(prepared)), retrievalBinding,
-        candidateLocators: Object.freeze(result.candidates.map(candidate => candidate.locator)) });
-      return Object.freeze({ candidates: Object.freeze(result.candidates.map((candidate) =>
-        Object.freeze({ contributions: Object.freeze(candidate.retrievalProvenance.contributions
-          .map((contribution) => Object.freeze({ ...contribution }))),
-        fusedScore: candidate.retrievalProvenance.fusedScore,
-        locatorId: candidate.locator,
-        providerRank: candidate.retrievalProvenance.providerRank }))),
-      rawResponseSha256: createHash("sha256").update(exchange.responseBytes).digest("hex"),
-      status: "completed" as const });
-    },
-  });
-
-  const evidence = createEvidencePort(input, state);
+  const retrieval = createCanonicalRetrievalPort(input, state);
+  const evidence = createCanonicalEvidencePort(input, state);
   const answer = createAnswerPort(input, state);
   const outcome: QualificationQuestionOutcomePort = Object.freeze({
     record: async (attemptId: string, value: QualificationQuestionOutcome) => {
@@ -302,99 +154,6 @@ function createCanonicalQuestionEngine(input: CanonicalEngineInput) {
     },
   });
   return Object.freeze({ answer, evidence, outcome, retrieval });
-}
-
-function isV3ExactExchange(exchange: InfinityContextRetrievalV2ExactExchange):
-exchange is InfinityContextRetrievalV3ExactExchange {
-  return "schemaVersion" in exchange && exchange.schemaVersion === 2 &&
-    "contractVersion" in exchange && exchange.contractVersion === "context-retrieval.v3" &&
-    "capabilityRoute" in exchange && exchange.capabilityRoute === "/v1/context/retrieve-v3/capability" &&
-    "retrievalRoute" in exchange && exchange.retrievalRoute === "/v1/context/retrieve-v3";
-}
-
-function createEvidencePort(input: CanonicalEngineInput,
-  state: CanonicalQuestionState): QualificationQuestionEvidencePort {
-  return Object.freeze({ rehydrate: async (
-    request: Parameters<QualificationQuestionEvidencePort["rehydrate"]>[0],
-    options: QualificationQuestionExecutionContext,
-  ) => {
-    const execution = state.get(options.attemptId);
-    if (execution === undefined || execution.binding !== null || execution.packet.questionId !== request.questionId ||
-      custodyJson(request.locatorIds) !== custodyJson(execution.candidateLocators) ||
-      execution.packet.scopeTopologyReference !==
-      request.scopeTopologyReference || new Set(request.locatorIds).size !==
-        request.locatorIds.length) {
-      throw new Error("canonical qualification retrieval state is absent or duplicated");
-    }
-    if (input.diagnostic !== true && execution.request.schemaVersion === 3 &&
-      execution.request.filters.sourceGenerations.length !== 1) {
-      throw new Error("canonical scalar answer requires the multi-source evidence companion");
-    }
-    const records = await input.store.findCurrentCandidates(execution.topology.scopeId,
-      execution.topology.roomId, request.locatorIds, { signal: options.signal });
-    if (records.length !== request.locatorIds.length) {
-      throw new Error("PostgreSQL locator authority is missing or ambiguous");
-    }
-    const turns: QualificationCanonicalTurn[] = [];
-    let binding: GroundedAnswerGenerationBinding | null = null;
-    for (let index = 0; index < records.length; index += 1) {
-      const record = records[index]!;
-      if (!await input.store.isCurrentGeneration(record.binding,
-        record.plan.topology.indexGeneration, { signal: options.signal }) ||
-        record.binding.scopeId !== execution.topology.scopeId ||
-        record.binding.roomId !== execution.topology.roomId) {
-        throw new Error("PostgreSQL locator is stale or cross-room");
-      }
-      if (!execution.request.filters.sourceGenerations.some(pair =>
-        pair.sourceKey === record.plan.topology.releaseRef &&
-        pair.projectionGeneration === record.plan.topology.indexGeneration) ||
-        (execution.retrievalBinding?.diagnosticPlanSha256 !== undefined &&
-          execution.retrievalBinding.diagnosticPlanSha256 !== null &&
-          custodyDigest({ plan: record.plan, remoteDocumentIds: record.remoteDocumentIds }) !==
-            execution.retrievalBinding.diagnosticPlanSha256)) {
-        throw new Error("canonical evidence is outside the frozen request or diagnostic plan");
-      }
-      const meeting = await input.evidenceAuthority.loadAcceptedFinalMeeting(record.binding,
-        { signal: options.signal });
-      if (meeting === null) {
-        throw new Error("PostgreSQL locator does not reference an accepted final meeting");
-      }
-      const block = rehydrateHistoricalBlock(meeting, record.plan, record.ordinal, input.ids);
-      if (block.candidateLocator !== request.locatorIds[index]) {
-        throw new Error("PostgreSQL locator order or ownership is ambiguous");
-      }
-      for (const turn of block.turns) {
-        const canonical = Object.freeze({ endMs: turn.endMs,
-          sourceLocatorId: block.candidateLocator, speakerId: turn.speakerId,
-          startMs: turn.startMs, text: turn.text, turnHash: canonicalFinalReplyTurnHash(turn),
-          turnId: turn.turnId });
-        const previous = input.diagnostic === true
-          ? turns.find(value => value.turnId === canonical.turnId) : undefined;
-        if (previous !== undefined) {
-          if (previous.turnHash !== canonical.turnHash) {
-            throw new Error("diagnostic selected incompatible slices of one canonical turn");
-          }
-          continue;
-        }
-        turns.push(canonical);
-      }
-      const nextBinding = Object.freeze({ canonicalEvidenceHash: sha256Json(
-        turns.map(({ turnHash }) => turnHash)), memoryGeneration: block.indexGeneration,
-      transcriptVersion: block.binding.transcriptVersion });
-      if (binding !== null && binding.memoryGeneration !== nextBinding.memoryGeneration) {
-        throw new Error("PostgreSQL selected locators span ambiguous generations");
-      }
-      binding = nextBinding;
-    }
-    const resolved = binding ?? Object.freeze({ canonicalEvidenceHash: sha256Json([]),
-      memoryGeneration: "qualification-empty:v1", transcriptVersion: 0 });
-    state.set(options.attemptId, { ...execution, binding: resolved, turns: Object.freeze(turns) });
-    await input.audit.seal({ attemptId: options.attemptId,
-      kind: "selected_canonical_turns", plaintext: utf8Json(turns) });
-    return Object.freeze({ authorityGeneration: resolved.memoryGeneration,
-      canonicalEvidenceHash: resolved.canonicalEvidenceHash,
-      transcriptVersion: resolved.transcriptVersion, turns: Object.freeze(turns) });
-  } });
 }
 
 function createAnswerPort(input: CanonicalEngineInput,
@@ -453,21 +212,6 @@ function createAnswerPort(input: CanonicalEngineInput,
     claims: Object.freeze(generated.answer.claims.map(({ text }) => text)),
     status: "answered" as const });
   } });
-}
-
-async function sealRetrievalExchange(audit: QualificationEncryptedAuditPort, attemptId: string,
-  exchange: ReturnType<ProductionCanonicalQuestionChainInput["retrieval"]["takeExactExchange"]>): Promise<void> {
-  const settled = await Promise.allSettled([
-    audit.seal({ attemptId, kind: "capability_request",
-      plaintext: exchange.capabilityRequestBytes }),
-    audit.seal({ attemptId, kind: "capability_response",
-      plaintext: exchange.capabilityResponseBytes }),
-    audit.seal({ attemptId, kind: "retrieval_request", plaintext: exchange.requestBytes }),
-    audit.seal({ attemptId, kind: "retrieval_response", plaintext: exchange.responseBytes }),
-  ]);
-  const failure = settled.find((value): value is PromiseRejectedResult =>
-    value.status === "rejected");
-  if (failure !== undefined) {throw failure.reason;}
 }
 
 async function sealAnswerExchanges(audit: QualificationEncryptedAuditPort, attemptId: string,

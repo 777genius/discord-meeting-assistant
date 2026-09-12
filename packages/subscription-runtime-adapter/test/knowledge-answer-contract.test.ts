@@ -180,6 +180,10 @@ function historicalSource(meetingId: string) {
   };
 }
 
+function bytes(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
+}
+
 describe("Meeting Knowledge subscription runtime contract", () => {
   it("serializes only bounded locally rehydrated focused evidence", async () => {
     const runtime = new RuntimeFake();
@@ -381,7 +385,6 @@ describe("Meeting Knowledge subscription runtime contract", () => {
   });
 
   it("hashes ordered request/response boundaries and repair occurrence", () => {
-    const bytes = (value: string) => new TextEncoder().encode(value);
     const originalOnly = knowledgeAnswerExchangeInventorySha256([{
       callOrdinal: "original", requestBytes: bytes("request"), responseBytes: bytes("AB"),
     }]);

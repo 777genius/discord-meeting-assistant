@@ -107,8 +107,10 @@ describe("nonqualifying diagnostic concrete boundaries", () => {
       expect(auditKinds).toContain("selected_canonical_turns");
       expect(answerCalls).toBe(0);
       await expect(store.findCurrentCandidates(release.scopeId, release.roomId, ["foreign-locator"])).rejects.toThrow();
+      const staleOptions = { ...options, attemptId: `sqv4-${"b".repeat(64)}` };
+      expect((await chain.retrieval.retrieve(packet, staleOptions)).status).toBe("completed");
       await database.query("UPDATE meeting_core.meetings SET snapshot = jsonb_set(snapshot, '{transcript,version}', '2') WHERE meeting_id = $1", [snapshot.meetingId]);
-      await expect(chain.evidence.rehydrate({ locatorIds: locators, questionId: packet.questionId, scopeTopologyReference: packet.scopeTopologyReference }, options)).rejects.toThrow("changed");
+      await expect(chain.evidence.rehydrate({ locatorIds: locators, questionId: packet.questionId, scopeTopologyReference: packet.scopeTopologyReference }, staleOptions)).rejects.toThrow("changed");
     } finally { transport.close(); await http.close(); }
   }, 60_000);
 });

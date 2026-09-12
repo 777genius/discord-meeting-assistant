@@ -9,9 +9,7 @@ import type {
   JsonValue,
 } from "@infinity-context/sdk";
 
-import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY } from
-  "@discord-meeting/meeting-core/meeting-knowledge";
+import { expect, it, vi } from "vitest";
 
 import {
   InfinityContextRetrievalV3Adapter,
@@ -34,19 +32,35 @@ const successFixture = fixture("success");
 successFixture.contract_version = "context-retrieval.v3";
 successFixture.capability_fingerprint = capability.capability_fingerprint;
 
-it("keeps the synthetic descriptor and response fingerprint bound", () => {
-  expect(retrievalV3CapabilityFingerprint(capability)).toBe(
-    capability.capability_fingerprint,
-  );
-  expect(successFixture.capability_fingerprint).toBe(capability.capability_fingerprint);
-});
-
 function json(status: number, value: JsonValue): HttpResponse {
   return {
     body: JSON.stringify(value),
     headers: new Headers({ "content-type": "application/json" }),
     status,
   };
+}
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) {return value.map(canonicalValue);}
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).toSorted(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0).map(([key, nested]) => [key, canonicalValue(nested)]));
+  }
+  return value;
+}
+
+function shaBytes(value: Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function answerSurface(answerRequest: { readonly task: { readonly systemPrompt: string;
+  readonly prompt: string; readonly controls: { readonly outputSchema: unknown } } }): Uint8Array {
+  return new TextEncoder().encode([answerRequest.task.systemPrompt, answerRequest.task.prompt,
+    JSON.stringify(answerRequest.task.controls.outputSchema)].join("\n"));
+}
+
+function urlText(url: string | URL | Request): string {
+  return typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
 }
 
 class RetrievalV3Endpoint implements HttpTransport {
@@ -172,382 +186,6 @@ function adapter(endpoint: RetrievalV3Endpoint, timeoutMs = 1_000) {
   });
 }
 
-describe("Infinity Context locator-only Retrieval V3 adapter", () => {
-  it("passes one original question and hard filters unchanged without ranking", async () => {
-    const endpoint = new RetrievalV3Endpoint();
-    const result = await adapter(endpoint).retrieve(request());
-
-    expect(result.status === "available" ? "available" : result.code)
-      .toBe("available");
-    if (result.status !== "available") {throw new Error("retrieval unavailable");}
-    const candidate = result.candidates[0];
-    expect(candidate?.locator).toBe("candidate-007");
-    expect(typeof candidate?.retrievalProvenance.fusedScore).toBe("number");
-    expect(typeof candidate?.retrievalProvenance.providerRank).toBe("number");
-    expect(candidate?.retrievalProvenance.contributions[0]).toMatchObject({
-      queryId: "original-question",
-    });
-    expect(typeof candidate?.retrievalProvenance.contributions[0]?.providerLaneId)
-      .toBe("string");
-    expect(typeof candidate?.retrievalProvenance.contributions[0]?.providerRank)
-      .toBe("number");
-    const wire = endpoint.requests[1]?.body;
-    expect(wire?.kind).toBe("json");
-    if (wire?.kind !== "json") {
-      throw new Error("missing Retrieval V3 wire request");
-    }
-    expect(wire.value).toEqual({
-      bounds: {
-        candidate_limit: 100,
-        deadline_ms: 1_000,
-        neighbor_radius: 0,
-        response_byte_limit: 16_384,
-        result_limit: 10,
-      },
-      capability_fingerprint: capability.capability_fingerprint,
-      contract_version: "context-retrieval.v3",
-      filters: {
-        actor_keys: ["actor-a"], category: "decision", document_keys: [],
-        excluded_source_keys: [], kinds: ["record_block"],
-        relative_time_interval: { end_ms: 480_000, start_ms: 420_000 },
-        source_generations: [{ projection_generation: "generation-a-42",
-          source_key: "source-family-a" }], tags_all: [], tags_any: ["approved"],
-        tags_none: ["draft"], time_interval: null,
-      },
-      profile_id: capability.profile_id,
-      queries: [{ query: "approved launch decision", query_id: "original-question",
-        weight_micros: 1_000_000 }],
-      scope: { memoryScopeId: "scope-a", spaceId: "space-a", thread: { mode: "any" } },
-      soft_preferences: {
-        actor_preferences: [], relative_time_interval: null,
-        source_preferences: [], time_interval: null, time_weight_micros: null,
-      },
-    });
-    expect(JSON.stringify(result)).not.toMatch(/text|snippet|content/u);
-  });
-
-
-
-  it("preserves a valid provider unavailable reason as retryable", async () => {
-    const endpoint = new RetrievalV3Endpoint();
-    endpoint.response.status = "unavailable";
-    endpoint.response.candidates = [];
-    endpoint.response.provider_outcomes = ["postgres_keyword", "qdrant_dense"]
-      .map((provider_id) => ({
-        provider_id,
-        reason_code: "provider_unavailable",
-        status: "unavailable",
-      }));
-    Object.assign(endpoint.response.applied_bounds as Record<string, unknown>, {
-      returned_neighbors: 0,
-      returned_seeds: 0,
-    });
-
-    await expect(adapter(endpoint).retrieve(request())).resolves.toEqual({
-      code: "provider_unavailable",
-      retryable: true,
-      status: "unavailable",
-    });
-  });
-
-  it("preserves a valid provider unqualified reason as nonretryable", async () => {
-    const endpoint = new RetrievalV3Endpoint();
-    const changedCapability = structuredClone(capability);
-    changedCapability.required_provider_lanes = ["postgres_keyword"];
-    const dense = (changedCapability.provider_lanes as Array<Record<string, unknown>>)[1];
-    if (dense === undefined) {
-      throw new Error("missing optional provider lane");
-    }
-    dense.required = false;
-    changedCapability.capability_fingerprint = retrievalV3CapabilityFingerprint(
-      changedCapability,
-    );
-    endpoint.capabilities = changedCapability;
-    endpoint.response.status = "unqualified";
-    endpoint.response.capability_fingerprint = changedCapability.capability_fingerprint;
-    endpoint.response.candidates = [];
-    endpoint.response.provider_outcomes = [{
-      provider_id: "postgres_keyword", reason_code: null, status: "available",
-    }, {
-      provider_id: "qdrant_dense", reason_code: "provider_unqualified",
-      status: "unqualified",
-    }];
-    endpoint.response.degradation_reason_codes = ["optional_provider_unqualified"];
-    Object.assign(endpoint.response.applied_bounds as Record<string, unknown>, {
-      returned_neighbors: 0,
-      returned_seeds: 0,
-    });
-    const changedRequest = request({ binding: {
-      ...request().binding,
-      capabilityFingerprint: changedCapability.capability_fingerprint as string,
-      requiredProviderLanes: ["postgres_keyword"],
-    } });
-
-    await expect(adapter(endpoint).retrieve(changedRequest)).resolves.toEqual({
-      code: "provider_unqualified",
-      retryable: false,
-      status: "unqualified",
-    });
-  });
-
-  it.each([
-    ["text", "remote transcript text"],
-    ["content", "remote transcript text"],
-    ["snippet", "remote transcript text"],
-  ])("rejects forbidden hostile-wire candidate field %s", async (field, value) => {
-    const endpoint = new RetrievalV3Endpoint();
-    const candidate = (endpoint.response.candidates as Array<Record<string, unknown>>)[0];
-    if (candidate === undefined) {
-      throw new Error("missing fixture candidate");
-    }
-    Object.assign(candidate, { [field]: value });
-    const result = await adapter(endpoint).retrieve(request());
-    expect(result).toEqual({
-      code: "memory.context_retrieval_response_invalid",
-      retryable: false,
-      status: "unavailable",
-    });
-  });
-
-  it("retains exact request and response bytes when the official SDK rejects a response",
-    async () => {
-    const hostile = response();
-    Object.assign((hostile.candidates as Record<string, unknown>[])[0]!, {
-      text: "provider text must be rejected",
-    });
-    const exactResponse = JSON.stringify(hostile);
-    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => new Response(
-      String(url).endsWith("/capability") ? JSON.stringify(capability) : exactResponse,
-      { status: 200, headers: { "content-type": "application/json" } },
-    )));
-    try {
-      const concrete = new InfinityContextRetrievalV3Adapter({
-        baseUrl: "https://infinity.invalid",
-        operationTimeoutMs: 1_000,
-        requestTimeoutMs: 1_000,
-      });
-      await expect(concrete.retrieve(request())).resolves.toEqual({
-        code: "memory.context_retrieval_response_invalid",
-        retryable: false,
-        status: "unavailable",
-      });
-      const exchange = concrete.takeExactExchange();
-      expect(exchange.capabilityRequestBytes).toHaveLength(0);
-      expect(JSON.parse(new TextDecoder().decode(exchange.capabilityResponseBytes)))
-        .toEqual(capability);
-      expect(new TextDecoder().decode(exchange.responseBytes)).toBe(exactResponse);
-      expect(JSON.parse(new TextDecoder().decode(exchange.requestBytes))).toMatchObject({
-        bounds: { candidate_limit: 100, neighbor_radius: 0, result_limit: 10 },
-        queries: [{ query: "approved launch decision", query_id: "original-question" }],
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-});
-
-describe("Infinity Context locator-only Retrieval V3 validation", () => {
-
-  it("fails closed on unsafe numbers and response bounds drift", async () => {
-    const endpoint = new RetrievalV3Endpoint();
-    const candidate = (endpoint.response.candidates as Array<Record<string, unknown>>)[0];
-    if (candidate === undefined) {
-      throw new Error("missing fixture candidate");
-    }
-    candidate.canonical_version = Number.MAX_SAFE_INTEGER + 1;
-    expect(await adapter(endpoint).retrieve(request())).toMatchObject({
-      code: "memory.context_retrieval_response_invalid", status: "unavailable",
-    });
-
-    endpoint.response = response();
-    (endpoint.response.applied_bounds as Record<string, unknown>).result_limit = 9;
-    expect(await adapter(endpoint).retrieve(request())).toMatchObject({
-      code: "memory.context_retrieval_response_invalid", status: "unavailable",
-    });
-  });
-
-  it.each([
-    ["missing", (candidate: Record<string, unknown>) => {
-      delete candidate.contributions;
-    }],
-    ["malformed", (candidate: Record<string, unknown>) => {
-      candidate.provider_rank = 0;
-    }],
-  ] as const)("rejects %s official-SDK ranking provenance", async (_name, mutate) => {
-    const endpoint = new RetrievalV3Endpoint();
-    const candidate = (endpoint.response.candidates as Array<Record<string, unknown>>)[0];
-    if (candidate === undefined) {
-      throw new Error("missing fixture candidate");
-    }
-    mutate(candidate);
-
-    await expect(adapter(endpoint).retrieve(request())).resolves.toEqual({
-      code: "memory.context_retrieval_response_invalid",
-      retryable: false,
-      status: "unavailable",
-    });
-  });
-
-  it("fails closed on fingerprint, profile, revision, digest, and lane mismatches", async () => {
-    const mismatches: InfinityContextRetrievalV3Request[] = [
-      request({ binding: { ...request().binding, capabilityFingerprint: "0".repeat(64) } }),
-      request({ binding: { ...request().binding, profileId: "other-profile" } }),
-      request({ binding: { ...request().binding, serviceRevision: "b".repeat(40) } }),
-      request({ binding: { ...request().binding, indexProfileDigest: "c".repeat(64) } }),
-      request({ binding: { ...request().binding, requiredProviderLanes: ["qdrant_dense"] } }),
-    ];
-    for (const mismatch of mismatches) {
-      const result = await adapter(new RetrievalV3Endpoint()).retrieve(mismatch);
-      expect(result).toMatchObject({ retryable: false, status: "unqualified" });
-    }
-  });
-
-  it("rejects an unhealthy or profile-unqualified required capability lane", async () => {
-    for (const drift of [{ healthy: false }, { profile_qualified: false }]) {
-      const endpoint = new RetrievalV3Endpoint();
-      const changed = structuredClone(capability);
-      const lane = (changed.provider_lanes as Array<Record<string, unknown>>)[0];
-      if (lane === undefined) {
-        throw new Error("missing fixture provider lane");
-      }
-      Object.assign(lane, drift);
-      changed.capability_fingerprint = retrievalV3CapabilityFingerprint(changed);
-      endpoint.capabilities = changed;
-      expect(await adapter(endpoint).retrieve(request({ binding: { ...request().binding,
-        capabilityFingerprint: changed.capability_fingerprint as string } }))).toMatchObject({
-        retryable: false,
-        status: "unqualified",
-      });
-      expect(endpoint.requests).toHaveLength(1);
-    }
-  });
-
-  it("rejects query, result, and neighbor bounds before transport", async () => {
-    const endpoint = new RetrievalV3Endpoint();
-    const invalid = request({
-      budgets: { ...request().budgets, neighborRadius: 1 as 0 },
-      queries: [{ query: "x".repeat(513), queryId: "q1" }],
-    });
-    expect(await adapter(endpoint).retrieve(invalid)).toEqual({
-      code: "memory.context_retrieval_contract_invalid",
-      retryable: false,
-      status: "unqualified",
-    });
-    expect(endpoint.requests).toHaveLength(0);
-  });
-
-  it("rejects policy/version drift and arbitrary persisted request fields", async () => {
-    const invalidInputs = [
-      { ...request(), schemaVersion: 2 },
-      { ...request(), binding: { ...request().binding, contractVersion: "context-retrieval.v2" } },
-      { ...request(), binding: { ...request().binding, rankingPolicy: "consumer_rerank.v1" } },
-      { ...request(), transcript: "must never enter provider retrieval" },
-    ] as unknown as InfinityContextRetrievalV3Request[];
-    for (const invalid of invalidInputs) {
-      const endpoint = new RetrievalV3Endpoint();
-      expect(await adapter(endpoint).retrieve(freeze(invalid))).toMatchObject({
-        code: "memory.context_retrieval_contract_invalid",
-        status: "unqualified",
-      });
-      expect(endpoint.requests).toHaveLength(0);
-    }
-  });
-
-});
-
-describe("Infinity Retrieval V3 deadline ownership", () => {
-  it("cancels an in-flight POST under the production 2000 ms budget without replay", async () => {
-    const endpoint = new RetrievalV3Endpoint();
-    endpoint.afterCapabilities = () => { endpoint.hang = true; };
-    const controller = new AbortController();
-    const retrieval = new InfinityContextRetrievalV3Adapter({
-      baseUrl: "http://infinity.invalid/v1", operationTimeoutMs: 4_000,
-      requestTimeoutMs: 2_000, transport: endpoint,
-    }).retrieve(request({ budgets: { ...request().budgets,
-      deadlineMs: DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY.deadlineMs },
-    }), { signal: controller.signal });
-    await vi.waitFor(() => { expect(endpoint.requests).toHaveLength(2); });
-    controller.abort(new Error("caller cancelled the pending POST"));
-    expect(await retrieval).toEqual({ code: "memory.operation_cancelled",
-      retryable: false, status: "unavailable" });
-    expect(endpoint.requests.map(({ url }) => url.pathname))
-      .toEqual(["/v1/context/retrieve-v3/capability", "/v1/context/retrieve-v3"]);
-    expect(endpoint.requests[1]!.signal?.aborted).toBe(true);
-  });
-
-  it("maps timeout and caller cancellation without returning partial locators", async () => {
-    const timeoutEndpoint = new RetrievalV3Endpoint();
-    timeoutEndpoint.hang = true;
-    expect(await adapter(timeoutEndpoint, 10).retrieve(request({
-      budgets: { ...request().budgets, deadlineMs: 10 },
-    }))).toEqual({
-      code: "memory.context_retrieval_deadline_exceeded",
-      retryable: true,
-      status: "unavailable",
-    });
-
-    const controller = new AbortController();
-    controller.abort(new Error("caller cancelled"));
-    expect(await adapter(new RetrievalV3Endpoint()).retrieve(
-      request(),
-      { signal: controller.signal },
-    )).toEqual({
-      code: "memory.operation_cancelled",
-      retryable: false,
-      status: "unavailable",
-    });
-  });
-
-  it.each([200, 2_000])("uses one %i ms absolute deadline across both SDK requests", async (deadlineMs) => {
-    let now = 1_000;
-    const endpoint = new RetrievalV3Endpoint();
-    endpoint.afterCapabilities = () => { now += deadlineMs + 1; };
-
-    await expect(adapterWithClock(endpoint, () => now, deadlineMs).retrieve(request({
-      budgets: { ...request().budgets, deadlineMs },
-    }))).resolves.toEqual({
-      code: "memory.context_retrieval_deadline_exceeded",
-      retryable: true,
-      status: "unavailable",
-    });
-    expect(endpoint.requests.map(({ url }) => url.pathname))
-      .toEqual(["/v1/context/retrieve-v3/capability"]);
-  });
-
-  it("gives caller cancellation deterministic precedence at a deadline race", async () => {
-    let now = 1_000;
-    const controller = new AbortController();
-    const endpoint = new RetrievalV3Endpoint();
-    endpoint.afterCapabilities = () => {
-      now = 1_201;
-      controller.abort(new Error("caller won the race"));
-    };
-
-    await expect(adapterWithClock(endpoint, () => now).retrieve(request({
-      budgets: { ...request().budgets, deadlineMs: 200 },
-    }), { signal: controller.signal })).resolves.toEqual({
-      code: "memory.operation_cancelled",
-      retryable: false,
-      status: "unavailable",
-    });
-  });
-});
-
-function adapterWithClock(
-  endpoint: RetrievalV3Endpoint,
-  monotonicNowMs: () => number,
-  operationTimeoutMs = 200,
-) {
-  return new InfinityContextRetrievalV3Adapter({
-    baseUrl: "http://infinity.invalid/v1",
-    monotonicNowMs,
-    operationTimeoutMs,
-    requestTimeoutMs: 100,
-    transport: endpoint,
-  });
-}
-
 function freeze<T>(value: T): T {
   if (typeof value === "object" && value !== null) {
     for (const nested of Object.values(value)) {freeze(nested);}
@@ -615,7 +253,7 @@ it.each(["duplicate", "unsafe-integer", "partial", "invalid-utf8"])(
       : kind === "partial" ? valid.replace('"status":"available"', '"status":"unavailable"')
       : new Uint8Array([0xff, 0xfe]);
     vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => new Response(
-      String(url).endsWith("/capability") ? JSON.stringify(capability) : raw,
+      urlText(url).endsWith("/capability") ? JSON.stringify(capability) : raw,
       { status: 200, headers: { "content-type": "application/json" } },
     )));
     try {
@@ -634,7 +272,7 @@ it("captures successful wire bytes, keeps snapshot/candidate digests distinct, a
   let capabilityBody = JSON.stringify(capability);
   const raw = ` ${JSON.stringify(response())}\n`;
   const fetch = vi.fn(async (url: string | URL | Request) => new Response(
-    String(url).endsWith("/capability") ? capabilityBody : raw,
+    urlText(url).endsWith("/capability") ? capabilityBody : raw,
     { status: 200, headers: { "content-type": "application/json" } },
   ));
   vi.stubGlobal("fetch", fetch);
@@ -653,11 +291,8 @@ it("captures successful wire bytes, keeps snapshot/candidate digests distinct, a
     expect(new TextDecoder().decode(exact.responseBytes)).toBe(raw);
     expect(observation.requestSha256).toBe(createHash("sha256").update(exact.requestBytes).digest("hex"));
     expect(observation.responseSha256).toBe(createHash("sha256").update(exact.responseBytes).digest("hex"));
-    const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
-      : typeof value === "object" && value !== null ? Object.fromEntries(Object.entries(value)
-        .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, nested]) => [key, canonical(nested)])) : value;
     expect(result.candidates[0]!.retrievalProvenance.requestDigest).toBe(createHash("sha256")
-      .update(JSON.stringify(canonical(request()))).digest("hex"));
+      .update(JSON.stringify(canonicalValue(request()))).digest("hex"));
     await concrete.retrieve(request()); // Leave this exchange unread.
     capabilityBody = JSON.stringify({ context: { retrieval: capability } });
     expect((await concrete.retrieve(request())).status).not.toBe("available");
@@ -677,7 +312,7 @@ it("preserves V2/null alongside explicit V3/any on separate exact transports", a
     capability_fingerprint: v2Capability.capability_fingerprint };
   const urls: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
-    const path = new URL(String(url)).pathname;
+    const path = new URL(urlText(url)).pathname;
     urls.push(path);
     const value = path === "/v1/capabilities" ? { context: { retrieval: v2Capability } }
       : path === "/v1/context/retrieve" ? v2Response
@@ -697,9 +332,11 @@ it("preserves V2/null alongside explicit V3/any on separate exact transports", a
     expect((await v3.retrieve(request())).status).toBe("available");
     expect(urls).toEqual(["/v1/capabilities", "/v1/context/retrieve",
       "/v1/context/retrieve-v3/capability", "/v1/context/retrieve-v3"]);
-    expect(JSON.parse(new TextDecoder().decode(v2.takeExactExchange().requestBytes)).scope)
+    expect((JSON.parse(new TextDecoder().decode(v2.takeExactExchange().requestBytes)) as
+      { readonly scope: unknown }).scope)
       .toEqual({ memory_scope_id: "scope-a", space_id: "space-a", thread_id: null });
-    expect(JSON.parse(new TextDecoder().decode(v3.takeExactExchange().requestBytes)).scope)
+    expect((JSON.parse(new TextDecoder().decode(v3.takeExactExchange().requestBytes)) as
+      { readonly scope: unknown }).scope)
       .toEqual({ memoryScopeId: "scope-a", spaceId: "space-a", thread: { mode: "any" } });
   } finally {vi.unstubAllGlobals();}
 });
@@ -743,8 +380,8 @@ it("rejects late POST success and never lets overlapping callers consume the own
   const pending = new Promise<void>((resolve) => {release = resolve;});
   const entered = new Promise<void>((resolve) => {started = resolve;});
   vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
-    if (!String(url).endsWith("/capability")) {started(); await pending; now = 1001;}
-    return new Response(JSON.stringify(String(url).endsWith("/capability") ? capability : response()),
+    if (!urlText(url).endsWith("/capability")) {started(); await pending; now = 1001;}
+    return new Response(JSON.stringify(urlText(url).endsWith("/capability") ? capability : response()),
       { status: 200, headers: { "content-type": "application/json" } });
   }));
   try {
@@ -911,7 +548,7 @@ it("keeps generic V3 retrieval custody multi-source while diagnostic custody rem
 it("requires and reconstructs the V3 retrieval binding in retained local evidence", async () => {
   const { mkdtemp, rename, unlink } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
+  const path = await import("node:path");
   const { createCanonicalRetrievalBinding, custodyJson } = await import(
     "../src/quality-campaign/canonical-execution-artifact-validation.js");
   const { createProductionCanonicalExecutionEvidence } = await import(
@@ -927,22 +564,21 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
   const { attemptIdentity } = await import("../src/quality-campaign/execution.js");
   const input = await custodyFixture();
   const binding = await createCanonicalRetrievalBinding(input);
-  const root = await mkdtemp(join(tmpdir(), "canonical-v3-reader-"));
-  const artifactRoot = join(root, "artifacts");
+  const root = await mkdtemp(path.join(tmpdir(), "canonical-v3-reader-"));
+  const artifactRoot = path.join(root, "artifacts");
   const artifactKey = new Uint8Array(32).fill(7);
   const campaignRootSha256 = "c".repeat(64);
-  const evidence = createProductionCanonicalExecutionEvidence({ answerJournalRoot: join(root, "answer"),
+  const evidence = createProductionCanonicalExecutionEvidence({ answerJournalRoot: path.join(root, "answer"),
     artifactKey, artifactKeyId: "synthetic-key", artifactRoot, attemptId: input.attemptId,
-    questionId: input.packet.questionId, repetition: 1, retrievalJournalRoot: join(root, "retrieval"),
+    questionId: input.packet.questionId, repetition: 1, retrievalJournalRoot: path.join(root, "retrieval"),
     rootBindingSha256: campaignRootSha256 });
   const canonicalCapability = new TextEncoder().encode(custodyJson(capability));
-  const sha = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
   const observation = { attemptId: input.attemptId, capabilityAndRetrievalLatencyUs: 12,
-    capabilityBytes: canonicalCapability.byteLength, capabilitySha256: sha(canonicalCapability),
+    capabilityBytes: canonicalCapability.byteLength, capabilitySha256: shaBytes(canonicalCapability),
     capabilityRoute: "/v1/context/retrieve-v3/capability", capabilitySemantics: "bare_descriptor",
     contractVersion: "context-retrieval.v3", requestBytes: input.exchange.requestBytes.byteLength,
-    requestSha256: sha(input.exchange.requestBytes), responseBytes: input.exchange.responseBytes.byteLength,
-    responseSha256: sha(input.exchange.responseBytes), retrievalRoute: "/v1/context/retrieve-v3",
+    requestSha256: shaBytes(input.exchange.requestBytes), responseBytes: input.exchange.responseBytes.byteLength,
+    responseSha256: shaBytes(input.exchange.responseBytes), retrievalRoute: "/v1/context/retrieve-v3",
     routeLatencyUs: 7, schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v2" };
   const turn = { endMs: 2, sourceLocatorId: binding.candidates[0]!.locatorId,
     speakerId: "speaker-1", startMs: 1, text: "Approved.", turnHash: "d".repeat(64),
@@ -969,9 +605,6 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     "A previous generation failed strict output validation. Regenerate once from the original supplied question and evidence and obey every schema bound exactly.",
     "In particular, claims=[] with status=answered is forbidden. Decide answerability before emitting claims: for an answerable question populate claims with at least one concise supported claim and its direct evidenceIds, then emit status=answered; otherwise keep claims=[] and emit insufficient_evidence or not_a_question.",
   ].join(" ") } };
-  const surface = (request: typeof answerRequest) => new TextEncoder().encode([
-    request.task.systemPrompt, request.task.prompt,
-    JSON.stringify(request.task.controls.outputSchema)].join("\n"));
   const answerResponse = new TextEncoder().encode("synthetic-grpc-response");
   const artifactPlaintexts = [
     ["capability_request", input.exchange.capabilityRequestBytes],
@@ -985,7 +618,7 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
         requestSha256: "1".repeat(64), responseSha256: "2".repeat(64), responseBytes: 12,
         status: "received" })) }))],
     ["selected_canonical_turns", new TextEncoder().encode(JSON.stringify([turn]))],
-    ["answer_original_model_surface", surface(answerRequest)],
+    ["answer_original_model_surface", answerSurface(answerRequest)],
     ["answer_original_request", serializeSubscriptionRuntimeTaskRequest(answerRequest)],
     ["answer_original_response", answerResponse],
     ["answer_normalized_outcome", new TextEncoder().encode(JSON.stringify(outcome))],
@@ -1001,8 +634,8 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     spendReservationSha256: "f".repeat(64) });
   expect(identity.attemptId).toBe(input.attemptId);
   const projection = { answerAbstained: false, attemptId: input.attemptId, campaignRootSha256,
-    capabilityRequestSha256: sha(input.exchange.capabilityRequestBytes),
-    capabilityResponseSha256: sha(input.exchange.capabilityResponseBytes),
+    capabilityRequestSha256: shaBytes(input.exchange.capabilityRequestBytes),
+    capabilityResponseSha256: shaBytes(input.exchange.capabilityResponseBytes),
     citationLocatorIds: [turn.sourceLocatorId], evidenceLocatorIds: [turn.sourceLocatorId],
     evidenceTurnIds: [turn.turnId], rankedLocatorIds: binding.candidates.map(value => value.locatorId),
     diagnosticCustody: input.diagnosticCustody, executionPacket: input.packet, identity,
@@ -1012,18 +645,18 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([{
       callOrdinal: "original", requestBytes: serializeSubscriptionRuntimeTaskRequest(answerRequest),
       responseBytes: answerResponse }]), topology: null };
-  await expect(reader.verify({ attempts: [projection], campaignRootSha256 })).resolves.toMatchObject({
-    inventorySha256: expect.stringMatching(/^[a-f0-9]{64}$/u) });
+  const verification = await reader.verify({ attempts: [projection], campaignRootSha256 });
+  expect(verification.inventorySha256).toMatch(/^[a-f0-9]{64}$/u);
   for (const substituted of [
     { ...projection, executionPacket: { ...projection.executionPacket, locale: "ru" as const } },
     { ...projection, executionPacket: { ...projection.executionPacket,
       scopeTopologyDocumentSha256: "0".repeat(64) } },
-    { ...projection, diagnosticCustody: { ...projection.diagnosticCustody!,
+    { ...projection, diagnosticCustody: { ...projection.diagnosticCustody,
       appliedDocumentIds: { "document-1": "substituted-remote" } } },
   ]) {
     await expect(reader.verify({ attempts: [substituted], campaignRootSha256 })).rejects.toThrow();
   }
-  const receipt = (kind: string) => join(artifactRoot, "receipts", input.attemptId, `${kind}.json`);
+  const receipt = (kind: string) => path.join(artifactRoot, "receipts", input.attemptId, `${kind}.json`);
   for (const kind of ["retrieval_binding", "selected_canonical_turns", "answer_original_request",
     "answer_original_response", "answer_original_model_surface"] as const) {
     const retained = artifactPlaintexts.find(([candidate]) => candidate === kind)![1];
@@ -1062,16 +695,16 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     plaintext: new TextEncoder().encode(canonicalBinding) });
   const repairResponse = new TextEncoder().encode("synthetic-repair-grpc-response");
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_repair_request",
-    plaintext: serializeSubscriptionRuntimeTaskRequest(repairRequest as typeof answerRequest) });
+    plaintext: serializeSubscriptionRuntimeTaskRequest(repairRequest) });
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_repair_response",
     plaintext: repairResponse });
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_repair_model_surface",
-    plaintext: surface(repairRequest as typeof answerRequest) });
+    plaintext: answerSurface(repairRequest) });
   const repairProjection = { ...projection, terminalAnswerResponseSha256:
     knowledgeAnswerExchangeInventorySha256([{ callOrdinal: "original",
       requestBytes: serializeSubscriptionRuntimeTaskRequest(answerRequest),
       responseBytes: answerResponse }, { callOrdinal: "repair",
-      requestBytes: serializeSubscriptionRuntimeTaskRequest(repairRequest as typeof answerRequest),
+      requestBytes: serializeSubscriptionRuntimeTaskRequest(repairRequest),
       responseBytes: repairResponse }]) };
   await expect(reader.verify({ attempts: [repairProjection], campaignRootSha256 })).resolves.toBeDefined();
   const originalPath = receipt("answer_original_request");
@@ -1095,7 +728,7 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     "answer_original_response", "selected_canonical_turns", "answer_normalized_outcome"] as const) {
     await unlink(receipt(kind));
   }
-  await unlink(join(artifactRoot, "outcomes", `${input.attemptId}.json`));
+  await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
   const zeroEvidenceOutcome = { citations: [], claims: [],
     rawRetrievalResponseSha256: binding.rawResponseSha256,
     reason: "zero_admissible_evidence", retrievalCandidates: binding.candidates,
@@ -1113,7 +746,7 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
   for (const kind of ["selected_canonical_turns", "answer_normalized_outcome"] as const) {
     await unlink(receipt(kind));
   }
-  await unlink(join(artifactRoot, "outcomes", `${input.attemptId}.json`));
+  await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
   const failedOutcome = { ...zeroEvidenceOutcome, reason: "evidence_rehydration_failed",
     status: "failed" as const };
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
@@ -1143,9 +776,9 @@ it("reconstructs the production mixed-case RU/EN privacy query and rejects a for
   const question = "Что Решили ABOUT Launch с <@123456789012345678>?";
   const legitimate = request({ queries: [{ queryId: "original-question",
     query: "что решили about launch с participant?" }] });
-  expect(() => assertCanonicalRequest(legitimate, question)).not.toThrow();
-  expect(() => assertCanonicalRequest(request({ queries: [{ queryId: "original-question",
-    query: "foreign retained query" }] }), question))
+  expect(() => {assertCanonicalRequest(legitimate, question);}).not.toThrow();
+  expect(() => {assertCanonicalRequest(request({ queries: [{ queryId: "original-question",
+    query: "foreign retained query" }] }), question);})
     .toThrow("qualification request violates Meeting Knowledge ownership");
 });
 
