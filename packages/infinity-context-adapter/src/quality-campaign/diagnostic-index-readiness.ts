@@ -1,3 +1,5 @@
+import * as sdk from "@infinity-context/sdk";
+import type { DiagnosticV3ProviderBinding } from "./diagnostic-manifest.js";
 import { randomUUID } from "node:crypto";
 import { FetchTransport, InfinityContextClient, InfinityContextError, assertRetrievalCapability,
   type HttpTransport } from "@infinity-context/sdk";
@@ -124,4 +126,93 @@ function observe(value: unknown, binding: FocusedLocatorRetrievalV2ProviderBindi
   return lanes.some(lane => lane !== null && binding.requiredProviderLanes.includes(String(lane.provider_id)) &&
     lane.required === true && (lane.healthy === false || lane.profile_qualified === false))
     ? "provider_unready" : "invalid_capability";
+}
+
+/** V3-only barrier. Requires the authentic SDK V3 public surface; never falls back to V2. */
+export async function awaitDiagnosticIndexReadinessV3(input: {
+  readonly baseUrl: string;
+  readonly token: string;
+  readonly binding: DiagnosticV3ProviderBinding;
+  readonly custody: Pick<DiagnosticCustody, "retain">;
+  readonly transport?: HttpTransport;
+}): Promise<DiagnosticIndexPreparation> {
+  const started = performance.now(), deadline = started + PREPARATION_TIMEOUT_MS;
+  const binding = Object.freeze({ ...input.binding,
+    requiredProviderLanes: Object.freeze([...input.binding.requiredProviderLanes]) });
+  const observer = new V3ReadinessTransport(input.transport ?? new FetchTransport(), binding);
+  const client = new InfinityContextClient({ baseUrl: input.baseUrl, token: input.token,
+    retryPolicy: { maxAttempts: 1 }, timeoutMs: 2_000, transport: observer });
+  let probes = 0, lastProbeCode: ProbeCode = "invalid_capability", ready = false;
+  const validBinding = binding.contractVersion === "context-retrieval.v3" &&
+    binding.rankingPolicy === sdk.CONTEXT_RETRIEVAL_RANKING_POLICY &&
+    /^[a-f0-9]{64}$/u.test(binding.indexProfileDigest) &&
+    /^[a-f0-9]{64}$/u.test(binding.capabilityFingerprint) &&
+    /^[a-f0-9]{40}$/u.test(binding.serviceRevision) &&
+    binding.profileId === `locator-v2-full-${binding.indexProfileDigest}` &&
+    JSON.stringify(binding.requiredProviderLanes) === JSON.stringify(["postgres_keyword", "qdrant_dense"]);
+  while (validBinding && performance.now() < deadline) {
+    probes += 1;
+    observer.reset();
+    try {
+      const capability = await client.context.retrievalV3Capability({
+        timeoutMs: Math.max(1, Math.min(2_000, Math.floor(deadline - performance.now()))) });
+      lastProbeCode = v3PinsMatch(capability, binding) &&
+        capability.capability_fingerprint === binding.capabilityFingerprint ? "ready" : "foreign_binding";
+    } catch (error) {
+      lastProbeCode = error instanceof InfinityContextError &&
+        error.code === "memory.context_retrieval_capability_mismatch" ? observer.observation :
+        error instanceof InfinityContextError &&
+        ["memory.request_timeout", "memory.context_retrieval_deadline_exceeded"].includes(error.code)
+          ? "request_timeout" : "request_failed";
+    }
+    if (performance.now() >= deadline) {break;}
+    if (lastProbeCode === "ready") {ready = true; break;}
+    if (lastProbeCode !== "provider_unready") {break;}
+    await new Promise<void>(resolve => {setTimeout(resolve,
+      Math.min(1_000, Math.max(0, deadline - performance.now())));});
+  }
+  const preparation: DiagnosticIndexPreparation = { status: ready ? "ready" : "blocked",
+    reason: ready ? null : performance.now() >= deadline ? "diagnostic_index_readiness_timeout"
+      : "diagnostic_index_readiness_failed",
+    elapsedMs: Math.max(0, Math.ceil(performance.now() - started)), probes, lastProbeCode };
+  await input.custody.retain(`index-preparation-${randomUUID()}`, preparation);
+  if (!ready) {throw new DiagnosticIndexReadinessError(preparation);}
+  return preparation;
+}
+
+function v3PinsMatch(capability: sdk.RetrievalV3Capability, binding: DiagnosticV3ProviderBinding): boolean {
+  return capability.contract_version === binding.contractVersion &&
+    capability.endpoint === "/v1/context/retrieve-v3" &&
+    capability.service_revision === binding.serviceRevision &&
+    capability.index_profile_digest === binding.indexProfileDigest &&
+    capability.profile_id === binding.profileId && capability.ranking_policy === binding.rankingPolicy &&
+    JSON.stringify(capability.required_provider_lanes) === JSON.stringify(binding.requiredProviderLanes);
+}
+
+class V3ReadinessTransport implements HttpTransport {
+  public observation: ProbeCode = "invalid_capability";
+  public reset(): void {this.observation = "invalid_capability";}
+  public constructor(readonly delegate: HttpTransport, readonly binding: DiagnosticV3ProviderBinding) {}
+  public async send(request: Parameters<HttpTransport["send"]>[0]) {
+    const response = await this.delegate.send(request);
+    if (response.status !== 200) {return response;}
+    try {
+      const bytes = typeof response.body === "string" ? Buffer.from(response.body) : response.body;
+      if (bytes.byteLength > 65_536) {return response;}
+      const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as sdk.RetrievalV3Capability;
+      // This projection permits only retry classification. The original bytes always go to the SDK,
+      // whose strict JSON failure (including duplicate keys) cannot authorize another probe.
+      const restored = sdk.decodeRetrievalV3Capability({ ...value,
+        provider_lanes: value.provider_lanes.map(lane => lane.required === true
+          ? { ...lane, healthy: true, profile_qualified: true } : lane) });
+      if (!v3PinsMatch(restored, this.binding)) {this.observation = "foreign_binding";}
+      else if (await sdk.retrievalCapabilityFingerprint(value) === value.capability_fingerprint &&
+        await sdk.retrievalCapabilityFingerprint(restored) === this.binding.capabilityFingerprint &&
+        value.provider_lanes.some(lane => lane.required === true &&
+          (lane.healthy === false || lane.profile_qualified === false)) &&
+        value.provider_lanes.every(lane => typeof lane.healthy === "boolean" &&
+          typeof lane.profile_qualified === "boolean")) {this.observation = "provider_unready";}
+    } catch {this.observation = "invalid_capability";}
+    return response;
+  }
 }

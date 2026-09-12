@@ -92,3 +92,56 @@ export function decodeDiagnosticManifest(value: unknown): DiagnosticManifest {
       requiredProviderLanes:Object.freeze([...provider.requiredProviderLanes as string[]])}),
     questions: decodeDiagnosticQuestions(v.questions) }) as unknown as DiagnosticManifest;
 }
+
+/** Supplied artifact identity is an input to installation verification, not proof of installation. */
+export interface DiagnosticSdkIdentity {
+  readonly packageName: "@infinity-context/sdk";
+  readonly version: string;
+  readonly sourceRevision: string;
+  readonly tarballSha256: string;
+  readonly manifestSha256: string;
+}
+export interface DiagnosticV3ProviderBinding extends Omit<FocusedLocatorRetrievalV2ProviderBinding, "contractVersion"> {
+  readonly contractVersion: "context-retrieval.v3";
+}
+export interface DiagnosticManifestV2 extends Omit<DiagnosticManifest, "schemaVersion" | "sdkVersion" | "providerBinding"> {
+  readonly schemaVersion: "meeting_knowledge.real40_diagnostic.v2";
+  readonly sdkIdentity: DiagnosticSdkIdentity;
+  readonly threadSelector: { readonly mode: "any" };
+  readonly providerBinding: DiagnosticV3ProviderBinding;
+}
+
+export function decodeDiagnosticManifestV2(value: unknown): DiagnosticManifestV2 {
+  const v = exactRecord(value, ["schemaVersion", "authorityKind", "runId", "sourceRevision", "sdkIdentity",
+    "threadSelector", "model", "reasoningEffort", "serviceTier", "frozen", "rosterSha256",
+    "providerBinding", "questions", "connections"], "diagnostic manifest v2");
+  if (v.schemaVersion !== "meeting_knowledge.real40_diagnostic.v2") {throw new Error("invalid diagnostic version");}
+  const sdk = exactRecord(v.sdkIdentity, ["packageName", "version", "sourceRevision", "tarballSha256", "manifestSha256"], "diagnostic SDK identity");
+  if (sdk.packageName !== "@infinity-context/sdk" || typeof sdk.version !== "string" ||
+    !/^0\.3\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(sdk.version) ||
+    typeof sdk.sourceRevision !== "string" || !/^[a-f0-9]{40}$/u.test(sdk.sourceRevision)) {
+    throw new Error("invalid diagnostic SDK identity");
+  }
+  digest(sdk.tarballSha256, "SDK tarball"); digest(sdk.manifestSha256, "SDK manifest");
+  const selector = exactRecord(v.threadSelector, ["mode"], "diagnostic thread selector");
+  if (selector.mode !== "any") {throw new Error("diagnostic v2 requires any selector");}
+  const provider = exactRecord(v.providerBinding, ["capabilityFingerprint", "contractVersion", "indexProfileDigest",
+    "profileId", "rankingPolicy", "requiredProviderLanes", "serviceRevision"], "diagnostic v3 provider");
+  if (typeof provider.serviceRevision !== "string" || !/^[a-f0-9]{40}$/u.test(provider.serviceRevision) ||
+    provider.contractVersion !== "context-retrieval.v3") {throw new Error("diagnostic v2 requires V3");}
+  // Reuse only unchanged validation rules. This projection is never returned or executed as V1.
+  const { sdkIdentity: _sdk, threadSelector: _selector, ...common } = v;
+  const validated = decodeDiagnosticManifest({ ...common, schemaVersion: "meeting_knowledge.real40_diagnostic.v1",
+    sdkVersion: "0.2.4", providerBinding: { ...provider, contractVersion: CONTEXT_RETRIEVAL_CONTRACT } });
+  const { sdkVersion: _version, ...fields } = validated;
+  return Object.freeze({ ...fields, schemaVersion: "meeting_knowledge.real40_diagnostic.v2",
+    sdkIdentity: Object.freeze({ ...sdk }) as unknown as DiagnosticSdkIdentity,
+    threadSelector: Object.freeze({ mode: "any" }),
+    providerBinding: Object.freeze({ ...validated.providerBinding, contractVersion: "context-retrieval.v3" }) });
+}
+
+/** Explicit version dispatch for new runner/scorer wiring; the original decoder remains V1-only. */
+export function decodeVersionedDiagnosticManifest(value: unknown): DiagnosticManifest | DiagnosticManifestV2 {
+  return (value as { schemaVersion?: unknown } | null)?.schemaVersion === "meeting_knowledge.real40_diagnostic.v2"
+    ? decodeDiagnosticManifestV2(value) : decodeDiagnosticManifest(value);
+}
