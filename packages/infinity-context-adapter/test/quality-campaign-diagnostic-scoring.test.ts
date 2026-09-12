@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { HistoricalIndexPlanV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { scoreDiagnostic } from "../src/quality-campaign/diagnostic-scoring.js";
+import type { DiagnosticManifestV2 } from "../src/quality-campaign/diagnostic-manifest.js";
+import { sha256 } from "../src/quality-campaign/canonical.js";
 const fixture=()=>({
   questions:Array.from({length:40},(_,i)=>({questionId:`q${i}`,locale:"en" as const})),
   outcomes:Array.from({length:40},(_,i)=>({questionId:`q${i}`,status:"failed" as "failed"|"answered"|"outcome_unknown"|"abstained",retrievedLocators:[] as string[]})),
@@ -59,5 +61,40 @@ describe("post-execution diagnostic retrieval scoring",()=> {
     for(const retrieved of [["foreign"],["b1","b1"]]) {
       const f=fixture();f.outcomes[0]!.retrievedLocators=retrieved;expect(()=>scoreDiagnostic(f)).toThrow();
     }
+  });
+  it("dispatches V2 scoring only for the same installed SDK, module and selected contracts",()=> {
+    const f=fixture(), digest="a".repeat(64), revision="b".repeat(40);
+    const sdk={packageName:"@infinity-context/sdk" as const,version:"0.3.1",
+      sourceRevision:revision,tarballSha256:"c".repeat(64),manifestSha256:"d".repeat(64)};
+    const manifest={schemaVersion:"meeting_knowledge.real40_diagnostic.v2",sourceRevision:revision,
+      sdkIdentity:sdk,threadSelector:{mode:"any"},providerBinding:{contractVersion:"context-retrieval.v3"},
+      frozen:{snapshotSha256:digest,transcriptSha256:"e".repeat(64)},rosterSha256:"f".repeat(64)} as unknown as DiagnosticManifestV2;
+    const installed={...sdk,loadedEntrypointSha256:"1".repeat(64)};
+    const report={schemaVersion:"meeting_knowledge.real40_diagnostic_report.v2",qualifying:false,
+      rootBindingSha256:sha256({manifest,loadedModuleSha256:"3".repeat(64),
+        loadedSdkSha256:installed.loadedEntrypointSha256}),declaredSourceRevision:revision,
+      sourceRevisionAuthority:"owner_declared_unverified",loadedModuleSha256:"3".repeat(64),
+      loadedSdkSha256:installed.loadedEntrypointSha256,snapshotSha256:digest,
+      transcriptSha256:"e".repeat(64),rosterSha256:"f".repeat(64),planSha256:sha256(f.plan),
+      questionDenominator:40,indexPreparation:{status:"ready"},counts:{answered:0,abstained:0,failed:40,unknown:0},
+      factualAccuracy:"UNMEASURED",recall:"UNMEASURED_REQUIRES_SEPARATE_GOLD_MAPPING",
+      questions:f.outcomes.map(outcome=>({questionId:outcome.questionId,status:outcome.status,
+        retrievedCount:outcome.retrievedLocators.length})),
+      executingModuleIdentity:{loadedModuleSha256:"3".repeat(64)},sdkIdentity:sdk,
+      executingSdkIdentity:installed,
+      selectedContracts:{manifest:manifest.schemaVersion,report:"meeting_knowledge.real40_diagnostic_report.v2",
+        retrieval:"context-retrieval.v3",threadSelector:{mode:"any"}}};
+    const authentication={manifest,report,installedSdkIdentity:installed,
+      loadedModuleSha256:"3".repeat(64)};
+    const score=scoreDiagnostic({...f,authentication});
+    expect(score.schemaVersion).toBe("meeting_knowledge.real40_diagnostic_score.v2");
+    expect("authenticatedExecution" in score && score.authenticatedExecution.sdkIdentity)
+      .toEqual(installed);
+    for(const changed of [
+      {...authentication,installedSdkIdentity:{...installed,tarballSha256:"9".repeat(64)}},
+      {...authentication,loadedModuleSha256:"8".repeat(64)},
+      {...authentication,report:{...report,selectedContracts:{...report.selectedContracts,
+        retrieval:"context-retrieval.v2"}}},
+    ]) expect(()=>scoreDiagnostic({...f,authentication:changed})).toThrow();
   });
 });

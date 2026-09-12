@@ -1,8 +1,9 @@
 import { InfinityRetrievalScopeResolution } from "../infinity-retrieval-scope-resolution.js";
 import { isAbsolute, resolve } from "node:path";
 
-import { PrepareFocusedLocatorRetrievalV2Request,
-  type FocusedLocatorRetrievalV2ProviderBinding } from
+import { PrepareFocusedLocatorRetrievalV2Request, PrepareFocusedLocatorRetrievalV3Request,
+  type FocusedLocatorRetrievalV2ProviderBinding,
+  type FocusedLocatorRetrievalV3ProviderBinding } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
   PostgresHistoricalRoomAuthoritySnapshot, PinnedLegacyHistoricalReceiptVerifier,
@@ -10,12 +11,15 @@ import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore,
 import { createGrpcQualifiedGroundedAnswerAdapter, GrpcSubscriptionRuntimeTransport,
   subscriptionRuntimeCliEngine, type KnowledgeAnswerQualificationExecutionBinding } from
   "@discord-meeting/subscription-runtime-adapter";
-import { CONTEXT_RETRIEVAL_CONTRACT, CONTEXT_RETRIEVAL_RANKING_POLICY } from
+import { CONTEXT_RETRIEVAL_CONTRACT, CONTEXT_RETRIEVAL_RANKING_POLICY,
+  decodeRetrievalV3Capability, retrievalCapabilityFingerprint,
+  type RetrievalV3Capability } from
   "@infinity-context/sdk";
 import { Pool } from "pg";
 
 import { HmacHistoricalOpaqueIds } from "../hmac-historical-ids.js";
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
+import { InfinityContextRetrievalV3Adapter } from "../infinity-context-retrieval-v3.js";
 import { digest, exactRecord, safeId, sha256 } from "./canonical.js";
 import { verifyExternalSignedValue } from "./execution.js";
 import { ExecuteAdmittedQualificationQuestion,
@@ -42,6 +46,8 @@ export interface ProductionCanonicalExecutionConnectionConfiguration {
   readonly infinityTokenPath: string;
   readonly postgresUrlPath: string;
   readonly requestTimeoutMs: number;
+  /** Omitted preserves the installed V2 production path byte-for-byte. */
+  readonly retrievalContractVersion?: "context-retrieval.v2" | "context-retrieval.v3";
   readonly retrievalJournalRoot: string;
   readonly runtimeAddress: string;
   readonly runtimeTokenPath: string;
@@ -89,8 +95,12 @@ export async function createProductionCanonicalExecutorFactory(
     postgresUrl.trim() === "" || runtimeToken.trim().length < 16 || topologyKey.byteLength < 32) {
     throw new Error("canonical execution credentials or encryption material are invalid");
   }
-  const capability = decodeCapability(capabilityValue);
-  const providerBinding = providerBindingFrom(capability);
+  const retrievalContractVersion = config.retrievalContractVersion ?? "context-retrieval.v2";
+  const capability = retrievalContractVersion === "context-retrieval.v3"
+    ? decodeRetrievalV3Capability(capabilityValue) : decodeCapability(capabilityValue);
+  const providerBinding = retrievalContractVersion === "context-retrieval.v3"
+    ? await providerBindingFromV3(capability as RetrievalV3Capability)
+    : providerBindingFrom(capability as ReturnType<typeof decodeCapability>);
   const runtimeBinding = decodeRuntimeBinding(executionBindingValue);
   const topology = decodeTopology(topologyValue, config.topologyAuthority.keyId,
     topologyPublicKeyPem, config.actorKeyProfileId);
@@ -99,11 +109,18 @@ export async function createProductionCanonicalExecutorFactory(
   const store = new PostgresHistoricalMemoryStore(pool);
   const evidenceAuthority = new PostgresHistoricalEvidenceAuthority(pool, undefined, legacyVerifier);
   const ids = new HmacHistoricalOpaqueIds(topologyKey, topology.actorKeyProfileId);
-  const preparer = new PrepareFocusedLocatorRetrievalV2Request({ ids, providerBinding,
+  const preparationDependencies = { ids, providerBinding,
     scopeResolution: new InfinityRetrievalScopeResolution({ baseUrl: config.infinityBaseUrl,
       token: infinityToken.trim(), operationTimeoutMs: Math.min(config.requestTimeoutMs * 2, 500),
       requestTimeoutMs: Math.min(config.requestTimeoutMs, 500) }),
-    snapshot: new PostgresHistoricalRoomAuthoritySnapshot(pool, undefined, legacyVerifier) });
+    snapshot: new PostgresHistoricalRoomAuthoritySnapshot(pool, undefined, legacyVerifier) };
+  const retrievalComposition = retrievalContractVersion === "context-retrieval.v3"
+    ? Object.freeze({ contractVersion: retrievalContractVersion,
+        preparer: new PrepareFocusedLocatorRetrievalV3Request({ ...preparationDependencies,
+          providerBinding: providerBinding as FocusedLocatorRetrievalV3ProviderBinding }) })
+    : Object.freeze({ contractVersion: retrievalContractVersion,
+        preparer: new PrepareFocusedLocatorRetrievalV2Request({ ...preparationDependencies,
+          providerBinding: providerBinding as FocusedLocatorRetrievalV2ProviderBinding }) });
   const transport = new GrpcSubscriptionRuntimeTransport({ address: config.runtimeAddress,
     serviceToken: runtimeToken.trim() });
   const topologyPort = topologyResolver(topology);
@@ -144,12 +161,18 @@ export async function createProductionCanonicalExecutorFactory(
         expectedRuntimeEngine: subscriptionRuntimeCliEngine, maxOutputTokens: 2_048 },
       transport,
     });
-    const chain = createProductionCanonicalQuestionChain({ answer, audit: evidence.audit,
-      evidenceAuthority, ids, journal: guardedJournal, preparer,
-      retrieval: new InfinityContextRetrievalV2Adapter({ baseUrl: config.infinityBaseUrl,
-        operationTimeoutMs: Math.min(4_000, config.requestTimeoutMs * 2),
-        requestTimeoutMs: config.requestTimeoutMs, token: infinityToken.trim() }),
-      spend: binding.reservation, store, topology: topologyPort });
+    const commonChain = { answer, audit: evidence.audit, evidenceAuthority, ids,
+      journal: guardedJournal, spend: binding.reservation, store, topology: topologyPort };
+    const retrievalConfig = { baseUrl: config.infinityBaseUrl,
+      operationTimeoutMs: Math.min(4_000, config.requestTimeoutMs * 2),
+      requestTimeoutMs: config.requestTimeoutMs, token: infinityToken.trim() };
+    const chain = retrievalComposition.contractVersion === "context-retrieval.v3"
+      ? createProductionCanonicalQuestionChain({ ...commonChain,
+          preparer: retrievalComposition.preparer,
+          retrieval: new InfinityContextRetrievalV3Adapter(retrievalConfig) })
+      : createProductionCanonicalQuestionChain({ ...commonChain,
+          preparer: retrievalComposition.preparer,
+          retrieval: new InfinityContextRetrievalV2Adapter(retrievalConfig) });
     return new ExecuteAdmittedQualificationQuestion(chain);
   }, recover: async (binding: Parameters<QualificationQuestionExecutorFactoryPort[
     "recover"]>[0]) => await recoverProductionCanonicalOutcome({ answerJournalRoot:
@@ -162,7 +185,7 @@ export async function createProductionCanonicalExecutorFactory(
 
 function assertReleaseBinding(binding: Parameters<QualificationQuestionExecutorFactoryPort[
   "create"]>[0], config: ProductionCanonicalExecutionConnectionConfiguration,
-capability: ReturnType<typeof decodeCapability>,
+capability: unknown,
 execution: AnswerRuntimeBinding): void {
   for (const value of [binding.answerProcessIdentitySha256, binding.campaignRootSha256,
     binding.infinityCapabilitySha256, binding.mapperSha256, binding.releaseRootSha256,
@@ -198,6 +221,25 @@ FocusedLocatorRetrievalV2ProviderBinding {
     indexProfileDigest: capability.index_profile_digest, profileId: capability.profile_id,
     rankingPolicy: CONTEXT_RETRIEVAL_RANKING_POLICY,
     requiredProviderLanes: Object.freeze(["postgres_keyword", "qdrant_dense"]),
+    serviceRevision: capability.service_revision });
+}
+
+async function providerBindingFromV3(
+  capability: RetrievalV3Capability,
+): Promise<FocusedLocatorRetrievalV3ProviderBinding> {
+  if (capability.contract_version !== "context-retrieval.v3" ||
+    capability.endpoint !== "/v1/context/retrieve-v3" ||
+    capability.profile_id !== `locator-v2-full-${capability.index_profile_digest}` ||
+    capability.ranking_policy !== CONTEXT_RETRIEVAL_RANKING_POLICY ||
+    JSON.stringify(capability.required_provider_lanes) !==
+      JSON.stringify(["postgres_keyword", "qdrant_dense"]) ||
+    await retrievalCapabilityFingerprint(capability) !== capability.capability_fingerprint) {
+    throw new Error("Infinity capability is not the authenticated V3 full locator profile");
+  }
+  return Object.freeze({ capabilityFingerprint: capability.capability_fingerprint,
+    contractVersion: "context-retrieval.v3", indexProfileDigest: capability.index_profile_digest,
+    profileId: capability.profile_id, rankingPolicy: capability.ranking_policy,
+    requiredProviderLanes: Object.freeze([...capability.required_provider_lanes]),
     serviceRevision: capability.service_revision });
 }
 
@@ -287,6 +329,10 @@ function validateConfiguration(config: ProductionCanonicalExecutionConnectionCon
     config.requestTimeoutMs > 2_000 || config.artifactKeyId.trim() === "" ||
     !/^https?:\/\//u.test(config.infinityBaseUrl) || config.runtimeAddress.trim() === "") {
     throw new Error("canonical execution connection configuration is invalid");
+  }
+  if (config.retrievalContractVersion !== undefined &&
+    !["context-retrieval.v2", "context-retrieval.v3"].includes(config.retrievalContractVersion)) {
+    throw new Error("canonical retrieval contract configuration is invalid");
   }
   digest(config.expectedRuntimeLauncherSha256, "expected runtime launcher");
 }

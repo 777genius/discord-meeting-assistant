@@ -1,17 +1,29 @@
 import type { HistoricalIndexPlanV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import { exactRecord, safeId } from "./canonical.js";
+import type { DiagnosticManifestV2, DiagnosticSdkIdentity } from "./diagnostic-manifest.js";
+import { canonicalJson, exactRecord, safeId, sha256 } from "./canonical.js";
 
 type Locale = "en" | "ru" | "mixed";
 type Status = "answered" | "abstained" | "failed" | "outcome_unknown";
 interface Question { readonly questionId:string; readonly locale:Locale }
 interface Outcome { readonly questionId:string; readonly status:Status; readonly retrievedLocators:readonly string[] }
 interface Gold { readonly questionId:string; readonly expectedDisposition:"answerable"|"must_abstain"; readonly relevantTurnIds:readonly string[] }
+export interface DiagnosticScoreV2Authentication {
+  readonly manifest: DiagnosticManifestV2;
+  readonly report: unknown;
+  readonly installedSdkIdentity: Readonly<DiagnosticSdkIdentity & {
+    readonly loadedEntrypointSha256: string;
+  }>;
+  readonly loadedModuleSha256: string;
+}
 // Fractions remain exact and compatible with the integer-only canonical artifact encoder.
 const ratio = (numerator:number, denominator:number) => ({numerator,denominator});
 
 /** Post-execution only: inputs must come from the sealed run and its retained frozen plan. */
 export function scoreDiagnostic(input:{readonly questions:readonly Question[];
-  readonly outcomes:readonly Outcome[];readonly plan:HistoricalIndexPlanV1;readonly gold:unknown}) {
+  readonly outcomes:readonly Outcome[];readonly plan:HistoricalIndexPlanV1;readonly gold:unknown;
+  readonly authentication?: DiagnosticScoreV2Authentication}) {
+  const authenticatedV2 = input.authentication === undefined ? null
+    : authenticateV2Score(input.authentication, input.plan, input.outcomes);
   const ids=new Set(input.questions.map(q=>safeId(q.questionId,"question")));
   if(input.questions.length!==40 || ids.size!==40 || input.questions.some(q=>
     !["en","ru","mixed"].includes(q.locale))) {throw new Error("invalid forty-question membership");}
@@ -70,7 +82,7 @@ export function scoreDiagnostic(input:{readonly questions:readonly Question[];
       answerRateOnAnswerable:ratio(answerable.filter(r=>r.status==="answered").length,answerable.length),
       abstentionRateOnMustAbstain:ratio(abstain.filter(r=>r.status==="abstained").length,abstain.length)};
   };
-  return {schemaVersion:"meeting_knowledge.real40_diagnostic_score.v1",qualifying:false,
+  const common = {qualifying:false,
     definitions:{ratios:"numerator / denominator; denominator zero means unmeasured",
       retrieval:"Answerable questions only; failed and unknown remain in denominators; retained retrieval is scored even when answer failed",
       targets:"Union of all frozen production block locators containing any relevant turn",
@@ -80,4 +92,69 @@ export function scoreDiagnostic(input:{readonly questions:readonly Question[];
     citationValidityIsFactualAccuracy:false,overall:aggregate(rows),
     byLocale:{ru:aggregate(rows.filter(r=>r.locale==="ru")),en:aggregate(rows.filter(r=>r.locale==="en")),
       mixed:aggregate(rows.filter(r=>r.locale==="mixed"))},questions:rows};
+  return authenticatedV2 === null
+    ? {schemaVersion:"meeting_knowledge.real40_diagnostic_score.v1",...common}
+    : {schemaVersion:"meeting_knowledge.real40_diagnostic_score.v2",...common,
+        authenticatedExecution: authenticatedV2};
+}
+
+function authenticateV2Score(input: DiagnosticScoreV2Authentication,
+  plan: HistoricalIndexPlanV1, outcomes: readonly Outcome[]) {
+  const report = exactRecord(input.report, ["schemaVersion", "qualifying", "rootBindingSha256",
+    "declaredSourceRevision", "sourceRevisionAuthority", "loadedModuleSha256", "loadedSdkSha256",
+    "snapshotSha256", "transcriptSha256", "rosterSha256", "planSha256",
+    "questionDenominator", "indexPreparation", "counts", "factualAccuracy", "recall",
+    "questions", "executingModuleIdentity", "sdkIdentity", "executingSdkIdentity",
+    "selectedContracts"],
+  "diagnostic report v2");
+  const selected = exactRecord(report.selectedContracts,
+    ["manifest", "report", "retrieval", "threadSelector"], "diagnostic selected contracts");
+  const moduleIdentity = exactRecord(report.executingModuleIdentity,
+    ["loadedModuleSha256"], "diagnostic executing module");
+  const installed = input.installedSdkIdentity;
+  const expectedSdk = input.manifest.sdkIdentity;
+  const expectedRoot = sha256({ manifest: input.manifest,
+    loadedModuleSha256: input.loadedModuleSha256,
+    loadedSdkSha256: installed.loadedEntrypointSha256 });
+  const expectedCounts = { answered: outcomes.filter(({ status }) => status === "answered").length,
+    abstained: outcomes.filter(({ status }) => status === "abstained").length,
+    failed: outcomes.filter(({ status }) => status === "failed").length,
+    unknown: outcomes.filter(({ status }) => status === "outcome_unknown").length };
+  const reportQuestions = Array.isArray(report.questions) ? report.questions : [];
+  const reportByQuestion = new Map(reportQuestions.map(value => {
+    const row = value as { questionId?: unknown; status?: unknown; retrievedCount?: unknown };
+    return [row.questionId, row];
+  }));
+  const observedSdk = { packageName: installed.packageName, version: installed.version,
+    sourceRevision: installed.sourceRevision, tarballSha256: installed.tarballSha256,
+    manifestSha256: installed.manifestSha256 };
+  if (report.schemaVersion !== "meeting_knowledge.real40_diagnostic_report.v2" ||
+    report.qualifying !== false || report.questionDenominator !== 40 ||
+    report.rootBindingSha256 !== expectedRoot || report.planSha256 !== sha256(plan) ||
+    report.sourceRevisionAuthority !== "owner_declared_unverified" ||
+    report.factualAccuracy !== "UNMEASURED" ||
+    report.recall !== "UNMEASURED_REQUIRES_SEPARATE_GOLD_MAPPING" ||
+    canonicalJson(report.counts) !== canonicalJson(expectedCounts) ||
+    (report.indexPreparation as { status?: unknown } | null)?.status !== "ready" ||
+    reportQuestions.length !== 40 || reportByQuestion.size !== 40 ||
+    outcomes.some(outcome => { const row = reportByQuestion.get(outcome.questionId);
+      return row?.status !== outcome.status || row.retrievedCount !== outcome.retrievedLocators.length; }) ||
+    report.declaredSourceRevision !== input.manifest.sourceRevision ||
+    report.snapshotSha256 !== input.manifest.frozen.snapshotSha256 ||
+    report.transcriptSha256 !== input.manifest.frozen.transcriptSha256 ||
+    report.rosterSha256 !== input.manifest.rosterSha256 ||
+    report.loadedModuleSha256 !== input.loadedModuleSha256 ||
+    moduleIdentity.loadedModuleSha256 !== input.loadedModuleSha256 ||
+    report.loadedSdkSha256 !== installed.loadedEntrypointSha256 ||
+    canonicalJson(report.sdkIdentity) !== canonicalJson(expectedSdk) ||
+    canonicalJson(report.executingSdkIdentity) !== canonicalJson(installed) ||
+    canonicalJson(observedSdk) !== canonicalJson(expectedSdk) ||
+    selected.manifest !== input.manifest.schemaVersion ||
+    selected.report !== report.schemaVersion ||
+    selected.retrieval !== input.manifest.providerBinding.contractVersion ||
+    canonicalJson(selected.threadSelector) !== canonicalJson(input.manifest.threadSelector)) {
+    throw new Error("diagnostic V2 score installation or execution evidence differs");
+  }
+  return Object.freeze({ loadedModuleSha256: input.loadedModuleSha256,
+    sdkIdentity: Object.freeze({ ...installed }), selectedContracts: Object.freeze({ ...selected }) });
 }

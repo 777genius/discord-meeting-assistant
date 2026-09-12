@@ -1,20 +1,31 @@
 import { InfinityRetrievalScopeResolution } from "../infinity-retrieval-scope-resolution.js";
-import { open, readFile, realpath } from "node:fs/promises";
+import { lstat, open, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
-import { buildHistoricalIndexPlan, historicalEmbeddingTokenProfile, PrepareFocusedLocatorRetrievalV2Request, type HistoricalIndexPlanV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { buildHistoricalIndexPlan, historicalEmbeddingTokenProfile,
+  PrepareFocusedLocatorRetrievalV2Request, PrepareFocusedLocatorRetrievalV3Request,
+  type HistoricalIndexPlanV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresDiagnosticFinalEvidence } from "@discord-meeting/postgres-adapter";
 import { createGrpcQualifiedGroundedAnswerAdapter, GrpcSubscriptionRuntimeTransport, subscriptionRuntimeCliEngine } from "@discord-meeting/subscription-runtime-adapter";
 import { HmacHistoricalOpaqueIds } from "../hmac-historical-ids.js";
 import { InfinityContextHistoricalMemoryAdapter } from "../infinity-context-historical-memory.js";
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
+import { InfinityContextRetrievalV3Adapter } from "../infinity-context-retrieval-v3.js";
+import { INFINITY_CONTEXT_SDK_PROVENANCE } from "../infinity-sdk-provenance.js";
 import { PinnedMultilingualMiniLmTokenizer } from "../pinned-multilingual-minilm-tokenizer.js";
 import { canonicalJson, sha256 } from "./canonical.js";
-import { awaitDiagnosticIndexReadiness, DiagnosticIndexReadinessError } from "./diagnostic-index-readiness.js";
+import { awaitDiagnosticIndexReadiness, awaitDiagnosticIndexReadinessV3,
+  DiagnosticIndexReadinessError } from "./diagnostic-index-readiness.js";
 import { DiagnosticCustody } from "./diagnostic-custody.js";
 import { DiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
-import { decodeDiagnosticManifest, decodeDiagnosticQuestions, type DiagnosticManifest, type DiagnosticQuestion } from "./diagnostic-manifest.js";
-import { createDiagnosticCanonicalQuestionChain } from "./production-canonical-question-chain.js";
+import { decodeVersionedDiagnosticManifest, decodeDiagnosticQuestions,
+  type DiagnosticManifest, type DiagnosticManifestV2, type DiagnosticQuestion,
+  type DiagnosticSdkIdentity } from "./diagnostic-manifest.js";
+import { createDiagnosticCanonicalQuestionChain,
+  type QualificationEncryptedAuditPort } from "./production-canonical-question-chain.js";
+import type { QualificationExternalEffectReservationPort } from
+  "./execute-admitted-qualification-question.js";
 import { createProductionCanonicalExecutionEvidence } from "./production-canonical-execution-evidence.js";
 export interface DiagnosticOutcome {
   readonly questionId: string;
@@ -46,9 +57,12 @@ export async function runDiagnosticCli(argv: readonly string[], writeSafeLine?: 
     return 1;
   }
   try {
-    const manifest = decodeDiagnosticManifest(JSON.parse(await readFile(manifestPath, "utf8")));
+    const manifest = decodeVersionedDiagnosticManifest(JSON.parse(await readFile(manifestPath, "utf8")));
     if ((argv[3] !== undefined && argv[3] !== "--reconcile-index") || argv.length > 4) {
       throw new Error("diagnostic report path or option is invalid");
+    }
+    if (manifest.schemaVersion === "meeting_knowledge.real40_diagnostic.v2") {
+      await verifyInstalledDiagnosticSdk(manifest.sdkIdentity);
     }
     const resolvedReportPath = await resolveDiagnosticReportPath(reportPath, manifest.connections.artifactRoot);
     const reportFile = await open(resolvedReportPath, "wx", 0o600);
@@ -101,12 +115,18 @@ async function diagnosticPhysicalPath(path: string): Promise<string> {
   }
 }
 
-export async function runDiagnostic(manifest: DiagnosticManifest, reconcileIndex = false) {
+export async function runDiagnostic(manifest: DiagnosticManifest | DiagnosticManifestV2,
+  reconcileIndex = false) {
   // Decode again: exported composition never treats a TypeScript cast as authority.
-  const m = decodeDiagnosticManifest(manifest), c = m.connections;
+  const m = decodeVersionedDiagnosticManifest(manifest), c = m.connections;
   if (sha256(m.frozen.roster) !== m.rosterSha256) {
     throw new Error("diagnostic frozen identity/profile differs");
   }
+  // V2 may execute only from the exact immutable package authenticated by the
+  // repository's official SDK preparer/provenance boundary. A source checkout,
+  // entrypoint alias, or manifest assertion alone is never package custody.
+  const installedSdk = m.schemaVersion === "meeting_knowledge.real40_diagnostic.v2"
+    ? await verifyInstalledDiagnosticSdk(m.sdkIdentity) : null;
   const [postgresUrl, infinityToken, runtimeToken, keyText, topologyKey] = await Promise.all([
     secret(c.postgresUrlPath), secret(c.infinityTokenPath), secret(c.runtimeTokenPath),
     secret(c.artifactKeyPath), readFile(c.topologyKeyPath),
@@ -166,12 +186,15 @@ export async function runDiagnostic(manifest: DiagnosticManifest, reconcileIndex
     if (applied.planSha256 !== sha256(plan)) {
       throw new Error("diagnostic applied receipt is foreign");
     }
-    const indexPreparation = await awaitDiagnosticIndexReadiness({ baseUrl: c.infinityBaseUrl,
-      token: infinityToken, binding: m.providerBinding, custody });
+    const indexPreparation = m.schemaVersion === "meeting_knowledge.real40_diagnostic.v2"
+      ? await awaitDiagnosticIndexReadinessV3({ baseUrl: c.infinityBaseUrl,
+          token: infinityToken, binding: m.providerBinding, custody })
+      : await awaitDiagnosticIndexReadiness({ baseUrl: c.infinityBaseUrl,
+          token: infinityToken, binding: m.providerBinding, custody });
     const store = new DiagnosticFrozenStore(authority, plan, applied.remoteDocumentIds);
     const outcomes = await runDiagnosticSchedule(custody, m.questions, question => executeQuestion({ m, question, root, key, custody, authority, store, ids,
       transport, infinityToken }));
-    const report = { schemaVersion: "meeting_knowledge.real40_diagnostic_report.v1", qualifying: false,
+    const commonReport = { qualifying: false,
       rootBindingSha256: root, declaredSourceRevision: m.sourceRevision, sourceRevisionAuthority: "owner_declared_unverified", loadedModuleSha256, loadedSdkSha256,
       snapshotSha256: m.frozen.snapshotSha256, transcriptSha256: m.frozen.transcriptSha256,
       rosterSha256: m.rosterSha256, planSha256: sha256(plan), questionDenominator: 40, indexPreparation,
@@ -185,6 +208,15 @@ export async function runDiagnostic(manifest: DiagnosticManifest, reconcileIndex
         claimCount: claims.length
       })),
     };
+    const report = m.schemaVersion === "meeting_knowledge.real40_diagnostic.v2"
+      ? { ...commonReport, schemaVersion: "meeting_knowledge.real40_diagnostic_report.v2",
+          executingModuleIdentity: Object.freeze({ loadedModuleSha256 }),
+          sdkIdentity: m.sdkIdentity, executingSdkIdentity: installedSdk,
+          selectedContracts: Object.freeze({ manifest: m.schemaVersion,
+            report: "meeting_knowledge.real40_diagnostic_report.v2" as const,
+            retrieval: m.providerBinding.contractVersion,
+            threadSelector: m.threadSelector }) }
+      : { schemaVersion: "meeting_knowledge.real40_diagnostic_report.v1", ...commonReport };
     if (await custody.recover("execution-complete") === null) {
       await custody.retain("execution-complete", report);
     }
@@ -236,7 +268,7 @@ export async function runDiagnosticSchedule(custody: DiagnosticCustody, packets:
   return outcomes;
 }
 async function executeQuestion(input: {
-  readonly m: DiagnosticManifest;
+  readonly m: DiagnosticManifest | DiagnosticManifestV2;
   readonly question: DiagnosticQuestion;
   readonly root: string;
   readonly key: Uint8Array;
@@ -277,8 +309,8 @@ async function executeQuestion(input: {
       effect.providerReserved = true;
     },
   });
-  const chain = createDiagnosticCanonicalQuestionChain({
-    answer, audit: { seal: async (value) => {
+  const commonChain = {
+    answer, audit: { seal: async (value: Parameters<QualificationEncryptedAuditPort["seal"]>[0]) => {
         if (value.kind === "selected_canonical_turns") {
           bytes.evidence = value.plaintext.length;
         }
@@ -295,22 +327,32 @@ async function executeQuestion(input: {
         await evidence.audit.seal(value);
       } },
     evidenceAuthority: input.authority, store: input.store, ids: input.ids, journal: evidence.journal,
-    preparer: new PrepareFocusedLocatorRetrievalV2Request({ ids: input.ids,
-      scopeResolution: new InfinityRetrievalScopeResolution({ baseUrl: c.infinityBaseUrl,
-        token: input.infinityToken, operationTimeoutMs: 500, requestTimeoutMs: 500 }),
-      providerBinding: m.providerBinding, snapshot: input.store }),
-    retrieval: new InfinityContextRetrievalV2Adapter({ baseUrl: c.infinityBaseUrl,
-      token: input.infinityToken, operationTimeoutMs: 4000, requestTimeoutMs: 2000 }),
-    spend: { reserve: async (reservation) => {
+    spend: { reserve: async (reservation: Parameters<
+      QualificationExternalEffectReservationPort["reserve"]>[0]) => {
         await custody.reserve(`effect-${sha256({ attemptId, kind: reservation.effectKind })}`, reservation);
       } },
-    topology: { resolve: async (reference) => {
+    topology: { resolve: async (reference: string) => {
         if (reference !== question.scopeTopologyReference) {
           throw new Error("foreign diagnostic question");
         }
         return { currentMeetingId: m.frozen.meetingId, scopeId: m.frozen.scopeId, roomId: m.frozen.roomId };
       } },
-  });
+  };
+  const retrievalConfiguration = { baseUrl: c.infinityBaseUrl,
+    token: input.infinityToken, operationTimeoutMs: 4000, requestTimeoutMs: 2000 };
+  const preparationDependencies = { ids: input.ids,
+      scopeResolution: new InfinityRetrievalScopeResolution({ baseUrl: c.infinityBaseUrl,
+        token: input.infinityToken, operationTimeoutMs: 500, requestTimeoutMs: 500 }),
+      snapshot: input.store };
+  const chain = m.schemaVersion === "meeting_knowledge.real40_diagnostic.v2"
+    ? createDiagnosticCanonicalQuestionChain({ ...commonChain,
+        preparer: new PrepareFocusedLocatorRetrievalV3Request({ ...preparationDependencies,
+          providerBinding: m.providerBinding }),
+        retrieval: new InfinityContextRetrievalV3Adapter(retrievalConfiguration) })
+    : createDiagnosticCanonicalQuestionChain({ ...commonChain,
+        preparer: new PrepareFocusedLocatorRetrievalV2Request({ ...preparationDependencies,
+          providerBinding: m.providerBinding }),
+        retrieval: new InfinityContextRetrievalV2Adapter(retrievalConfiguration) });
   const options = { attemptId, signal };
   try {
     let mark = Date.now();
@@ -361,4 +403,92 @@ async function secret(path: string): Promise<string> {
     throw new Error("empty diagnostic secret");
   }
   return value;
+}
+
+/** Authenticate both the installed bytes and the immutable package identity
+ * supplied by the repository's official SDK preparation boundary. */
+export async function verifyInstalledDiagnosticSdk(
+  expected: DiagnosticSdkIdentity,
+): Promise<Readonly<DiagnosticSdkIdentity & { readonly loadedEntrypointSha256: string }>> {
+  const entrypoint = new URL(import.meta.resolve("@infinity-context/sdk"));
+  const installedEntrypoint = await realpath(fileURLToPath(entrypoint));
+  if (!installedEntrypoint.includes(`${sep}node_modules${sep}`)) {
+    throw new Error("diagnostic SDK resolution is not an installed package artifact");
+  }
+  const packageRoot = await realpath(fileURLToPath(new URL("..", entrypoint)));
+  const manifestBytes = await readFile(join(packageRoot, "package.json"));
+  const manifest = JSON.parse(manifestBytes.toString("utf8")) as { name?: unknown; version?: unknown };
+  const provenance = INFINITY_CONTEXT_SDK_PROVENANCE as typeof INFINITY_CONTEXT_SDK_PROVENANCE &
+    { readonly packageArtifactIdentitySha256?: unknown };
+  const observed = Object.freeze({ packageName: INFINITY_CONTEXT_SDK_PROVENANCE.packageName,
+    version: INFINITY_CONTEXT_SDK_PROVENANCE.packageVersion,
+    sourceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
+    tarballSha256: INFINITY_CONTEXT_SDK_PROVENANCE.packageTarballSha256,
+    manifestSha256: INFINITY_CONTEXT_SDK_PROVENANCE.packageManifestSha256 });
+  if (typeof provenance.packageArtifactIdentitySha256 !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(provenance.packageArtifactIdentitySha256) ||
+    canonicalJson(observed) !== canonicalJson(expected) || manifest.name !== expected.packageName ||
+    manifest.version !== expected.version || sha256(manifestBytes) !== expected.manifestSha256) {
+    throw new Error("installed diagnostic SDK differs from authenticated immutable package");
+  }
+  const identityBytes = await readFile(join(packageRoot, "dist/sdk-artifact-identity.json"));
+  if (sha256(identityBytes) !== provenance.packageArtifactIdentitySha256) {
+    throw new Error("installed diagnostic SDK artifact identity differs");
+  }
+  const identity = exactInstalledSdkIdentity(JSON.parse(identityBytes.toString("utf8")));
+  if (identity.package_name !== expected.packageName || identity.package_version !== expected.version ||
+    identity.source_commit !== expected.sourceRevision || identity.source_git_tree_oid !== provenance.tree) {
+    throw new Error("installed diagnostic SDK source identity differs");
+  }
+  const entrypointRelative = relative(packageRoot, installedEntrypoint).split(sep).join("/");
+  if (!identity.files.some(({ path }) => path === "package.json") ||
+    !identity.files.some(({ path }) => path === entrypointRelative)) {
+    throw new Error("installed diagnostic SDK inventory is incomplete");
+  }
+  for (const file of identity.files) {
+    const path = resolve(packageRoot, file.path);
+    const child = relative(packageRoot, path);
+    if (child === "" || child === ".." || child.startsWith(`..${sep}`) || isAbsolute(child) ||
+      await realpath(path) !== path ||
+      (await lstat(path)).isSymbolicLink() || sha256(await readFile(path)) !== file.sha256_hex) {
+      throw new Error("installed diagnostic SDK file inventory differs");
+    }
+  }
+  return Object.freeze({ ...observed,
+    loadedEntrypointSha256: sha256(await readFile(installedEntrypoint)) });
+}
+
+interface InstalledSdkArtifactIdentity {
+  readonly files: readonly { readonly path: string; readonly sha256_hex: string }[];
+  readonly package_name: string; readonly package_version: string;
+  readonly schema_version: string; readonly source_commit: string;
+  readonly source_git_tree_oid: string;
+}
+function exactInstalledSdkIdentity(value: unknown): InstalledSdkArtifactIdentity {
+  const record = value as Record<string, unknown>;
+  const keys = ["files", "package_name", "package_version", "schema_version", "source_commit",
+    "source_git_tree_oid"];
+  if (typeof record !== "object" || record === null ||
+    canonicalJson(Object.keys(record).toSorted()) !== canonicalJson(keys.toSorted()) ||
+    record.schema_version !== "infinity-context-typescript-sdk-artifact-identity.v1" ||
+    !Array.isArray(record.files) || record.files.length === 0 ||
+    ![record.package_name, record.package_version, record.source_commit,
+      record.source_git_tree_oid].every(item => typeof item === "string" && item.length > 0)) {
+    throw new Error("installed diagnostic SDK artifact identity is invalid");
+  }
+  const files = record.files.map(item => {
+    const file = item as Record<string, unknown>;
+    if (typeof file !== "object" || file === null ||
+      canonicalJson(Object.keys(file).toSorted()) !== canonicalJson(["path", "sha256_hex"]) ||
+      typeof file.path !== "string" || file.path.length === 0 || file.path.includes("\0") ||
+      typeof file.sha256_hex !== "string" || !/^[a-f0-9]{64}$/u.test(file.sha256_hex)) {
+      throw new Error("installed diagnostic SDK file identity is invalid");
+    }
+    return Object.freeze({ path: file.path, sha256_hex: file.sha256_hex });
+  });
+  if (new Set(files.map(({ path }) => path)).size !== files.length) {
+    throw new Error("installed diagnostic SDK file inventory is duplicated");
+  }
+  return Object.freeze({ ...record, files: Object.freeze(files) }) as unknown as
+    InstalledSdkArtifactIdentity;
 }

@@ -1,7 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { retrievalCapabilityFingerprint, type HttpTransport } from "@infinity-context/sdk";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { decodeDiagnosticManifest, decodeDiagnosticManifestV2, decodeVersionedDiagnosticManifest } from "../src/quality-campaign/diagnostic-manifest.js";
 import { awaitDiagnosticIndexReadiness, awaitDiagnosticIndexReadinessV3 } from "../src/quality-campaign/diagnostic-index-readiness.js";
+import { runDiagnosticCli } from "../src/quality-campaign/diagnostic-run.js";
 import { sha256 } from "../src/quality-campaign/canonical.js";
 const questions = Array.from({ length: 40 }, (_, i) => ({ locale: "en", questionId: `q${i}`,
   questionText: "What was decided?", scopeTopologyReference: "diagnostic:scope" }));
@@ -54,6 +58,16 @@ it.each([
   { schemaVersion: "future" }, { gold: [] },
 ])("rejects incompatible V2 fields %j", change => {
   expect(() => decodeDiagnosticManifestV2({ ...v2(), ...change })).toThrow();
+});
+it("authenticates the installed SDK before reserving the V2 report", async () => {
+  const root = await mkdtemp(join(tmpdir(), "diagnostic-v3-sdk-preflight-"));
+  try {
+    const manifestPath = join(root, "manifest.json"), reportPath = join(root, "report.json");
+    await writeFile(manifestPath, JSON.stringify({ ...v2(), connections: {
+      ...v2().connections, artifactRoot: join(root, "artifacts") } }));
+    await expect(runDiagnosticCli(["diagnostic", manifestPath, reportPath])).resolves.toBe(1);
+    await expect(access(reportPath)).rejects.toThrow();
+  } finally { await rm(root, { force: true, recursive: true }); }
 });
 async function setup() {
   const value = {
