@@ -26,12 +26,12 @@ vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(async (path: string | URL) => {
     const name = typeof path === "string" ? path : path.href;
     mocked.reads.push(name);
-    if (name === paths.manifest) return JSON.stringify(mocked.manifest);
-    if (name === paths.report) return JSON.stringify(mocked.report);
-    if (name === paths.gold) return JSON.stringify(gold());
-    if (name === paths.key) return Buffer.alloc(32, 1).toString("base64");
-    if (name.endsWith("/diagnostic-run.js")) return moduleBytes;
-    if (path instanceof URL) return sdkBytes;
+    if (name === paths.manifest) { return JSON.stringify(mocked.manifest); }
+    if (name === paths.report) { return JSON.stringify(mocked.report); }
+    if (name === paths.gold) { return JSON.stringify(gold()); }
+    if (name === paths.key) { return Buffer.alloc(32, 1).toString("base64"); }
+    if (name.endsWith("/diagnostic-run.js")) { return moduleBytes; }
+    if (path instanceof URL) { return sdkBytes; }
     throw new Error(`unexpected provisional read: ${name}`);
   }),
   writeFile: vi.fn(async (path: string, data: string, options: unknown) => {
@@ -43,7 +43,7 @@ vi.mock("../src/quality-campaign/diagnostic-manifest.js", () => ({
 }));
 vi.mock("../src/quality-campaign/diagnostic-run.js", () => ({
   verifyInstalledDiagnosticSdk: vi.fn(async () => {
-    if (mocked.sdkFailure !== undefined) throw mocked.sdkFailure;
+    if (mocked.sdkFailure !== undefined) { throw mocked.sdkFailure; }
     return mocked.installedSdk;
   }),
 }));
@@ -51,9 +51,9 @@ vi.mock("../src/quality-campaign/diagnostic-custody.js", () => ({
   DiagnosticCustody: class {
     public constructor(_root: string, _key: Uint8Array, binding: string) { mocked.custodyBinding = binding; }
     public async recover(id: string): Promise<unknown> {
-      if (id === "execution-complete") return mocked.sealed;
-      if (id === "frozen-plan") return mocked.plan;
-      if (id.startsWith("question-")) return mocked.outcomes.shift() ?? null;
+      if (id === "execution-complete") { return mocked.sealed; }
+      if (id === "frozen-plan") { return mocked.plan; }
+      if (id.startsWith("question-")) { return mocked.outcomes.shift() ?? null; }
       throw new Error(`unexpected provisional custody read: ${id}`);
     }
   },
@@ -82,6 +82,21 @@ const v1Manifest = () => ({ schemaVersion: "meeting_knowledge.real40_diagnostic.
 const sdkIdentity = { packageName: "@infinity-context/sdk" as const, version: "0.3.1",
   sourceRevision: "b".repeat(40), tarballSha256: "c".repeat(64), manifestSha256: "d".repeat(64) };
 const installedSdk = { ...sdkIdentity, loadedEntrypointSha256: "1".repeat(64) };
+
+function outputRecord(value: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("expected diagnostic score object");
+  }
+  return Object.fromEntries(Object.entries(parsed));
+}
+
+function nestedRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("expected nested diagnostic score object");
+  }
+  return Object.fromEntries(Object.entries(value));
+}
 const v2Manifest = () => ({ schemaVersion: "meeting_knowledge.real40_diagnostic.v2",
   sourceRevision: sdkIdentity.sourceRevision, sdkIdentity, threadSelector: { mode: "any" },
   providerBinding: { contractVersion: "context-retrieval.v3" },
@@ -123,7 +138,8 @@ describe("diagnostic-score CLI authentication and version dispatch", () => {
     expect(mocked.reads).toContain(paths.gold);
     expect(mocked.writes).toHaveLength(1);
     expect(mocked.writes[0]!.options).toEqual({ flag: "wx", mode: 0o600 });
-    expect(JSON.parse(mocked.writes[0]!.data).schemaVersion).toBe("meeting_knowledge.real40_diagnostic_score.v1");
+    expect(outputRecord(mocked.writes[0]!.data).schemaVersion)
+      .toBe("meeting_knowledge.real40_diagnostic_score.v1");
   });
 
   it("authenticates and dispatches V2 scoring before reading gold", async () => {
@@ -133,10 +149,11 @@ describe("diagnostic-score CLI authentication and version dispatch", () => {
     mocked.sealed = mocked.report; mocked.outcomes = [...retainedOutcomes];
     expect(await runDiagnosticScoreCli(["diagnostic-score", paths.manifest, paths.report, paths.gold, paths.output])).toBe(0);
     expect(mocked.reads.indexOf(paths.gold)).toBeGreaterThan(mocked.reads.indexOf(paths.report));
-    const written = JSON.parse(mocked.writes[0]!.data);
+    const written = outputRecord(mocked.writes[0]!.data);
+    const overall = nestedRecord(written.overall);
     expect(written.schemaVersion).toBe("meeting_knowledge.real40_diagnostic_score.v2");
-    expect(written.overall.counts).toEqual({ answered: 1, abstained: 0, failed: 39, unknown: 0 });
-    expect(written.overall.microBlockRecallAt5).toEqual({ numerator: 1, denominator: 40 });
+    expect(overall.counts).toEqual({ answered: 1, abstained: 0, failed: 39, unknown: 0 });
+    expect(overall.microBlockRecallAt5).toEqual({ numerator: 1, denominator: 40 });
     expect(mocked.custodyBinding).toBe(report.rootBindingSha256);
   });
 

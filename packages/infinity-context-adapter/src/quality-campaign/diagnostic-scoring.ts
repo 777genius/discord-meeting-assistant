@@ -109,19 +109,40 @@ export function authenticateDiagnosticScoreV2(input: DiagnosticScoreV2Authentica
   if (!Array.isArray(outcomes) || !Array.isArray(plan.documents)) {
     throw new Error("diagnostic V2 score execution evidence is invalid");
   }
-  const manifestQuestionIds = new Set(input.manifest.questions.map(question => question.questionId));
+  assertDiagnosticV2Outcomes(input.manifest, plan, outcomes);
+  const evidence = decodeDiagnosticV2Report(input);
+  assertDiagnosticV2ReportExecution(evidence, input, plan, outcomes);
+  assertDiagnosticV2ReportIdentity(evidence, input);
+  return Object.freeze({ loadedModuleSha256: input.loadedModuleSha256,
+    sdkIdentity: Object.freeze({ ...input.installedSdkIdentity }),
+    selectedContracts: Object.freeze({ ...evidence.selected }) });
+}
+
+function assertDiagnosticV2Outcomes(manifest: DiagnosticManifestV2, plan: HistoricalIndexPlanV1,
+  outcomes: readonly Outcome[]): void {
+  const manifestQuestionIds = new Set(manifest.questions.map(question => question.questionId));
   const outcomeIds = new Set(outcomes.map(outcome => outcome.questionId));
   const planLocators = new Set(plan.documents.map(document => document.manifest.candidateLocator));
-  if (input.manifest.questions.length !== 40 || manifestQuestionIds.size !== 40 ||
-    outcomes.length !== 40 || outcomeIds.size !== 40 ||
-    outcomes.some(outcome => !manifestQuestionIds.has(outcome.questionId) ||
-      !["answered", "abstained", "failed", "outcome_unknown"].includes(outcome.status) ||
-      !Array.isArray(outcome.retrievedLocators) ||
-      new Set(outcome.retrievedLocators).size !== outcome.retrievedLocators.length ||
-      outcome.retrievedLocators.some((locator: unknown) =>
-        typeof locator !== "string" || !planLocators.has(locator)))) {
+  const invalidOutcome = outcomes.some(outcome =>
+    !manifestQuestionIds.has(outcome.questionId) ||
+    !["answered", "abstained", "failed", "outcome_unknown"].includes(outcome.status) ||
+    !Array.isArray(outcome.retrievedLocators) ||
+    new Set(outcome.retrievedLocators).size !== outcome.retrievedLocators.length ||
+    outcome.retrievedLocators.some((locator: unknown) =>
+      typeof locator !== "string" || !planLocators.has(locator)));
+  if (manifest.questions.length !== 40 || manifestQuestionIds.size !== 40 ||
+    outcomes.length !== 40 || outcomeIds.size !== 40 || invalidOutcome) {
     throw new Error("diagnostic V2 score outcomes are invalid");
   }
+}
+
+interface DiagnosticV2ReportEvidence {
+  readonly report: Record<string, unknown>;
+  readonly selected: Record<string, unknown>;
+  readonly moduleIdentity: Record<string, unknown>;
+}
+
+function decodeDiagnosticV2Report(input: DiagnosticScoreV2Authentication): DiagnosticV2ReportEvidence {
   const report = exactRecord(input.report, ["schemaVersion", "qualifying", "rootBindingSha256",
     "declaredSourceRevision", "sourceRevisionAuthority", "loadedModuleSha256", "loadedSdkSha256",
     "snapshotSha256", "transcriptSha256", "rosterSha256", "planSha256",
@@ -133,8 +154,29 @@ export function authenticateDiagnosticScoreV2(input: DiagnosticScoreV2Authentica
     ["manifest", "report", "retrieval", "threadSelector"], "diagnostic selected contracts");
   const moduleIdentity = exactRecord(report.executingModuleIdentity,
     ["loadedModuleSha256"], "diagnostic executing module");
+  return { report, selected, moduleIdentity };
+}
+
+function diagnosticReportQuestion(value: unknown): Readonly<{
+  questionId: unknown; status: unknown; retrievedCount: unknown;
+}> {
+  if (typeof value !== "object" || value === null) {
+    return { questionId: undefined, status: undefined, retrievedCount: undefined };
+  }
+  return { questionId: "questionId" in value ? value.questionId : undefined,
+    status: "status" in value ? value.status : undefined,
+    retrievedCount: "retrievedCount" in value ? value.retrievedCount : undefined };
+}
+
+function isReadyIndexPreparation(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "status" in value && value.status === "ready";
+}
+
+function assertDiagnosticV2ReportExecution(evidence: DiagnosticV2ReportEvidence,
+  input: DiagnosticScoreV2Authentication, plan: HistoricalIndexPlanV1,
+  outcomes: readonly Outcome[]): void {
+  const { report } = evidence;
   const installed = input.installedSdkIdentity;
-  const expectedSdk = input.manifest.sdkIdentity;
   const expectedRoot = sha256({ manifest: input.manifest,
     loadedModuleSha256: input.loadedModuleSha256,
     loadedSdkSha256: installed.loadedEntrypointSha256 });
@@ -144,12 +186,13 @@ export function authenticateDiagnosticScoreV2(input: DiagnosticScoreV2Authentica
     unknown: outcomes.filter(({ status }) => status === "outcome_unknown").length };
   const reportQuestions = Array.isArray(report.questions) ? report.questions : [];
   const reportByQuestion = new Map(reportQuestions.map(value => {
-    const row = value as { questionId?: unknown; status?: unknown; retrievedCount?: unknown };
+    const row = diagnosticReportQuestion(value);
     return [row.questionId, row];
   }));
-  const observedSdk = { packageName: installed.packageName, version: installed.version,
-    sourceRevision: installed.sourceRevision, tarballSha256: installed.tarballSha256,
-    manifestSha256: installed.manifestSha256 };
+  const questionMismatch = outcomes.some(outcome => {
+    const row = reportByQuestion.get(outcome.questionId);
+    return row?.status !== outcome.status || row.retrievedCount !== outcome.retrievedLocators.length;
+  });
   if (report.schemaVersion !== "meeting_knowledge.real40_diagnostic_report.v2" ||
     report.qualifying !== false || report.questionDenominator !== 40 ||
     report.rootBindingSha256 !== expectedRoot || report.planSha256 !== sha256(plan) ||
@@ -157,11 +200,21 @@ export function authenticateDiagnosticScoreV2(input: DiagnosticScoreV2Authentica
     report.factualAccuracy !== "UNMEASURED" ||
     report.recall !== "UNMEASURED_REQUIRES_SEPARATE_GOLD_MAPPING" ||
     canonicalJson(report.counts) !== canonicalJson(expectedCounts) ||
-    (report.indexPreparation as { status?: unknown } | null)?.status !== "ready" ||
-    reportQuestions.length !== 40 || reportByQuestion.size !== 40 ||
-    outcomes.some(outcome => { const row = reportByQuestion.get(outcome.questionId);
-      return row?.status !== outcome.status || row?.retrievedCount !== outcome.retrievedLocators.length; }) ||
-    report.declaredSourceRevision !== input.manifest.sourceRevision ||
+    !isReadyIndexPreparation(report.indexPreparation) ||
+    reportQuestions.length !== 40 || reportByQuestion.size !== 40 || questionMismatch) {
+    throw new Error("diagnostic V2 score installation or execution evidence differs");
+  }
+}
+
+function assertDiagnosticV2ReportIdentity(evidence: DiagnosticV2ReportEvidence,
+  input: DiagnosticScoreV2Authentication): void {
+  const { report, selected, moduleIdentity } = evidence;
+  const installed = input.installedSdkIdentity;
+  const expectedSdk = input.manifest.sdkIdentity;
+  const observedSdk = { packageName: installed.packageName, version: installed.version,
+    sourceRevision: installed.sourceRevision, tarballSha256: installed.tarballSha256,
+    manifestSha256: installed.manifestSha256 };
+  if (report.declaredSourceRevision !== input.manifest.sourceRevision ||
     report.snapshotSha256 !== input.manifest.frozen.snapshotSha256 ||
     report.transcriptSha256 !== input.manifest.frozen.transcriptSha256 ||
     report.rosterSha256 !== input.manifest.rosterSha256 ||
@@ -177,6 +230,4 @@ export function authenticateDiagnosticScoreV2(input: DiagnosticScoreV2Authentica
     canonicalJson(selected.threadSelector) !== canonicalJson(input.manifest.threadSelector)) {
     throw new Error("diagnostic V2 score installation or execution evidence differs");
   }
-  return Object.freeze({ loadedModuleSha256: input.loadedModuleSha256,
-    sdkIdentity: Object.freeze({ ...installed }), selectedContracts: Object.freeze({ ...selected }) });
 }

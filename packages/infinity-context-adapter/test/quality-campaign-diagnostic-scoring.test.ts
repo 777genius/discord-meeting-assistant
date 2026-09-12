@@ -101,6 +101,6 @@ describe("post-execution diagnostic retrieval scoring",()=> {
       {...authentication,loadedModuleSha256:"8".repeat(64)},
       {...authentication,report:{...report,selectedContracts:{...report.selectedContracts,
         retrieval:"context-retrieval.v2"}}},
-    ]) expect(()=>scoreDiagnostic({...f,authentication:changed})).toThrow();
+    ]) { expect(()=>scoreDiagnostic({...f,authentication:changed})).toThrow(); }
   });
 });

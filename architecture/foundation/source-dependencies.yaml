@@ -340,6 +340,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-manifest.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-frozen-store.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-index-readiness.ts
+      - packages/infinity-context-adapter/src/quality-campaign/diagnostic-installed-sdk.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-run.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-score-cli.ts
@@ -372,6 +373,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-manifest.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-frozen-store.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-index-readiness.ts
+      - packages/infinity-context-adapter/src/quality-campaign/diagnostic-installed-sdk.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-run.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-score-cli.ts
@@ -393,6 +395,7 @@ boundaries:
         - node:fs
         - node:fs/promises
         - node:path
+        - node:url
       runtimeReferences: []
   - id: adapters.infinity-quality-budget-lock
     roots:

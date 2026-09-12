@@ -82,9 +82,9 @@ const authenticSdkIdentity = Object.freeze({
 });
 
 it("authenticates every member of the actual installed SDK 0.3.1 draft", async () => {
-  await expect(verifyInstalledDiagnosticSdk(authenticSdkIdentity)).resolves.toMatchObject({
-    ...authenticSdkIdentity, loadedEntrypointSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-  });
+  const verified = await verifyInstalledDiagnosticSdk(authenticSdkIdentity);
+  expect(verified).toMatchObject(authenticSdkIdentity);
+  expect(verified.loadedEntrypointSha256).toMatch(/^[a-f0-9]{64}$/u);
 });
 
 async function copiedInstalledSdk() {
@@ -113,8 +113,8 @@ it.each(["identity-bytes", "inventory", "member", "unsafe-path", "symlink"] as c
         const identity = JSON.parse(await readFile(identityPath, "utf8")) as {
           files: { path: string; sha256_hex: string }[];
         };
-        if (kind === "inventory") identity.files.pop();
-        else identity.files[0]!.path = "../outside";
+        if (kind === "inventory") { identity.files.pop(); }
+        else { identity.files[0]!.path = "../outside"; }
         await writeFile(identityPath, JSON.stringify(identity));
       } else if (kind === "member") {
         await writeFile(join(copy.packageRoot, "README.md"), "tampered installed member");
@@ -210,7 +210,7 @@ async function setup() {
   const binding = { contractVersion: "context-retrieval.v3" as const, capabilityFingerprint: value.capability_fingerprint,
     indexProfileDigest: value.index_profile_digest, profileId: value.profile_id, rankingPolicy: "weighted_rrf_canonical_preferences.v1" as const,
     requiredProviderLanes: value.required_provider_lanes, serviceRevision: value.service_revision };
-  const retain = vi.fn(async () => undefined);
+  const retain = vi.fn(async () => {});
   const send = vi.fn<HttpTransport["send"]>();
   const input = { baseUrl: "http://synthetic.invalid", token: "synthetic", binding, custody: { retain }, transport: { send } };
   return { value, send, retain, input };
@@ -229,12 +229,12 @@ it.each(["envelope", "revision", "index", "fingerprint", "profile", "lanes", "ma
   "fails closed without retry on %s", async kind => {
     const { value, send, input } = await setup();
     const changed = { ...value };
-    if (kind === "revision") changed.service_revision = "f".repeat(40);
-    if (kind === "index") changed.index_profile_digest = "f".repeat(64);
-    if (kind === "fingerprint") changed.capability_fingerprint = "f".repeat(64);
-    if (kind === "profile") changed.profile_id = "foreign";
-    if (kind === "lanes") changed.required_provider_lanes = ["postgres_keyword"];
-    if (kind === "malformed") Object.assign(changed, { supports_neighbors: "unknown" });
+    if (kind === "revision") { changed.service_revision = "f".repeat(40); }
+    if (kind === "index") { changed.index_profile_digest = "f".repeat(64); }
+    if (kind === "fingerprint") { changed.capability_fingerprint = "f".repeat(64); }
+    if (kind === "profile") { changed.profile_id = "foreign"; }
+    if (kind === "lanes") { changed.required_provider_lanes = ["postgres_keyword"]; }
+    if (kind === "malformed") { Object.assign(changed, { supports_neighbors: "unknown" }); }
     send.mockResolvedValue(kind === "duplicate" ? { ...response(value), body: '{"endpoint":"/v1/context/retrieve-v3",' + JSON.stringify(value).slice(1) }
       : response(kind === "envelope" ? { context: { retrieval: value } } : changed));
     await expect(awaitDiagnosticIndexReadinessV3(input)).rejects.toMatchObject({ preparation: { status: "blocked", probes: 1 } });
@@ -259,7 +259,7 @@ it("rejects success arriving at the total deadline", async () => {
 it("bounds a hung call to two seconds without retry", async () => {
   const { send, input } = await setup();
   send.mockImplementation(request => new Promise((_resolve, reject) => {
-    request.signal?.addEventListener("abort", () => reject(request.signal?.reason), { once: true });
+    request.signal?.addEventListener("abort", () => { reject(request.signal?.reason); }, { once: true });
   }));
   await expect(awaitDiagnosticIndexReadinessV3(input)).rejects.toMatchObject({ preparation: {
     status: "blocked", probes: 1, lastProbeCode: "request_timeout" } });
@@ -269,9 +269,9 @@ it("bounds a hung call to two seconds without retry", async () => {
 it.each(["foreign", "malformed", "duplicate", "unknown-health"])("never retries unhealthy %s", async kind => {
   const { value, send, input } = await setup();
   const changed = { ...value, provider_lanes: value.provider_lanes.map(lane => ({ ...lane, healthy: false })) };
-  if (kind === "foreign") changed.service_revision = "f".repeat(40);
-  if (kind === "malformed") Object.assign(changed, { extra: true });
-  if (kind === "unknown-health") Object.assign(changed.provider_lanes[0]!, { healthy: "unknown" });
+  if (kind === "foreign") { changed.service_revision = "f".repeat(40); }
+  if (kind === "malformed") { Object.assign(changed, { extra: true }); }
+  if (kind === "unknown-health") { Object.assign(changed.provider_lanes[0]!, { healthy: "unknown" }); }
   changed.capability_fingerprint = await retrievalCapabilityFingerprint(changed);
   send.mockResolvedValue(kind === "duplicate" ? { ...response(changed),
     body: '{"endpoint":"/v1/context/retrieve-v3",' + JSON.stringify(changed).slice(1) } : response(changed));
