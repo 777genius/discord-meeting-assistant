@@ -577,7 +577,7 @@ function retrievalRequest(): InfinityContextRetrievalV2Request {
     kinds: ["record_block"], relativeTimeInterval: null,
     sourceGenerations: [{ projectionGeneration: "generation-1", sourceKey: "source-1" }],
     tagsAll: [], tagsAny: [], tagsNone: [], timeInterval: null },
-  queries: [{ query: "actual measured request", queryId: "original-question" }],
+  queries: [{ query: executionPacket.questionText, queryId: "original-question" }],
   schemaVersion: 2, scope: { memoryScopeId: "scope-1", spaceId: "space-1", threadId: null },
   softPreferences: { actorPreferences: [], relativeTimeInterval: null, sourcePreferences: [],
     timeInterval: null, timeWeightMicros: null } };
