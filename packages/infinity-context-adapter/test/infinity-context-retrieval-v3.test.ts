@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines, max-lines-per-function -- one end-to-end hostile custody fixture */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -47,6 +48,10 @@ function canonicalValue(value: unknown): unknown {
       a < b ? -1 : a > b ? 1 : 0).map(([key, nested]) => [key, canonicalValue(nested)]));
   }
   return value;
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalValue(value));
 }
 
 function shaBytes(value: Uint8Array): string {
@@ -620,6 +625,9 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     ["selected_canonical_turns", new TextEncoder().encode(JSON.stringify([turn]))],
     ["answer_request_intent", answerIntent.preparedAnswerRequestIntentBytes(
       input.attemptId, answerRequest)],
+    ["answer_execution_observation", new TextEncoder().encode(canonicalJson({
+      attemptId: input.attemptId, outcomeCertain: true, providerBytesSent: true,
+      schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v1" }))],
     ["answer_original_model_surface", answerSurface(answerRequest)],
     ["answer_original_request", serializeSubscriptionRuntimeTaskRequest(answerRequest)],
     ["answer_original_response", answerResponse],
@@ -640,15 +648,33 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     capabilityResponseSha256: shaBytes(input.exchange.capabilityResponseBytes),
     citationLocatorIds: [turn.sourceLocatorId], evidenceLocatorIds: [turn.sourceLocatorId],
     evidenceTurnIds: [turn.turnId], rankedLocatorIds: binding.candidates.map(value => value.locatorId),
+    providerCallInventory: [{ callKind: "capability", callOrdinal: 0 as const },
+      { callKind: "retrieval", callOrdinal: 0 as const },
+      { callKind: "answer", callOrdinal: 0 as const }],
     diagnosticCustody: input.diagnosticCustody, executionPacket: input.packet, identity,
     retrievalLatencyUs: 12, retrievalRequestSha256: binding.rawRequestSha256,
     retrievalResponseSha256: binding.rawResponseSha256,
     terminalAnswerRequestSha256: canonicalSha256({ effectKind: "answer", request: answerRequest }),
     terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([{
       callOrdinal: "original", requestBytes: serializeSubscriptionRuntimeTaskRequest(answerRequest),
-      responseBytes: answerResponse }]), topology: null };
+      responseBytes: answerResponse }]), terminalReason: null, terminalStatus: "answered" as const,
+    topology: null };
   const verification = await reader.verify({ attempts: [projection], campaignRootSha256 });
   expect(verification.inventorySha256).toMatch(/^[a-f0-9]{64}$/u);
+  const normalizedReceipt = path.join(artifactRoot, "receipts", input.attemptId,
+    "answer_normalized_outcome.json");
+  await unlink(normalizedReceipt);
+  await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
+    plaintext: new TextEncoder().encode(JSON.stringify({ ...outcome, citations: [], claims: [],
+      reason: "provider_output_invalid", status: "failed" })) });
+  await expect(reader.verify({ attempts: [{ ...projection, citationLocatorIds: [],
+    terminalReason: "provider_output_invalid", terminalStatus: "failed" as const }],
+    campaignRootSha256 })).resolves.toBeDefined();
+  await unlink(normalizedReceipt);
+  await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
+    plaintext: new TextEncoder().encode(JSON.stringify(outcome)) });
   for (const substituted of [
     { ...projection, executionPacket: { ...projection.executionPacket, locale: "ru" as const } },
     { ...projection, executionPacket: { ...projection.executionPacket,
@@ -660,6 +686,7 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
   }
   const receipt = (kind: string) => path.join(artifactRoot, "receipts", input.attemptId, `${kind}.json`);
   for (const kind of ["retrieval_binding", "selected_canonical_turns", "answer_request_intent",
+    "answer_execution_observation",
     "answer_original_request", "answer_original_response", "answer_original_model_surface"] as const) {
     const retained = artifactPlaintexts.find(([candidate]) => candidate === kind)![1];
     await unlink(receipt(kind));
@@ -725,7 +752,7 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
   await expect(reader.verify({ attempts: [repairProjection], campaignRootSha256 }))
     .rejects.toThrow("exchange inventory differs");
 
-  for (const kind of ["answer_original_model_surface", "answer_original_request",
+  for (const kind of ["answer_execution_observation", "answer_original_model_surface", "answer_original_request",
     "answer_original_response", "selected_canonical_turns", "answer_normalized_outcome"] as const) {
     await unlink(receipt(kind));
   }
@@ -740,6 +767,9 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     plaintext: new TextEncoder().encode(JSON.stringify(zeroEvidenceOutcome)) });
   const noModelProjection = { ...projection, answerAbstained: true,
     citationLocatorIds: [], evidenceLocatorIds: [], evidenceTurnIds: [],
+    providerCallInventory: projection.providerCallInventory.slice(0, 2),
+    terminalReason: "zero_admissible_evidence",
+    terminalStatus: "abstained" as const,
     terminalAnswerRequestSha256: answerIntent.absentAnswerRequestIntentSha256(input.attemptId,
       "zero_admissible_evidence"),
     terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([]) };
@@ -766,9 +796,52 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
     plaintext: new TextEncoder().encode(JSON.stringify(failedOutcome)) });
   await expect(reader.verify({ attempts: [{ ...noModelProjection, answerAbstained: false,
+    terminalReason: "evidence_rehydration_failed",
+    terminalStatus: "failed" as const,
     terminalAnswerRequestSha256: answerIntent.absentAnswerRequestIntentSha256(input.attemptId,
       "evidence_rehydration_failed") }],
     campaignRootSha256 })).resolves.toBeDefined();
+
+  for (const kind of ["selected_canonical_turns", "answer_normalized_outcome",
+    "answer_request_intent"] as const) {
+    await unlink(receipt(kind));
+  }
+  await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
+  const preSendFailure = { ...outcome, citations: [], claims: [], reason: "runtime_unavailable",
+    status: "failed" as const };
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "selected_canonical_turns",
+    plaintext: new TextEncoder().encode(JSON.stringify([turn])) });
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_request_intent",
+    plaintext: answerIntent.preparedAnswerRequestIntentBytes(input.attemptId, answerRequest) });
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_execution_observation",
+    plaintext: new TextEncoder().encode(canonicalJson({ attemptId: input.attemptId,
+      outcomeCertain: true, providerBytesSent: false,
+      schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v1" })) });
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
+    plaintext: new TextEncoder().encode(JSON.stringify(preSendFailure)) });
+  const preSendProjection = { ...projection, citationLocatorIds: [],
+    providerCallInventory: projection.providerCallInventory.slice(0, 2),
+    terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([]),
+    terminalReason: "runtime_unavailable", terminalStatus: "failed" as const };
+  const forgedReasonProjection = { ...preSendProjection, terminalReason: "invalid_attestation" };
+  await expect(reader.verify({ attempts: [forgedReasonProjection], campaignRootSha256 }))
+    .resolves.toBeDefined();
+
+  await unlink(receipt("answer_normalized_outcome"));
+  await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
+    plaintext: new TextEncoder().encode(JSON.stringify({ ...preSendFailure,
+      reason: "invalid_attestation" })) });
+  await expect(reader.verify({ attempts: [forgedReasonProjection], campaignRootSha256 }))
+    .rejects.toThrow("terminal reason differs");
+
+  await unlink(receipt("answer_execution_observation"));
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_execution_observation",
+    plaintext: new TextEncoder().encode(canonicalJson({ attemptId: "foreign-attempt",
+      outcomeCertain: true, providerBytesSent: false,
+      schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v1" })) });
+  await expect(reader.verify({ attempts: [preSendProjection], campaignRootSha256 }))
+    .rejects.toThrow("execution observation differs");
 });
 
 it("rejects mixed routes, request bytes, and hostile bare descriptor bytes", async () => {

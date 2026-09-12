@@ -16,7 +16,7 @@ import { loadMainExecutionEvidence } from
   "../src/quality-campaign/production-execution-evidence.js";
 import { createProductionLocalCanonicalEvidenceReader } from
   "../src/quality-campaign/production-local-canonical-evidence-reader.js";
-import type { ExactCampaignEvidence, ExactOutcomeEvidence } from
+import { assertExactOutcomeContract, type ExactCampaignEvidence, type ExactOutcomeEvidence } from
   "../src/quality-campaign/production-evidence.js";
 
 describe("main external/local retention binding", () => {
@@ -73,18 +73,25 @@ describe("main external/local retention binding", () => {
           attemptIdentity({ ...identity, callKind }).attemptId, callKind, callOrdinal: 0,
         predecessorResultDigestSha256: null, requestDigestSha256, resultEnvelopeDigestSha256,
         signedResult: {}, terminalDigestSha256: "f".repeat(64) });
-        outcomes.push({ answerAbstained: false, artifactBindingSha256ByKind: {},
+        outcomes.push({ answerAbstained: false,
+          answerExchangeInventorySha256: "6".repeat(64),
+          answerRequestIntentSha256: "5".repeat(64), artifactBindingSha256ByKind: {},
           attemptId: identity.attemptId, campaignRootSha256, citationLocatorDigests: [locator],
           evidenceLocatorDigests: [locator], evidenceTurnIds: [turn.turnId],
           expectedAnswer: "answerable", finalAdjudicationSha256: "4".repeat(64),
-          forbiddenLocatorDigests: [], identity, questionDigestSha256:
+          forbiddenLocatorDigests: [], identity, providerCallInventory: [
+            { callKind: "capability", callOrdinal: 0 },
+            { callKind: "retrieval", callOrdinal: 0 },
+            { callKind: "answer", callOrdinal: 0 }], questionDigestSha256:
           question.questionDigestSha256, questionId: question.questionId,
           rankedLocatorDigests: [locator], relevantLocatorDigests: [locator], repetition,
           retrievalLatencyUs: observation.capabilityAndRetrievalLatencyUs,
+          schemaVersion: "meeting_knowledge.semantic_quality_exact_outcome.v2",
           scopeViolationLocatorIds: [], speakerTimeChecks: [], terminalChain: [
             terminal("capability", hash(capabilityRequest), hash(capabilityResponse)),
             terminal("retrieval", hash(retrievalRequest), hash(retrievalResponse)),
-            terminal("answer", "5".repeat(64), "6".repeat(64))] });
+            terminal("answer", "5".repeat(64), "6".repeat(64))], terminalReason: null,
+          terminalStatus: "answered" });
       }
       const externalEvidence: ExactCampaignEvidence = { adjudications: [], artifacts: [],
         authorizedLocatorIds: [], authorizedLocatorInventory: {}, campaignByteCeiling: 1,
@@ -107,6 +114,8 @@ describe("main external/local retention binding", () => {
       expect(loaded.externalEvidence).toBe(externalEvidence);
       expect(receipt.digests.localCanonicalInventorySha256)
         .toBe(loaded.localEvidence.inventorySha256);
+      const { schemaVersion: _schemaVersion, ...legacy } = outcomes[0]!;
+      expect(() => assertExactOutcomeContract(legacy as ExactOutcomeEvidence)).toThrow();
     });
 });
 

@@ -18,7 +18,8 @@ export function scopeObservation(identity: AttemptIdentity) {
 }
 
 /** Synthetic metadata is sealed and reopened by the production custody implementation. */
-export function scopeObservationCustody(): CanonicalScopeObservationPort {
+export function scopeObservationCustody(providerFree: (identity: AttemptIdentity) => boolean = () => false):
+CanonicalScopeObservationPort {
   const root = mkdtemp(join(tmpdir(), "scope-retention-fixture-"));
   const sealed = new Map<string, Promise<void>>();
   return { readScopeObservation: async (identity) => {
@@ -32,7 +33,9 @@ export function scopeObservationCustody(): CanonicalScopeObservationPort {
           attemptId: identity.attemptId, questionId: identity.questionId, repetition: identity.repetition,
           rootBindingSha256: identity.campaignRootSha256 });
         await evidence.audit.seal({ attemptId: identity.attemptId, kind: "scope_resolution_observation",
-          plaintext: Buffer.from(canonicalJson(scopeObservation(identity))) });
+          plaintext: Buffer.from(canonicalJson(providerFree(identity) ? {
+            reads: [], schemaVersion: "meeting_knowledge.scope_resolution.v1", status: "empty",
+          } : scopeObservation(identity))) });
       })());
     }
     await sealed.get(identity.attemptId);

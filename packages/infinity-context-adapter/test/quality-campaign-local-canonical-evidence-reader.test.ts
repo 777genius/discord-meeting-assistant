@@ -160,15 +160,29 @@ describe("production local canonical evidence reader", () => {
     await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
       .rejects.toThrow("canonical scope resolution observation is incomplete");
   });
+
+  it("requires V2 topology binding and exact zero retrieval latency before retrieval", async () => {
+    const legacy = await earlyFailureFixture("empty", [], { legacy: true });
+    await expect(legacy.reader.verify({ attempts: [legacy.projection], campaignRootSha256 }))
+      .rejects.toThrow("generation-bound V2");
+    const altered = await earlyFailureFixture("empty", [], { alteredTopology: true });
+    await expect(altered.reader.verify({ attempts: [altered.projection], campaignRootSha256 }))
+      .rejects.toThrow("topology differs");
+    const nonzero = await earlyFailureFixture("empty");
+    await expect(nonzero.reader.verify({ attempts: [{ ...nonzero.projection,
+      retrievalLatencyUs: 1 }], campaignRootSha256 })).rejects.toThrow("pre-retrieval outcome");
+  });
 });
 
 async function earlyFailureFixture(status: "empty" | "unavailable",
   reads: readonly unknown[] = status === "unavailable" ? [{ kind: "scope_spaces",
     requestSha256: "1".repeat(64), responseBytes: 0, responseSha256: null,
-    status: "failed" }] : []) {
-  const packet = { ...executionPacket,
+    status: "failed" }] : [], options: { readonly alteredTopology?: boolean;
+      readonly legacy?: boolean } = {}) {
+  const versionedPacket = { ...executionPacket,
     schemaVersion: "meeting_knowledge.qualification_execution_packet.v2" as const,
     scopeTopologyDocumentSha256: "9".repeat(64), scopeTopologyGeneration: "generation-1" };
+  const packet = options.legacy === true ? executionPacket : versionedPacket;
   const earlyIdentity = attemptIdentity({ callKind: "answer", callOrdinal: 0, campaignRootSha256,
     questionDigestSha256: canonicalSha256(packet), questionId: packet.questionId,
     releaseRootSha256: "d".repeat(64), repetition: 1,
@@ -193,18 +207,20 @@ async function earlyFailureFixture(status: "empty" | "unavailable",
   }
   const topology = { currentMeetingId: "synthetic-meeting", roomId: "synthetic-room",
     scopeId: "synthetic-scope", memoryScopeId: "internal-memory-scope", spaceId: "internal-space",
-    topologyDocumentSha256: packet.scopeTopologyDocumentSha256,
-    topologyGeneration: packet.scopeTopologyGeneration };
+    topologyDocumentSha256: versionedPacket.scopeTopologyDocumentSha256,
+    topologyGeneration: options.alteredTopology === true ? "altered-generation" :
+      versionedPacket.scopeTopologyGeneration };
   const reader = createProductionLocalCanonicalEvidenceReader({ artifactKey,
     artifactKeyId: "synthetic-key", artifactRoot, topology: { resolve: async () => topology } });
   return { evidence, reader, projection: { answerAbstained: false, attemptId: earlyIdentity.attemptId,
-    campaignRootSha256, capabilityRequestSha256: "1".repeat(64),
-    capabilityResponseSha256: "2".repeat(64), citationLocatorIds: [],
+    campaignRootSha256, capabilityRequestSha256: null,
+    capabilityResponseSha256: null, citationLocatorIds: [],
     diagnosticCustody: null, evidenceLocatorIds: [], evidenceTurnIds: [], executionPacket: packet,
-    identity: earlyIdentity, rankedLocatorIds: [], retrievalLatencyUs: 0,
-    retrievalRequestSha256: "3".repeat(64), retrievalResponseSha256: "4".repeat(64),
+    identity: earlyIdentity, providerCallInventory: [], rankedLocatorIds: [], retrievalLatencyUs: 0,
+    retrievalRequestSha256: null, retrievalResponseSha256: null,
     terminalAnswerRequestSha256: absentAnswerRequestIntentSha256(earlyIdentity.attemptId, reason),
-    terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([]), topology: null } };
+    terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([]), terminalReason: reason,
+    terminalStatus: "failed" as const, topology: null } };
 }
 
 async function localFixture(options: { readonly extraObservationKey?: boolean;
@@ -255,10 +271,16 @@ async function localFixture(options: { readonly extraObservationKey?: boolean;
     citationLocatorIds: options.outcomeStatus === "failed" ? [] : ["locator-1"],
     evidenceLocatorIds: ["locator-1"],
     diagnosticCustody: null, evidenceTurnIds: ["turn-1"], executionPacket, identity,
+    providerCallInventory: [{ callKind: "capability", callOrdinal: 0 as const },
+      { callKind: "retrieval", callOrdinal: 0 as const },
+      { callKind: "answer", callOrdinal: 0 as const }],
     rankedLocatorIds: ["locator-1"], retrievalLatencyUs: 12,
     retrievalRequestSha256: sha(retrievalRequest), retrievalResponseSha256:
       sha(retrievalResponse), terminalAnswerRequestSha256: sha(bytes("synthetic-answer-request")),
-    terminalAnswerResponseSha256: sha(bytes("synthetic-answer-response")), topology: {
+    terminalAnswerResponseSha256: sha(bytes("synthetic-answer-response")),
+    terminalReason: options.outcomeStatus === "failed" ? "synthetic_failure" : null,
+    terminalStatus: options.outcomeStatus === "failed" ? "failed" as const : "answered" as const,
+    topology: {
       currentMeetingId: "synthetic-meeting", roomId: "synthetic-room",
       scopeId: "synthetic-scope" } } };
 }

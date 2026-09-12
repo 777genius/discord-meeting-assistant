@@ -93,21 +93,35 @@ export async function runQualityCampaignOperatorCli(input: { readonly argv: read
     phaseInput = exactRecord(await readCanonicalQualityCampaignJson(resolve(phaseInputPath),
       "operator phase input"),
       ["payload", "schemaVersion"], "operator phase input");
-  } catch {return 1;}
+  } catch (error) {if (process.env.CUSTODY_DEBUG === "1") {console.error(error);} return 1;}
   let status: Awaited<ReturnType<typeof reserveStatus>>;
   try {status = await reserveStatus(input.statusReceiptPath, phaseInput, phaseInputPath);}
-  catch {return 1;}
+  catch (error) {if (process.env.CUSTODY_DEBUG === "1") {console.error(error);} return 1;}
   let result: OperatorResult;
   try {result = await input.handlers.run({ command: command as QualityCampaignCommand,
-    phaseInput });} catch {await abandonStatus(status); return 1;}
+    phaseInput });} catch (error) {
+    if (process.env.CUSTODY_DEBUG === "1") {console.error(error);}
+    await abandonStatus(status); return 1;
+  }
   let safe: OperatorSafeReceipt;
-  try {safe = decodeSafeReceipt(result.receipt);} catch {await abandonStatus(status); return 1;}
+  try {safe = decodeSafeReceipt(result.receipt);} catch (error) {
+    if (process.env.CUSTODY_DEBUG === "1") {console.error(error);}
+    await abandonStatus(status); return 1;
+  }
   if (result.command !== command || !isSafeBlockerSet(result.blockers) ||
-    !isConsistentResult(result, safe)) {await abandonStatus(status); return 1;}
+    !isConsistentResult(result, safe)) {
+    if (process.env.CUSTODY_DEBUG === "1") {
+      console.error("inconsistent operator result", result.status, result.blockers, safe);
+    }
+    await abandonStatus(status); return 1;
+  }
   const receipt = Object.freeze({ blockers: result.blockers, command: result.command,
     counters: safe.counters, digests: safe.digests, errorCode: safe.errorCode, schemaVersion:
     "meeting_knowledge.semantic_quality_operator_status.v1", status: result.status });
-  try {await publishStatus(status, canonicalJson(receipt));} catch {return 1;}
+  try {await publishStatus(status, canonicalJson(receipt));} catch (error) {
+    if (process.env.CUSTODY_DEBUG === "1") {console.error(error);}
+    return 1;
+  }
   input.writeSafeLine?.(canonicalJson(receipt));
   if (result.status === "outcome_unknown") {return EXIT_OUTCOME_UNKNOWN;}
   if (result.status === "paused") {return EXIT_SAFE_PAUSE;}

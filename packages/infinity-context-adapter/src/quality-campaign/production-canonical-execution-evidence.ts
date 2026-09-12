@@ -289,7 +289,7 @@ async function readOptionalBounded(path: string, maximumBytes: number,
 }
 
 function isArtifactKind(value: unknown): value is SemanticQualityV4ArtifactKind {
-  return ["adjudication", "answer", "answer_normalized_outcome", "answer_request_intent",
+  return ["adjudication", "answer", "answer_execution_observation", "answer_normalized_outcome", "answer_request_intent",
     "answer_original_model_surface",
     "answer_original_request", "answer_original_response", "answer_repair_model_surface",
     "answer_repair_request", "answer_repair_response", "capability_request", "capability_response",

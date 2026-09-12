@@ -2,7 +2,7 @@ import type { AdjudicationEffectEvidence, RawOutcomeVaultPort } from "./adjudica
 import type { AttemptIdentity, ProviderExchangePort } from "./execution.js";
 import type { QualityCampaignRelease } from "./release.js";
 import type { ArtifactCustodyPort, CanonicalScopeObservationPort } from "./retention.js";
-import type { ExactCampaignEvidence } from "./production-evidence.js";
+import type { ExactCampaignEvidence, ProviderCallInventoryEntry } from "./production-evidence.js";
 import type { QualificationExecutionPacket, QualificationQuestionExecutorFactoryPort } from
   "./execute-admitted-qualification-question.js";
 import type { PROTECTED_SOURCE_KINDS } from "./cleanup-evidence.js";
@@ -110,19 +110,22 @@ export interface MainCanonicalEvidenceProjection {
   readonly answerAbstained: boolean;
   readonly attemptId: string;
   readonly campaignRootSha256: string;
-  readonly capabilityRequestSha256: string;
-  readonly capabilityResponseSha256: string;
+  readonly capabilityRequestSha256: string | null;
+  readonly capabilityResponseSha256: string | null;
   /** Independently authenticated execution input; never reconstructed from a retained binding. */
   readonly executionPacket: QualificationExecutionPacket;
   readonly citationLocatorIds: readonly string[];
   readonly evidenceLocatorIds: readonly string[];
   readonly evidenceTurnIds: readonly string[];
+  readonly providerCallInventory: readonly ProviderCallInventoryEntry[];
   readonly rankedLocatorIds: readonly string[];
   readonly retrievalLatencyUs: number;
-  readonly retrievalRequestSha256: string;
-  readonly retrievalResponseSha256: string;
+  readonly retrievalRequestSha256: string | null;
+  readonly retrievalResponseSha256: string | null;
   readonly terminalAnswerRequestSha256: string;
   readonly terminalAnswerResponseSha256: string;
+  readonly terminalReason: string | null;
+  readonly terminalStatus: "abstained" | "answered" | "failed";
   readonly identity: AttemptIdentity;
   /** Resolved only for V3 custody; legacy V1 verification has no topology dependency. */
   readonly topology: QualificationScopeTopology | null;

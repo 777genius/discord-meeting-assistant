@@ -62,7 +62,8 @@ export interface QualificationCreateOnlyJournalPort {
 
 export interface QualificationEncryptedAuditPort {
   seal(input: { readonly attemptId: string;
-    readonly kind: "answer_normalized_outcome" | "answer_request_intent" |
+  readonly kind: "answer_normalized_outcome" | "answer_request_intent" |
+      "answer_execution_observation" |
       "answer_original_model_surface" |
       "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
       "answer_repair_request" | "answer_repair_response" | "capability_request" |
@@ -195,6 +196,10 @@ function createAnswerPort(input: CanonicalEngineInput,
     await input.journal.reserve({ attemptId, payloadSha256, phase: "answer" });
     const generated = await input.answer.generate(groundedRequest, options);
     const observation = input.answer.takeQualificationObservation(attemptId);
+    await input.audit.seal({ attemptId, kind: "answer_execution_observation",
+      plaintext: utf8Json({ attemptId, outcomeCertain: observation.outcomeCertain,
+        providerBytesSent: observation.providerBytesSent,
+        schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v1" }) });
     await sealAnswerExchanges(input.audit, attemptId, observation.exchanges.original,
       observation.exchanges.repair, prepared.modelInputs);
     const stateValue = observation.providerBytesSent && !observation.outcomeCertain ?

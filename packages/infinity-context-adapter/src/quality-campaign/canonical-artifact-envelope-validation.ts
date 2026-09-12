@@ -19,7 +19,7 @@ export interface SemanticQualityV4ArtifactEnvelope {
 const digestPattern = /^[a-f0-9]{64}$/u;
 const attemptPattern = /^sqv4-[a-f0-9]{64}$/u;
 const artifactKinds = new Set<unknown>([
-  "adjudication", "answer", "answer_normalized_outcome", "answer_request_intent",
+  "adjudication", "answer", "answer_execution_observation", "answer_normalized_outcome", "answer_request_intent",
   "answer_original_model_surface",
   "answer_original_request", "answer_original_response", "answer_repair_model_surface",
   "answer_repair_request", "answer_repair_response", "capability_request",

@@ -63,14 +63,18 @@ describe("scheduler-owned exact evidence chain", () => {
     });
     const execution = { answerAttemptId: exactAnswerIdentity.attemptId,
       answerIdentity: exactAnswerIdentity,
+      providerCallInventory: (["capability", "retrieval", "answer"] as const)
+        .map((callKind) => ({ callKind, callOrdinal: 0 as const })),
       terminalChain } satisfies ScheduledExactOutcome;
     const evidence = { outcomes: [{ attemptId: exactAnswerIdentity.attemptId,
       identity: exactAnswerIdentity,
+      providerCallInventory: execution.providerCallInventory,
       terminalChain }] } as unknown as ExactCampaignEvidence;
     expect(bindExactExecutionEvidence(evidence, [execution]).outcomes[0]!.terminalChain)
       .toEqual(terminalChain);
     const withChain = (chain: unknown, identity = exactAnswerIdentity) => ({ ...evidence,
-      outcomes: [{ attemptId: identity.attemptId, identity, terminalChain: chain }] }) as
+      outcomes: [{ attemptId: identity.attemptId, identity,
+        providerCallInventory: execution.providerCallInventory, terminalChain: chain }] }) as
       unknown as ExactCampaignEvidence;
     expect(() => bindExactExecutionEvidence(withChain(terminalChain.slice(0, 2)), [execution]))
       .toThrow(/scheduler-produced/u);
@@ -421,26 +425,32 @@ function finalFixture() {
   const stored = new Map<string, StoredEnvelope>(); const artifacts: RetainedArtifact[] = [];
   const schedulerClaims: unknown[] = [];
   const outcomesByRepetition = ([1, 2, 3] as const).map((repetition) =>
+    // One fixture builder keeps exact provider/derived artifact predecessor custody coherent.
+    // oxlint-disable-next-line complexity
     questions.map((question, index): QualificationOutcome => {
       const identity = answerIdentity({ question, releaseRootSha256: release.releaseRootSha256,
         repetition, spendReservationSha256: spendDigests[repetition - 1]! });
-      appendScopeClaims(identity, schedulerClaims);
+      const providerFree = index === 1;
+      if (!providerFree) {appendScopeClaims(identity, schedulerClaims);}
       const expectedAbstention = index % 10 === 9;
       const resolverRequired = index === 0;
       const turnId = `turn-${repetition}-${index}`; const claimId = `final-${question.questionId}`;
-      const rankedLocatorIds = expectedAbstention ? [] : authorizedLocatorIds.slice(0, 5);
-      const speakerTimeChecks = [{ canonicalTurnId: turnId, expectedSpeakerId: "speaker-1",
+      const rankedLocatorIds = expectedAbstention || providerFree ? [] : authorizedLocatorIds.slice(0, 5);
+      const speakerTimeChecks = providerFree ? [] : [{ canonicalTurnId: turnId, expectedSpeakerId: "speaker-1",
         expectedStartMs: 1_000, observedSpeakerId: "speaker-1", observedStartMs: 1_050,
         toleranceMs: 100 }];
       let finalValue = finalAdjudicationValue(identity, resolverRequired, authorities,
-        d("9"), true, expectedAbstention);
+        d("9"), !providerFree, expectedAbstention || providerFree);
       let finalPlaintext = Buffer.from(canonicalJson(finalValue));
       let finalAdjudicationSha256 = sha256(finalPlaintext);
       const artifactBindingSha256ByKind: Record<string, string> = {};
       const terminalChain: QualificationOutcome["terminalChain"][number][] = [];
       let predecessorResultDigestSha256: string | null = null;
-      const kinds: readonly EncryptedArtifactKind[] = resolverRequired ?
+      const completeKinds: readonly EncryptedArtifactKind[] = resolverRequired ?
         [...KINDS.slice(0, -1), "resolver_result", "final_adjudication"] : KINDS;
+      const kinds = providerFree ? completeKinds.filter((kind) => ![
+        "capability_request", "capability_response", "retrieval_request", "retrieval_response",
+        "answer_request", "answer_response"].includes(kind)) : completeKinds;
       let predecessorPlaintextSha256: string | null = null;
       for (const kind of kinds) {
         const artifactIdentity = artifactAttemptIdentity(identity, kind);
@@ -448,9 +458,9 @@ function finalFixture() {
         const providerResultBytes = Buffer.from(canonicalJson({ callKind:
           artifactIdentity.callKind, questionId: artifactIdentity.questionId,
         schemaVersion: "meeting_knowledge.semantic_quality_test_provider_result.v1" }));
-        const terminal = ["capability_response", "retrieval_response", "answer_response",
-          "raw_outcome", "adjudicator_1_result", "adjudicator_2_result", "resolver_result"]
-          .includes(kind);
+        const terminal = ["adjudicator_1_result", "adjudicator_2_result", "resolver_result"]
+          .includes(kind) || !providerFree && ["capability_response", "retrieval_response",
+            "answer_response", "raw_outcome"].includes(kind);
         const decisionReceipt = kind === "adjudicator_1_result" ? finalValue.firstReceipt :
           kind === "adjudicator_2_result" ? finalValue.secondReceipt :
           kind === "resolver_result" ? finalValue.resolverReceipt : undefined;
@@ -515,12 +525,14 @@ function finalFixture() {
             schemaVersion: "meeting_knowledge.semantic_quality_retrieval_evidence.v1",
             scopeViolationLocatorIds: [] })) : kind === "evidence" ?
             Buffer.from(canonicalJson({ attempt: artifactIdentity, chain,
-              evidenceTurnIds: [turnId],
+              evidenceTurnIds: providerFree ? [] : [turnId],
               schemaVersion: "meeting_knowledge.semantic_quality_canonical_evidence.v1",
               speakerTimeChecks })) : kind === "raw_outcome" ? Buffer.from(canonicalJson({ ...base,
                 encryptedEvidenceSha256: finalValue.encryptedEvidenceSha256,
                 outcomeDigestSha256: finalValue.outcomeDigestSha256,
-                responseBytesBase64: providerResultBytes.toString("base64") })) :
+                ...(providerFree ? { schemaVersion:
+                  "meeting_knowledge.semantic_quality_raw_outcome.v2" } :
+                  { responseBytesBase64: providerResultBytes.toString("base64") }) })) :
             kind === "adjudication_input" ? Buffer.from(canonicalJson({ ...base,
               encryptedEvidenceSha256: finalValue.encryptedEvidenceSha256,
               outcomeDigestSha256: finalValue.outcomeDigestSha256 })) :
@@ -541,18 +553,22 @@ function finalFixture() {
       return { abstention: { expected: expectedAbstention, observed: expectedAbstention },
         artifactBindingSha256ByKind,
         campaignRootSha256: CAMPAIGN_ROOT,
-        citationChecks: expectedAbstention ? [] :
+        citationChecks: expectedAbstention || providerFree ? [] :
           [{ citedTurnId: turnId, claimId, entailed: true }],
-        claimChecks: expectedAbstention ? [] : [{ claimId, factual: true, supported: true }],
-        evidenceTurnIds: [turnId],
+        claimChecks: expectedAbstention || providerFree ? [] : [{ claimId, factual: true, supported: true }],
+        evidenceTurnIds: providerFree ? [] : [turnId],
         finalAdjudicationSha256, identity, locale: question.locale,
+        providerCallInventory: providerFree ? [] :
+          (["capability", "retrieval", "answer"] as const)
+            .map((callKind) => ({ callKind, callOrdinal: 0 as const })),
         rankedLocatorIds,
         relevantLocatorIds: expectedAbstention ? [] : authorizedLocatorIds.slice(0, 5),
         repetition, resolverRequired,
-        retrievalLatencyUs: 200_000,
+        retrievalLatencyUs: providerFree ? 0 : 200_000,
         rootBindingSha256, source: question.source,
         scopeViolationLocatorIds: [],
-        speakerTimeChecks, terminalChain };
+        speakerTimeChecks, terminalChain, terminalReason: providerFree ? "request_empty" : null,
+        terminalStatus: providerFree ? "failed" : expectedAbstention ? "abstained" : "answered" };
     }));
   const repetitionAuthority = authorities.signers.repetition;
   const evidence = outcomesByRepetition.map((outcomes, index) => {
@@ -561,7 +577,7 @@ function finalFixture() {
       metrics, metricsSha256: sha256(metrics), outcomes, outcomesSha256: sha256(outcomes),
       releaseRootSha256: release.releaseRootSha256, repetition: (index + 1) as 1 | 2 | 3,
       rootBindingSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v4",
+      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v5",
       spendReservationSha256: spendDigests[index]!, thresholdsPassed: true };
     return repetitionAuthority.signed(payload);
   });
@@ -591,7 +607,7 @@ function finalFixture() {
     releaseRootSha256: release.releaseRootSha256,
     schemaVersion: "meeting_knowledge.semantic_quality_cleanup_absence.v5" });
   const input = { artifactCustody: custody(authorities.policy, stored), artifacts,
-    scopeObservationCustody: scopeObservationCustody(),
+    scopeObservationCustody: scopeObservationCustody(({ questionId }) => questionId === "a-1"),
     authorizedLocatorInventory,
     campaignByteCeiling: artifacts.reduce((total, artifact) => total + artifact.storedBytes, 0) + 720 * 2048,
     campaignRootSha256: CAMPAIGN_ROOT, cleanupAuthorityKeyId: cleanupAuthority.keyId,
@@ -1014,6 +1030,14 @@ describe("production quality campaign final evidence", () => {
   // A cold run verifies and decrypts the complete 3 x 240 AES-GCM inventory before reconstruction.
   it("accepts exact empty capability GET bytes and reconstructs all bounded metric groups",
     async () => {
+    const providerFree = FINAL.outcomesByRepetition[0]![1]!;
+    expect(providerFree.terminalStatus).toBe("failed");
+    expect(providerFree.providerCallInventory).toEqual([]);
+    expect(providerFree.terminalChain).toEqual([]);
+    expect(FINAL.input.artifacts.filter(({ attemptId, kind }) =>
+      attemptId === providerFree.identity.attemptId && ["capability_request", "capability_response",
+        "retrieval_request", "retrieval_response", "answer_request", "answer_response"]
+        .includes(kind))).toEqual([]);
     const capabilityRequest = FINAL.input.artifacts.find(({ kind }) =>
       kind === "capability_request")!;
     const capabilityValue = JSON.parse(Buffer.from(FINAL.stored.get(
@@ -1026,7 +1050,7 @@ describe("production quality campaign final evidence", () => {
     expect(metrics.find(({ group }) => group === "independent_review")?.applicableOutcomeCount)
       .toBe(40);
     expect(metrics.find(({ group }) => group === "overall")?.ndcgAt10MillionthsTotal)
-      .toBe(216_000_000);
+      .toBe(215_000_000);
     expect(metrics.find(({ group }) => group === "overall")?.abstentionPrecision)
       .toEqual({ denominator: 24, numerator: 24 });
     expect(metrics.find(({ group }) => group === "overall")?.abstentionRecall)
@@ -1036,9 +1060,35 @@ describe("production quality campaign final evidence", () => {
     expect(metrics.every(({ thresholdPassed }) => thresholdPassed)).toBe(true);
   }, 60_000);
 
-  it("rejects legacy accuracy-shaped repetition evidence", async () => {
+  it("rejects a fabricated provider artifact for an authenticated provider-free attempt", async () => {
+    const outcome = FINAL.outcomesByRepetition[0]![1]!;
+    const identity = artifactAttemptIdentity(outcome.identity, "capability_request");
+    const chain = artifactChain({ authorities: FINAL.authorities, identity,
+      kind: "capability_request", predecessorPlaintextSha256: null, terminal: false });
+    const plaintext = Buffer.from(canonicalJson({ attempt: identity, chain,
+      requestBytesBase64: "",
+      schemaVersion: "meeting_knowledge.semantic_quality_capability_request.v1" }));
+    const fabricated = encryptedArtifact(outcome.identity, "capability_request", plaintext,
+      FINAL.stored);
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      artifacts: [...FINAL.input.artifacts, fabricated] })).rejects.toThrow("orphan artifact");
+  });
+
+  it("rejects an authenticated call inventory with a missing provider terminal chain", async () => {
+    const first = FINAL.evidence[0]!.payload;
+    const outcomes = first.outcomes.map((outcome, index) => index === 1 ? { ...outcome,
+      providerCallInventory: (["capability", "retrieval", "answer"] as const)
+        .map((callKind) => ({ callKind, callOrdinal: 0 as const })) } : outcome);
+    const receipt = FINAL.repetitionAuthority.signed({ ...first, outcomes,
+      outcomesSha256: sha256(outcomes) });
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      repetitionEvidence: [receipt, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
+      .rejects.toThrow("differs from provider call inventory");
+  });
+
+  it.each(["v3", "v4"] as const)("rejects legacy %s repetition evidence", async (version) => {
     const legacy = FINAL.repetitionAuthority.signed({ ...FINAL.evidence[0]!.payload,
-      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v3" });
+      schemaVersion: `meeting_knowledge.semantic_quality_repetition_evidence.${version}` });
     await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
       repetitionEvidence: [legacy, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
       .rejects.toThrow(/binding or structure/u);
@@ -1336,7 +1386,7 @@ describe("production quality campaign final evidence", () => {
 
   it("blocks answerComplete false and every retained artifact omission or binding swap", async () => {
     const first = FINAL.evidence[0]!.payload;
-    const selected = first.outcomes[1]!;
+    const selected = first.outcomes[2]!;
     const oldFinal = FINAL.input.artifacts.find(({ attemptId, kind }) =>
       kind === "final_adjudication" && attemptId === artifactAttemptIdentity(selected.identity,
         "final_adjudication").attemptId)!;

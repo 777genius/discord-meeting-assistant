@@ -3,6 +3,7 @@ import { canonicalJson, sha256 } from "./canonical.js";
 import { attemptIdentity } from "./execution.js";
 import type { QualificationExecutionPacket } from "./execute-admitted-qualification-question.js";
 import type { QualityCampaignProductionPorts } from "./production-ports.js";
+import { assertExactOutcomeContract } from "./production-evidence.js";
 
 interface ExecutionEvidenceInput {
   readonly campaignRootSha256: string; readonly deadlineEpochMs: number;
@@ -23,28 +24,31 @@ export async function loadMainExecutionEvidence(input: ExecutionEvidenceInput) {
     throw new Error("independently admitted execution packet inventory is duplicated");
   }
   const attempts = await Promise.all(externalEvidence.outcomes.map(async (outcome) => {
-    const capability = terminal(outcome, "capability");
-    const retrieval = terminal(outcome, "retrieval");
-    const answer = terminal(outcome, "answer");
+    assertExactOutcomeContract(outcome);
+    const capability = optionalTerminal(outcome, "capability");
+    const retrieval = optionalTerminal(outcome, "retrieval");
+    optionalTerminal(outcome, "answer");
     const packet = packets.get(outcome.questionId);
     if (packet === undefined || sha256(packet) !== outcome.identity.questionDigestSha256) {
       throw new Error("externally authenticated outcome lacks its admitted execution packet");
     }
     return await input.ports.mainCanonicalEvidence.project({ answerAbstained: outcome.answerAbstained,
       attemptId: outcome.attemptId, campaignRootSha256: outcome.campaignRootSha256,
-      capabilityRequestSha256: capability.requestDigestSha256,
-      capabilityResponseSha256: capability.resultEnvelopeDigestSha256,
+      capabilityRequestSha256: capability?.requestDigestSha256 ?? null,
+      capabilityResponseSha256: capability?.resultEnvelopeDigestSha256 ?? null,
       citationLocatorIds: outcome.citationLocatorDigests,
       evidenceLocatorIds: outcome.evidenceLocatorDigests,
       evidenceTurnIds: outcome.evidenceTurnIds,
       executionPacket: packet,
       identity: outcome.identity,
+      providerCallInventory: outcome.providerCallInventory,
       rankedLocatorIds: outcome.rankedLocatorDigests,
       retrievalLatencyUs: outcome.retrievalLatencyUs,
-      retrievalRequestSha256: retrieval.requestDigestSha256,
-      retrievalResponseSha256: retrieval.resultEnvelopeDigestSha256,
-      terminalAnswerRequestSha256: answer.requestDigestSha256,
-      terminalAnswerResponseSha256: answer.resultEnvelopeDigestSha256 });
+      retrievalRequestSha256: retrieval?.requestDigestSha256 ?? null,
+      retrievalResponseSha256: retrieval?.resultEnvelopeDigestSha256 ?? null,
+      terminalAnswerRequestSha256: outcome.answerRequestIntentSha256,
+      terminalAnswerResponseSha256: outcome.answerExchangeInventorySha256,
+      terminalReason: outcome.terminalReason, terminalStatus: outcome.terminalStatus });
   }));
   const localEvidence = await input.ports.mainCanonicalEvidence.verify({ attempts,
     campaignRootSha256: input.campaignRootSha256 });
@@ -55,11 +59,14 @@ export async function loadHoldoutExecutionEvidence(input: ExecutionEvidenceInput
   return await loadExecutionEvidence(input, "holdout");
 }
 
-function terminal(outcome: Awaited<ReturnType<typeof loadExecutionEvidence>>["outcomes"][number],
+function optionalTerminal(outcome: Awaited<ReturnType<typeof loadExecutionEvidence>>["outcomes"][number],
   kind: "answer" | "capability" | "retrieval") {
   const matches = outcome.terminalChain.filter((item) => item.callKind === kind);
-  if (matches.length !== 1) {throw new Error(`external ${kind} terminal evidence is incomplete`);}
-  return matches[0]!;
+  const expected = outcome.providerCallInventory.some((item) => item.callKind === kind);
+  if (matches.length !== (expected ? 1 : 0)) {
+    throw new Error(`external ${kind} terminal evidence differs from call inventory`);
+  }
+  return matches[0];
 }
 
 async function loadExecutionEvidence(input: ExecutionEvidenceInput, kind: "holdout" | "main") {

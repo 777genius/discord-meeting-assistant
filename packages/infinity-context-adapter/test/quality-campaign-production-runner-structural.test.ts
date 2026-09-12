@@ -861,6 +861,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         ({ claimId, factual: claimFactual, supported: claimSupported })),
       evidenceTurnIds: [turnId],
       finalAdjudicationSha256: outcome.finalAdjudicationSha256, identity: outcome.identity,
+      providerCallInventory: outcome.providerCallInventory,
       locale: question.locale, rankedLocatorIds: outcome.rankedLocatorDigests,
       relevantLocatorIds: outcome.expectedAnswer === "abstain" ? [] :
         outcome.relevantLocatorDigests, repetition: outcome.repetition,
@@ -871,6 +872,8 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         [{ canonicalTurnId: turnId, expectedSpeakerId: "speaker-1", expectedStartMs: 1_000,
           observedSpeakerId: "speaker-1", observedStartMs: 1_000, toleranceMs: 0 }],
       terminalChain: outcome.terminalChain,
+      terminalReason: outcome.terminalReason,
+      terminalStatus: outcome.terminalStatus,
       };
     });
     const repetitionEvidence = ([1, 2, 3] as const).map((repetition) => {
@@ -880,7 +883,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
         outcomes[0]!.campaignRootSha256, metrics, metricsSha256: sha256(metrics),
       outcomes: selected, outcomesSha256: sha256(selected), releaseRootSha256:
         input.releaseRootSha256, repetition, rootBindingSha256,
-      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v4",
+      schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v5",
       spendReservationSha256: spendDigests[repetition - 1], thresholdsPassed: true });
     });
     const authorizedLocatorInventory = input.locator.signed({ campaignRootSha256:
@@ -1124,7 +1127,10 @@ function exactOutcome(attemptId: string, source: {
     predecessorResultDigestSha256 = resultEnvelopeDigestSha256;
     return terminal;
   });
-  return { answerAbstained: isAbstention, artifactBindingSha256ByKind, attemptId,
+  return { answerAbstained: isAbstention,
+    answerExchangeInventorySha256: terminalChain[2]!.resultEnvelopeDigestSha256,
+    answerRequestIntentSha256: terminalChain[2]!.requestDigestSha256,
+    artifactBindingSha256ByKind, attemptId,
     campaignRootSha256: String(request.campaignRootSha256),
     citationLocatorDigests: isAbstention ? [] : [locator],
     evidenceLocatorDigests: isAbstention ? [] : [locator],
@@ -1134,13 +1140,18 @@ function exactOutcome(attemptId: string, source: {
       digest(`${attemptId}:final-adjudication`), identity,
     forbiddenLocatorDigests: [digest(questionId.startsWith("h-") ?
       `forbidden:${questionId}` : "global-forbidden")],
+    providerCallInventory: (["capability", "retrieval", "answer"] as const)
+      .map((callKind) => ({ callKind, callOrdinal: 0 as const })),
     questionDigestSha256: String(request.questionDigestSha256), questionId,
     rankedLocatorDigests: [locator, digest(`distractor:${questionId}`)],
     relevantLocatorDigests: isAbstention ? [] : [locator],
-    repetition, retrievalLatencyUs: 200_000, scopeViolationLocatorIds: [],
+    repetition, retrievalLatencyUs: 200_000,
+    schemaVersion: "meeting_knowledge.semantic_quality_exact_outcome.v2",
+    scopeViolationLocatorIds: [],
     speakerTimeChecks: [{ canonicalTurnId: `turn-${repetition}-${questionId}`,
       expectedSpeakerId: "speaker-1", expectedStartMs: 1_000, observedSpeakerId: "speaker-1",
-      observedStartMs: 1_000, toleranceMs: 0 }], terminalChain };
+      observedStartMs: 1_000, toleranceMs: 0 }], terminalChain, terminalReason: null,
+    terminalStatus: isAbstention ? "abstained" : "answered" };
 }
 
 async function writeAuthority(root: string, name: string, authority: {

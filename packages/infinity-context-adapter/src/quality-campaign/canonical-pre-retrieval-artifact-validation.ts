@@ -8,6 +8,8 @@ import type { MainCanonicalEvidenceProjection, QualificationScopeTopology } from
   "./production-ports.js";
 
 /** Authenticates a completed preparation failure without implying retrieval provider activity. */
+// Closed branch, call-inventory, latency, and topology validation is intentionally fail-closed.
+// oxlint-disable-next-line complexity
 export async function verifyPreRetrievalFailureProjection(input: {
   readonly expected: MainCanonicalEvidenceProjection;
   readonly outcome: ReturnType<typeof decodeQualificationQuestionOutcome>;
@@ -20,13 +22,15 @@ export async function verifyPreRetrievalFailureProjection(input: {
     outcome.reason !== `request_${scope.status}` || outcome.rawRetrievalResponseSha256 !== null ||
     outcome.retrievalCandidates.length !== 0 || outcome.selectedTurns.length !== 0 ||
     outcome.citations.length !== 0 || outcome.claims.length !== 0 || expected.answerAbstained ||
-    !Number.isSafeInteger(expected.retrievalLatencyUs) || expected.retrievalLatencyUs < 0) {
+    expected.providerCallInventory.length !== 0 || expected.capabilityRequestSha256 !== null ||
+    expected.capabilityResponseSha256 !== null || expected.retrievalRequestSha256 !== null ||
+    expected.retrievalResponseSha256 !== null || expected.retrievalLatencyUs !== 0) {
     throw new Error(
       "canonical scope resolution observation differs from the pre-retrieval outcome branch");
   }
   if (expected.executionPacket.schemaVersion !==
     "meeting_knowledge.qualification_execution_packet.v2") {
-    return;
+    throw new Error("pre-retrieval failure requires a generation-bound V2 execution packet");
   }
   const topology = Object.freeze({ ...await input.resolveTopology() });
   if (topology.topologyDocumentSha256 !== expected.executionPacket.scopeTopologyDocumentSha256 ||

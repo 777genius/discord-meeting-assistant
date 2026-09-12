@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- exact local custody verification remains one closed reader */
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -95,10 +96,18 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
   const opened = await openRequiredArtifacts(source);
   const scope = decodeScopeObservation(opened.get("scope_resolution_observation")!.plaintext);
   const outcome = decodeOutcome(opened.get("answer_normalized_outcome")!.plaintext);
+  if ((outcome.reason ?? null) !== expected.terminalReason ||
+    outcome.status !== expected.terminalStatus) {
+    throw new Error("canonical terminal reason differs from external outcome evidence");
+  }
   if (scope.status !== "prepared") {
     await verifyPreRetrievalFailure(opened, source, scope, outcome);
     assertCanonicalOutcomeProjection(outcome, expected);
     return [...opened.values()].map(({ receipt }) => receipt);
+  }
+  if (canonicalJson(expected.providerCallInventory.slice(0, 2)) !== canonicalJson([
+    { callKind: "capability", callOrdinal: 0 }, { callKind: "retrieval", callOrdinal: 0 }])) {
+    throw new Error("retrieval branch provider inventory lacks its exact retrieval calls");
   }
   for (const kind of REQUIRED_RETRIEVAL_KINDS) {
     if (!opened.has(kind)) {await openArtifact(opened, kind, source);}
@@ -263,6 +272,14 @@ async function verifyV3Artifacts(opened: OpenedArtifacts, source: AttemptVerific
   if (answerIntent.prepared !== (outcome.selectedTurns.length > 0)) {
     throw new Error("answer request intent differs from the normalized branch");
   }
+  if (answerIntent.prepared) {
+    await openArtifact(opened, "answer_execution_observation", source);
+    assertAnswerExecutionObservation(
+      opened.get("answer_execution_observation")!.plaintext, expected, outcome,
+      answerInventory.originalPresent);
+  } else if (expected.providerCallInventory.some(({ callKind }) => callKind === "answer")) {
+    throw new Error("unprepared answer branch contains a provider answer call");
+  }
   if (answerInventory.originalPresent) {
     await verifyAnswerArtifacts(opened, expected, outcome,
       binding.request.filters.sourceGenerations[0]!.projectionGeneration,
@@ -273,6 +290,24 @@ async function verifyV3Artifacts(opened: OpenedArtifacts, source: AttemptVerific
     throw new Error("answer exchange inventory differs from external terminal evidence");
   }
   await assertClosedV3ReceiptInventory(source.artifactRoot, expected.attemptId, [...opened.keys()]);
+}
+
+function assertAnswerExecutionObservation(bytes: Uint8Array,
+  expected: MainCanonicalEvidenceProjection,
+  outcome: ReturnType<typeof decodeQualificationQuestionOutcome>, exchangePresent: boolean): void {
+  const record = exactRecord(parseJson(bytes, "answer execution observation"), ["attemptId",
+    "outcomeCertain", "providerBytesSent", "schemaVersion"], "answer execution observation");
+  if (record.schemaVersion !== "meeting_knowledge.canonical_answer_execution_observation.v1" ||
+    record.attemptId !== expected.attemptId || record.outcomeCertain !== true ||
+    typeof record.providerBytesSent !== "boolean" || record.providerBytesSent !== exchangePresent) {
+    throw new Error("answer execution observation differs from retained exchange inventory");
+  }
+  const responseDependent = outcome.status === "failed" &&
+    ["invalid_attestation", "provider_output_invalid"].includes(outcome.reason ?? "");
+  if (responseDependent && !exchangePresent || outcome.status !== "failed" && !exchangePresent ||
+    expected.providerCallInventory.some(({ callKind }) => callKind === "answer") !== exchangePresent) {
+    throw new Error("answer terminal reason differs from proven provider call inventory");
+  }
 }
 
 function assertAnswerInventory(outcome: ReturnType<typeof decodeQualificationQuestionOutcome>,

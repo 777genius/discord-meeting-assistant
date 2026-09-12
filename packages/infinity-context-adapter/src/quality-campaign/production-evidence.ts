@@ -18,6 +18,8 @@ export interface ExactOutcomeEvidence {
   readonly artifactBindingSha256ByKind:
     Readonly<Partial<Record<RetainedArtifactKind, string>>>;
   readonly answerAbstained: boolean;
+  readonly answerExchangeInventorySha256: string;
+  readonly answerRequestIntentSha256: string;
   readonly attemptId: string;
   readonly campaignRootSha256: string;
   readonly citationLocatorDigests: readonly string[];
@@ -27,6 +29,7 @@ export interface ExactOutcomeEvidence {
   readonly finalAdjudicationSha256: string;
   readonly forbiddenLocatorDigests: readonly string[];
   readonly identity: AttemptIdentity;
+  readonly providerCallInventory: readonly ProviderCallInventoryEntry[];
   readonly questionDigestSha256: string;
   readonly questionId: string;
   readonly rankedLocatorDigests: readonly string[];
@@ -36,6 +39,14 @@ export interface ExactOutcomeEvidence {
   readonly scopeViolationLocatorIds: readonly string[];
   readonly speakerTimeChecks: readonly unknown[];
   readonly terminalChain: readonly ExactTerminalEvidence[];
+  readonly terminalReason: string | null;
+  readonly terminalStatus: "abstained" | "answered" | "failed";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_exact_outcome.v2";
+}
+
+export interface ProviderCallInventoryEntry {
+  readonly callKind: "answer" | "capability" | "retrieval";
+  readonly callOrdinal: 0;
 }
 
 export interface ExactTerminalEvidence {
@@ -54,6 +65,7 @@ export interface ScheduledExactOutcome {
   readonly answerAttemptId: string;
   readonly answerIdentity: AttemptIdentity;
   readonly terminalChain: readonly ExactTerminalEvidence[];
+  readonly providerCallInventory: readonly ProviderCallInventoryEntry[];
 }
 
 export interface ExactAdjudicationEvidence extends FinalAdjudicationEnvelope {
@@ -102,7 +114,8 @@ export function bindExactExecutionEvidence(evidence: ExactCampaignEvidence,
     if (execution === undefined || canonicalJson(outcome.terminalChain) !==
       canonicalJson(execution.terminalChain) || outcome.identity.attemptId !==
       execution.answerAttemptId || canonicalJson(outcome.identity) !==
-      canonicalJson(execution.answerIdentity)) {
+      canonicalJson(execution.answerIdentity) || canonicalJson(outcome.providerCallInventory) !==
+      canonicalJson(execution.providerCallInventory)) {
       throw new Error("final evidence is not the scheduler-produced exact terminal chain");
     }
     return Object.freeze({ ...outcome, identity: attemptIdentityFromChain(execution),
@@ -112,13 +125,12 @@ export function bindExactExecutionEvidence(evidence: ExactCampaignEvidence,
 }
 
 function attemptIdentityFromChain(execution: ScheduledExactOutcome): AttemptIdentity {
-  const answer = execution.terminalChain[2];
-  if (answer === undefined || answer.callKind !== "answer" ||
-    answer.attemptId !== execution.answerAttemptId) {
-    throw new Error("scheduler terminal chain has no exact answer identity");
-  }
-  if (execution.answerIdentity.attemptId !== answer.attemptId) {
+  const answer = execution.terminalChain.find(({ callKind }) => callKind === "answer");
+  if (answer !== undefined && answer.attemptId !== execution.answerAttemptId) {
     throw new Error("scheduler answer identity differs from its terminal chain");
+  }
+  if (execution.answerIdentity.attemptId !== execution.answerAttemptId) {
+    throw new Error("scheduler outcome has a foreign answer identity");
   }
   return execution.answerIdentity;
 }
@@ -188,12 +200,14 @@ export async function reconstructExactMainEvidence(input: {
           ({ claimFactual, claimId, claimSupported }) => ({ claimId, factual: claimFactual,
             supported: claimSupported })), evidenceTurnIds: outcome.evidenceTurnIds,
         finalAdjudicationSha256: outcome.finalAdjudicationSha256, identity: attempt,
+        providerCallInventory: outcome.providerCallInventory,
         rankedLocatorIds: outcome.rankedLocatorDigests,
         relevantLocatorIds: outcome.relevantLocatorDigests,
       resolverRequired: adjudicationByAttempt.get(attempt.attemptId)?.resolverReceipt !==
         null, retrievalLatencyUs: outcome.retrievalLatencyUs,
         scopeViolationLocatorIds: outcome.scopeViolationLocatorIds,
-        speakerTimeChecks: outcome.speakerTimeChecks, terminalChain: outcome.terminalChain }; }) });
+        speakerTimeChecks: outcome.speakerTimeChecks, terminalChain: outcome.terminalChain,
+        terminalReason: outcome.terminalReason, terminalStatus: outcome.terminalStatus }; }) });
   const metrics = ([1, 2, 3] as const).map((repetition) => computeMetrics({ adjudications:
     input.evidence.adjudications.filter((value) => value.repetition === repetition), outcomes:
     input.evidence.outcomes.filter((value) => value.repetition === repetition), repetition }));
@@ -280,12 +294,14 @@ export async function reconstructExactHoldoutEvidence(input: {
           claimSupported }) => ({ claimId, factual: claimFactual, supported: claimSupported })),
         evidenceTurnIds: outcome.evidenceTurnIds,
         finalAdjudicationSha256: outcome.finalAdjudicationSha256, identity: attempt,
+        providerCallInventory: outcome.providerCallInventory,
         rankedLocatorIds: outcome.rankedLocatorDigests,
         relevantLocatorIds: outcome.relevantLocatorDigests,
         resolverRequired: adjudication.resolverReceipt !== null,
         retrievalLatencyUs: outcome.retrievalLatencyUs,
         scopeViolationLocatorIds: outcome.scopeViolationLocatorIds,
-        speakerTimeChecks: outcome.speakerTimeChecks, terminalChain: outcome.terminalChain };
+        speakerTimeChecks: outcome.speakerTimeChecks, terminalChain: outcome.terminalChain,
+        terminalReason: outcome.terminalReason, terminalStatus: outcome.terminalStatus };
     }), perRepetitionCardinality: 30,
     keyNamespace: input.keyNamespace, providerResultAuthorityRole: "holdout_provider_result",
     release: input.release,
@@ -451,7 +467,7 @@ function assertExactMembership(campaignRootSha256: string, expected: readonly {
   }
   const expectedById = new Map(expected.map((value) => [value.attempt.attemptId, value]));
   for (const outcome of rawOutcomes) {
-    decodeOutcome(outcome);
+    assertExactOutcomeContract(outcome);
     const value = expectedById.get(outcome.attemptId);
     if (value === undefined || outcome.campaignRootSha256 !== campaignRootSha256 ||
       outcome.questionId !== value.question.questionId || outcome.questionDigestSha256 !==
@@ -475,18 +491,24 @@ function assertExactMembership(campaignRootSha256: string, expected: readonly {
   }
 }
 
-function decodeOutcome(value: ExactOutcomeEvidence): void {
-  exactRecord(value, ["answerAbstained", "attemptId", "campaignRootSha256",
+// The versioned external outcome is decoded in one closed pass.
+// oxlint-disable-next-line complexity
+export function assertExactOutcomeContract(value: ExactOutcomeEvidence): void {
+  exactRecord(value, ["answerAbstained", "answerExchangeInventorySha256", "answerRequestIntentSha256",
+    "attemptId", "campaignRootSha256",
     "artifactBindingSha256ByKind", "citationLocatorDigests", "evidenceLocatorDigests",
     "expectedAnswer", "finalAdjudicationSha256", "forbiddenLocatorDigests", "identity",
-    "questionDigestSha256", "questionId", "rankedLocatorDigests", "relevantLocatorDigests",
+    "providerCallInventory", "questionDigestSha256", "questionId", "rankedLocatorDigests", "relevantLocatorDigests",
     "repetition", "retrievalLatencyUs", "scopeViolationLocatorIds", "speakerTimeChecks",
-    "terminalChain", "evidenceTurnIds"],
+    "terminalChain", "terminalReason", "terminalStatus", "evidenceTurnIds", "schemaVersion"],
   "exact outcome evidence");
   safeId(value.attemptId, "outcome attempt"); safeId(value.questionId, "outcome question");
   digest(value.campaignRootSha256, "outcome root");
   digest(value.questionDigestSha256, "outcome question digest");
-  if (typeof value.answerAbstained !== "boolean" ||
+  digest(value.answerExchangeInventorySha256, "outcome answer exchange inventory");
+  digest(value.answerRequestIntentSha256, "outcome answer request intent");
+  if (value.schemaVersion !== "meeting_knowledge.semantic_quality_exact_outcome.v2" ||
+    typeof value.answerAbstained !== "boolean" ||
     !["answerable", "abstain"].includes(value.expectedAnswer) ||
     !Number.isSafeInteger(value.retrievalLatencyUs) || value.retrievalLatencyUs < 0) {
     throw new Error("outcome contains a missing or unknown metric field");
@@ -496,9 +518,45 @@ function decodeOutcome(value: ExactOutcomeEvidence): void {
   assertLocatorDigests(value.rankedLocatorDigests);
   assertLocatorDigests(value.relevantLocatorDigests);
   assertLocatorDigests(value.forbiddenLocatorDigests);
+  assertProviderCallInventory(value.providerCallInventory);
+  if (!(value.terminalReason === null || typeof value.terminalReason === "string" &&
+    value.terminalReason.trim() !== "")) {
+    throw new Error("outcome terminal reason is invalid");
+  }
+  if (!["abstained", "answered", "failed"].includes(value.terminalStatus) ||
+    value.answerAbstained !== (value.terminalStatus === "abstained") ||
+    value.terminalStatus === "failed" && value.terminalReason === null ||
+    value.terminalStatus === "answered" && value.terminalReason !== null) {
+    throw new Error("outcome terminal status and reason are inconsistent");
+  }
+  if (value.providerCallInventory.length === 0 &&
+    (!["request_empty", "request_unavailable"].includes(value.terminalReason ?? "") ||
+      value.retrievalLatencyUs !== 0 || value.rankedLocatorDigests.length !== 0 ||
+      value.evidenceLocatorDigests.length !== 0 || value.citationLocatorDigests.length !== 0 ||
+      value.evidenceTurnIds.length !== 0 || value.answerAbstained)) {
+    throw new Error("provider-free outcome is not a pre-retrieval failure");
+  }
   if (value.rankedLocatorDigests.length >
     QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.resultLimit) {
     throw new Error("outcome contains a missing or unknown metric field");
+  }
+}
+
+function assertProviderCallInventory(value: unknown): asserts value is readonly ProviderCallInventoryEntry[] {
+  if (!Array.isArray(value)) {throw new Error("outcome provider call inventory is invalid");}
+  const calls = value.map((item) => exactRecord(item, ["callKind", "callOrdinal"],
+    "outcome provider call inventory"));
+  if (calls.some(({ callKind, callOrdinal }) =>
+    !["capability", "retrieval", "answer"].includes(String(callKind)) || callOrdinal !== 0) ||
+    new Set(calls.map(({ callKind }) => callKind)).size !== calls.length) {
+    throw new Error("outcome provider call inventory is invalid or duplicated");
+  }
+  const kinds = calls.map(({ callKind }) => callKind);
+  const valid = [[], ["capability", "retrieval"],
+    ["capability", "retrieval", "answer"]].some((candidate) =>
+    canonicalJson(kinds) === canonicalJson(candidate));
+  if (!valid) {
+    throw new Error("outcome provider call inventory is incomplete or reordered");
   }
 }
 

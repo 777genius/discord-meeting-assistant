@@ -143,6 +143,8 @@ export async function loadScheduledExactOutcomes(input: {
         releaseRootSha256: input.releaseRootSha256, repetition,
         spendReservationSha256: input.spendReservationSha256ByRepetition[repetition] });
       return Object.freeze({ answerAttemptId: terminalChain[2]!.attemptId, answerIdentity,
+        providerCallInventory: Object.freeze((["capability", "retrieval", "answer"] as const)
+          .map((callKind) => Object.freeze({ callKind, callOrdinal: 0 as const }))),
         terminalChain: Object.freeze(terminalChain) });
     })))));
 }
@@ -275,6 +277,8 @@ async function executeQuestion(input: {
     repetition: input.job.repetition,
     spendReservationSha256: input.binding.spendReservationSha256 });
   return Object.freeze({ answerAttemptId: terminalChain[2]!.attemptId, answerIdentity,
+    providerCallInventory: Object.freeze((["capability", "retrieval", "answer"] as const)
+      .map((callKind) => Object.freeze({ callKind, callOrdinal: 0 as const }))),
     terminalChain: Object.freeze(terminalChain) });
 }
 

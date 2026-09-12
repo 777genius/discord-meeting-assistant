@@ -39,10 +39,12 @@ describe("canonical prepared answer intent", () => {
         capabilityResponseSha256: "2".repeat(64), citationLocatorIds: [],
         diagnosticCustody: null, evidenceLocatorIds: [turn.sourceLocatorId],
         evidenceTurnIds: [turn.turnId], executionPacket: packet, identity,
+        providerCallInventory: [{ callKind: "capability", callOrdinal: 0 as const },
+          { callKind: "retrieval", callOrdinal: 0 as const }],
         rankedLocatorIds: [turn.sourceLocatorId], retrievalLatencyUs: 1,
         retrievalRequestSha256: "3".repeat(64), retrievalResponseSha256: "4".repeat(64),
         terminalAnswerRequestSha256, terminalAnswerResponseSha256: "5".repeat(64),
-        topology: null };
+        terminalReason: "runtime_unavailable", terminalStatus: "failed" as const, topology: null };
       const outcome = { citations: [], claims: [], rawRetrievalResponseSha256: "4".repeat(64),
         reason: "runtime_unavailable", retrievalCandidates: [{ contributions: [], fusedScore: 1,
           locatorId: turn.sourceLocatorId, providerRank: 0 }], selectedTurns: [turn],
@@ -54,5 +56,8 @@ describe("canonical prepared answer intent", () => {
       expect(() => verifyAnswerRequestIntent(intent, {
         ...projection, terminalAnswerRequestSha256: "0".repeat(64) }, outcome, memoryGeneration))
         .toThrow("prepared answer request intent differs");
+      expect(() => verifyAnswerRequestIntent(
+        preparedAnswerRequestIntentBytes("foreign-attempt", request), projection, outcome,
+        memoryGeneration)).toThrow("belongs to another attempt");
     });
 });

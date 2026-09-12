@@ -1,7 +1,7 @@
 import { digest, exactRecord } from "./canonical.js";
 
 export type SemanticQualityV4ArtifactKind = "adjudication" | "answer" | "evidence" |
-  "answer_request_intent" |
+  "answer_request_intent" | "answer_execution_observation" |
   "answer_normalized_outcome" | "answer_original_model_surface" |
   "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
   "answer_repair_request" | "answer_repair_response" | "capability_request" |
