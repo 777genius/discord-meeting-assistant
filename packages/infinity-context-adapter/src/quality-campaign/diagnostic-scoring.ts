@@ -118,7 +118,8 @@ export function authenticateDiagnosticScoreV2(input: DiagnosticScoreV2Authentica
       !["answered", "abstained", "failed", "outcome_unknown"].includes(outcome.status) ||
       !Array.isArray(outcome.retrievedLocators) ||
       new Set(outcome.retrievedLocators).size !== outcome.retrievedLocators.length ||
-      outcome.retrievedLocators.some(locator => typeof locator !== "string" || !planLocators.has(locator)))) {
+      outcome.retrievedLocators.some((locator: unknown) =>
+        typeof locator !== "string" || !planLocators.has(locator)))) {
     throw new Error("diagnostic V2 score outcomes are invalid");
   }
   const report = exactRecord(input.report, ["schemaVersion", "qualifying", "rootBindingSha256",

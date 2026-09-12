@@ -5,14 +5,23 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { canonicalJson } from "../src/quality-campaign/canonical.js";
+import { canonicalJson, sha256 as canonicalSha256 } from
+  "../src/quality-campaign/canonical.js";
+import { attemptIdentity } from "../src/quality-campaign/execution.js";
 import { createProductionCanonicalExecutionEvidence } from
   "../src/quality-campaign/production-canonical-execution-evidence.js";
 import { createProductionLocalCanonicalEvidenceReader } from
   "../src/quality-campaign/production-local-canonical-evidence-reader.js";
 
-const attemptId = `sqv4-${"a".repeat(64)}`;
 const campaignRootSha256 = "b".repeat(64);
+const executionPacket = { locale: "en" as const, questionId: "q-1",
+  questionText: "What synthetic evidence was retained?",
+  scopeTopologyReference: "synthetic-topology-reference", source: "automatic" as const };
+const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0, campaignRootSha256,
+  questionDigestSha256: canonicalSha256(executionPacket), questionId: executionPacket.questionId,
+  releaseRootSha256: "d".repeat(64), repetition: 1,
+  spendReservationSha256: "e".repeat(64) });
+const attemptId = identity.attemptId;
 
 describe("production local canonical evidence reader", () => {
   it("authenticates the exact SDK exchange and normalized outcome into a deterministic inventory",
@@ -171,9 +180,13 @@ async function localFixture(options: { readonly extraObservationKey?: boolean;
     attemptId, campaignRootSha256,
     capabilityRequestSha256: sha(capabilityRequest), capabilityResponseSha256: sha(capabilityResponse),
     citationLocatorIds: ["locator-1"], evidenceLocatorIds: ["locator-1"],
-    evidenceTurnIds: ["turn-1"], rankedLocatorIds: ["locator-1"], retrievalLatencyUs: 12,
+    diagnosticCustody: null, evidenceTurnIds: ["turn-1"], executionPacket, identity,
+    rankedLocatorIds: ["locator-1"], retrievalLatencyUs: 12,
     retrievalRequestSha256: sha(retrievalRequest), retrievalResponseSha256:
-      sha(retrievalResponse) } };
+      sha(retrievalResponse), terminalAnswerRequestSha256: sha(bytes("synthetic-answer-request")),
+    terminalAnswerResponseSha256: sha(bytes("synthetic-answer-response")), topology: {
+      currentMeetingId: "synthetic-meeting", roomId: "synthetic-room",
+      scopeId: "synthetic-scope" } } };
 }
 function bytes(value: string): Uint8Array {return new TextEncoder().encode(value);}
 function sha(value: Uint8Array): string {return createHash("sha256").update(value).digest("hex");}
