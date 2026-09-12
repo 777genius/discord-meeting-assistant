@@ -334,7 +334,8 @@ export type {
   FocusedRetrievalScopeResolutionEffects,
   FocusedLocatorRetrievalV2Result,
 } from "./application/ports/focused-locator-retrieval-v2.js";
-export { groundingPlanRetrievalAuditsBindInput, retrievalAuditsBindInput } from
+export { groundingPlanRetrievalAuditsBindInput, historicalRetrievalAuditsBindRequest,
+  retrievalAuditsBindInput } from
   "./application/ports/focused-retrieval-provenance.js";
 export type {
   AnswerEffectDeliveryResult,

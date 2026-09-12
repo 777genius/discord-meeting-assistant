@@ -450,7 +450,7 @@ it("keeps one global provider order for different admitted sources", async () =>
 it.each([[1, 1], [2, 1]])("binds fused order for raw provider ranks %j", async (first, second) => {
   const ranks = [first, second];
   const { historicalRetrievalAuditsBindRequest } = await import(
-    "../../meeting-core/src/features/meeting-knowledge/application/ports/focused-retrieval-provenance.js");
+    "@discord-meeting/meeting-core/meeting-knowledge");
   const endpoint = new RetrievalV3Endpoint();
   const candidates = endpoint.response.candidates as Record<string, unknown>[];
   candidates.push({ ...structuredClone(candidates[0]), locator: "candidate-008",
