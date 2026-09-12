@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Summary-first Discord AI Meeting Assistant built around an isolated Craig voice gateway.",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@11.18.0",
   "engines": {

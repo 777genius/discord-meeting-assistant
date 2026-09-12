@@ -8,11 +8,18 @@
 - [Examples](preview.md): summaries, transcripts and playback.
 - [Speech providers](speech-providers.md): batch, live and languages.
 - [Tested capabilities and limitations](../infra/deployment/oss-acceptance.md).
+- [Measured fresh installation](self-hosting/verified-install.md): time, memory,
+  recording size and speech usage from the latest private test run.
 
 ## Run Botik
 
+- [Self-hosting scenarios](self-hosting/README.md): detailed setup by feature.
+- [Operations and backups](self-hosting/operations.md).
+- [Troubleshooting](self-hosting/troubleshooting.md).
+
 - [Installation and backups](../infra/deployment/oss-meeting-topology.md).
 - [Speech gateway configuration](../infra/deployment/voicetext-gateway.md).
+- [Optional features](optional-features.md): AI summaries, voice answers, memory and playback.
 - [Deployment options](../infra/deployment/README.md).
 - [Greeting ledger retention](operations/greeting-ledger-retention.md).
 - [Meeting memory retrieval baseline](operations/meeting-memory-retrieval-baseline.md).

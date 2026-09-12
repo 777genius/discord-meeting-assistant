@@ -510,7 +510,7 @@ test("rejects malformed or multiple bridge result JSON payloads", () => {
   );
 });
 
-test("resolves the image-owned launcher against the adjacent mounted runtime package", async (t) => {
+test("resolves the image-owned launcher against the adjacent runtime package", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "subscription-runtime-layout-test-"));
   t.after(async () => rm(root, { force: true, recursive: true }));
   const runtimeRoot = join(root, "opt/subscription-runtime");
@@ -540,7 +540,7 @@ test("resolves the image-owned launcher against the adjacent mounted runtime pac
       exports: { "./worker-codex": "./worker-codex.mjs" },
       name: "@vioxen/subscription-runtime",
       type: "module",
-      version: "0.1.0-main.27",
+      version: "0.1.0-main.28",
     })),
     writeFile(join(packageRoot, "worker-codex.mjs"), [
       "export class FileBackendCodexWorker {",

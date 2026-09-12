@@ -2,21 +2,24 @@
 
 [Documentation](README.md) · [Botik](../README.md)
 
-You will need:
+Botik is self-hosted. You run the server and storage, create two Discord bot
+applications and supply your own speech-provider credentials. External providers
+may charge for usage.
 
-- a server with persistent storage, Node.js `24.18.0`, Docker Compose `2.24.4+`
-  and Docker Buildx `0.28.0+`;
-- two user-owned Discord applications: one for recording and one for publishing;
-- a Deepgram and/or ElevenLabs API key;
-- a domain pointing to your server, with ports 80/443 available for HTTPS.
+1. [Choose your scenario](self-hosting/README.md).
+2. [Prepare and install the base stack](self-hosting/installation.md).
+3. [Provision storage and secret files](self-hosting/storage-and-secrets.md).
+4. [Install the Discord bots and verify a first meeting](self-hosting/discord.md).
+5. Add [live captions](self-hosting/transcription.md), [AI summaries](self-hosting/ai-summaries.md),
+   [voice answers](self-hosting/voice-answers.md) or [recording playback](self-hosting/recording-playback.md) as needed.
 
-1. Clone this repository.
-2. Follow the [Docker Compose setup](../infra/deployment/oss-meeting-topology.md)
-   to configure credentials, build the services and check their health.
-3. Install both bots in your Discord server with the documented permissions.
-4. Run `/setup-voice-bot` as a server administrator and choose the voice channel
-   to record and the text channel for results.
-5. Join the selected voice channel. After the meeting ends, Botik posts the result.
+The base result is a full transcript with speaker names and timestamps plus a
+turn-count outline. AI generation needs an additional public source-built runtime image;
+[meeting memory](self-hosting/meeting-memory.md) has separate serving gates.
+Read each feature's prerequisites before choosing it.
 
-Keep bot tokens and provider keys in the mounted secret files described in the
-setup guide. Speech recognition uses your selected provider's API and billing.
+For day-to-day maintenance, use [Operations](self-hosting/operations.md) and
+[Troubleshooting](self-hosting/troubleshooting.md). The detailed
+[Compose topology](../infra/deployment/oss-meeting-topology.md) and
+[acceptance record](../infra/deployment/oss-acceptance.md) retain deployment
+contracts and exact tested capabilities.

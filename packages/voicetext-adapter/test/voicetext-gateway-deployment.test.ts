@@ -137,7 +137,10 @@ describe("VoiceText gateway deployment overlay", () => {
     expect(providers).toMatch(/English, Russian and Ukrainian display labels are separate from speech recognition/iu);
     expect(providers).toMatch(/Ukrainian speech has not been qualified/iu);
     expect(readme).toMatch(/default setup includes a transcript and a simple turn-count outline/iu);
-    expect(readme).toMatch(/AI features and playback need extra configuration/iu);
+    expect(readme).toMatch(/AI summaries and voice answers build from the public/iu);
+    expect(readme).toContain("https://github.com/777genius/ar");
+    expect(readme).toMatch(/authorized Codex subscription sessions and account-pool setup/iu);
+    expect(readme).toMatch(/Playback also needs extra configuration/iu);
     expect(providers).toMatch(/Both default to Deepgram/iu);
     expect(providers).toMatch(/only have an ElevenLabs key[\s\S]*before starting the services/iu);
     expect(readme).not.toMatch(/Real Discord campaign acceptance remains PENDING/u);

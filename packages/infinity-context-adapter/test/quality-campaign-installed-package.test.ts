@@ -707,7 +707,7 @@ async function startPackedGroundedAnswerRuntime(launcherSha256: string, forceRep
       canonicalJsonSha256(request), launcherSha256, model: "gpt-5.6-terra",
     provider: "AGENT_RUNTIME_PROVIDER_CODEX", purpose: request.context.purpose,
     reasoningEffort: "low", requestId: request.runId, serviceTier: "default",
-    runtimeEngine: "subscription-runtime-cli", runtimePackageVersion: "0.1.0-main.27",
+    runtimeEngine: "subscription-runtime-cli", runtimePackageVersion: "0.1.0-main.28",
     schemaVersion: 1, selectedOutputKind:
       "AGENT_RUNTIME_SELECTED_OUTPUT_KIND_STRUCTURED_OUTPUT",
     selectedOutputSha256: canonicalJsonSha256(structuredOutput) }, schemaVersion: 1,

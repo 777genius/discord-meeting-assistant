@@ -84,6 +84,27 @@ function assertRemotePin(rendered, serviceName, pin) {
   assertEqual(service.image?.split(":").at(-1), pin.revision, `${serviceName} image revision`);
 }
 
+export function assertRuntimeSource(rendered, pin) {
+  const service = requiredService(rendered, "subscription-runtime-sidecar");
+  const build = requiredRecord(service.build, "subscription-runtime-sidecar build");
+  assertEqual(build.additional_contexts?.subscription_runtime_source,
+    `${pin.gitUrl}?ref=${pin.gitRef}&checksum=${pin.revision}`, "runtime Git source");
+  assertEqual(build.args?.SUBSCRIPTION_RUNTIME_SOURCE_REVISION, pin.revision, "runtime source revision");
+  assertEqual(service.environment?.SUBSCRIPTION_RUNTIME_EXPECTED_PACKAGE_VERSION, pin.packageVersion, "runtime package version");
+  for (const volume of service.volumes ?? []) {
+    const target = typeof volume === "string" ? volume.split(":")[1] : volume.target;
+    if (typeof target === "string" && (target === "/opt" || target.startsWith("/opt/"))) {
+      throw new Error("rendered Compose must not overlay image-owned runtime code");
+    }
+  }
+}
+
+function assertOptionalRuntimeSource(rendered, pin) {
+  if (rendered.services?.["subscription-runtime-sidecar"] !== undefined) {
+    assertRuntimeSource(rendered, pin);
+  }
+}
+
 export function assertRenderedDeployment(input) {
   const platform = requiredService(input.rendered, "meeting-platform");
   const environment = requiredRecord(platform.environment, "meeting-platform environment");
@@ -102,6 +123,7 @@ export function assertRenderedDeployment(input) {
   ]) {
     if (input.rendered.services?.[name] !== undefined) {assertLocalBuildContext(input.rendered, name, input.contextPath, input.provenance);}
   }
+  assertOptionalRuntimeSource(input.rendered, input.pins.subscriptionRuntime);
   if (input.rendered.services?.["recording-edge"] !== undefined) {assertLocalBuildContext(input.rendered, "recording-edge", input.contextPath);}
   if (input.rendered.services?.["voicetext-edge"] !== undefined) {assertLocalBuildContext(input.rendered, "voicetext-edge", input.contextPath);}
   if (input.rendered.services?.["craig-bot"] !== undefined) {

@@ -63,7 +63,7 @@ export function installation(): InstallationIdentity {
     launcherSha256: "a".repeat(64),
     packageManifestRealpath: "/audited/package/package.json",
     packageRootRealpath: "/audited/package",
-    runtimePackageVersion: "0.1.0-main.27",
+    runtimePackageVersion: "0.1.0-main.28",
   };
 }
 

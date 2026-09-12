@@ -85,7 +85,7 @@ const childEnvironmentNames = Object.freeze([
 
 /**
  * Mirrors the immutable packaged-exec argv contract in
- * @vioxen/subscription-runtime 0.1.0-main.27. Its current task path omits the
+ * @vioxen/subscription-runtime 0.1.0-main.28. Its current task path omits the
  * optional schema file; callers that do forward one receive the same exact
  * fail-closed argv with one admitted generated path.
  */
