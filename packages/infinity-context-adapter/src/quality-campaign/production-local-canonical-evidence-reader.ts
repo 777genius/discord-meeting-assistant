@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { createFocusedRetrievalGroundingPlan } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { buildSubscriptionRuntimeKnowledgeAnswerRequest, serializeSubscriptionRuntimeTaskRequest,
-  stableSubscriptionRuntimeId, subscriptionRuntimeTranscriptVersionFromRequestBytes } from
+  knowledgeAnswerExchangeInventorySha256, stableSubscriptionRuntimeId,
+  subscriptionRuntimeTranscriptVersionFromRequestBytes } from
   "@discord-meeting/subscription-runtime-adapter";
 
 import { canonicalJson, digest, exactRecord, sha256 as canonicalSha256 } from "./canonical.js";
@@ -17,17 +18,13 @@ import { readProductionCanonicalArtifact } from
   "./production-canonical-execution-evidence.js";
 import { decodeQualificationQuestionOutcome } from
   "./execute-admitted-qualification-question.js";
-import type { MainCanonicalEvidenceProjection, MainCanonicalEvidenceVerificationPort } from
-  "./production-ports.js";
+import type { MainCanonicalEvidenceProjection, MainCanonicalEvidenceVerificationPort,
+  QualificationScopeTopology, QualificationScopeTopologyPort } from "./production-ports.js";
 import { attemptIdentity } from "./execution.js";
-import type { QualificationScopeTopologyPort } from "./production-canonical-question-chain.js";
 
 const REQUIRED_V1_KINDS = Object.freeze(["capability_request", "capability_response",
   "retrieval_request", "retrieval_response", "retrieval_observation", "scope_resolution_observation",
   "answer_normalized_outcome"] as const satisfies readonly SemanticQualityV4ArtifactKind[]);
-const REQUIRED_V3_ANSWER_KINDS = Object.freeze(["selected_canonical_turns",
-  "answer_original_model_surface", "answer_original_request", "answer_original_response",
-  "answer_repair_model_surface"] as const satisfies readonly SemanticQualityV4ArtifactKind[]);
 
 /** Read-only authentication of artifacts emitted by the installed main canonical SDK chain. */
 export function createProductionLocalCanonicalEvidenceReader(input: { readonly artifactKey: Uint8Array;
@@ -41,16 +38,7 @@ MainCanonicalEvidenceVerificationPort {
   let topologyAdmission: Promise<QualificationScopeTopologyPort> | undefined;
   return Object.freeze({ project: async (projection: Parameters<
     MainCanonicalEvidenceVerificationPort["project"]>[0]) => {
-    if (input.topology === undefined) {
-      throw new Error("canonical evidence topology admission is unavailable");
-    }
-    topologyAdmission ??= typeof input.topology === "function" ? input.topology() :
-      Promise.resolve(input.topology);
-    const topology = await (await topologyAdmission).resolve(
-      projection.executionPacket.scopeTopologyReference,
-      projection.executionPacket.questionId);
-    return Object.freeze({ ...projection, topology: Object.freeze({ ...topology }),
-      diagnosticCustody: null });
+    return Object.freeze({ ...projection, topology: null, diagnosticCustody: null });
   }, readScopeObservation: async (identity: Parameters<
     MainCanonicalEvidenceVerificationPort["readScopeObservation"]>[0]) => {
     const opened = await readProductionCanonicalArtifact({ artifactKey: key,
@@ -68,14 +56,28 @@ MainCanonicalEvidenceVerificationPort {
       throw new Error("local canonical evidence inventory is empty, duplicated, or foreign");
     }
     const receipts = (await mapBounded(attempts, 8, async (attempt) =>
-      await verifyAttempt(input.artifactRoot, key, input.artifactKeyId, attempt)))
+      await verifyAttempt(input.artifactRoot, key, input.artifactKeyId, attempt, async () => {
+        if (input.topology === undefined) {
+          throw new Error("canonical evidence topology admission is unavailable");
+        }
+        topologyAdmission ??= typeof input.topology === "function" ? input.topology() :
+          Promise.resolve(input.topology);
+        const packet = attempt.executionPacket;
+        return await (await topologyAdmission).resolve(packet.scopeTopologyReference,
+          packet.questionId, packet.schemaVersion ===
+            "meeting_knowledge.qualification_execution_packet.v2" ? {
+              topologyDocumentSha256: packet.scopeTopologyDocumentSha256,
+              topologyGeneration: packet.scopeTopologyGeneration,
+            } : undefined);
+      })))
       .flat().toSorted(compareReceipt);
     return Object.freeze({ inventorySha256: sha256(receipts) });
   } });
 }
 
 async function verifyAttempt(artifactRoot: string, artifactKey: Uint8Array,
-  artifactKeyId: string, expected: MainCanonicalEvidenceProjection):
+  artifactKeyId: string, expected: MainCanonicalEvidenceProjection,
+  resolveTopology: () => Promise<QualificationScopeTopology>):
 Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
   const opened = new Map<SemanticQualityV4ArtifactKind, Awaited<ReturnType<
     typeof readProductionCanonicalArtifact>>>();
@@ -151,8 +153,9 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
   const outcome = decodeQualificationQuestionOutcome(JSON.parse(new TextDecoder("utf-8", {
     fatal: true }).decode(bytes("answer_normalized_outcome"))) as unknown);
   assertExactOutcomeRecords(outcome);
-  if (outcome.status === "failed" || (outcome.status === "abstained") !==
-    expected.answerAbstained || outcome.rawRetrievalResponseSha256 !== observation.responseSha256) {
+  if ((outcome.status === "abstained") !== expected.answerAbstained ||
+    (outcome.rawRetrievalResponseSha256 !== observation.responseSha256 &&
+      !(outcome.status === "failed" && outcome.rawRetrievalResponseSha256 === null))) {
     throw new Error("normalized canonical outcome differs from external outcome evidence");
   }
   const ranked = outcome.retrievalCandidates.map(({ locatorId }) => locatorId);
@@ -162,6 +165,7 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
   const citationLocators = outcome.citations.map((turnId) => byTurn.get(turnId));
   if (v3) {
     assertExpectedAttempt(expected);
+    const topology = Object.freeze({ ...await resolveTopology() });
     const retained = await readProductionCanonicalArtifact({ artifactKey, artifactKeyId, artifactRoot,
       attemptId: expected.attemptId, kind: "retrieval_binding",
       rootBindingSha256: expected.campaignRootSha256 });
@@ -175,24 +179,45 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
     const binding = await validateCanonicalRetrievalBinding(bindingValue, {
       attemptId: expected.attemptId,
       packet: expected.executionPacket,
-      topology: expected.topology,
+      topology,
       diagnosticPlanSha256,
       exchange: v3Exchange! });
-    if (binding.providerStatus !== "available" ||
+    if ((binding.providerStatus === "available") !==
+        (outcome.rawRetrievalResponseSha256 !== null) ||
       binding.rawCapabilitySha256 !== expected.capabilityResponseSha256 ||
       binding.rawRequestSha256 !== expected.retrievalRequestSha256 ||
       binding.rawResponseSha256 !== expected.retrievalResponseSha256 ||
       custodyJson(binding.candidates) !== custodyJson(outcome.retrievalCandidates)) {
       throw new Error("canonical V3 retrieval binding differs from retained outcome inventory");
     }
-    for (const kind of REQUIRED_V3_ANSWER_KINDS) {
-      const artifact = await readProductionCanonicalArtifact({ artifactKey, artifactKeyId,
-        artifactRoot, attemptId: expected.attemptId, kind,
-        rootBindingSha256: expected.campaignRootSha256 });
-      opened.set(kind, artifact);
+    const selectedExpected = outcome.status !== "failed" || outcome.selectedTurns.length > 0;
+    if (selectedExpected) {
+      await openArtifact(opened, "selected_canonical_turns", expected, artifactRoot,
+        artifactKey, artifactKeyId);
+      if (canonicalJson(parseJson(opened.get("selected_canonical_turns")!.plaintext,
+        "selected canonical turns")) !== canonicalJson(outcome.selectedTurns)) {
+        throw new Error("selected canonical turns differ from the normalized outcome");
+      }
     }
-    await verifyAnswerArtifacts(opened, expected, outcome, artifactRoot, artifactKey,
-      artifactKeyId, binding.request.filters.sourceGenerations[0]!.projectionGeneration);
+    const answerInventory = await openAnswerInventory(opened, expected, artifactRoot,
+      artifactKey, artifactKeyId);
+    const modelRequired = outcome.status === "answered" ||
+      outcome.status === "abstained" && outcome.reason !== "zero_admissible_evidence";
+    if (modelRequired && !answerInventory.originalPresent ||
+      outcome.reason === "zero_admissible_evidence" &&
+        (outcome.status !== "abstained" || outcome.selectedTurns.length !== 0 ||
+          answerInventory.originalPresent)) {
+      throw new Error("canonical V3 answer branch inventory differs from normalized outcome");
+    }
+    if (answerInventory.originalPresent) {
+      await verifyAnswerArtifacts(opened, expected, outcome,
+        binding.request.filters.sourceGenerations[0]!.projectionGeneration,
+        answerInventory.repairPresent);
+    }
+    if (knowledgeAnswerExchangeInventorySha256(answerInventory.exchanges) !==
+      expected.terminalAnswerResponseSha256) {
+      throw new Error("answer exchange inventory differs from external terminal evidence");
+    }
     await assertClosedV3ReceiptInventory(artifactRoot, expected.attemptId,
       [...opened.keys()]);
   }
@@ -207,7 +232,7 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
 }
 
 function assertExpectedAttempt(expected: MainCanonicalEvidenceProjection): void {
-  const { attemptId: ignored, ...identityInput } = expected.identity;
+  const { attemptId: _attemptId, ...identityInput } = expected.identity;
   const reconstructed = attemptIdentity(identityInput);
   if (reconstructed.attemptId !== expected.attemptId || expected.identity.callKind !== "answer" ||
     expected.identity.callOrdinal !== 0 || expected.identity.questionId !==
@@ -220,14 +245,9 @@ function assertExpectedAttempt(expected: MainCanonicalEvidenceProjection): void 
 
 async function verifyAnswerArtifacts(opened: Map<SemanticQualityV4ArtifactKind, Awaited<ReturnType<
   typeof readProductionCanonicalArtifact>>>, expected: MainCanonicalEvidenceProjection,
-  outcome: ReturnType<typeof decodeQualificationQuestionOutcome>, artifactRoot: string,
-  artifactKey: Uint8Array, artifactKeyId: string, memoryGeneration: string): Promise<void> {
+  outcome: ReturnType<typeof decodeQualificationQuestionOutcome>, memoryGeneration: string,
+  repairPresent: boolean): Promise<void> {
   const artifactBytes = (kind: SemanticQualityV4ArtifactKind) => opened.get(kind)!.plaintext;
-  const selected = parseJson(artifactBytes("selected_canonical_turns"),
-    "selected canonical turns");
-  if (canonicalJson(selected) !== canonicalJson(outcome.selectedTurns)) {
-    throw new Error("selected canonical turns differ from the normalized outcome");
-  }
   const reconstructed = reconstructAnswerRequest(expected, outcome,
     subscriptionRuntimeTranscriptVersionFromRequestBytes(artifactBytes("answer_original_request")),
     memoryGeneration);
@@ -240,8 +260,6 @@ async function verifyAnswerArtifacts(opened: Map<SemanticQualityV4ArtifactKind, 
     expected.terminalAnswerRequestSha256) {
     throw new Error("original answer request differs from external terminal evidence");
   }
-  const repairPresent = await openConditionalRepair(opened, expected, artifactRoot, artifactKey,
-    artifactKeyId);
   if (repairPresent) {
     const repairRequest = repairRequestFrom(reconstructed);
     if (!Buffer.from(serializeSubscriptionRuntimeTaskRequest(repairRequest)).equals(
@@ -249,16 +267,6 @@ async function verifyAnswerArtifacts(opened: Map<SemanticQualityV4ArtifactKind, 
       throw new Error("repair answer request is substituted or swapped with original");
     }
     assertModelSurface(repairRequest, artifactBytes("answer_repair_model_surface"), "repair");
-  } else {
-    const preparedRepairSurface = repairRequestFrom(reconstructed);
-    assertModelSurface(preparedRepairSurface, artifactBytes("answer_repair_model_surface"),
-      "prepared repair");
-  }
-  const responses = [artifactBytes("answer_original_response"),
-    ...(repairPresent ? [artifactBytes("answer_repair_response")] : [])];
-  if (sha256Bytes(Buffer.concat(responses.map(value => Buffer.from(value)))) !==
-    expected.terminalAnswerResponseSha256) {
-    throw new Error("answer response bytes differ from external terminal evidence");
   }
 }
 
@@ -299,22 +307,45 @@ ReturnType<typeof buildSubscriptionRuntimeKnowledgeAnswerRequest> {
     ].join(" ") } };
 }
 
-async function openConditionalRepair(opened: Map<SemanticQualityV4ArtifactKind, Awaited<ReturnType<
+async function openArtifact(opened: Map<SemanticQualityV4ArtifactKind, Awaited<ReturnType<
+  typeof readProductionCanonicalArtifact>>>, kind: SemanticQualityV4ArtifactKind,
+  expected: MainCanonicalEvidenceProjection, artifactRoot: string,
+  artifactKey: Uint8Array, artifactKeyId: string): Promise<void> {
+  opened.set(kind, await readProductionCanonicalArtifact({ artifactKey, artifactKeyId,
+    artifactRoot, attemptId: expected.attemptId, kind,
+    rootBindingSha256: expected.campaignRootSha256 }));
+}
+
+async function openAnswerInventory(opened: Map<SemanticQualityV4ArtifactKind, Awaited<ReturnType<
   typeof readProductionCanonicalArtifact>>>, expected: MainCanonicalEvidenceProjection,
-  artifactRoot: string, artifactKey: Uint8Array, artifactKeyId: string): Promise<boolean> {
+  artifactRoot: string, artifactKey: Uint8Array, artifactKeyId: string) {
   const receiptNames = await readdir(join(artifactRoot, "receipts", expected.attemptId));
-  const kinds = ["answer_repair_request", "answer_repair_response"] as const;
-  const present = kinds.map(kind => receiptNames.includes(`${kind}.json`));
-  if (present[0] !== present[1]) {
-    throw new Error("repair answer artifact inventory is incomplete");
+  const originalKinds = ["answer_original_model_surface", "answer_original_request",
+    "answer_original_response"] as const;
+  const repairKinds = ["answer_repair_model_surface", "answer_repair_request",
+    "answer_repair_response"] as const;
+  const presence = (kinds: readonly SemanticQualityV4ArtifactKind[]) =>
+    kinds.map(kind => receiptNames.includes(`${kind}.json`));
+  const originalPresence = presence(originalKinds);
+  const repairPresence = presence(repairKinds);
+  if (new Set(originalPresence).size !== 1 || new Set(repairPresence).size !== 1 ||
+    repairPresence[0] === true && originalPresence[0] !== true) {
+    throw new Error("answer exchange artifact inventory is incomplete or unordered");
   }
-  if (!present[0]) {return false;}
-  for (const kind of kinds) {
-    opened.set(kind, await readProductionCanonicalArtifact({ artifactKey, artifactKeyId,
-      artifactRoot, attemptId: expected.attemptId, kind,
-      rootBindingSha256: expected.campaignRootSha256 }));
+  for (const kind of [...originalKinds, ...repairKinds]) {
+    if (receiptNames.includes(`${kind}.json`)) {
+      await openArtifact(opened, kind, expected, artifactRoot, artifactKey, artifactKeyId);
+    }
   }
-  return true;
+  const artifactBytes = (kind: SemanticQualityV4ArtifactKind) => opened.get(kind)!.plaintext;
+  const exchanges = originalPresence[0] === true ? [{ callOrdinal: "original" as const,
+    requestBytes: artifactBytes("answer_original_request"),
+    responseBytes: artifactBytes("answer_original_response") },
+    ...(repairPresence[0] === true ? [{ callOrdinal: "repair" as const,
+      requestBytes: artifactBytes("answer_repair_request"),
+      responseBytes: artifactBytes("answer_repair_response") }] : [])] : [];
+  return Object.freeze({ exchanges: Object.freeze(exchanges),
+    originalPresent: originalPresence[0] === true, repairPresent: repairPresence[0] === true });
 }
 
 async function assertClosedV3ReceiptInventory(artifactRoot: string, attemptId: string,

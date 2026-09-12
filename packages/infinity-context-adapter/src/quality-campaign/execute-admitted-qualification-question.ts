@@ -1,8 +1,10 @@
-const EXECUTION_PACKET_KEYS = Object.freeze([
+const EXECUTION_PACKET_V1_KEYS = Object.freeze([
   "locale", "questionId", "questionText", "scopeTopologyReference", "source",
 ]);
+const EXECUTION_PACKET_V2_KEYS = Object.freeze([...EXECUTION_PACKET_V1_KEYS, "schemaVersion",
+  "scopeTopologyDocumentSha256", "scopeTopologyGeneration"]);
 
-export interface QualificationExecutionPacket {
+interface QualificationExecutionPacketCommon {
   readonly locale: "en" | "mixed" | "ru";
   readonly questionId: string;
   readonly questionText: string;
@@ -10,6 +12,16 @@ export interface QualificationExecutionPacket {
   readonly scopeTopologyReference: string;
   readonly source: "automatic" | "independent_review";
 }
+
+export type QualificationExecutionPacket = QualificationExecutionPacketCommon & ({
+  readonly schemaVersion?: never;
+  readonly scopeTopologyDocumentSha256?: never;
+  readonly scopeTopologyGeneration?: never;
+} | {
+  readonly schemaVersion: "meeting_knowledge.qualification_execution_packet.v2";
+  readonly scopeTopologyDocumentSha256: string;
+  readonly scopeTopologyGeneration: string;
+});
 
 export interface QualificationRetrievalContribution {
   readonly contributionScorePicos: number;
@@ -194,14 +206,22 @@ export class ExecuteAdmittedQualificationQuestion {
 }
 
 function assertExecutionPacket(input: unknown): asserts input is QualificationExecutionPacket {
+  const versioned = isRecord(input) && input.schemaVersion ===
+    "meeting_knowledge.qualification_execution_packet.v2";
   if (!isRecord(input) ||
-    JSON.stringify(Object.keys(input).toSorted()) !== JSON.stringify([...EXECUTION_PACKET_KEYS].toSorted()) ||
+    JSON.stringify(Object.keys(input).toSorted()) !== JSON.stringify(
+      [...(versioned ? EXECUTION_PACKET_V2_KEYS : EXECUTION_PACKET_V1_KEYS)].toSorted()) ||
     typeof input.locale !== "string" || !["en", "mixed", "ru"].includes(input.locale) ||
     typeof input.source !== "string" ||
     !["automatic", "independent_review"].includes(input.source) ||
-    [input.questionId, input.questionText, input.scopeTopologyReference]
+    [input.questionId, input.questionText, input.scopeTopologyReference,
+      ...(versioned ? [input.scopeTopologyGeneration] : [])]
       .some((value) => typeof value !== "string" || value.trim().length === 0)) {
     throw new Error("qualification execution packet is invalid or gold-bearing");
+  }
+  if (versioned && (typeof input.scopeTopologyDocumentSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(input.scopeTopologyDocumentSha256))) {
+    throw new Error("qualification execution packet topology binding is invalid");
   }
 }
 

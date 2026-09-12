@@ -57,13 +57,49 @@ export interface PreparedKnowledgeAnswerRuntimeRequest {
 export interface KnowledgeAnswerQualificationObservation {
   readonly attemptId: string;
   readonly exchanges: {
-    readonly original: KnowledgeAnswerProviderExchange;
+    readonly original: KnowledgeAnswerProviderExchange | null;
     readonly repair: KnowledgeAnswerProviderExchange | null;
   };
   readonly outcomeCertain: boolean;
   readonly providerBytesSent: boolean;
   readonly responseBytes: number;
   readonly runtimeReceiptSha256: string;
+}
+
+export interface KnowledgeAnswerExchangeInventoryV2 {
+  readonly schemaVersion: "discord_meeting.knowledge_answer_exchange_inventory.v2";
+  readonly exchanges: readonly {
+    readonly callOrdinal: "original" | "repair";
+    readonly requestSha256: string;
+    readonly responseSha256: string;
+  }[];
+}
+
+/** Authenticates exchange occurrence and each request/response boundary independently. */
+export function knowledgeAnswerExchangeInventory(
+  exchanges: readonly { readonly callOrdinal: "original" | "repair";
+    readonly requestBytes: Uint8Array; readonly responseBytes: Uint8Array }[],
+): KnowledgeAnswerExchangeInventoryV2 {
+  if (exchanges.length > 2 || exchanges.some((exchange, index) =>
+    exchange.callOrdinal !== (index === 0 ? "original" : "repair"))) {
+    throw new Error("knowledge answer exchange inventory is unordered or invalid");
+  }
+  return Object.freeze({
+    schemaVersion: "discord_meeting.knowledge_answer_exchange_inventory.v2",
+    exchanges: Object.freeze(exchanges.map((exchange) => Object.freeze({
+      callOrdinal: exchange.callOrdinal,
+      requestSha256: createHash("sha256").update(exchange.requestBytes).digest("hex"),
+      responseSha256: createHash("sha256").update(exchange.responseBytes).digest("hex"),
+    }))),
+  });
+}
+
+export function knowledgeAnswerExchangeInventorySha256(
+  exchanges: readonly { readonly callOrdinal: "original" | "repair";
+    readonly requestBytes: Uint8Array; readonly responseBytes: Uint8Array }[],
+): string {
+  return createHash("sha256").update(JSON.stringify(
+    knowledgeAnswerExchangeInventory(exchanges)), "utf8").digest("hex");
 }
 export interface KnowledgeAnswerProviderExchange {
   readonly identity: KnowledgeAnswerProviderExchangeIdentity;
@@ -298,17 +334,15 @@ export class SubscriptionRuntimeGroundedAnswerAdapter
     }
     const responseBytes = exchanges.reduce((total, exchange) =>
       total + exchange.responseBytes.byteLength, 0);
-    const receiptBytes = Buffer.concat(exchanges.map(({ responseBytes: value }) =>
-      Buffer.from(value)));
+    const original = exchanges[0] ?? null;
+    const repair = exchanges[1] ?? null;
     this.qualificationObservations.set(attemptId, Object.freeze({ attemptId,
-      exchanges: Object.freeze({ original: exchanges[0] ?? Object.freeze({
-        identity: Object.freeze({ attemptId, callOrdinal: "original", purpose: "",
-          runId: "", runtimeProfile: Object.freeze({ maxOutputTokens: 0, model: "",
-            outputSchemaName: "", policyVersion: "", reasoningEffort: "" }) }),
-        requestBytes: new Uint8Array(), responseBytes: new Uint8Array() }),
-      repair: exchanges[1] ?? null }), outcomeCertain,
+      exchanges: Object.freeze({ original, repair }), outcomeCertain,
       providerBytesSent, responseBytes,
-      runtimeReceiptSha256: createHash("sha256").update(receiptBytes).digest("hex") }));
+      runtimeReceiptSha256: knowledgeAnswerExchangeInventorySha256(exchanges.map(exchange => ({
+        callOrdinal: exchange.identity.callOrdinal,
+        requestBytes: exchange.requestBytes, responseBytes: exchange.responseBytes,
+      }))) }));
   }
 }
 

@@ -1,14 +1,11 @@
 import type { AdjudicationEffectEvidence, RawOutcomeVaultPort } from "./adjudication.js";
-import type { ProviderExchangePort } from "./execution.js";
+import type { AttemptIdentity, ProviderExchangePort } from "./execution.js";
 import type { QualityCampaignRelease } from "./release.js";
 import type { ArtifactCustodyPort, CanonicalScopeObservationPort } from "./retention.js";
 import type { ExactCampaignEvidence } from "./production-evidence.js";
-import type { QualificationQuestionExecutorFactoryPort } from
+import type { QualificationExecutionPacket, QualificationQuestionExecutorFactoryPort } from
   "./execute-admitted-qualification-question.js";
 import type { PROTECTED_SOURCE_KINDS } from "./cleanup-evidence.js";
-import type { AttemptIdentity } from "./execution.js";
-import type { QualificationExecutionPacket } from "./execute-admitted-qualification-question.js";
-import type { QualificationScopeTopology } from "./production-canonical-question-chain.js";
 
 export interface CampaignCallContext {
   readonly deadlineEpochMs: number;
@@ -90,6 +87,25 @@ export interface CampaignEvidenceCustodyPort {
     readonly releaseRootSha256: string }): Promise<ExactCampaignEvidence>;
 }
 
+/** Consumer-owned application view of one admitted quality-campaign scope. */
+export interface QualificationScopeTopology {
+  readonly currentMeetingId: string;
+  readonly roomId: string;
+  readonly scopeId: string;
+  readonly memoryScopeId?: string;
+  readonly spaceId?: string;
+  readonly topologyDocumentSha256?: string;
+  readonly topologyGeneration?: string;
+}
+
+/** Resolves only an already authenticated execution-safe reference. */
+export interface QualificationScopeTopologyPort {
+  resolve(reference: string, questionId: string, binding?: {
+    readonly topologyDocumentSha256: string;
+    readonly topologyGeneration: string;
+  }): Promise<QualificationScopeTopology>;
+}
+
 export interface MainCanonicalEvidenceProjection {
   readonly answerAbstained: boolean;
   readonly attemptId: string;
@@ -108,7 +124,8 @@ export interface MainCanonicalEvidenceProjection {
   readonly terminalAnswerRequestSha256: string;
   readonly terminalAnswerResponseSha256: string;
   readonly identity: AttemptIdentity;
-  readonly topology: QualificationScopeTopology;
+  /** Resolved only for V3 custody; legacy V1 verification has no topology dependency. */
+  readonly topology: QualificationScopeTopology | null;
   /** Present only for diagnostic attempts and reconstructed from the frozen plan and applied receipt. */
   readonly diagnosticCustody: { readonly appliedDocumentIds: Readonly<Record<string, string>>;
     readonly frozenPlan: unknown } | null;

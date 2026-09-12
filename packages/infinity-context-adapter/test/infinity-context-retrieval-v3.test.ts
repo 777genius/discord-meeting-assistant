@@ -866,6 +866,13 @@ it("reconstructs V3 frozen binding with separate byte, snapshot and projection i
     packet: { ...input.packet, questionId: "other" } })).rejects.toThrow();
   await expect(validateCanonicalRetrievalBinding(binding, { ...input,
     topology: { ...input.topology, roomId: "other" } })).rejects.toThrow();
+  for (const topology of [{ ...input.topology, topologyDocumentSha256: "0".repeat(64) },
+    { ...input.topology, topologyGeneration: "replacement" },
+    { ...input.topology, spaceId: "replacement-space" },
+    { ...input.topology, memoryScopeId: "replacement-memory-scope" }]) {
+    await expect(createCanonicalRetrievalBinding({ ...input, topology }))
+      .rejects.toThrow(/admitted topology generation/u);
+  }
   const changed = structuredClone(binding);
   (changed.request.filters.sourceGenerations[0] as { projectionGeneration: string }).projectionGeneration = "other";
   await expect(validateCanonicalRetrievalBinding(changed, input)).rejects.toThrow();
@@ -913,8 +920,8 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     "../src/quality-campaign/production-local-canonical-evidence-reader.js");
   const { createFocusedRetrievalGroundingPlan } = await import(
     "@discord-meeting/meeting-core/meeting-knowledge");
-  const { buildSubscriptionRuntimeKnowledgeAnswerRequest, serializeSubscriptionRuntimeTaskRequest,
-    stableSubscriptionRuntimeId } =
+  const { buildSubscriptionRuntimeKnowledgeAnswerRequest, knowledgeAnswerExchangeInventorySha256,
+    serializeSubscriptionRuntimeTaskRequest, stableSubscriptionRuntimeId } =
     await import("@discord-meeting/subscription-runtime-adapter");
   const { sha256: canonicalSha256 } = await import("../src/quality-campaign/canonical.js");
   const { attemptIdentity } = await import("../src/quality-campaign/execution.js");
@@ -981,14 +988,13 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     ["answer_original_model_surface", surface(answerRequest)],
     ["answer_original_request", serializeSubscriptionRuntimeTaskRequest(answerRequest)],
     ["answer_original_response", answerResponse],
-    ["answer_repair_model_surface", surface(repairRequest as typeof answerRequest)],
     ["answer_normalized_outcome", new TextEncoder().encode(JSON.stringify(outcome))],
   ] as const;
   for (const [kind, plaintext] of artifactPlaintexts) {
     await evidence.audit.seal({ attemptId: input.attemptId, kind, plaintext });
   }
   const reader = createProductionLocalCanonicalEvidenceReader({ artifactKey,
-    artifactKeyId: "synthetic-key", artifactRoot });
+    artifactKeyId: "synthetic-key", artifactRoot, topology: { resolve: async () => input.topology } });
   const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0, campaignRootSha256,
     questionDigestSha256: canonicalSha256(input.packet), questionId: input.packet.questionId,
     releaseRootSha256: "e".repeat(64), repetition: 1,
@@ -1003,12 +1009,15 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     retrievalLatencyUs: 12, retrievalRequestSha256: binding.rawRequestSha256,
     retrievalResponseSha256: binding.rawResponseSha256,
     terminalAnswerRequestSha256: canonicalSha256({ effectKind: "answer", request: answerRequest }),
-    terminalAnswerResponseSha256: sha(answerResponse), topology: input.topology };
+    terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([{
+      callOrdinal: "original", requestBytes: serializeSubscriptionRuntimeTaskRequest(answerRequest),
+      responseBytes: answerResponse }]), topology: null };
   await expect(reader.verify({ attempts: [projection], campaignRootSha256 })).resolves.toMatchObject({
     inventorySha256: expect.stringMatching(/^[a-f0-9]{64}$/u) });
   for (const substituted of [
     { ...projection, executionPacket: { ...projection.executionPacket, locale: "ru" as const } },
-    { ...projection, topology: { ...projection.topology, roomId: "substituted-room" } },
+    { ...projection, executionPacket: { ...projection.executionPacket,
+      scopeTopologyDocumentSha256: "0".repeat(64) } },
     { ...projection, diagnosticCustody: { ...projection.diagnosticCustody!,
       appliedDocumentIds: { "document-1": "substituted-remote" } } },
   ]) {
@@ -1016,7 +1025,7 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
   }
   const receipt = (kind: string) => join(artifactRoot, "receipts", input.attemptId, `${kind}.json`);
   for (const kind of ["retrieval_binding", "selected_canonical_turns", "answer_original_request",
-    "answer_original_response", "answer_original_model_surface", "answer_repair_model_surface"] as const) {
+    "answer_original_response", "answer_original_model_surface"] as const) {
     const retained = artifactPlaintexts.find(([candidate]) => candidate === kind)![1];
     await unlink(receipt(kind));
     await expect(reader.verify({ attempts: [projection], campaignRootSha256 })).rejects.toThrow();
@@ -1056,8 +1065,14 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     plaintext: serializeSubscriptionRuntimeTaskRequest(repairRequest as typeof answerRequest) });
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_repair_response",
     plaintext: repairResponse });
-  const repairProjection = { ...projection, terminalAnswerResponseSha256: sha(Buffer.concat([
-    Buffer.from(answerResponse), Buffer.from(repairResponse)])) };
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_repair_model_surface",
+    plaintext: surface(repairRequest as typeof answerRequest) });
+  const repairProjection = { ...projection, terminalAnswerResponseSha256:
+    knowledgeAnswerExchangeInventorySha256([{ callOrdinal: "original",
+      requestBytes: serializeSubscriptionRuntimeTaskRequest(answerRequest),
+      responseBytes: answerResponse }, { callOrdinal: "repair",
+      requestBytes: serializeSubscriptionRuntimeTaskRequest(repairRequest as typeof answerRequest),
+      responseBytes: repairResponse }]) };
   await expect(reader.verify({ attempts: [repairProjection], campaignRootSha256 })).resolves.toBeDefined();
   const originalPath = receipt("answer_original_request");
   const repairPath = receipt("answer_repair_request");
@@ -1067,6 +1082,44 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
   await expect(reader.verify({ attempts: [repairProjection], campaignRootSha256 })).rejects.toThrow();
   await rename(originalPath, temporaryPath); await rename(repairPath, originalPath);
   await rename(temporaryPath, repairPath);
+  for (const kind of ["answer_repair_model_surface", "answer_repair_request",
+    "answer_repair_response", "answer_original_response"] as const) {
+    await unlink(receipt(kind));
+  }
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_original_response",
+    plaintext: Buffer.concat([answerResponse, repairResponse]) });
+  await expect(reader.verify({ attempts: [repairProjection], campaignRootSha256 }))
+    .rejects.toThrow("exchange inventory differs");
+
+  for (const kind of ["answer_original_model_surface", "answer_original_request",
+    "answer_original_response", "selected_canonical_turns", "answer_normalized_outcome"] as const) {
+    await unlink(receipt(kind));
+  }
+  await unlink(join(artifactRoot, "outcomes", `${input.attemptId}.json`));
+  const zeroEvidenceOutcome = { citations: [], claims: [],
+    rawRetrievalResponseSha256: binding.rawResponseSha256,
+    reason: "zero_admissible_evidence", retrievalCandidates: binding.candidates,
+    selectedTurns: [], status: "abstained" as const };
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "selected_canonical_turns",
+    plaintext: new TextEncoder().encode(JSON.stringify([])) });
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
+    plaintext: new TextEncoder().encode(JSON.stringify(zeroEvidenceOutcome)) });
+  const noModelProjection = { ...projection, answerAbstained: true,
+    citationLocatorIds: [], evidenceLocatorIds: [], evidenceTurnIds: [],
+    terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([]) };
+  await expect(reader.verify({ attempts: [noModelProjection], campaignRootSha256 }))
+    .resolves.toBeDefined();
+
+  for (const kind of ["selected_canonical_turns", "answer_normalized_outcome"] as const) {
+    await unlink(receipt(kind));
+  }
+  await unlink(join(artifactRoot, "outcomes", `${input.attemptId}.json`));
+  const failedOutcome = { ...zeroEvidenceOutcome, reason: "evidence_rehydration_failed",
+    status: "failed" as const };
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
+    plaintext: new TextEncoder().encode(JSON.stringify(failedOutcome)) });
+  await expect(reader.verify({ attempts: [{ ...noModelProjection, answerAbstained: false }],
+    campaignRootSha256 })).resolves.toBeDefined();
 });
 
 it("rejects mixed routes, request bytes, and hostile bare descriptor bytes", async () => {
@@ -1084,6 +1137,18 @@ it("rejects mixed routes, request bytes, and hostile bare descriptor bytes", asy
   }
 });
 
+it("reconstructs the production mixed-case RU/EN privacy query and rejects a foreign query", async () => {
+  const { assertCanonicalRequest } = await import(
+    "../src/quality-campaign/canonical-execution-artifact-validation.js");
+  const question = "Что Решили ABOUT Launch с <@123456789012345678>?";
+  const legitimate = request({ queries: [{ queryId: "original-question",
+    query: "что решили about launch с participant?" }] });
+  expect(() => assertCanonicalRequest(legitimate, question)).not.toThrow();
+  expect(() => assertCanonicalRequest(request({ queries: [{ queryId: "original-question",
+    query: "foreign retained query" }] }), question))
+    .toThrow("qualification request violates Meeting Knowledge ownership");
+});
+
 async function custodyFixture() {
   const { retrievalV3RequestPayload } = await import("@infinity-context/sdk");
   const { retrievalV3InputFromSnapshot } = await import("../src/infinity-context-retrieval-v3.js");
@@ -1092,6 +1157,8 @@ async function custodyFixture() {
   (raw.applied_bounds as Record<string, unknown>).deadline_ms = 2000;
   const packet = { locale: "en" as const, questionId: "q1",
       questionText: snapshot.queries[0]!.query,
+      schemaVersion: "meeting_knowledge.qualification_execution_packet.v2" as const,
+      scopeTopologyDocumentSha256: "9".repeat(64), scopeTopologyGeneration: "generation-1",
       scopeTopologyReference: "signed:one", source: "automatic" as const };
   const { sha256 } = await import("../src/quality-campaign/canonical.js");
   const { attemptIdentity } = await import("../src/quality-campaign/execution.js");
@@ -1107,7 +1174,10 @@ async function custodyFixture() {
   return {
     attemptId: identity.attemptId,
     packet,
-    topology: { scopeId: "scope1", roomId: "room1", currentMeetingId: "meeting1" },
+    topology: { scopeId: "scope1", roomId: "room1", currentMeetingId: "meeting1",
+      memoryScopeId: snapshot.scope.memoryScopeId, spaceId: snapshot.scope.spaceId,
+      topologyDocumentSha256: packet.scopeTopologyDocumentSha256,
+      topologyGeneration: packet.scopeTopologyGeneration },
     diagnosticCustody,
     diagnosticPlanSha256: custodyDigest({ plan: diagnosticCustody.frozenPlan,
       remoteDocumentIds: diagnosticCustody.appliedDocumentIds }), request: snapshot,

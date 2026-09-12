@@ -37,6 +37,7 @@ import { assertCanonicalRequest, createCanonicalRetrievalBinding, custodyDigest,
   "./canonical-execution-artifact-validation.js";
 import type {
   QualificationCanonicalTurn,
+  QualificationExecutionPacket,
   QualificationQuestionExecutionContext,
   QualificationExternalEffectReservationPort,
   QualificationQuestionOutcome,
@@ -45,11 +46,15 @@ import type {
   QualificationQuestionOutcomePort,
   QualificationQuestionRetrievalPort,
 } from "./execute-admitted-qualification-question.js";
+import type { QualificationScopeTopology, QualificationScopeTopologyPort } from
+  "./production-ports.js";
 
 export { createProductionCanonicalExecutionEvidence } from
   "./production-canonical-execution-evidence.js";
 export { loadProductionExecutionCorpus } from
   "./production-execution-corpus-custody.js";
+export type { QualificationScopeTopology, QualificationScopeTopologyPort } from
+  "./production-ports.js";
 
 export interface QualificationCreateOnlyJournalPort {
   reserve(input: { readonly attemptId: string; readonly payloadSha256: string;
@@ -67,17 +72,6 @@ export interface QualificationEncryptedAuditPort {
       "capability_response" | "retrieval_request" | "retrieval_response" |
       "retrieval_binding" | "retrieval_observation" | "scope_resolution_observation" | "selected_canonical_turns";
     readonly plaintext: Uint8Array }): Promise<void>;
-}
-
-export interface QualificationScopeTopology {
-  readonly currentMeetingId: string;
-  readonly roomId: string;
-  readonly scopeId: string;
-}
-
-/** Resolves only an already authenticated execution-safe reference. */
-export interface QualificationScopeTopologyPort {
-  resolve(reference: string, questionId: string): Promise<QualificationScopeTopology>;
 }
 
 interface ProductionCanonicalQuestionChainInput {
@@ -160,8 +154,15 @@ function createCanonicalQuestionEngine(input: CanonicalEngineInput) {
     retrieve: async (packet: DiagnosticQuestion,
       options: QualificationQuestionExecutionContext) => {
       packet = freezeCustody(structuredClone(packet));
-      const topology = freezeCustody(structuredClone(await input.topology.resolve(packet.scopeTopologyReference,
-        packet.questionId)));
+      const qualificationPacket = "source" in packet ?
+        packet as QualificationExecutionPacket : null;
+      const topologyBinding = qualificationPacket?.schemaVersion ===
+        "meeting_knowledge.qualification_execution_packet.v2" ? {
+          topologyDocumentSha256: qualificationPacket.scopeTopologyDocumentSha256,
+          topologyGeneration: qualificationPacket.scopeTopologyGeneration,
+        } : undefined;
+      const topology = freezeCustody(structuredClone(await input.topology.resolve(
+        packet.scopeTopologyReference, packet.questionId, topologyBinding)));
       const scopeReads: { readonly kind: string; readonly requestSha256: string;
         readonly responseSha256: string | null; readonly responseBytes: number;
         readonly status: string }[] = [];
@@ -420,12 +421,6 @@ function createAnswerPort(input: CanonicalEngineInput,
     const groundedRequest = { attemptId, binding: execution.binding,
       locale: request.locale, plan, question: request.questionText };
     const prepared = input.answer.prepare(groundedRequest);
-    await Promise.all([
-      input.audit.seal({ attemptId, kind: "answer_original_model_surface",
-        plaintext: utf8(prepared.modelInputs.original) }),
-      input.audit.seal({ attemptId, kind: "answer_repair_model_surface",
-        plaintext: utf8(prepared.modelInputs.repair) }),
-    ]);
     const payloadSha256 = sha256Json({ effectKind: "answer", request: prepared.request });
     await input.spend.reserve({ effectKind: "answer", payloadSha256,
       requestedEncryptedBytes: 16_000, requestedTokens: 2_048 });
@@ -433,7 +428,7 @@ function createAnswerPort(input: CanonicalEngineInput,
     const generated = await input.answer.generate(groundedRequest, options);
     const observation = input.answer.takeQualificationObservation(attemptId);
     await sealAnswerExchanges(input.audit, attemptId, observation.exchanges.original,
-      observation.exchanges.repair);
+      observation.exchanges.repair, prepared.modelInputs);
     const stateValue = observation.providerBytesSent && !observation.outcomeCertain ?
       "outcome_unknown" as const : generated.status === "completed" ?
         "succeeded" as const : "failed" as const;
@@ -476,10 +471,19 @@ async function sealRetrievalExchange(audit: QualificationEncryptedAuditPort, att
 }
 
 async function sealAnswerExchanges(audit: QualificationEncryptedAuditPort, attemptId: string,
-  original: KnowledgeAnswerProviderExchange, repair: KnowledgeAnswerProviderExchange | null) {
+  original: KnowledgeAnswerProviderExchange | null, repair: KnowledgeAnswerProviderExchange | null,
+  modelInputs: { readonly original: string; readonly repair: string }) {
+  if (original === null) {
+    if (repair !== null) {throw new Error("repair answer exchange lacks its original exchange");}
+    return;
+  }
+  await audit.seal({ attemptId, kind: "answer_original_model_surface",
+    plaintext: utf8(modelInputs.original) });
   await audit.seal({ attemptId, kind: "answer_original_request", plaintext: original.requestBytes });
   await audit.seal({ attemptId, kind: "answer_original_response", plaintext: original.responseBytes });
   if (repair !== null) {
+    await audit.seal({ attemptId, kind: "answer_repair_model_surface",
+      plaintext: utf8(modelInputs.repair) });
     await audit.seal({ attemptId, kind: "answer_repair_request", plaintext: repair.requestBytes });
     await audit.seal({ attemptId, kind: "answer_repair_response", plaintext: repair.responseBytes });
   }

@@ -107,7 +107,7 @@ describe("production local canonical evidence reader", () => {
       attemptId: `sqv4-${"d".repeat(64)}` }], campaignRootSha256 })).rejects.toThrow();
     const failed = await localFixture({ outcomeStatus: "failed" });
     await expect(failed.reader.verify({ attempts: [failed.projection], campaignRootSha256 }))
-      .rejects.toThrow("differs from external outcome evidence");
+      .resolves.toMatchObject({ inventorySha256: expect.stringMatching(/^[a-f0-9]{64}$/u) });
   });
 
   it("rejects missing indices and corrupt envelopes without scanning for replacements", async () => {
@@ -157,7 +157,8 @@ async function localFixture(options: { readonly extraObservationKey?: boolean;
     ...(options.extraObservationKey === true ? { unexpected: true } : {}) };
   const turn = { endMs: 2, sourceLocatorId: "locator-1", speakerId: "speaker-1", startMs: 1,
     text: "Synthetic evidence", turnHash: "turn-hash", turnId: "turn-1" };
-  const outcome = { citations: ["turn-1"], claims: ["Synthetic claim"],
+  const outcome = { citations: options.outcomeStatus === "failed" ? [] : ["turn-1"],
+    claims: options.outcomeStatus === "failed" ? [] : ["Synthetic claim"],
     rawRetrievalResponseSha256: sha(retrievalResponse), retrievalCandidates: [{ contributions: [],
       fusedScore: 1, locatorId: "locator-1", providerRank: 0 }], selectedTurns: [turn],
     ...(options.outcomeStatus === "failed" ? { reason: "synthetic_failure" } : {}),
@@ -179,7 +180,8 @@ async function localFixture(options: { readonly extraObservationKey?: boolean;
     artifactKeyId: "synthetic-key", artifactRoot }), projection: { answerAbstained: false,
     attemptId, campaignRootSha256,
     capabilityRequestSha256: sha(capabilityRequest), capabilityResponseSha256: sha(capabilityResponse),
-    citationLocatorIds: ["locator-1"], evidenceLocatorIds: ["locator-1"],
+    citationLocatorIds: options.outcomeStatus === "failed" ? [] : ["locator-1"],
+    evidenceLocatorIds: ["locator-1"],
     diagnosticCustody: null, evidenceTurnIds: ["turn-1"], executionPacket, identity,
     rankedLocatorIds: ["locator-1"], retrievalLatencyUs: 12,
     retrievalRequestSha256: sha(retrievalRequest), retrievalResponseSha256:

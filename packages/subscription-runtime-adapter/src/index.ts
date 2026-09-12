@@ -72,9 +72,12 @@ export {
 } from "./knowledge-coverage-request-mapper.js";
 export {
   knowledgeAnswerMaximumModelInputBytes,
+  knowledgeAnswerExchangeInventory,
+  knowledgeAnswerExchangeInventorySha256,
   measureKnowledgeAnswerModelInputs,
   SubscriptionRuntimeGroundedAnswerAdapter,
   type KnowledgeAnswerExactInputMeasurement,
+  type KnowledgeAnswerExchangeInventoryV2,
   type KnowledgeAnswerModelInputSurfaceMeasurement,
   type KnowledgeAnswerProviderExchange,
   type KnowledgeAnswerProviderExchangeIdentity,

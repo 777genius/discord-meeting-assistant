@@ -19,12 +19,19 @@ export interface QualificationGoldScoringPort {
 
 export function validateQualificationExecutionPacket(value: unknown):
 import("./execute-admitted-qualification-question.js").QualificationExecutionPacket {
+  const candidate = value as Record<string, unknown>;
+  const v2 = candidate?.schemaVersion === "meeting_knowledge.qualification_execution_packet.v2";
   const record = exactObject(value, ["locale", "questionId", "questionText",
-    "scopeTopologyReference", "source"], "qualification execution packet");
+    "scopeTopologyReference", "source", ...(v2 ? ["schemaVersion",
+      "scopeTopologyDocumentSha256", "scopeTopologyGeneration"] : [])],
+  "qualification execution packet");
   if ((record.locale !== "en" && record.locale !== "mixed" && record.locale !== "ru") ||
     (record.source !== "automatic" && record.source !== "independent_review") ||
     !safeText(record.questionId, 128) || !safeText(record.questionText, 4_096) ||
-    !safeText(record.scopeTopologyReference, 512)) {
+    !safeText(record.scopeTopologyReference, 512) || v2 &&
+      (!safeText(record.scopeTopologyGeneration, 256) ||
+        typeof record.scopeTopologyDocumentSha256 !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(record.scopeTopologyDocumentSha256))) {
     throw new Error("qualification execution packet is invalid");
   }
   return Object.freeze(record as unknown as

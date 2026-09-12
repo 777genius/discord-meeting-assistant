@@ -310,6 +310,10 @@ export {
   isPersistedRetrievalV2Binding,
   type FocusedLocatorRetrievalV2Policy,
 } from "./application/focused-locator-retrieval-v2.js";
+export {
+  boundedRetrievalQuery,
+  redactRetrievalQueryIdentities,
+} from "./application/focused-locator-retrieval-v2-query.js";
 export type {
   FocusedEvidenceSelectionCandidateV1,
   FocusedEvidenceSelectionResultV1,

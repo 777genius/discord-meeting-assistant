@@ -97,8 +97,9 @@ describe("main external/local retention binding", () => {
           main: async () => ({ envelopeBytes: bytes("external"), signedReceipt: {} }) },
         evidenceCustody: { open: async () => externalEvidence }, mainCanonicalEvidence:
           createProductionLocalCanonicalEvidenceReader({ artifactKey,
-            artifactKeyId: "synthetic-key", artifactRoot, topology: { resolve: async () => ({
-              currentMeetingId: "meeting-1", roomId: "room-1", scopeId: "scope-1" }) } }) },
+            artifactKeyId: "synthetic-key", artifactRoot, topology: async () => {
+              throw new Error("legacy V1 must not resolve topology");
+            } }) },
       executionPackets: [packet], questions: [question], releaseRootSha256,
       spendReservationSha256ByRepetition });
       const receipt = retentionCheckpointReceipt(campaignRootSha256, { inventorySha256:

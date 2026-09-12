@@ -27,8 +27,8 @@ import { ExecuteAdmittedQualificationQuestion,
   "./execute-admitted-qualification-question.js";
 import { createProductionCanonicalExecutionEvidence, recoverProductionCanonicalOutcome } from
   "./production-canonical-execution-evidence.js";
-import { createProductionCanonicalQuestionChain,
-  type QualificationScopeTopologyPort } from "./production-canonical-question-chain.js";
+import { createProductionCanonicalQuestionChain } from "./production-canonical-question-chain.js";
+import type { QualificationScopeTopologyPort } from "./production-ports.js";
 import { readCanonicalQualityCampaignJson, readQualityCampaignBytes,
   readQualityCampaignText } from "./production-execution-corpus-custody.js";
 
@@ -60,20 +60,29 @@ export interface ProductionCanonicalExecutionConnectionConfiguration {
 export async function loadProductionCanonicalEvidenceTopology(
   config: ProductionCanonicalExecutionConnectionConfiguration,
 ): Promise<QualificationScopeTopologyPort> {
-  const [topologyValue, topologyPublicKeyPem] = await Promise.all([
-    readJson(config.topologyPath, "scope topology"),
-    readQualityCampaignText(absolute(config.topologyAuthority.publicKeyPath,
-      "scope topology authority key"), "scope topology authority key", 16_384),
-  ]);
-  return topologyResolver(decodeTopology(topologyValue, config.topologyAuthority.keyId,
-    topologyPublicKeyPem, config.actorKeyProfileId));
+  return Object.freeze({ resolve: async (reference: string, questionId: string,
+    binding?: { readonly topologyDocumentSha256: string;
+      readonly topologyGeneration: string }) => {
+    const [topologyValue, topologyPublicKeyPem] = await Promise.all([
+      readJson(config.topologyPath, "scope topology"),
+      readQualityCampaignText(absolute(config.topologyAuthority.publicKeyPath,
+        "scope topology authority key"), "scope topology authority key", 16_384),
+    ]);
+    return await topologyResolver(decodeTopology(topologyValue,
+      config.topologyAuthority.keyId, topologyPublicKeyPem,
+      config.actorKeyProfileId)).resolve(reference, questionId, binding);
+  } });
 }
 
 interface ScopeTopologyDocument {
   readonly actorKeyProfileId: string;
   readonly entries: readonly { readonly currentMeetingId: string; readonly questionId: string;
-    readonly reference: string; readonly roomId: string; readonly scopeId: string }[];
-  readonly schemaVersion: "meeting_knowledge.quality_scope_topology.v2";
+    readonly reference: string; readonly roomId: string; readonly scopeId: string;
+    readonly memoryScopeId?: string; readonly spaceId?: string }[];
+  readonly schemaVersion: "meeting_knowledge.quality_scope_topology.v2" |
+    "meeting_knowledge.quality_scope_topology.v3";
+  readonly topologyDocumentSha256: string;
+  readonly topologyGeneration?: string;
 }
 
 /** Concrete installed composition of the official SDK, selected PostgreSQL evidence and gRPC answer. */
@@ -117,6 +126,10 @@ export async function createProductionCanonicalExecutorFactory(
   const runtimeBinding = decodeRuntimeBinding(executionBindingValue);
   const topology = decodeTopology(topologyValue, config.topologyAuthority.keyId,
     topologyPublicKeyPem, config.actorKeyProfileId);
+  if (retrievalContractVersion === "context-retrieval.v3" &&
+    topology.schemaVersion !== "meeting_knowledge.quality_scope_topology.v3") {
+    throw new Error("canonical V3 retrieval requires a generation-bound scope topology");
+  }
   const pool = new Pool({ connectionString: postgresUrl.trim(), connectionTimeoutMillis: 5_000,
     max: 32 });
   const store = new PostgresHistoricalMemoryStore(pool);
@@ -286,36 +299,61 @@ function decodeTopology(document: unknown, keyId: string,
   publicKeyPem: string, actorKeyProfileId: string): ScopeTopologyDocument {
   const signed = verifyExternalSignedValue<ScopeTopologyDocument>(document, keyId, publicKeyPem,
     "scope topology");
-  const payload = exactRecord(signed.payload, ["actorKeyProfileId", "entries", "schemaVersion"], "scope topology");
-  if (payload.schemaVersion !== "meeting_knowledge.quality_scope_topology.v2" ||
+  const candidate = signed.payload as unknown as Record<string, unknown>;
+  const v3 = candidate.schemaVersion === "meeting_knowledge.quality_scope_topology.v3";
+  const payload = exactRecord(signed.payload, ["actorKeyProfileId", "entries", "schemaVersion",
+    ...(v3 ? ["topologyGeneration"] : [])], "scope topology");
+  if ((!v3 && payload.schemaVersion !== "meeting_knowledge.quality_scope_topology.v2") ||
     !Array.isArray(payload.entries)) {throw new Error("scope topology is invalid");}
+  const topologyGeneration = v3 ? safeId(payload.topologyGeneration,
+    "scope topology generation") : undefined;
   if (safeId(payload.actorKeyProfileId, "scope topology actor key profile") !== actorKeyProfileId) {
     throw new Error("scope topology actor key profile differs from configured binding");
   }
   const entries = payload.entries.map((entryValue) => {
     const entry = exactRecord(entryValue, ["currentMeetingId", "questionId", "reference", "roomId",
-      "scopeId"], "scope topology entry");
+      "scopeId", ...(v3 ? ["memoryScopeId", "spaceId"] : [])], "scope topology entry");
     return Object.freeze({ currentMeetingId: safeId(entry.currentMeetingId, "current meeting ID"),
       questionId: safeId(entry.questionId, "topology question ID"),
       reference: safeId(entry.reference, "scope topology reference"),
       roomId: safeId(entry.roomId, "topology room ID"),
-      scopeId: safeId(entry.scopeId, "topology scope ID") });
+      scopeId: safeId(entry.scopeId, "topology scope ID"),
+      ...(v3 ? { memoryScopeId: safeId(entry.memoryScopeId, "topology memory scope ID"),
+        spaceId: safeId(entry.spaceId, "topology space ID") } : {}) });
   });
   if (new Set(entries.map(({ reference }) => reference)).size !== entries.length) {
     throw new Error("scope topology references are duplicated");
   }
-  return Object.freeze({ actorKeyProfileId, entries: Object.freeze(entries), schemaVersion: payload.schemaVersion });
+  return Object.freeze({ actorKeyProfileId, entries: Object.freeze(entries),
+    schemaVersion: payload.schemaVersion as ScopeTopologyDocument["schemaVersion"],
+    topologyDocumentSha256: sha256(document),
+    ...(topologyGeneration === undefined ? {} : { topologyGeneration }) });
 }
 
 function topologyResolver(topology: ScopeTopologyDocument): QualificationScopeTopologyPort {
   const byReference = new Map(topology.entries.map((entry) => [entry.reference, entry]));
-  return Object.freeze({ resolve: async (reference: string, questionId: string) => {
+  return Object.freeze({ resolve: async (reference: string, questionId: string,
+    binding?: { readonly topologyDocumentSha256: string;
+      readonly topologyGeneration: string }) => {
     const entry = byReference.get(reference);
     if (entry === undefined || entry.questionId !== questionId) {
       throw new Error("signed scope topology reference is absent or question-substituted");
     }
+    if (topology.schemaVersion === "meeting_knowledge.quality_scope_topology.v3" &&
+      (binding === undefined || binding.topologyDocumentSha256 !==
+        topology.topologyDocumentSha256 || binding.topologyGeneration !==
+        topology.topologyGeneration) ||
+      topology.schemaVersion === "meeting_knowledge.quality_scope_topology.v2" &&
+        binding !== undefined) {
+      throw new Error("signed scope topology differs from the admitted document generation");
+    }
     return Object.freeze({ currentMeetingId: entry.currentMeetingId, roomId: entry.roomId,
-      scopeId: entry.scopeId });
+      scopeId: entry.scopeId,
+      ...(topology.schemaVersion === "meeting_knowledge.quality_scope_topology.v3" ? {
+        memoryScopeId: entry.memoryScopeId!, spaceId: entry.spaceId!,
+        topologyDocumentSha256: topology.topologyDocumentSha256,
+        topologyGeneration: topology.topologyGeneration!,
+      } : {}) });
   } });
 }
 

@@ -1,4 +1,5 @@
-import { validateFocusedLocatorRetrievalV3Request,
+import { boundedRetrievalQuery, redactRetrievalQueryIdentities,
+  validateFocusedLocatorRetrievalV3Request,
   type FocusedLocatorRetrievalRequestSnapshot, type FocusedLocatorRetrievalV3RequestSnapshot } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { InfinityContextClient, decodeRetrievalV3Capability, retrievalV3RequestPayload,
@@ -248,8 +249,12 @@ export function assertCanonicalRequest(request: FocusedLocatorRetrievalRequestSn
     throw new Error("qualification request violates Meeting Knowledge ownership");
   }
   const [originalQuery] = request.queries;
+  // V3 reconstructs the installed preparer's privacy transform. V2 keeps its
+  // legacy literal question binding byte-for-byte.
+  const expectedQuery = request.schemaVersion === 3
+    ? boundedRetrievalQuery(redactRetrievalQueryIdentities(question, [])) : question;
   if (originalQuery === undefined || originalQuery.queryId !== "original-question" ||
-    originalQuery.query !== question) {
+    expectedQuery.length === 0 || originalQuery.query !== expectedQuery) {
     throw new Error("qualification request violates Meeting Knowledge ownership");
   }
 }
@@ -283,10 +288,15 @@ export function freezeCustody<T>(value: T): T {
 }
 
 export interface CanonicalRetrievalBindingV1 {
-  readonly schemaVersion: "meeting_knowledge.canonical_retrieval_binding.v1";
+  readonly schemaVersion: "meeting_knowledge.canonical_retrieval_binding.v1" |
+    "meeting_knowledge.canonical_retrieval_binding.v2";
   readonly attemptId: string;
   readonly packet: QualificationExecutionPacket | DiagnosticQuestion;
-  readonly topology: { readonly scopeId: string; readonly roomId: string; readonly currentMeetingId: string };
+  readonly topology: { readonly scopeId: string; readonly roomId: string;
+    readonly currentMeetingId: string; readonly memoryScopeId?: string;
+    readonly spaceId?: string; readonly topologyDocumentSha256?: string;
+    readonly topologyGeneration?: string };
+  readonly scopeDerivationSha256?: string;
   readonly diagnosticPlanSha256: string | null;
   readonly request: FocusedLocatorRetrievalV3RequestSnapshot;
   readonly snapshotSha256: string;
@@ -314,8 +324,11 @@ export async function createCanonicalRetrievalBinding(input: {
 }): Promise<CanonicalRetrievalBindingV1> {
   if (!attemptPattern.test(input.attemptId)) {throw new Error("retrieval binding attempt is invalid");}
   const packet = validateCustodyPacket(input.packet);
-  if (!isPlainRecord(input.topology) || !hasExactKeys(input.topology,
-    ["scopeId", "roomId", "currentMeetingId"]) ||
+  const admittedMain = "source" in packet;
+  const topologyKeys = admittedMain ? ["scopeId", "roomId", "currentMeetingId",
+    "memoryScopeId", "spaceId", "topologyDocumentSha256", "topologyGeneration"] :
+    ["scopeId", "roomId", "currentMeetingId"];
+  if (!isPlainRecord(input.topology) || !hasExactKeys(input.topology, topologyKeys) ||
     [input.topology.scopeId, input.topology.roomId, input.topology.currentMeetingId]
       .some(value => typeof value !== "string" || value.length === 0) ||
     input.diagnosticPlanSha256 !== null && !/^[a-f0-9]{64}$/u.test(input.diagnosticPlanSha256)) {
@@ -323,6 +336,14 @@ export async function createCanonicalRetrievalBinding(input: {
   }
   const request = validateFocusedLocatorRetrievalV3Request(input.request);
   assertCanonicalRequest(request, packet.questionText);
+  if (admittedMain && (packet.schemaVersion !==
+      "meeting_knowledge.qualification_execution_packet.v2" ||
+    input.topology.topologyDocumentSha256 !== packet.scopeTopologyDocumentSha256 ||
+    input.topology.topologyGeneration !== packet.scopeTopologyGeneration ||
+    input.topology.spaceId !== request.scope.spaceId ||
+    input.topology.memoryScopeId !== request.scope.memoryScopeId)) {
+    throw new Error("V3 retrieval scope is not derived from the admitted topology generation");
+  }
   if (request.scope.thread.mode !== "any" ||
     (input.diagnosticPlanSha256 !== null && request.filters.sourceGenerations.length !== 1) ||
     request.budgets.deadlineMs !== 2000 || request.budgets.evidenceByteLimit !== 16000 ||
@@ -378,8 +399,16 @@ export async function createCanonicalRetrievalBinding(input: {
           providerRank: candidate.retrievalProvenance.providerRank }));
     }
   } catch { /* Malformed raw bytes remain failed evidence, never an omitted outcome. */ }
-  return freezeCustody({ schemaVersion: "meeting_knowledge.canonical_retrieval_binding.v1",
+  const scopeDerivationSha256 = admittedMain ? custodyDigest({
+    reference: packet.scopeTopologyReference,
+    resolvedScope: { memoryScopeId: request.scope.memoryScopeId, spaceId: request.scope.spaceId },
+    topology: input.topology,
+  }) : undefined;
+  return freezeCustody({ schemaVersion: admittedMain ?
+      "meeting_knowledge.canonical_retrieval_binding.v2" as const :
+      "meeting_knowledge.canonical_retrieval_binding.v1" as const,
     attemptId: input.attemptId, packet: structuredClone(packet), topology: structuredClone(input.topology),
+    ...(scopeDerivationSha256 === undefined ? {} : { scopeDerivationSha256 }),
     diagnosticPlanSha256: input.diagnosticPlanSha256, request,
     snapshotSha256: custodyDigest(request), officialPayloadSha256: custodyDigest(payload),
     rawRequestSha256: sha256(exchange.requestBytes), rawResponseSha256: sha256(exchange.responseBytes),
@@ -399,7 +428,9 @@ export async function validateCanonicalRetrievalBinding(value: unknown, expected
   if (!isPlainRecord(value) || !hasExactKeys(value, ["schemaVersion", "attemptId", "packet", "topology",
     "diagnosticPlanSha256", "request", "snapshotSha256", "officialPayloadSha256", "rawRequestSha256",
     "rawResponseSha256", "rawCapabilitySha256", "descriptorSha256", "descriptor", "contractVersion",
-    "capabilityRoute", "retrievalRoute", "candidateProjectionSha256", "candidates", "providerStatus"])) {
+    "capabilityRoute", "retrievalRoute", "candidateProjectionSha256", "candidates", "providerStatus",
+    ...(value.schemaVersion === "meeting_knowledge.canonical_retrieval_binding.v2" ?
+      ["scopeDerivationSha256"] : [])])) {
     throw new Error("retrieval binding has an invalid shape");
   }
   const reconstructed = await createCanonicalRetrievalBinding({ ...expected,
