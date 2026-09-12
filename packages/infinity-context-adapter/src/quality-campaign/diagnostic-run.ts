@@ -12,7 +12,7 @@ import { HmacHistoricalOpaqueIds } from "../hmac-historical-ids.js";
 import { InfinityContextHistoricalMemoryAdapter } from "../infinity-context-historical-memory.js";
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
 import { InfinityContextRetrievalV3Adapter } from "../infinity-context-retrieval-v3.js";
-import { INFINITY_CONTEXT_SDK_PROVENANCE } from "../infinity-sdk-provenance.js";
+import { INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE } from "../infinity-sdk-provenance.js";
 import { PinnedMultilingualMiniLmTokenizer } from "../pinned-multilingual-minilm-tokenizer.js";
 import { canonicalJson, sha256 } from "./canonical.js";
 import { awaitDiagnosticIndexReadiness, awaitDiagnosticIndexReadinessV3,
@@ -122,8 +122,8 @@ export async function runDiagnostic(manifest: DiagnosticManifest | DiagnosticMan
   if (sha256(m.frozen.roster) !== m.rosterSha256) {
     throw new Error("diagnostic frozen identity/profile differs");
   }
-  // V2 may execute only from the exact immutable package authenticated by the
-  // repository's official SDK preparer/provenance boundary. A source checkout,
+  // V2 may execute only from the exact installed draft package authenticated by
+  // the repository's test-only SDK intake boundary. A source checkout,
   // entrypoint alias, or manifest assertion alone is never package custody.
   const installedSdk = m.schemaVersion === "meeting_knowledge.real40_diagnostic.v2"
     ? await verifyInstalledDiagnosticSdk(m.sdkIdentity) : null;
@@ -405,8 +405,7 @@ async function secret(path: string): Promise<string> {
   return value;
 }
 
-/** Authenticate both the installed bytes and the immutable package identity
- * supplied by the repository's official SDK preparation boundary. */
+/** Authenticate the installed bytes against the explicit test-only V3 draft intake. */
 export async function verifyInstalledDiagnosticSdk(
   expected: DiagnosticSdkIdentity,
 ): Promise<Readonly<DiagnosticSdkIdentity & { readonly loadedEntrypointSha256: string }>> {
@@ -416,28 +415,49 @@ export async function verifyInstalledDiagnosticSdk(
     throw new Error("diagnostic SDK resolution is not an installed package artifact");
   }
   const packageRoot = await realpath(fileURLToPath(new URL("..", entrypoint)));
+  return verifyDiagnosticSdkPackageBytes(packageRoot, installedEntrypoint, expected);
+}
+
+/** Byte verifier kept separate so hostile installed-package layouts can be tested without
+ * mutating the workspace installation. It does not establish installed-package resolution. */
+export async function verifyDiagnosticSdkPackageBytes(
+  packageRoot: string,
+  installedEntrypoint: string,
+  expected: DiagnosticSdkIdentity,
+): Promise<Readonly<DiagnosticSdkIdentity & { readonly loadedEntrypointSha256: string }>> {
+  const provenance = INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE;
+  if (provenance.evidenceKind !== "draft-qualification" || provenance.releaseState !== "draft" ||
+    provenance.qualificationScope !== "test-only" || provenance.immutableAttestationVerified !== false ||
+    provenance.publicDistributionVerified !== false) {
+    throw new Error("diagnostic SDK provenance is not an admitted test-only draft");
+  }
+  const observed = Object.freeze({ packageName: provenance.packageName,
+    version: provenance.packageVersion,
+    sourceRevision: provenance.reviewedSourceCommit,
+    tarballSha256: provenance.packageTarballSha256,
+    manifestSha256: provenance.packageManifestSha256 });
+  if (canonicalJson(observed) !== canonicalJson(expected)) {
+    throw new Error("installed diagnostic SDK differs from authenticated draft package");
+  }
   const manifestBytes = await readFile(join(packageRoot, "package.json"));
   const manifest = JSON.parse(manifestBytes.toString("utf8")) as { name?: unknown; version?: unknown };
-  const provenance = INFINITY_CONTEXT_SDK_PROVENANCE as typeof INFINITY_CONTEXT_SDK_PROVENANCE &
-    { readonly packageArtifactIdentitySha256?: unknown };
-  const observed = Object.freeze({ packageName: INFINITY_CONTEXT_SDK_PROVENANCE.packageName,
-    version: INFINITY_CONTEXT_SDK_PROVENANCE.packageVersion,
-    sourceRevision: INFINITY_CONTEXT_SDK_PROVENANCE.commit,
-    tarballSha256: INFINITY_CONTEXT_SDK_PROVENANCE.packageTarballSha256,
-    manifestSha256: INFINITY_CONTEXT_SDK_PROVENANCE.packageManifestSha256 });
-  if (typeof provenance.packageArtifactIdentitySha256 !== "string" ||
-    !/^[a-f0-9]{64}$/u.test(provenance.packageArtifactIdentitySha256) ||
-    canonicalJson(observed) !== canonicalJson(expected) || manifest.name !== expected.packageName ||
+  if (manifest.name !== expected.packageName ||
     manifest.version !== expected.version || sha256(manifestBytes) !== expected.manifestSha256) {
-    throw new Error("installed diagnostic SDK differs from authenticated immutable package");
+    throw new Error("installed diagnostic SDK manifest differs from authenticated draft package");
   }
-  const identityBytes = await readFile(join(packageRoot, "dist/sdk-artifact-identity.json"));
-  if (sha256(identityBytes) !== provenance.packageArtifactIdentitySha256) {
+  const identityPath = resolve(packageRoot, provenance.artifactIdentityPath);
+  if (relative(packageRoot, identityPath).split(sep).join("/") !== provenance.artifactIdentityPath) {
+    throw new Error("installed diagnostic SDK artifact identity path is unsafe");
+  }
+  const identityBytes = await readFile(identityPath);
+  const identity = exactInstalledSdkIdentity(JSON.parse(identityBytes.toString("utf8")));
+  if (sha256(identityBytes) !== provenance.artifactIdentitySha256 ||
+    sha256(identity.files) !== provenance.artifactInventorySha256) {
     throw new Error("installed diagnostic SDK artifact identity differs");
   }
-  const identity = exactInstalledSdkIdentity(JSON.parse(identityBytes.toString("utf8")));
   if (identity.package_name !== expected.packageName || identity.package_version !== expected.version ||
-    identity.source_commit !== expected.sourceRevision || identity.source_git_tree_oid !== provenance.tree) {
+    identity.source_commit !== provenance.reviewedSourceCommit ||
+    identity.source_git_tree_oid !== provenance.reviewedSourceTree) {
     throw new Error("installed diagnostic SDK source identity differs");
   }
   const entrypointRelative = relative(packageRoot, installedEntrypoint).split(sep).join("/");
@@ -481,6 +501,8 @@ function exactInstalledSdkIdentity(value: unknown): InstalledSdkArtifactIdentity
     if (typeof file !== "object" || file === null ||
       canonicalJson(Object.keys(file).toSorted()) !== canonicalJson(["path", "sha256_hex"]) ||
       typeof file.path !== "string" || file.path.length === 0 || file.path.includes("\0") ||
+      file.path.includes("\\") || file.path.startsWith("/") ||
+      file.path.split("/").some(part => part === "" || part === "." || part === "..") ||
       typeof file.sha256_hex !== "string" || !/^[a-f0-9]{64}$/u.test(file.sha256_hex)) {
       throw new Error("installed diagnostic SDK file identity is invalid");
     }

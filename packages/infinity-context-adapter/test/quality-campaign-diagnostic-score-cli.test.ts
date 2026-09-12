@@ -114,8 +114,7 @@ beforeEach(() => {
   mocked.custodyBinding = ""; mocked.plan = plan;
 });
 
-// Provisional bounded CLI tests: installed SDK 0.3.1 integration remains a controller-owned seam.
-describe("diagnostic-score CLI version dispatch (provisional mocks)", () => {
+describe("diagnostic-score CLI authentication and version dispatch", () => {
   it("preserves V1 scoring and create-only output", async () => {
     mocked.manifest = v1Manifest(); mocked.report = { schemaVersion: "meeting_knowledge.real40_diagnostic_report.v1" };
     mocked.sealed = mocked.report; mocked.outcomes = outcomes();
@@ -134,7 +133,10 @@ describe("diagnostic-score CLI version dispatch (provisional mocks)", () => {
     mocked.sealed = mocked.report; mocked.outcomes = [...retainedOutcomes];
     expect(await runDiagnosticScoreCli(["diagnostic-score", paths.manifest, paths.report, paths.gold, paths.output])).toBe(0);
     expect(mocked.reads.indexOf(paths.gold)).toBeGreaterThan(mocked.reads.indexOf(paths.report));
-    expect(JSON.parse(mocked.writes[0]!.data).schemaVersion).toBe("meeting_knowledge.real40_diagnostic_score.v2");
+    const written = JSON.parse(mocked.writes[0]!.data);
+    expect(written.schemaVersion).toBe("meeting_knowledge.real40_diagnostic_score.v2");
+    expect(written.overall.counts).toEqual({ answered: 1, abstained: 0, failed: 39, unknown: 0 });
+    expect(written.overall.microBlockRecallAt5).toEqual({ numerator: 1, denominator: 40 });
     expect(mocked.custodyBinding).toBe(report.rootBindingSha256);
   });
 

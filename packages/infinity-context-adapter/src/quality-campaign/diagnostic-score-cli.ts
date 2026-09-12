@@ -4,7 +4,7 @@ import { canonicalJson, sha256 } from "./canonical.js";
 import { DiagnosticCustody } from "./diagnostic-custody.js";
 import { decodeVersionedDiagnosticManifest } from "./diagnostic-manifest.js";
 import { verifyInstalledDiagnosticSdk, type DiagnosticOutcome } from "./diagnostic-run.js";
-import { scoreDiagnostic } from "./diagnostic-scoring.js";
+import { authenticateDiagnosticScoreV2, scoreDiagnostic } from "./diagnostic-scoring.js";
 /** Separate post-execution entrypoint: execution has no gold-reading capability. */
 export async function runDiagnosticScoreCli(argv: readonly string[], writeSafeLine?: (line: string) => void): Promise<0 | 1> {
   if (argv.length !== 5 || argv.slice(1).some(path => !path.startsWith("/"))) {
@@ -41,24 +41,8 @@ export async function runDiagnosticScoreCli(argv: readonly string[], writeSafeLi
       outcomes.push(outcome);
     }
     if (manifest.schemaVersion === "meeting_knowledge.real40_diagnostic.v2") {
-      const authenticationComplete = new Error("diagnostic V2 authentication complete");
-      const unopenedGold = new Proxy([], { get(target, property, receiver) {
-        if (property === "map") {
-          throw authenticationComplete;
-        }
-        return Reflect.get(target, property, receiver) as unknown;
-      } });
-      try {
-        scoreDiagnostic({ questions: manifest.questions, outcomes, plan, gold: unopenedGold, authentication: {
-          manifest, report: authenticatedReport, installedSdkIdentity: installedSdk!, loadedModuleSha256,
-        } });
-        throw new Error("diagnostic V2 authentication did not stop before gold validation");
-      }
-      catch (error) {
-        if (error !== authenticationComplete) {
-          throw error;
-        }
-      }
+      authenticateDiagnosticScoreV2({ manifest, report: authenticatedReport,
+        installedSdkIdentity: installedSdk!, loadedModuleSha256 }, plan, outcomes);
     }
     // Gold enters only after authenticated complete execution and all forty outcomes.
     const gold = JSON.parse(await readFile(argv[3]!, "utf8")) as unknown;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { HistoricalIndexPlanV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
-import { scoreDiagnostic } from "../src/quality-campaign/diagnostic-scoring.js";
+import { authenticateDiagnosticScoreV2,
+  scoreDiagnostic } from "../src/quality-campaign/diagnostic-scoring.js";
 import type { DiagnosticManifestV2 } from "../src/quality-campaign/diagnostic-manifest.js";
 import { sha256 } from "../src/quality-campaign/canonical.js";
 const fixture=()=>({
@@ -67,7 +68,7 @@ describe("post-execution diagnostic retrieval scoring",()=> {
     const sdk={packageName:"@infinity-context/sdk" as const,version:"0.3.1",
       sourceRevision:revision,tarballSha256:"c".repeat(64),manifestSha256:"d".repeat(64)};
     const manifest={schemaVersion:"meeting_knowledge.real40_diagnostic.v2",sourceRevision:revision,
-      sdkIdentity:sdk,threadSelector:{mode:"any"},providerBinding:{contractVersion:"context-retrieval.v3"},
+      questions:f.questions,sdkIdentity:sdk,threadSelector:{mode:"any"},providerBinding:{contractVersion:"context-retrieval.v3"},
       frozen:{snapshotSha256:digest,transcriptSha256:"e".repeat(64)},rosterSha256:"f".repeat(64)} as unknown as DiagnosticManifestV2;
     const installed={...sdk,loadedEntrypointSha256:"1".repeat(64)};
     const report={schemaVersion:"meeting_knowledge.real40_diagnostic_report.v2",qualifying:false,
@@ -86,6 +87,11 @@ describe("post-execution diagnostic retrieval scoring",()=> {
         retrieval:"context-retrieval.v3",threadSelector:{mode:"any"}}};
     const authentication={manifest,report,installedSdkIdentity:installed,
       loadedModuleSha256:"3".repeat(64)};
+    expect(authenticateDiagnosticScoreV2(authentication, f.plan, f.outcomes)).toMatchObject({
+      loadedModuleSha256: "3".repeat(64), sdkIdentity: installed,
+    });
+    expect(() => authenticateDiagnosticScoreV2(authentication, f.plan,
+      null as unknown as typeof f.outcomes)).toThrow("execution evidence is invalid");
     const score=scoreDiagnostic({...f,authentication});
     expect(score.schemaVersion).toBe("meeting_knowledge.real40_diagnostic_score.v2");
     expect("authenticatedExecution" in score && score.authenticatedExecution.sdkIdentity)

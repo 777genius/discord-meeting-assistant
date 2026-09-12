@@ -15,6 +15,11 @@ export interface DiagnosticScoreV2Authentication {
   }>;
   readonly loadedModuleSha256: string;
 }
+export interface AuthenticatedDiagnosticScoreV2Execution {
+  readonly loadedModuleSha256: string;
+  readonly sdkIdentity: DiagnosticScoreV2Authentication["installedSdkIdentity"];
+  readonly selectedContracts: Readonly<Record<string, unknown>>;
+}
 // Fractions remain exact and compatible with the integer-only canonical artifact encoder.
 const ratio = (numerator:number, denominator:number) => ({numerator,denominator});
 
@@ -23,7 +28,7 @@ export function scoreDiagnostic(input:{readonly questions:readonly Question[];
   readonly outcomes:readonly Outcome[];readonly plan:HistoricalIndexPlanV1;readonly gold:unknown;
   readonly authentication?: DiagnosticScoreV2Authentication}) {
   const authenticatedV2 = input.authentication === undefined ? null
-    : authenticateV2Score(input.authentication, input.plan, input.outcomes);
+    : authenticateDiagnosticScoreV2(input.authentication, input.plan, input.outcomes);
   const ids=new Set(input.questions.map(q=>safeId(q.questionId,"question")));
   if(input.questions.length!==40 || ids.size!==40 || input.questions.some(q=>
     !["en","ru","mixed"].includes(q.locale))) {throw new Error("invalid forty-question membership");}
@@ -98,8 +103,24 @@ export function scoreDiagnostic(input:{readonly questions:readonly Question[];
         authenticatedExecution: authenticatedV2};
 }
 
-function authenticateV2Score(input: DiagnosticScoreV2Authentication,
-  plan: HistoricalIndexPlanV1, outcomes: readonly Outcome[]) {
+/** Authenticate a sealed V2 execution without inspecting or requiring retrieval gold. */
+export function authenticateDiagnosticScoreV2(input: DiagnosticScoreV2Authentication,
+  plan: HistoricalIndexPlanV1, outcomes: readonly Outcome[]): AuthenticatedDiagnosticScoreV2Execution {
+  if (!Array.isArray(outcomes) || !Array.isArray(plan.documents)) {
+    throw new Error("diagnostic V2 score execution evidence is invalid");
+  }
+  const manifestQuestionIds = new Set(input.manifest.questions.map(question => question.questionId));
+  const outcomeIds = new Set(outcomes.map(outcome => outcome.questionId));
+  const planLocators = new Set(plan.documents.map(document => document.manifest.candidateLocator));
+  if (input.manifest.questions.length !== 40 || manifestQuestionIds.size !== 40 ||
+    outcomes.length !== 40 || outcomeIds.size !== 40 ||
+    outcomes.some(outcome => !manifestQuestionIds.has(outcome.questionId) ||
+      !["answered", "abstained", "failed", "outcome_unknown"].includes(outcome.status) ||
+      !Array.isArray(outcome.retrievedLocators) ||
+      new Set(outcome.retrievedLocators).size !== outcome.retrievedLocators.length ||
+      outcome.retrievedLocators.some(locator => typeof locator !== "string" || !planLocators.has(locator)))) {
+    throw new Error("diagnostic V2 score outcomes are invalid");
+  }
   const report = exactRecord(input.report, ["schemaVersion", "qualifying", "rootBindingSha256",
     "declaredSourceRevision", "sourceRevisionAuthority", "loadedModuleSha256", "loadedSdkSha256",
     "snapshotSha256", "transcriptSha256", "rosterSha256", "planSha256",
@@ -138,7 +159,7 @@ function authenticateV2Score(input: DiagnosticScoreV2Authentication,
     (report.indexPreparation as { status?: unknown } | null)?.status !== "ready" ||
     reportQuestions.length !== 40 || reportByQuestion.size !== 40 ||
     outcomes.some(outcome => { const row = reportByQuestion.get(outcome.questionId);
-      return row?.status !== outcome.status || row.retrievedCount !== outcome.retrievedLocators.length; }) ||
+      return row?.status !== outcome.status || row?.retrievedCount !== outcome.retrievedLocators.length; }) ||
     report.declaredSourceRevision !== input.manifest.sourceRevision ||
     report.snapshotSha256 !== input.manifest.frozen.snapshotSha256 ||
     report.transcriptSha256 !== input.manifest.frozen.transcriptSha256 ||

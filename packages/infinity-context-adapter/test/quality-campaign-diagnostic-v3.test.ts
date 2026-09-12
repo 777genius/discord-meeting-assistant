@@ -1,11 +1,14 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { retrievalCapabilityFingerprint, type HttpTransport } from "@infinity-context/sdk";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE } from "../src/infinity-sdk-provenance.js";
 import { decodeDiagnosticManifest, decodeDiagnosticManifestV2, decodeVersionedDiagnosticManifest } from "../src/quality-campaign/diagnostic-manifest.js";
 import { awaitDiagnosticIndexReadiness, awaitDiagnosticIndexReadinessV3 } from "../src/quality-campaign/diagnostic-index-readiness.js";
-import { runDiagnosticCli } from "../src/quality-campaign/diagnostic-run.js";
+import { runDiagnosticCli, verifyDiagnosticSdkPackageBytes,
+  verifyInstalledDiagnosticSdk } from "../src/quality-campaign/diagnostic-run.js";
 import { sha256 } from "../src/quality-campaign/canonical.js";
 const questions = Array.from({ length: 40 }, (_, i) => ({ locale: "en", questionId: `q${i}`,
   questionText: "What was decided?", scopeTopologyReference: "diagnostic:scope" }));
@@ -69,6 +72,62 @@ it("authenticates the installed SDK before reserving the V2 report", async () =>
     await expect(access(reportPath)).rejects.toThrow();
   } finally { await rm(root, { force: true, recursive: true }); }
 });
+
+const authenticSdkIdentity = Object.freeze({
+  packageName: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.packageName,
+  version: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.packageVersion,
+  sourceRevision: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.reviewedSourceCommit,
+  tarballSha256: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.packageTarballSha256,
+  manifestSha256: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.packageManifestSha256,
+});
+
+it("authenticates every member of the actual installed SDK 0.3.1 draft", async () => {
+  await expect(verifyInstalledDiagnosticSdk(authenticSdkIdentity)).resolves.toMatchObject({
+    ...authenticSdkIdentity, loadedEntrypointSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+  });
+});
+
+async function copiedInstalledSdk() {
+  const installedEntrypoint = await realpath(fileURLToPath(
+    new URL(import.meta.resolve("@infinity-context/sdk"))));
+  const installedRoot = await realpath(dirname(dirname(installedEntrypoint)));
+  const root = await mkdtemp(join(tmpdir(), "diagnostic-sdk-copy-"));
+  const packageRoot = join(root, "sdk");
+  await cp(installedRoot, packageRoot, { recursive: true });
+  return { root, packageRoot, entrypoint: join(packageRoot, "dist/index.js") };
+}
+
+it("rejects a wrong expected V3 SDK identity", async () => {
+  await expect(verifyInstalledDiagnosticSdk({ ...authenticSdkIdentity,
+    tarballSha256: "0".repeat(64) })).rejects.toThrow(/authenticated draft package/u);
+});
+
+it.each(["identity-bytes", "inventory", "member", "unsafe-path", "symlink"] as const)(
+  "rejects copied installed SDK %s tampering", async kind => {
+    const copy = await copiedInstalledSdk();
+    try {
+      const identityPath = join(copy.packageRoot, "dist/sdk-artifact-identity.json");
+      if (kind === "identity-bytes") {
+        await writeFile(identityPath, Buffer.concat([await readFile(identityPath), Buffer.from("\n")]));
+      } else if (kind === "inventory" || kind === "unsafe-path") {
+        const identity = JSON.parse(await readFile(identityPath, "utf8")) as {
+          files: { path: string; sha256_hex: string }[];
+        };
+        if (kind === "inventory") identity.files.pop();
+        else identity.files[0]!.path = "../outside";
+        await writeFile(identityPath, JSON.stringify(identity));
+      } else if (kind === "member") {
+        await writeFile(join(copy.packageRoot, "README.md"), "tampered installed member");
+      } else {
+        await rm(join(copy.packageRoot, "README.md"));
+        await symlink("package.json", join(copy.packageRoot, "README.md"));
+      }
+      await expect(verifyDiagnosticSdkPackageBytes(copy.packageRoot, copy.entrypoint,
+        authenticSdkIdentity)).rejects.toThrow(/installed diagnostic SDK/u);
+    } finally {
+      await rm(copy.root, { force: true, recursive: true });
+    }
+  });
 async function setup() {
   const value = {
   "endpoint": "/v1/context/retrieve",
