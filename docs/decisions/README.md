@@ -69,8 +69,6 @@
 
 - [ADR-0070: Bound normalized historical embedding documents](0070-normalized-historical-embedding-budget.md)
 
-- [ADR-0071: Terra low as the memory default](0071-terra-low-memory-default.md)
-
 - [ADR-0072: Diagnostic index readiness before question reservation](0072-diagnostic-index-readiness.md)
 
 - [ADR-0073: Bounded signed legacy historical admission](0073-signed-legacy-historical-admission.md)
@@ -80,6 +78,7 @@
 - [ADR-0075: Bind canonical memory execution to the signed actor profile](0075-canonical-memory-actor-profile.md)
 
 - [ADR-0076: Read-only retrieval scope resolution](0076-read-only-retrieval-scope-resolution.md)
+- [ADR-0078: Restore the sealed qualification answer profile](0078-restore-sealed-qualification-answer-profile.md)
 
 ## Superseded
 
@@ -93,6 +92,7 @@
 - [ADR-0058: Exact Craig hosted stack recovery](0058-exact-craig-hosted-stack-recovery.md)
 - [ADR-0050: Persisted Retrieval V2 serving binding and official SDK custody](0050-persisted-retrieval-v2-serving-binding.md)
 - [ADR-0066: Bind qualification corpus cardinality to an authoritative generation](0066-authoritative-qualification-corpus-generation.md)
+- [ADR-0071: Terra low as the memory default](0071-terra-low-memory-default.md)
 
 OSS STT native collection extends the existing Voicetext adapter and Platform
 composition, with qualification owned by `apps/discord-e2e-actors/src/oss-*`.
