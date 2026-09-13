@@ -2,6 +2,8 @@
 
 # Botik - Self-hosted Meeting Assistant for Discord
 
+[![Codecov](https://codecov.io/gh/777genius/discord-meeting-assistant/graph/badge.svg?branch=main)](https://codecov.io/gh/777genius/discord-meeting-assistant)
+
 Run Botik on your own server with your own Discord bots and provider credentials.
 It records Discord meetings, shows live captions, posts a transcript and a
 summary, and answers questions on that summary.

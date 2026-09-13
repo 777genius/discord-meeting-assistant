@@ -1,6 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreBinaries": ["mkfifo", "uv"],
+  "ignoreBinaries": ["mkfifo", "perl", "uv", "vitest"],
+  "ignoreDependencies": ["@vitest/coverage-v8"],
   "ignoreIssues": {
     "apps/discord-e2e-actors/src/discordjs-historical-reply-campaign-adapter.ts": ["exports", "types"],
     "apps/discord-e2e-actors/src/e2e-evidence.ts": ["exports"],
