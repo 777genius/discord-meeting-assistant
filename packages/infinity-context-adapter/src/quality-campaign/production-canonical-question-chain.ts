@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 
 import {
   createFocusedRetrievalGroundingPlan,
-  PrepareFocusedLocatorRetrievalV2Request,
-  rehydrateHistoricalBlock,
+  PrepareFocusedLocatorRetrievalV2Request, PrepareFocusedLocatorRetrievalV3Request,
+  type FocusedLocatorRetrievalRequestSnapshot,
   type GroundedAnswerGenerationBinding,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
@@ -11,7 +11,6 @@ import {
   type PostgresDiagnosticFinalEvidence,
   assertConstructedPostgresHistoricalEvidenceAuthority,
   assertConstructedPostgresHistoricalMemoryStore,
-  canonicalFinalReplyTurnHash,
   PostgresHistoricalEvidenceAuthority,
   PostgresHistoricalMemoryStore,
 } from "@discord-meeting/postgres-adapter";
@@ -23,12 +22,11 @@ import {
 
 import { assertConstructedHmacHistoricalOpaqueIds,
   type HmacHistoricalOpaqueIds } from "../hmac-historical-ids.js";
+import { InfinityContextRetrievalV3Adapter } from "../infinity-context-retrieval-v3.js";
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
 import { DiagnosticFrozenStore, assertDiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
 import type { DiagnosticQuestion } from "./diagnostic-manifest.js";
-import { canonicalJson } from "./canonical.js";
-import { assertCanonicalRequest, validateCanonicalRetrievalObservation,
-  validateCanonicalScopeResolutionObservation } from
+import type { CanonicalRetrievalBindingV1 } from
   "./canonical-execution-artifact-validation.js";
 import type {
   QualificationCanonicalTurn,
@@ -40,11 +38,19 @@ import type {
   QualificationQuestionOutcomePort,
   QualificationQuestionRetrievalPort,
 } from "./execute-admitted-qualification-question.js";
+import type { QualificationScopeTopology, QualificationScopeTopologyPort } from
+  "./production-ports.js";
+import { createCanonicalEvidencePort } from "./production-canonical-evidence-port.js";
+import { createCanonicalRetrievalPort } from "./production-canonical-retrieval-port.js";
+import { absentAnswerRequestIntentBytes, preparedAnswerRequestIntentBytes } from
+  "./canonical-answer-artifact-validation.js";
 
 export { createProductionCanonicalExecutionEvidence } from
   "./production-canonical-execution-evidence.js";
 export { loadProductionExecutionCorpus } from
   "./production-execution-corpus-custody.js";
+export type { QualificationScopeTopology, QualificationScopeTopologyPort } from
+  "./production-ports.js";
 
 export interface QualificationCreateOnlyJournalPort {
   reserve(input: { readonly attemptId: string; readonly payloadSha256: string;
@@ -56,46 +62,40 @@ export interface QualificationCreateOnlyJournalPort {
 
 export interface QualificationEncryptedAuditPort {
   seal(input: { readonly attemptId: string;
-    readonly kind: "answer_normalized_outcome" | "answer_original_model_surface" |
+  readonly kind: "answer_normalized_outcome" | "answer_request_intent" |
+      "answer_execution_observation" |
+      "answer_original_model_surface" |
       "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
       "answer_repair_request" | "answer_repair_response" | "capability_request" |
       "capability_response" | "retrieval_request" | "retrieval_response" |
-      "retrieval_observation" | "scope_resolution_observation" | "selected_canonical_turns";
+      "retrieval_binding" | "retrieval_observation" | "scope_resolution_observation" | "selected_canonical_turns";
     readonly plaintext: Uint8Array }): Promise<void>;
 }
 
-export interface QualificationScopeTopology {
-  readonly currentMeetingId: string;
-  readonly roomId: string;
-  readonly scopeId: string;
-}
-
-/** Resolves only an already authenticated execution-safe reference. */
-export interface QualificationScopeTopologyPort {
-  resolve(reference: string, questionId: string): Promise<QualificationScopeTopology>;
-}
-
-interface ProductionCanonicalQuestionChainInput {
+export interface ProductionCanonicalQuestionChainInput {
   readonly answer: SubscriptionRuntimeGroundedAnswerAdapter;
   readonly audit: QualificationEncryptedAuditPort;
   readonly evidenceAuthority: PostgresHistoricalEvidenceAuthority;
   readonly ids: HmacHistoricalOpaqueIds;
   readonly journal: QualificationCreateOnlyJournalPort;
-  readonly preparer: PrepareFocusedLocatorRetrievalV2Request;
-  readonly retrieval: InfinityContextRetrievalV2Adapter;
+  readonly preparer: PrepareFocusedLocatorRetrievalV2Request | PrepareFocusedLocatorRetrievalV3Request;
+  readonly retrieval: InfinityContextRetrievalV2Adapter | InfinityContextRetrievalV3Adapter;
   readonly spend: QualificationExternalEffectReservationPort;
   readonly store: PostgresHistoricalMemoryStore;
   readonly topology: QualificationScopeTopologyPort;
 }
 
-interface CanonicalQuestionExecution {
+export interface CanonicalQuestionExecution {
   readonly binding: GroundedAnswerGenerationBinding | null;
+  readonly request: FocusedLocatorRetrievalRequestSnapshot;
+  readonly retrievalBinding: CanonicalRetrievalBindingV1 | null;
+  readonly candidateLocators: readonly string[];
   readonly packet: DiagnosticQuestion;
   readonly topology: QualificationScopeTopology;
   readonly turns: readonly QualificationCanonicalTurn[];
 }
 
-type CanonicalQuestionState = Map<string, CanonicalQuestionExecution>;
+export type CanonicalQuestionState = Map<string, CanonicalQuestionExecution>;
 
 export function createProductionCanonicalQuestionChain(
   input: ProductionCanonicalQuestionChainInput,
@@ -103,8 +103,7 @@ export function createProductionCanonicalQuestionChain(
   readonly evidence: QualificationQuestionEvidencePort;
   readonly outcome: QualificationQuestionOutcomePort;
   readonly retrieval: QualificationQuestionRetrievalPort } {
-  if (!(input.preparer instanceof PrepareFocusedLocatorRetrievalV2Request) ||
-    !(input.retrieval instanceof InfinityContextRetrievalV2Adapter) ||
+  if (!isConcreteRetrievalPair(input) ||
     !(input.answer instanceof SubscriptionRuntimeGroundedAnswerAdapter)) {
     throw new Error("canonical qualification chain requires the production adapters");
   }
@@ -115,7 +114,7 @@ export function createProductionCanonicalQuestionChain(
   return createCanonicalQuestionEngine(input);
 }
 
-interface CanonicalEngineInput extends Omit<ProductionCanonicalQuestionChainInput,
+export interface CanonicalEngineInput extends Omit<ProductionCanonicalQuestionChainInput,
   "store" | "evidenceAuthority"> {
   readonly diagnostic?: true;
   readonly store: Pick<PostgresHistoricalMemoryStore, "findCurrentCandidates" | "isCurrentGeneration">;
@@ -131,8 +130,7 @@ export function createDiagnosticCanonicalQuestionChain(input: Omit<ProductionCan
   assertConstructedPostgresDiagnosticFinalEvidence(input.evidenceAuthority);
   assertDiagnosticFrozenStore(input.store);
   if (input.store.authority !== input.evidenceAuthority ||
-    !(input.preparer instanceof PrepareFocusedLocatorRetrievalV2Request) ||
-    !(input.retrieval instanceof InfinityContextRetrievalV2Adapter)) {
+    !isConcreteRetrievalPair(input)) {
     throw new Error("diagnostic chain requires concrete bound adapters");
   }
   assertConstructedHmacHistoricalOpaqueIds(input.ids);
@@ -140,195 +138,31 @@ export function createDiagnosticCanonicalQuestionChain(input: Omit<ProductionCan
   return createCanonicalQuestionEngine({...input, diagnostic:true});
 }
 
+function isConcreteRetrievalPair(input: Pick<ProductionCanonicalQuestionChainInput, "preparer" | "retrieval">): boolean {
+  return (input.preparer instanceof PrepareFocusedLocatorRetrievalV2Request &&
+    input.retrieval instanceof InfinityContextRetrievalV2Adapter) ||
+    (input.preparer instanceof PrepareFocusedLocatorRetrievalV3Request &&
+    input.retrieval instanceof InfinityContextRetrievalV3Adapter);
+}
+
 function createCanonicalQuestionEngine(input: CanonicalEngineInput) {
   const state: CanonicalQuestionState = new Map();
-
-  const retrieval = Object.freeze({
-    retrieve: async (packet: DiagnosticQuestion,
-      options: QualificationQuestionExecutionContext) => {
-      const topology = await input.topology.resolve(packet.scopeTopologyReference,
-        packet.questionId);
-      const scopeReads: { readonly kind: string; readonly requestSha256: string;
-        readonly responseSha256: string | null; readonly responseBytes: number;
-        readonly status: string }[] = [];
-      let prepared: Awaited<ReturnType<PrepareFocusedLocatorRetrievalV2Request["prepare"]>> | undefined;
-      try { prepared = await input.preparer.prepare({ ...topology, question: packet.questionText,
-        signal: options.signal, scopeResolutionEffects: {
-          beforeRead: async ({ kind, requestSha256 }) => {
-            await input.spend.reserve({ effectKind: kind, payloadSha256: requestSha256,
-              requestedEncryptedBytes: 2048, requestedTokens: 1 });
-            scopeReads.push({ kind, requestSha256, responseSha256: null,
-              responseBytes: 0, status: "outcome_unknown" });
-          },
-          observe: async (observation) => {
-            const index = scopeReads.findIndex(({ kind }) => kind === observation.kind);
-            if (index < 0 || scopeReads[index]!.requestSha256 !== observation.requestSha256 ||
-              scopeReads[index]!.status !== "outcome_unknown") {
-              throw new Error("Unreserved or duplicate scope metadata effect");
-            }
-            scopeReads[index] = observation;
-          },
-        } });
-      } finally {
-        const observation = { schemaVersion: "meeting_knowledge.scope_resolution.v1",
-          status: prepared?.status ?? "interrupted", reads: scopeReads };
-        if (observation.status === "prepared") { validateCanonicalScopeResolutionObservation(observation); }
-        await input.audit.seal({ attemptId: options.attemptId, kind: "scope_resolution_observation",
-          plaintext: utf8(canonicalJson(observation)) });
-      }
-      if (prepared.status !== "prepared") {
-        return { reason: `request_${prepared.status}`, status: "failed" as const };
-      }
-      assertCanonicalRequest(prepared, packet.questionText);
-      const attemptId = options.attemptId;
-      const payloadSha256 = sha256Json({ effectKind: "retrieval", request: prepared });
-      await input.spend.reserve({ effectKind: "capability",
-        payloadSha256: sha256Json({ effectKind: "capability", request: prepared }),
-        requestedEncryptedBytes: 16_000, requestedTokens: 1 });
-      await input.spend.reserve({ effectKind: "retrieval", payloadSha256,
-        requestedEncryptedBytes: 16_000, requestedTokens: 1 });
-      await input.journal.reserve({ attemptId, payloadSha256, phase: "retrieval" });
-      let result;
-      try {result = await input.retrieval.retrieve(prepared, options);}
-      catch (error) {
-        await input.journal.terminal({ attemptId, payloadSha256: sha256Json({
-          reason: "retrieval_external_effect_unknown" }), phase: "retrieval",
-          state: "outcome_unknown" });
-        throw error;
-      }
-      let exchange;
-      let observation;
-      let exactExchangeError: unknown;
-      let observationError: unknown;
-      try {exchange = input.retrieval.takeExactExchange();}
-      catch (error) {exactExchangeError = error;}
-      try {observation = input.retrieval.takeObservation();}
-      catch (error) {observationError = error;}
-      if (exchange === undefined) {
-        await input.journal.terminal({ attemptId, payloadSha256: sha256Json({
-          providerFailureCode: result.status === "available" ? null : result.code,
-          reason: "retrieval_external_effect_unknown",
-          telemetryEvidence: observationError === undefined ? "present" : "missing_or_invalid",
-        }), phase: "retrieval", state: "outcome_unknown" });
-        throw new Error("retrieval external effect is unknown and terminal", {
-          cause: exactExchangeError,
-        });
-      }
-      try {
-        await sealRetrievalExchange(input.audit, attemptId, exchange);
-        if (observation === undefined) {throw observationError;}
-        const telemetry = validateCanonicalRetrievalObservation({ attemptId, exchange,
-          observation });
-        await input.audit.seal({ attemptId, kind: "retrieval_observation",
-          plaintext: utf8(canonicalJson(telemetry)) });
-      }
-      catch {
-        const failureReason = result.status === "available" ?
-          "retrieval_observation_evidence_invalid" : result.code;
-        await input.journal.terminal({ attemptId, payloadSha256: sha256Json({
-          reason: failureReason, telemetryEvidence: "missing_or_invalid" }), phase: "retrieval",
-        state: "failed" });
-        return { reason: failureReason, status: "failed" as const };
-      }
-      await input.journal.terminal({ attemptId, payloadSha256: sha256Json({ result,
-        responseSha256: createHash("sha256").update(exchange.responseBytes).digest("hex") }),
-        phase: "retrieval",
-        state: result.status === "available" ? "succeeded" : "failed" });
-      if (result.status !== "available") {
-        return { reason: result.code, status: "failed" as const };
-      }
-      state.set(options.attemptId, { binding: null, packet, topology, turns: [] });
-      return Object.freeze({ candidates: Object.freeze(result.candidates.map((candidate) =>
-        Object.freeze({ contributions: Object.freeze(candidate.retrievalProvenance.contributions
-          .map((contribution) => Object.freeze({ ...contribution }))),
-        fusedScore: candidate.retrievalProvenance.fusedScore,
-        locatorId: candidate.locator,
-        providerRank: candidate.retrievalProvenance.providerRank }))),
-      rawResponseSha256: createHash("sha256").update(exchange.responseBytes).digest("hex"),
-      status: "completed" as const });
-    },
-  });
-
-  const evidence = createEvidencePort(input, state);
+  const retrieval = createCanonicalRetrievalPort(input, state);
+  const evidence = createCanonicalEvidencePort(input, state, (execution, binding, turns, attemptId) =>
+    canonicalAnswerFitsPreparedInput(input.answer, execution.packet, binding, turns, attemptId));
   const answer = createAnswerPort(input, state);
   const outcome: QualificationQuestionOutcomePort = Object.freeze({
     record: async (attemptId: string, value: QualificationQuestionOutcome) => {
+      if (value.selectedTurns.length === 0) {
+        await input.audit.seal({ attemptId, kind: "answer_request_intent",
+          plaintext: absentAnswerRequestIntentBytes(attemptId, value.reason) });
+      }
       await input.audit.seal({ attemptId, kind: "answer_normalized_outcome",
         plaintext: utf8Json(value) });
       state.delete(attemptId);
     },
   });
   return Object.freeze({ answer, evidence, outcome, retrieval });
-}
-
-function createEvidencePort(input: CanonicalEngineInput,
-  state: CanonicalQuestionState): QualificationQuestionEvidencePort {
-  return Object.freeze({ rehydrate: async (
-    request: Parameters<QualificationQuestionEvidencePort["rehydrate"]>[0],
-    options: QualificationQuestionExecutionContext,
-  ) => {
-    const execution = state.get(options.attemptId);
-    if (execution === undefined || execution.packet.scopeTopologyReference !==
-      request.scopeTopologyReference || new Set(request.locatorIds).size !==
-        request.locatorIds.length) {
-      throw new Error("canonical qualification retrieval state is absent or duplicated");
-    }
-    const records = await input.store.findCurrentCandidates(execution.topology.scopeId,
-      execution.topology.roomId, request.locatorIds, { signal: options.signal });
-    if (records.length !== request.locatorIds.length) {
-      throw new Error("PostgreSQL locator authority is missing or ambiguous");
-    }
-    const turns: QualificationCanonicalTurn[] = [];
-    let binding: GroundedAnswerGenerationBinding | null = null;
-    for (let index = 0; index < records.length; index += 1) {
-      const record = records[index]!;
-      if (!await input.store.isCurrentGeneration(record.binding,
-        record.plan.topology.indexGeneration, { signal: options.signal }) ||
-        record.binding.scopeId !== execution.topology.scopeId ||
-        record.binding.roomId !== execution.topology.roomId) {
-        throw new Error("PostgreSQL locator is stale or cross-room");
-      }
-      const meeting = await input.evidenceAuthority.loadAcceptedFinalMeeting(record.binding,
-        { signal: options.signal });
-      if (meeting === null) {
-        throw new Error("PostgreSQL locator does not reference an accepted final meeting");
-      }
-      const block = rehydrateHistoricalBlock(meeting, record.plan, record.ordinal, input.ids);
-      if (block.candidateLocator !== request.locatorIds[index]) {
-        throw new Error("PostgreSQL locator order or ownership is ambiguous");
-      }
-      for (const turn of block.turns) {
-        const canonical = Object.freeze({ endMs: turn.endMs,
-          sourceLocatorId: block.candidateLocator, speakerId: turn.speakerId,
-          startMs: turn.startMs, text: turn.text, turnHash: canonicalFinalReplyTurnHash(turn),
-          turnId: turn.turnId });
-        const previous = input.diagnostic === true
-          ? turns.find(value => value.turnId === canonical.turnId) : undefined;
-        if (previous !== undefined) {
-          if (previous.turnHash !== canonical.turnHash) {
-            throw new Error("diagnostic selected incompatible slices of one canonical turn");
-          }
-          continue;
-        }
-        turns.push(canonical);
-      }
-      const nextBinding = Object.freeze({ canonicalEvidenceHash: sha256Json(
-        turns.map(({ turnHash }) => turnHash)), memoryGeneration: block.indexGeneration,
-      transcriptVersion: block.binding.transcriptVersion });
-      if (binding !== null && binding.memoryGeneration !== nextBinding.memoryGeneration) {
-        throw new Error("PostgreSQL selected locators span ambiguous generations");
-      }
-      binding = nextBinding;
-    }
-    const resolved = binding ?? Object.freeze({ canonicalEvidenceHash: sha256Json([]),
-      memoryGeneration: "qualification-empty:v1", transcriptVersion: 0 });
-    state.set(options.attemptId, { ...execution, binding: resolved, turns: Object.freeze(turns) });
-    await input.audit.seal({ attemptId: options.attemptId,
-      kind: "selected_canonical_turns", plaintext: utf8Json(turns) });
-    return Object.freeze({ authorityGeneration: resolved.memoryGeneration,
-      canonicalEvidenceHash: resolved.canonicalEvidenceHash,
-      transcriptVersion: resolved.transcriptVersion, turns: Object.freeze(turns) });
-  } });
 }
 
 function createAnswerPort(input: CanonicalEngineInput,
@@ -339,34 +173,38 @@ function createAnswerPort(input: CanonicalEngineInput,
   ) => {
     const execution = state.get(options.attemptId);
     if (execution === undefined || execution.binding === null ||
+      execution.packet.questionId !== request.questionId ||
+      execution.packet.questionText !== request.questionText || execution.packet.locale !== request.locale ||
+      execution.binding.memoryGeneration !== request.authorityGeneration ||
+      execution.binding.canonicalEvidenceHash !== request.canonicalEvidenceHash ||
+      execution.binding.transcriptVersion !== request.transcriptVersion ||
       JSON.stringify(execution.turns) !== JSON.stringify(request.evidence)) {
       throw new Error("grounded answer evidence is not the selected PostgreSQL evidence");
     }
-    const plan = createFocusedRetrievalGroundingPlan({ authorityGeneration:
-      request.authorityGeneration, coverage: "sufficient",
-    humanActorIds: [...new Set(request.evidence.map(({ speakerId }) => speakerId))],
-    turns: request.evidence });
     const attemptId = options.attemptId;
-    const groundedRequest = { attemptId, binding: execution.binding,
-      locale: request.locale, plan, question: request.questionText };
+    const groundedRequest = canonicalAnswerRequest(execution.packet, execution.binding,
+      request.evidence, attemptId);
+    const plan = groundedRequest.plan;
     const prepared = input.answer.prepare(groundedRequest);
-    await Promise.all([
-      input.audit.seal({ attemptId, kind: "answer_original_model_surface",
-        plaintext: utf8(prepared.modelInputs.original) }),
-      input.audit.seal({ attemptId, kind: "answer_repair_model_surface",
-        plaintext: utf8(prepared.modelInputs.repair) }),
-    ]);
+    await input.audit.seal({ attemptId, kind: "answer_request_intent",
+      plaintext: preparedAnswerRequestIntentBytes(attemptId, prepared.request,
+        execution.binding.memoryGeneration) });
     const payloadSha256 = sha256Json({ effectKind: "answer", request: prepared.request });
     await input.spend.reserve({ effectKind: "answer", payloadSha256,
       requestedEncryptedBytes: 16_000, requestedTokens: 2_048 });
     await input.journal.reserve({ attemptId, payloadSha256, phase: "answer" });
     const generated = await input.answer.generate(groundedRequest, options);
     const observation = input.answer.takeQualificationObservation(attemptId);
+    const terminalReason = generated.status === "failed" ? generated.code : null;
+    await input.audit.seal({ attemptId, kind: "answer_execution_observation",
+      plaintext: utf8Json({ attemptId, outcomeCertain: observation.outcomeCertain,
+        providerBytesSent: observation.providerBytesSent,
+        schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v2",
+        terminalReason }) });
     await sealAnswerExchanges(input.audit, attemptId, observation.exchanges.original,
-      observation.exchanges.repair);
-    const stateValue = observation.providerBytesSent && !observation.outcomeCertain ?
-      "outcome_unknown" as const : generated.status === "completed" ?
-        "succeeded" as const : "failed" as const;
+      observation.exchanges.repair, prepared.modelInputs);
+    const stateValue = !observation.outcomeCertain ? "outcome_unknown" as const :
+      generated.status === "completed" ? "succeeded" as const : "failed" as const;
     await input.journal.terminal({ attemptId, payloadSha256: sha256Json({ generated,
       outcomeCertain: observation.outcomeCertain,
       runtimeReceiptSha256: observation.runtimeReceiptSha256 }), phase: "answer",
@@ -390,26 +228,47 @@ function createAnswerPort(input: CanonicalEngineInput,
   } });
 }
 
-async function sealRetrievalExchange(audit: QualificationEncryptedAuditPort, attemptId: string,
-  exchange: ReturnType<InfinityContextRetrievalV2Adapter["takeExactExchange"]>): Promise<void> {
-  const settled = await Promise.allSettled([
-    audit.seal({ attemptId, kind: "capability_request",
-      plaintext: exchange.capabilityRequestBytes }),
-    audit.seal({ attemptId, kind: "capability_response",
-      plaintext: exchange.capabilityResponseBytes }),
-    audit.seal({ attemptId, kind: "retrieval_request", plaintext: exchange.requestBytes }),
-    audit.seal({ attemptId, kind: "retrieval_response", plaintext: exchange.responseBytes }),
-  ]);
-  const failure = settled.find((value): value is PromiseRejectedResult =>
-    value.status === "rejected");
-  if (failure !== undefined) {throw failure.reason;}
+function canonicalAnswerRequest(packet: Pick<DiagnosticQuestion, "locale" | "questionText">,
+  binding: GroundedAnswerGenerationBinding, turns: readonly QualificationCanonicalTurn[],
+  attemptId: string) {
+  const plan = createFocusedRetrievalGroundingPlan({ authorityGeneration:
+    binding.memoryGeneration, coverage: "sufficient",
+  humanActorIds: [...new Set(turns.map(({ speakerId }) => speakerId))], turns });
+  return Object.freeze({ attemptId, binding, locale: packet.locale, plan,
+    question: packet.questionText });
+}
+
+/** Exact provider-free preflight shared by selection and the eventual answer request. */
+export function canonicalAnswerFitsPreparedInput(answer: SubscriptionRuntimeGroundedAnswerAdapter,
+  packet: Pick<DiagnosticQuestion, "locale" | "questionText">,
+  binding: GroundedAnswerGenerationBinding, turns: readonly QualificationCanonicalTurn[],
+  attemptId: string): boolean {
+  try {
+    answer.prepare(canonicalAnswerRequest(packet, binding, turns, attemptId));
+    return true;
+  } catch (error) {
+    if (error instanceof Error &&
+      error.message === "knowledge answer model input exceeds the qualified 16000-byte bound") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function sealAnswerExchanges(audit: QualificationEncryptedAuditPort, attemptId: string,
-  original: KnowledgeAnswerProviderExchange, repair: KnowledgeAnswerProviderExchange | null) {
+  original: KnowledgeAnswerProviderExchange | null, repair: KnowledgeAnswerProviderExchange | null,
+  modelInputs: { readonly original: string; readonly repair: string }) {
+  if (original === null) {
+    if (repair !== null) {throw new Error("repair answer exchange lacks its original exchange");}
+    return;
+  }
+  await audit.seal({ attemptId, kind: "answer_original_model_surface",
+    plaintext: utf8(modelInputs.original) });
   await audit.seal({ attemptId, kind: "answer_original_request", plaintext: original.requestBytes });
   await audit.seal({ attemptId, kind: "answer_original_response", plaintext: original.responseBytes });
   if (repair !== null) {
+    await audit.seal({ attemptId, kind: "answer_repair_model_surface",
+      plaintext: utf8(modelInputs.repair) });
     await audit.seal({ attemptId, kind: "answer_repair_request", plaintext: repair.requestBytes });
     await audit.seal({ attemptId, kind: "answer_repair_response", plaintext: repair.responseBytes });
   }

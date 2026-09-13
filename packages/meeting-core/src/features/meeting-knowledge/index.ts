@@ -271,6 +271,12 @@ export {
   type RetrievalAdmissionRollout,
   type RetrievalBindingSnapshot,
   type RetrievalPath,
+  validateFocusedLocatorRetrievalV3Request,
+  type FocusedLocatorRetrievalRequestSnapshot,
+  type FocusedLocatorRetrievalProviderBinding,
+  type FocusedLocatorRetrievalV3ProviderBinding,
+  type FocusedLocatorRetrievalV3RequestSnapshot,
+  type FocusedLocatorRetrievalV3ThreadSelector,
   type FocusedLocatorRetrievalV2ProviderBinding,
   type FocusedLocatorRetrievalV2RequestSnapshot,
 } from "./domain/retrieval-admission.js";
@@ -294,12 +300,20 @@ export {
 export {
   DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY,
   FocusedHistoricalEvidenceV2,
+  FocusedHistoricalEvidenceV3,
   HistoricalFocusedLocatorRetrievalV2,
+  HistoricalFocusedLocatorRetrievalV3,
   PersistedFocusedMemoryRetrievalV2,
+  PersistedFocusedMemoryRetrievalV3,
   PrepareFocusedLocatorRetrievalV2Request,
+  PrepareFocusedLocatorRetrievalV3Request,
   isPersistedRetrievalV2Binding,
   type FocusedLocatorRetrievalV2Policy,
 } from "./application/focused-locator-retrieval-v2.js";
+export {
+  boundedRetrievalQuery,
+  redactRetrievalQueryIdentities,
+} from "./application/focused-locator-retrieval-v2-query.js";
 export type {
   FocusedEvidenceSelectionCandidateV1,
   FocusedEvidenceSelectionResultV1,
@@ -310,13 +324,18 @@ export type {
   FocusedHistoricalEvidenceV2Result,
   FocusedLocatorRetrievalV2Candidate,
   FocusedLocatorRetrievalV2Preparation,
+  FocusedLocatorRetrievalV3Preparation,
+  FocusedLocatorRetrievalPreparation,
   FocusedLocatorRetrievalV2PreparationUnavailableReason,
   FocusedLocatorRetrievalV2Port,
+  FocusedLocatorRetrievalV3Port,
+  FocusedLocatorRetrievalPort,
   FocusedRetrievalScopeResolutionPort,
   FocusedRetrievalScopeResolutionEffects,
   FocusedLocatorRetrievalV2Result,
 } from "./application/ports/focused-locator-retrieval-v2.js";
-export { groundingPlanRetrievalAuditsBindInput, retrievalAuditsBindInput } from
+export { groundingPlanRetrievalAuditsBindInput, historicalRetrievalAuditsBindRequest,
+  retrievalAuditsBindInput } from
   "./application/ports/focused-retrieval-provenance.js";
 export type {
   AnswerEffectDeliveryResult,
@@ -333,6 +352,8 @@ export type {
   FinalReplyEvidencePort,
   FinalReplyRendererPort,
   FocusedLocatorRetrievalV2AdmissionPort,
+  FocusedLocatorRetrievalV3AdmissionPort,
+  FocusedLocatorRetrievalAdmissionPort,
   FocusedMemoryRetrievalPort,
   FocusedMemoryRetrievalResult,
   GroundedAnswerGenerationRequest,

@@ -41,11 +41,13 @@ export function assertTerminalChain(input: { readonly authority: { readonly keyI
   readonly spendReservationSha256: string }): void {
   const { authority, outcome, question, releaseRootSha256, root, spendReservationSha256 } = input;
   const terminalChain: unknown = outcome.terminalChain;
-  if (!Array.isArray(terminalChain) || terminalChain.length !== 3) {
-    throw new Error("provider terminal chain is incomplete");
+  const inventory = outcome.providerCallInventory;
+  if (!Array.isArray(terminalChain) || terminalChain.length !== inventory.length) {
+    throw new Error("provider terminal chain differs from authenticated call inventory");
   }
   let predecessor: string | null = null;
-  for (const [position, callKind] of (["capability", "retrieval", "answer"] as const).entries()) {
+  for (const [position, inventoryEntry] of inventory.entries()) {
+    const callKind = inventoryEntry.callKind;
     const terminal = exactRecord(terminalChain[position], ["attemptId", "callKind", "callOrdinal",
       "predecessorResultDigestSha256", "requestDigestSha256", "resultEnvelopeDigestSha256",
       "signedResult", "terminalDigestSha256"], "outcome terminal chain") as unknown as
@@ -73,7 +75,8 @@ export function assertTerminalChain(input: { readonly authority: { readonly keyI
     }
     predecessor = terminal.resultEnvelopeDigestSha256;
   }
-  if (outcome.attemptId !== outcome.terminalChain[2]!.attemptId) {
+  const answer = outcome.terminalChain.find(({ callKind }) => callKind === "answer");
+  if (answer !== undefined && outcome.attemptId !== answer.attemptId) {
     throw new Error("answer outcome is not bound to its provider terminal");
   }
 }

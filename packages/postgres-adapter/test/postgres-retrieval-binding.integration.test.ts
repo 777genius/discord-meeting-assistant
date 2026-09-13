@@ -528,3 +528,34 @@ function answerCandidate() {
     status: "answered" as const,
   };
 }
+
+it("retains V3 selector and complete pair filter across a PostgreSQL lease restart", async (context) => {
+  const database = databaseOrSkip(context);
+  const old = binding("v3-restart", true);
+  if (old.retrievalBinding?.retrievalPath !== "infinity_locator_v2") {throw new Error("missing fixture request");}
+  const current = QuestionBinding.create({ ...old, bindingProtocolVersion: 2,
+    retrievalBinding: { ...old.retrievalBinding, retrievalPath: "infinity_locator_v3",
+      request: { ...old.retrievalBinding.request, schemaVersion: 3,
+        binding: { ...old.retrievalBinding.request.binding, contractVersion: "context-retrieval.v3" },
+        scope: { memoryScopeId: "internal-room", spaceId: "internal-space", thread: { mode: "any" } },
+        filters: { ...old.retrievalBinding.request.filters, sourceGenerations: [
+          { sourceKey: "source-a", projectionGeneration: "generation-a" },
+          { sourceKey: "source-b", projectionGeneration: "generation-b" },
+        ] },
+      } },
+  }).toSnapshot();
+  await insertJob(database, current);
+  const first = await new PostgresQuestionJobStore(database, policy).leaseNext({
+    leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "v3-worker-before-restart",
+  });
+  expect(first?.binding).toEqual(current);
+  if (first === null) {throw new Error("V3 lease was not decoded");}
+  await database.query(`UPDATE meeting_knowledge.question_jobs
+    SET lease_until = transaction_timestamp() - interval '1 second' WHERE question_id = $1`,
+  [current.questionId]);
+  const recovered = await new PostgresQuestionJobStore(database, policy).leaseNext({
+    leaseSeconds: 60, maximumProviderAttempts: 2, workerId: "v3-worker-after-restart",
+  });
+  expect(recovered?.binding).toEqual(current);
+  expect(recovered?.generation).toBe(first.generation + 1);
+});

@@ -301,7 +301,7 @@ describe("historical locator deduplication", () => {
               historicalSource: { ...canonicalTurn.source.historicalSource,
                 candidateLocator: "block-overlap" } },
           }, distinct],
-        }) } as unknown as HistoricalFocusedLocatorRetrievalV2,
+        }) },
       });
 
       const result = await evidence.retrieve({

@@ -281,18 +281,15 @@ structural runner.
 The installed `corpus-admit` command is the production-faithful corpus boundary.
 It accepts no corpus text on the command line and publishes only a private,
 create-only handoff plus a safe digest/count status receipt. As recorded by
-[ADR-0066](../decisions/0066-authoritative-qualification-corpus-generation.md),
-the candidate generation observed from the authoritative PostgreSQL `NEW`
-snapshot on 2026-09-05 is bound to accepted final transcript version 2: it exactly
-matched its saved source JSON and had status `succeeded`; no newer accepted
-transcript existed for that meeting. The snapshot contained 1,779 ordered turns
-from seven speakers. Identity authority classified six speakers as human and
-one as declared automation; excluding that automation speaker's 10 turns
-produced 1,769 ordered, unique human turns from six speakers. The existing
-private 40-question candidate set comprised 29 answerable and 11 abstention
-questions, with 10 EN and 30 RU. These measured counts identify only that
-immutable candidate generation. They are aggregate provenance, not a reusable
-schema, a minimum, or quality evidence.
+[ADR-0077](../decisions/0077-exact-authoritative-qualification-generation.md),
+the corrected candidate generation is meeting `HQogFSdvy0tf`, bound to 1,779
+ordered, unique turns from seven speakers, source SHA-256
+`fc92b9d76f4b4c9613e19f78b87fe3a38e4b772b3d4943cde486ed75ac0a72e4`,
+and canonical ordered-turn SHA-256
+`3940285ace11a4449a7489bdc631833fffaeda3339b581316d48bf6358fc5c82`.
+The private 40-question set comprises 29 answerable and 11 abstention questions,
+with 10 EN and 30 RU. These aggregate values identify only that immutable
+generation; they are not a reusable minimum or quality evidence.
 
 Read-only authoritative metadata inspection also found no canonical `source`,
 `actors`, `identityProvenance`, `lifecycleGeneration`, or
@@ -307,11 +304,12 @@ legacy-import policy, followed by derived indexing. Never edit the old
 production snapshot or synthesize lifecycle-v3 metadata. Ordinary
 `corpus-admit` alone does not make this meeting ready for rehydration.
 
-Do not reshape an authoritative generation to historical fixture counts. The
-installed admission contract instead seals the exact `sourceDigestSha256` and
-`snapshotSha256`, requires exactly 200 `automatic` plus 40
-`independent_review` entries, and derives answerability and locale applicability
-from those sealed entries. Prose expected answers are never scoring authority;
+The 2,209-turn/eight-speaker, 37/3 answerability, and 22/18 locale artifact is
+another meeting and is not an admissible fallback. The installed admission
+contract exact-compares the target and generation metadata, seals the exact
+`sourceDigestSha256` and `snapshotSha256`, requires exactly 200 `automatic` plus
+40 `independent_review` entries, and derives answerability and locale
+applicability from those sealed entries. Prose expected answers are never scoring authority;
 they must be replaced by a pre-sealed atomic-claim rubric. Two truly independent
 signed exact-binding question-review receipts are mandatory, with conflict
 adjudication where needed. The accepted final transcript and identity authority
@@ -427,14 +425,12 @@ precedes each retrieval or answer provider boundary. Missing or tampered raw
 exchange envelopes fail run reconstruction. Artifact retention, derived Infinity
 deletion, and authoritative canonical absence remain distinct signed bindings.
 
-The older source-harness decoder that exact-compares 2,209 turns, eight
-speakers, 37/3 answerable/abstention, 22/18 EN/RU, category counts
-8/8/7/5/5/4/3, and five time windows is a historical test-only arithmetic
-fixture. It is not invoked by the installed `corpus-admit` path and is not
-authority for a new generation. Installed admission binds the supplied source
-and snapshot digests and the exact reviewed question/rubric material; downstream
+Installed admission requires the artifact-custody signed V2 turn-mapping receipt to bind
+the exact authoritative-generation digest and source digest together with the snapshot and
+mapping digest. It also binds the exact authoritative target, reviewed question/rubric material,
+and a separate snapshot-bound forbidden-locator receipt. Downstream
 evaluation derives applicable denominators from that immutable admitted
-generation.
+generation; no decoder for a different meeting participates.
 
 The reviewer registry and release artifact binding are authenticated by an
 Ed25519 release root supplied by the independent launcher on an inherited file
@@ -508,8 +504,9 @@ the exact fields below; every path is absolute. `outputRoot` must not exist.
 ```
 
 The sealed corpus schema is
-`meeting_knowledge.semantic_quality_sealed_corpus.v1`. It binds the release,
-source, frozen snapshot, reviewer set, and exactly 240 entries. Each entry has
+`meeting_knowledge.semantic_quality_sealed_corpus.v2`. It binds the release,
+source, frozen snapshot, reviewer set, exact `authoritativeGeneration`, and
+exactly 240 entries. Each entry has
 exactly `execution` and `gold`; the corpus additionally carries the closed global
 `forbiddenLocatorIds` set (at most 100 locators) and the real `turnMappings`
 entries (`turnId`, `sourceLocatorId`). Turn IDs are unique; multiple turns may
@@ -520,7 +517,9 @@ installed execution-packet contract. `gold` is the separate gold-packet
 contract and declares `answerable` or `must_abstain`; answerable entries require
 evidence and claims, while abstentions prohibit them. Locator IDs are SHA-256
 digests. The set must contain exactly 200 `automatic` and 40
-`independent_review` entries and may use `en`, `ru`, and `mixed` locales.
+`independent_review` entries. The reviewed entries exact-compare as 29
+answerable/11 abstention and 10 EN/30 RU; `mixed` remains available only to the
+automatic set. V1 and any generation mismatch fail closed.
 
 The command opens every trust/control path through descriptor-pinned,
 no-symlink ancestors and accepts only canonical JSON. It verifies the pinned,

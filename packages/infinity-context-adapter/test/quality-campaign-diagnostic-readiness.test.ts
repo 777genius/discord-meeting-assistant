@@ -45,13 +45,20 @@ vi.mock("../src/quality-campaign/production-canonical-question-chain.js", () => 
       state.questions += 1;
       await input.spend.reserve({ effectKind: "retrieval" });
       state.now += 10;
-      return { status: "completed", candidates: [] };
+      return { status: "completed", rawResponseSha256: "a".repeat(64),
+        candidates: Array.from({ length: 10 }, (_, index) => ({ contributions: [],
+          fusedScore: 10 - index, locatorId: `loc-${index}`, providerRank: index })) };
     } },
-    evidence: { rehydrate: async () => {state.now += 20; return { turns: [] };} },
+    evidence: { rehydrate: async () => {state.now += 20; return {
+      authorityGeneration: "generation", canonicalEvidenceHash: "e".repeat(64),
+      transcriptVersion: 1, turns: [{ endMs: 2, sourceLocatorId: "loc-0",
+        speakerId: "speaker", startMs: 1, text: "Synthetic approved decision.",
+        turnHash: "f".repeat(64), turnId: "turn-0" }] };} },
     answer: { generate: async () => {
       state.modelCalls += 1; state.now += 30;
       return { status: "abstained", claims: [], citations: [] };
     } },
+    outcome: { record: async () => {} },
   }),
 }));
 const require = createRequire(import.meta.url);

@@ -19,7 +19,10 @@ export {
   type InfinityContextRetrievalV2Config,
   type InfinityContextRetrievalV2Request,
 } from "./infinity-context-retrieval-v2.js";
-export { INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE } from "./infinity-sdk-provenance.js";
+export {
+  INFINITY_CONTEXT_RETRIEVAL_V2_SDK_PROVENANCE,
+  INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE,
+} from "./infinity-sdk-provenance.js";
 export {
   INFINITY_CONTEXT_SDK_PROVENANCE,
   InfinityContextActivationError,
@@ -81,3 +84,13 @@ export { measureQualificationModelInput } from
   "./quality-campaign/qualification-contract.js";
 
 export { InfinityRetrievalScopeResolution } from "./infinity-retrieval-scope-resolution.js";
+
+export {
+  InfinityContextRetrievalV3Adapter,
+  retrievalV3CapabilityFingerprint,
+  type InfinityContextRetrievalV3Binding,
+  type InfinityContextRetrievalV3Config,
+  type InfinityContextRetrievalV3Request,
+  type InfinityContextRetrievalV3Observation,
+  type InfinityContextRetrievalV3ExactExchange,
+} from "./infinity-context-retrieval-v3.js";

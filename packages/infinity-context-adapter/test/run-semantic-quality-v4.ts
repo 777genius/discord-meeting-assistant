@@ -1,8 +1,5 @@
 import { readFileSync } from "node:fs";
 
-import { DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY } from
-  "@discord-meeting/meeting-core/meeting-knowledge";
-
 import { runSemanticQualityV4 } from "../src/semantic-quality-v4-runner.js";
 import { frozenSemanticQualityCorpusV4, v4EvaluationQuestionText } from
   "./semantic-quality-v4-corpus.js";
@@ -13,13 +10,6 @@ import {
   evaluateV4QualificationReadiness,
 } from "./semantic-quality-v4-manifest.js";
 import { perfectOutcomesForP0Test } from "./semantic-quality-v4-test-fixtures.js";
-import {
-  createSemanticQualityV4RealRunAuthorities,
-  loadRealSemanticQualityV4Corpus,
-  mapRealGoldTurnsToProductionLocators,
-} from "./semantic-quality-v4-private-corpus.js";
-import type { SemanticQualityV4PinnedReviewerKey } from
-  "./semantic-quality-v4-trusted-receipts.js";
 import { verifySemanticQualityV4ReleaseTrustAnchor } from
   "./semantic-quality-v4-trusted-receipts.js";
 import { runSemanticQualityV4WorkflowResumeCommand } from
@@ -37,8 +27,8 @@ if (process.argv.includes("--real-execute")) {
   await runResume("cleanup");
 } else if (process.argv.includes("--real-status")) {
   await runResume("status");
-} else if (process.argv.includes("--real-preflight")) {
-  runRealPreflight();
+} else if (process.argv.some((argument) => argument.startsWith("--real-"))) {
+  throw new Error("unsupported legacy real command; use the installed quality-campaign runner");
 } else {
   await runProviderFreeStructuralGate();
 }
@@ -123,52 +113,6 @@ process.stdout.write(`${JSON.stringify({ outcomeCount: outcomes.length, provider
 if (!thresholds.passed || outcomes.length !== 240) {
   process.exitCode = 1;
 }
-}
-
-function runRealPreflight(): void {
-  const transcriptPath = requiredPath("SEMANTIC_QUALITY_V4_PRIVATE_TRANSCRIPT_PATH");
-  const questionPath = requiredPath("SEMANTIC_QUALITY_V4_PRIVATE_QUESTION_PATH");
-  const rubricPath = requiredPath("SEMANTIC_QUALITY_V4_PRIVATE_RUBRIC_PATH");
-  const pinnedReviewerKeys = readInjectedJson(
-    requiredPath("SEMANTIC_QUALITY_V4_PINNED_REVIEWER_KEYS_PATH")) as
-    readonly SemanticQualityV4PinnedReviewerKey[];
-  const reviewReceipts = readInjectedJson(
-    requiredPath("SEMANTIC_QUALITY_V4_QUESTION_REVIEW_RECEIPTS_PATH")) as readonly unknown[];
-  const automatedMapping = readInjectedJson(
-    requiredPath("SEMANTIC_QUALITY_V4_AUTOMATED_BLOCK_MAPPING_PATH")) as readonly {
-    readonly sourceLocatorId: string; readonly turnId: string;
-  }[];
-  const realMapping = readInjectedJson(
-    requiredPath("SEMANTIC_QUALITY_V4_REAL_BLOCK_MAPPING_PATH")) as readonly {
-    readonly sourceLocatorId: string; readonly turnId: string;
-  }[];
-  const forbiddenLocatorIds = readInjectedJson(
-    requiredPath("SEMANTIC_QUALITY_V4_FORBIDDEN_LOCATORS_PATH")) as readonly string[];
-  const realCorpus = loadRealSemanticQualityV4Corpus({ pinnedReviewerKeys, questionPath,
-    reviewReceipts, rubricPath, transcriptPath });
-  const automatedCorpus = frozenSemanticQualityCorpusV4();
-  const mapped = mapRealGoldTurnsToProductionLocators({ corpus: realCorpus,
-    mapping: realMapping });
-  const authorities = createSemanticQualityV4RealRunAuthorities({ automatedCorpus,
-    automatedMapping, forbiddenLocatorIds, realCorpus, realMapping });
-  const policy = DEFAULT_FOCUSED_LOCATOR_RETRIEVAL_V2_POLICY;
-  if (policy.resultLimit !== 10 || policy.evidenceByteLimit !== 16_000) {
-    throw new Error("semantic quality V4 serving request profile drifted");
-  }
-  process.stdout.write(`${JSON.stringify({
-    bindings: realCorpus.bindings,
-    providerCalls: 0,
-    questionCounts: { automated: authorities.automated.questions.length,
-      overall: authorities.overall.questions.length, real: authorities.real.questions.length },
-    releaseCandidateRequest: { candidateLimit: policy.candidateLimit,
-      deadlineMs: policy.deadlineMs, evidenceByteLimit: policy.evidenceByteLimit,
-      neighborRadius: 0,
-      responseByteLimit: policy.responseByteLimit, resultLimit: policy.resultLimit },
-    reviewReceiptDigests: realCorpus.reviewReceipts.map(({ digestSha256 }) => digestSha256),
-    safeCounts: realCorpus.safeCounts,
-    status: "preflight_only_unqualified",
-    structuralCeilings: mapped.structuralCeilings,
-  }, null, 2)}\n`);
 }
 
 function requiredPath(name: string): string {

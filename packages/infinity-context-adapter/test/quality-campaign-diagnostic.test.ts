@@ -6,9 +6,11 @@ import { decodeDiagnosticManifest, decodeDiagnosticQuestions } from "../src/qual
 import { resolveDiagnosticReportPath, runDiagnosticCli, runDiagnosticSchedule } from "../src/quality-campaign/diagnostic-run.js";
 import { sha256 } from "../src/quality-campaign/canonical.js";
 import { DiagnosticCustody } from "../src/quality-campaign/diagnostic-custody.js";
+import { ExecuteAdmittedQualificationQuestion } from
+  "../src/quality-campaign/execute-admitted-qualification-question.js";
 
 const questions = Array.from({ length: 40 }, (_, i) => ({
-  locale: "en", questionId: `q${i}`, questionText: "What was decided?",
+  locale: "en" as const, questionId: `q${i}`, questionText: "What was decided?",
   scopeTopologyReference: "diagnostic:scope",
 }));
 describe("nonqualifying diagnostic custody", () => {
@@ -45,6 +47,36 @@ describe("nonqualifying diagnostic custody", () => {
       expect(replay).toEqual(outcomes);
     } finally {await rm(root, {recursive:true, force:true});}
   });
+  it("runs diagnostics through the canonical executor and retains all ranked candidates", async () => {
+    const candidates = Array.from({ length: 10 }, (_, index) => ({ contributions: [],
+      fusedScore: 10 - index, locatorId: `loc-${index}`, providerRank: index }));
+    let answerCalls = 0;
+    const outcome = await new ExecuteAdmittedQualificationQuestion({
+      answer: { generate: async input => {
+          answerCalls += 1;
+          expect(input.evidence.map(({ turnId }) => turnId)).toEqual(["turn-0"]);
+          return { citations: ["turn-0"], claims: ["Approved."], status: "answered" as const };
+        } },
+      evidence: { rehydrate: async input => {
+          expect(input.locatorIds).toEqual(candidates.map(({ locatorId }) => locatorId));
+          return { authorityGeneration: "generation", canonicalEvidenceHash: "e".repeat(64),
+            transcriptVersion: 1, turns: [{ endMs: 2, sourceLocatorId: "loc-0",
+              speakerId: "speaker", startMs: 1, text: "Approved.", turnHash: "f".repeat(64),
+              turnId: "turn-0" }] };
+        } },
+      outcome: { record: async () => {} },
+      retrieval: { retrieve: async input => {
+          expect(input.source).toBe("independent_review");
+          return { candidates, rawResponseSha256: "a".repeat(64), status: "completed" as const };
+        } },
+    }).execute({ ...questions[0]!, source: "independent_review" }, {
+      attemptId: "diagnostic-attempt", signal: new AbortController().signal });
+    expect(answerCalls).toBe(1);
+    expect(outcome.status).toBe("answered");
+    expect(outcome.retrievalCandidates).toHaveLength(10);
+    expect(outcome.selectedTurns.map(({ turnId }) => turnId)).toEqual(["turn-0"]);
+  });
+
   it("never repeats an original or repair reservation after a crash", async () => {
     const root = await mkdtemp(join(tmpdir(), "diagnostic-custody-"));
     try {

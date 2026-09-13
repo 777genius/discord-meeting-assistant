@@ -1,51 +1,63 @@
-import { MeetingKnowledgeInvariantError, requireKnowledgeText, requireSha256 } from
-  "./errors.js";
+import { MeetingKnowledgeInvariantError, requireKnowledgeText, requireSha256 } from "./errors.js";
 
 export const retrievalV2ConsumerEvidenceByteLimit = 16_000;
 
 export interface FocusedLocatorRetrievalV2ProviderBinding {
-  readonly capabilityFingerprint: string; readonly contractVersion: "context-retrieval.v2";
-  readonly indexProfileDigest: string; readonly profileId: string;
-  readonly rankingPolicy: "weighted_rrf_canonical_preferences.v1";
-  readonly requiredProviderLanes: readonly string[]; readonly serviceRevision: string;
+  readonly capabilityFingerprint: string; readonly contractVersion: "context-retrieval.v2"; readonly indexProfileDigest: string; readonly profileId: string;
+  readonly rankingPolicy: "weighted_rrf_canonical_preferences.v1"; readonly requiredProviderLanes: readonly string[]; readonly serviceRevision: string;
 }
 
 export interface FocusedLocatorRetrievalV2RequestSnapshot {
   readonly binding: FocusedLocatorRetrievalV2ProviderBinding;
   readonly budgets: {
-    readonly candidateLimit: number; readonly deadlineMs: number;
-    readonly evidenceByteLimit: number; readonly neighborRadius: 0;
+    readonly candidateLimit: number; readonly deadlineMs: number; readonly evidenceByteLimit: number; readonly neighborRadius: 0;
     readonly responseByteLimit: number; readonly resultLimit: number;
   };
   readonly filters: {
-    readonly actorKeys: readonly string[]; readonly category: string | null;
-    readonly documentKeys: readonly string[]; readonly excludedSourceKeys: readonly string[];
-    readonly kinds: readonly string[];
-    readonly relativeTimeInterval: { readonly endMs: number; readonly startMs: number } | null;
+    readonly actorKeys: readonly string[]; readonly category: string | null; readonly documentKeys: readonly string[]; readonly excludedSourceKeys: readonly string[];
+    readonly kinds: readonly string[]; readonly relativeTimeInterval: { readonly endMs: number; readonly startMs: number } | null;
     readonly sourceGenerations: readonly { readonly projectionGeneration: string;
       readonly sourceKey: string }[];
-    readonly tagsAll: readonly string[]; readonly tagsAny: readonly string[];
-    readonly tagsNone: readonly string[];
+    readonly tagsAll: readonly string[]; readonly tagsAny: readonly string[]; readonly tagsNone: readonly string[];
     readonly timeInterval: { readonly endAt: string; readonly startAt: string } | null;
   };
   readonly queries: readonly { readonly query: string; readonly queryId: string;
     readonly weightMicros?: number }[];
-  readonly schemaVersion: 2;
-  readonly scope: { readonly memoryScopeId: string; readonly spaceId: string;
+  readonly schemaVersion: 2; readonly scope: { readonly memoryScopeId: string; readonly spaceId: string;
     readonly threadId?: string | null };
   readonly softPreferences: {
     readonly actorPreferences: readonly { readonly key: string;
       readonly weightMicros: number }[];
-    readonly relativeTimeInterval: { readonly endMs: number; readonly startMs: number } | null;
-    readonly sourcePreferences: readonly { readonly key: string;
+    readonly relativeTimeInterval: { readonly endMs: number; readonly startMs: number } | null; readonly sourcePreferences: readonly { readonly key: string;
       readonly weightMicros: number }[];
-    readonly timeInterval: { readonly endAt: string; readonly startAt: string } | null;
-    readonly timeWeightMicros: number | null;
+    readonly timeInterval: { readonly endAt: string; readonly startAt: string } | null; readonly timeWeightMicros: number | null;
   };
 }
 
+/** V3 changes only the contract and thread selector, never the ranking policy. */
+export interface FocusedLocatorRetrievalV3ProviderBinding extends
+  Omit<FocusedLocatorRetrievalV2ProviderBinding, "contractVersion"> {
+  readonly contractVersion: "context-retrieval.v3";
+}
+
+export type FocusedLocatorRetrievalV3ThreadSelector =
+  | { readonly mode: "any" }
+  | { readonly mode: "exact"; readonly id: string | null };
+
+export interface FocusedLocatorRetrievalV3RequestSnapshot extends
+  Omit<FocusedLocatorRetrievalV2RequestSnapshot, "binding" | "schemaVersion" | "scope"> {
+  readonly binding: FocusedLocatorRetrievalV3ProviderBinding; readonly schemaVersion: 3;
+  readonly scope: { readonly memoryScopeId: string; readonly spaceId: string;
+    readonly thread: FocusedLocatorRetrievalV3ThreadSelector };
+}
+
+export type FocusedLocatorRetrievalRequestSnapshot =
+  FocusedLocatorRetrievalV2RequestSnapshot | FocusedLocatorRetrievalV3RequestSnapshot;
+export type FocusedLocatorRetrievalProviderBinding =
+  FocusedLocatorRetrievalV2ProviderBinding | FocusedLocatorRetrievalV3ProviderBinding;
+
 export type RetrievalPath = "canonical_local_exact_lexical_v1" |
-  "infinity_locator_v1" | "infinity_locator_v2" | "legacy_downstream_v1";
+  "infinity_locator_v1" | "infinity_locator_v2" | "infinity_locator_v3" | "legacy_downstream_v1";
 
 export interface CanonicalEvidenceFiltersSnapshot {
   readonly relativeTimeInterval: { readonly endMs: number;
@@ -54,51 +66,44 @@ export interface CanonicalEvidenceFiltersSnapshot {
 }
 
 export interface LocalCurrentRetrievalIdentitySnapshot {
-  readonly algorithmId: "canonical_local_exact_lexical_v1";
-  readonly profileFingerprint: string;
+  readonly algorithmId: "canonical_local_exact_lexical_v1"; readonly profileFingerprint: string;
   readonly profileId: "meeting-knowledge.local-current.v2";
 }
 
 export interface CompositeRetrievalProfileSnapshot {
-  readonly candidatePolicy: "bounded_lane_round_robin_dedupe.v1";
-  readonly interleavePolicy: "local_then_historical_per_rank.v1";
+  readonly candidatePolicy: "bounded_lane_round_robin_dedupe.v1"; readonly interleavePolicy: "local_then_historical_per_rank.v1";
   readonly profileId: "meeting-knowledge.composite-retrieval.v1";
 }
 
 interface RetrievalProvenanceBaseSnapshot {
-  readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot;
-  readonly localCurrentIdentity?: LocalCurrentRetrievalIdentitySnapshot;
+  readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot; readonly localCurrentIdentity?: LocalCurrentRetrievalIdentitySnapshot;
   readonly originalQuestion?: string; readonly provenanceSchemaVersion?: 1;
 }
 
 type RetrievalBindingPathSnapshot =
   | {
-      readonly cutoverEpoch: string; readonly profileFingerprint: string;
-      readonly request: FocusedLocatorRetrievalV2RequestSnapshot;
-      readonly retrievalPath: "infinity_locator_v2";
-      readonly compositeProfile?: CompositeRetrievalProfileSnapshot;
+      readonly cutoverEpoch: string; readonly profileFingerprint: string; readonly request: FocusedLocatorRetrievalV3RequestSnapshot;
+      readonly retrievalPath: "infinity_locator_v3"; readonly compositeProfile?: CompositeRetrievalProfileSnapshot;
     }
   | {
-      readonly cutoverEpoch: string; readonly profileFingerprint: string;
-      readonly retrievalPath: "infinity_locator_v1";
+      readonly cutoverEpoch: string; readonly profileFingerprint: string; readonly request: FocusedLocatorRetrievalV2RequestSnapshot;
+      readonly retrievalPath: "infinity_locator_v2"; readonly compositeProfile?: CompositeRetrievalProfileSnapshot;
     }
   | {
-      readonly cutoverEpoch: string; readonly profileFingerprint: string;
-      readonly retrievalPath: "legacy_downstream_v1";
+      readonly cutoverEpoch: string; readonly profileFingerprint: string; readonly retrievalPath: "infinity_locator_v1";
     }
   | {
-      readonly cutoverEpoch: string; readonly profileFingerprint: string;
-      readonly retrievalPath: "canonical_local_exact_lexical_v1";
+      readonly cutoverEpoch: string; readonly profileFingerprint: string; readonly retrievalPath: "legacy_downstream_v1";
+    }
+  | {
+      readonly cutoverEpoch: string; readonly profileFingerprint: string; readonly retrievalPath: "canonical_local_exact_lexical_v1";
     };
 
-export type RetrievalBindingSnapshot = RetrievalBindingPathSnapshot &
-  RetrievalProvenanceBaseSnapshot;
+export type RetrievalBindingSnapshot = RetrievalBindingPathSnapshot & RetrievalProvenanceBaseSnapshot;
 
 export interface RetrievalAdmissionRollout {
-  readonly compositeProfileFingerprint?: string;
-  readonly cutoverEpoch: string;
-  readonly infinityProfileFingerprint: string;
-  readonly localProfileFingerprint: string;
+  readonly compositeProfileFingerprint?: string; readonly cutoverEpoch: string;
+  readonly infinityProfileFingerprint: string; readonly localProfileFingerprint: string;
   readonly retrievalV2ProviderBinding?: FocusedLocatorRetrievalV2ProviderBinding;
 }
 
@@ -112,9 +117,7 @@ export function compareRetrievalV2Utf8(left: string, right: string): number {
   const sharedLength = Math.min(leftBytes.length, rightBytes.length);
   for (let index = 0; index < sharedLength; index += 1) {
     const difference = (leftBytes[index] ?? 0) - (rightBytes[index] ?? 0);
-    if (difference !== 0) {
-      return difference;
-    }
+    if (difference !== 0) {return difference;}
   }
   return leftBytes.length - rightBytes.length;
 }
@@ -122,10 +125,7 @@ export function compareRetrievalV2Utf8(left: string, right: string): number {
 function requireCutoverEpoch(value: string): string {
   const epoch = requireKnowledgeText(value, "retrievalBinding.cutoverEpoch", 128);
   if (!namedCutoverEpoch.test(epoch)) {
-    throw new MeetingKnowledgeInvariantError(
-      "INVALID_BINDING",
-      "retrievalBinding.cutoverEpoch must be a named lowercase epoch",
-    );
+    throw new MeetingKnowledgeInvariantError("INVALID_BINDING", "retrievalBinding.cutoverEpoch must be a named lowercase epoch");
   }
   return epoch;
 }
@@ -139,7 +139,7 @@ export class RetrievalBinding {
   public readonly profileFingerprint: string;
   public readonly provenanceSchemaVersion = 1 as const;
   public readonly retrievalPath: RetrievalPath;
-  public readonly request?: FocusedLocatorRetrievalV2RequestSnapshot;
+  public readonly request?: FocusedLocatorRetrievalRequestSnapshot;
 
   private constructor(input: RetrievalBindingSnapshot) {
     requireCompositeProvenance(input);
@@ -154,7 +154,8 @@ export class RetrievalBinding {
     this.cutoverEpoch = input.cutoverEpoch;
     this.profileFingerprint = input.profileFingerprint;
     this.retrievalPath = input.retrievalPath;
-    if (input.retrievalPath === "infinity_locator_v2") {
+    if (input.retrievalPath === "infinity_locator_v2" ||
+      input.retrievalPath === "infinity_locator_v3") {
       if (input.compositeProfile === undefined) {
         throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
           "composite retrieval profile is absent");
@@ -168,7 +169,7 @@ export class RetrievalBinding {
   public static create(input: RetrievalBindingSnapshot): RetrievalBinding {
     requireCompositeProvenance(input);
     const retrievalPath: unknown = input.retrievalPath;
-    if (retrievalPath !== "infinity_locator_v2" &&
+    if (retrievalPath !== "infinity_locator_v3" && retrievalPath !== "infinity_locator_v2" &&
       retrievalPath !== "infinity_locator_v1" &&
       retrievalPath !== "legacy_downstream_v1" &&
       retrievalPath !== "canonical_local_exact_lexical_v1") {
@@ -187,6 +188,18 @@ export class RetrievalBinding {
         "retrievalBinding.profileFingerprint"),
       retrievalPath,
     } as const;
+    if (input.retrievalPath === "infinity_locator_v3") {
+      if (input.compositeProfile === undefined) {
+        throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+          "Infinity Retrieval V3 requires a composite profile");
+      }
+      return new RetrievalBinding({ ...base,
+        compositeProfile: validateCompositeProfile(input.compositeProfile),
+        provenanceSchemaVersion: 1,
+        request: validateFocusedLocatorRetrievalV3Request(input.request),
+        retrievalPath: "infinity_locator_v3",
+      });
+    }
     if (retrievalPath === "infinity_locator_v2") {
       if (!("request" in input)) {
         throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
@@ -212,9 +225,8 @@ export class RetrievalBinding {
     return new RetrievalBinding({ canonicalEvidenceFilters: base.canonicalEvidenceFilters,
       cutoverEpoch: base.cutoverEpoch,
       localCurrentIdentity: base.localCurrentIdentity,
-      originalQuestion: base.originalQuestion, profileFingerprint: base.profileFingerprint,
-      provenanceSchemaVersion: 1,
-      retrievalPath,
+      originalQuestion: base.originalQuestion, profileFingerprint: base.profileFingerprint, provenanceSchemaVersion: 1,
+      retrievalPath: input.retrievalPath,
     });
   }
 
@@ -226,7 +238,11 @@ export class RetrievalBinding {
       provenanceSchemaVersion: this.provenanceSchemaVersion,
       retrievalPath: this.retrievalPath,
     };
-    return this.retrievalPath === "infinity_locator_v2" && this.request !== undefined
+    if (this.retrievalPath === "infinity_locator_v3" && this.request?.schemaVersion === 3) {
+      return { ...base, compositeProfile: this.compositeProfile!,
+        request: freezeRetrievalV2Request(this.request), retrievalPath: "infinity_locator_v3" };
+    }
+    return this.retrievalPath === "infinity_locator_v2" && this.request?.schemaVersion === 2
       ? { ...base, compositeProfile: this.compositeProfile!,
           request: freezeRetrievalV2Request(this.request),
           retrievalPath: "infinity_locator_v2" }
@@ -237,13 +253,18 @@ export class RetrievalBinding {
 }
 
 export function selectRetrievalBinding(input: {
-  readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot;
-  readonly originalQuestion?: string; readonly questionId: string;
-  readonly retrievalV2Request: FocusedLocatorRetrievalV2RequestSnapshot | null;
+  readonly canonicalEvidenceFilters?: CanonicalEvidenceFiltersSnapshot; readonly originalQuestion?: string; readonly questionId: string;
   readonly rollout: RetrievalAdmissionRollout;
-}): RetrievalBinding {
+} & (
+  | { readonly retrievalV2Request: FocusedLocatorRetrievalV2RequestSnapshot | null;
+      readonly retrievalRequest?: never }
+  | { readonly retrievalRequest: FocusedLocatorRetrievalRequestSnapshot | null;
+      readonly retrievalV2Request?: never }
+)): RetrievalBinding {
+  const request = input.retrievalRequest !== undefined
+    ? input.retrievalRequest : input.retrievalV2Request;
   requireKnowledgeText(input.questionId, "questionId", 128);
-  return RetrievalBinding.create(input.retrievalV2Request === null ? {
+  return RetrievalBinding.create(request === null ? {
     canonicalEvidenceFilters: input.canonicalEvidenceFilters ?? emptyCanonicalFilters(),
     cutoverEpoch: requireCutoverEpoch(input.rollout.cutoverEpoch),
     localCurrentIdentity: localCurrentIdentity(input.rollout),
@@ -265,8 +286,9 @@ export function selectRetrievalBinding(input: {
         input.rollout.infinityProfileFingerprint,
       "retrievalAdmission.compositeProfileFingerprint"),
     provenanceSchemaVersion: 1,
-    request: input.retrievalV2Request,
-    retrievalPath: "infinity_locator_v2",
+    ...(request.schemaVersion === 3
+      ? { request, retrievalPath: "infinity_locator_v3" as const }
+      : { request, retrievalPath: "infinity_locator_v2" as const }),
   });
 }
 
@@ -356,30 +378,22 @@ function validateCanonicalEvidenceFilters(
 
 /** Compares durable V2 protocol values independently of JSON object key order. */
 export function sameFocusedLocatorRetrievalV2Value(
-  left: FocusedLocatorRetrievalV2RequestSnapshot | FocusedLocatorRetrievalV2ProviderBinding,
-  right: FocusedLocatorRetrievalV2RequestSnapshot | FocusedLocatorRetrievalV2ProviderBinding,
+  left: FocusedLocatorRetrievalRequestSnapshot | FocusedLocatorRetrievalProviderBinding,
+  right: FocusedLocatorRetrievalRequestSnapshot | FocusedLocatorRetrievalProviderBinding,
 ): boolean {
   return JSON.stringify(canonicalRetrievalValue(left)) ===
     JSON.stringify(canonicalRetrievalValue(right));
 }
 
 function canonicalRetrievalValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(canonicalRetrievalValue);
-  }
-  if (typeof value !== "object" || value === null) {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value)
-      .toSorted(([leftKey], [rightKey]) =>
-        compareRetrievalV2Utf8(leftKey, rightKey))
-      .map(([key, nested]) => [key, canonicalRetrievalValue(nested)]),
-  );
+  if (Array.isArray(value)) {return value.map(canonicalRetrievalValue);}
+  if (typeof value !== "object" || value === null) {return value;}
+  return Object.fromEntries(Object.entries(value)
+    .toSorted(([leftKey], [rightKey]) => compareRetrievalV2Utf8(leftKey, rightKey))
+    .map(([key, nested]) => [key, canonicalRetrievalValue(nested)]));
 }
 
-function freezeRetrievalV2Request(request: FocusedLocatorRetrievalV2RequestSnapshot):
-FocusedLocatorRetrievalV2RequestSnapshot {
+function freezeRetrievalV2Request<T extends FocusedLocatorRetrievalRequestSnapshot>(request: T): T {
   return deepFreeze(structuredClone(request));
 }
 
@@ -401,14 +415,42 @@ function validateRetrievalV2Request(
   return freezeRetrievalV2Request(request!);
 }
 
-function validateRetrievalV2RequestValue(value: unknown): void {
-  const request = exactRetrievalObject(value, [
-    "binding", "budgets", "filters", "queries", "schemaVersion", "scope",
-    "softPreferences",
-  ]);
-  if (request.schemaVersion !== 2) {
-    throw new TypeError("unsupported schema version");
+export function validateFocusedLocatorRetrievalV3Request(
+  value: unknown,
+): FocusedLocatorRetrievalV3RequestSnapshot {
+  try {
+    const request = exactRetrievalObject(value, [
+      "binding", "budgets", "filters", "queries", "schemaVersion", "scope", "softPreferences",
+    ]);
+    if (request.schemaVersion !== 3) {throw new TypeError("unsupported schema version");}
+    const binding = request.binding as Record<string, unknown>;
+    if (binding.contractVersion !== "context-retrieval.v3") {
+      throw new TypeError("unsupported provider contract");
+    }
+    const scope = exactRetrievalObject(request.scope, ["memoryScopeId", "spaceId", "thread"]);
+    retrievalOpaque(scope.memoryScopeId);
+    retrievalOpaque(scope.spaceId);
+    const selector = exactRetrievalObject(scope.thread, ["mode"], ["id"]);
+    if (selector.mode === "any") {
+      exactRetrievalObject(selector, ["mode"]);
+    } else if (selector.mode === "exact") {
+      exactRetrievalObject(selector, ["mode", "id"]);
+      if (selector.id !== null) {retrievalOpaque(selector.id);}
+    } else {throw new TypeError("unsupported thread selector");}
+    validateRetrievalV2RequestValue({ ...request, schemaVersion: 2,
+      binding: { ...binding, contractVersion: "context-retrieval.v2" },
+      scope: { memoryScopeId: scope.memoryScopeId, spaceId: scope.spaceId, threadId: null } });
+    return freezeRetrievalV2Request(value as FocusedLocatorRetrievalV3RequestSnapshot);
+  } catch {
+    throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
+      "persisted Retrieval V3 request is outside the consumer contract");
   }
+}
+
+function validateRetrievalV2RequestValue(value: unknown): void {
+  const request = exactRetrievalObject(value, ["binding", "budgets", "filters",
+    "queries", "schemaVersion", "scope", "softPreferences"]);
+  if (request.schemaVersion !== 2) {throw new TypeError("unsupported schema version");}
   validateRetrievalV2ProviderBinding(request.binding);
   validateRetrievalV2Budgets(request.budgets);
   validateRetrievalV2Filters(request.filters);
@@ -471,18 +513,13 @@ function validateRetrievalV2Filters(value: unknown): void {
         sourceKey: retrievalOpaque(pair.sourceKey) };
     });
   retrievalSortedUnique(sourceGenerations.map(({ sourceKey }) => sourceKey));
-  if (sourceGenerations.some((entry, index) => index > 0 &&
-    compareRetrievalV2Utf8(sourceGenerations[index - 1]!.sourceKey, entry.sourceKey) >= 0)) {
-    throw new TypeError("source generations are not ordered");
-  }
+  // retrievalSortedUnique above already enforces strict source-key ordering.
   retrievalNoOverlap(sourceGenerations.map(({ sourceKey }) => sourceKey),
     excludedSourceKeys);
   retrievalNoOverlap(tagsAll, tagsNone);
   const absolute = retrievalTimeInterval(filters.timeInterval);
   const relative = retrievalRelativeInterval(filters.relativeTimeInterval);
-  if (absolute !== null && relative !== null) {
-    throw new TypeError("hard filters mix time coordinates");
-  }
+  if (absolute !== null && relative !== null) {throw new TypeError("hard filters mix time coordinates");}
 }
 
 function validateRetrievalV2Queries(value: unknown): void {
@@ -490,9 +527,7 @@ function validateRetrievalV2Queries(value: unknown): void {
     const input = exactRetrievalObject(entry, ["query", "queryId"], ["weightMicros"]);
     const queryId = retrievalOpaque(input.queryId, 64);
     const query = retrievalNormalizedQuery(input.query);
-    if (Object.hasOwn(input, "weightMicros")) {
-      retrievalInteger(input.weightMicros, 100_000, 10_000_000);
-    }
+    if (Object.hasOwn(input, "weightMicros")) {retrievalInteger(input.weightMicros, 100_000, 10_000_000);}
     return { query, queryId };
   });
   retrievalSortedUnique(queries.map(({ queryId }) => queryId));
@@ -502,9 +537,7 @@ function validateRetrievalV2Scope(value: unknown): void {
   const scope = exactRetrievalObject(value, ["memoryScopeId", "spaceId"], ["threadId"]);
   retrievalOpaque(scope.memoryScopeId);
   retrievalOpaque(scope.spaceId);
-  if (Object.hasOwn(scope, "threadId") && scope.threadId !== null) {
-    retrievalOpaque(scope.threadId);
-  }
+  if (Object.hasOwn(scope, "threadId") && scope.threadId !== null) {retrievalOpaque(scope.threadId);}
 }
 
 function validateRetrievalV2SoftPreferences(value: unknown): void {
@@ -523,9 +556,7 @@ function validateRetrievalV2SoftPreferences(value: unknown): void {
   ) {
     throw new TypeError("soft preferences have inconsistent time evidence");
   }
-  if (preferences.timeWeightMicros !== null) {
-    retrievalInteger(preferences.timeWeightMicros, 100_000, 10_000_000);
-  }
+  if (preferences.timeWeightMicros !== null) {retrievalInteger(preferences.timeWeightMicros, 100_000, 10_000_000);}
 }
 
 function retrievalWeightedKeys(value: unknown): void {
@@ -538,28 +569,20 @@ function retrievalWeightedKeys(value: unknown): void {
 }
 
 function retrievalTimeInterval(value: unknown): Record<string, unknown> | null {
-  if (value === null) {
-    return null;
-  }
+  if (value === null) {return null;}
   const interval = exactRetrievalObject(value, ["endAt", "startAt"]);
   const start = retrievalTimestamp(interval.startAt);
   const end = retrievalTimestamp(interval.endAt);
-  if (retrievalTimestampOrder(start) > retrievalTimestampOrder(end)) {
-    throw new TypeError("time interval is reversed");
-  }
+  if (retrievalTimestampOrder(start) > retrievalTimestampOrder(end)) {throw new TypeError("time interval is reversed");}
   return interval;
 }
 
 function retrievalRelativeInterval(value: unknown): Record<string, unknown> | null {
-  if (value === null) {
-    return null;
-  }
+  if (value === null) {return null;}
   const interval = exactRetrievalObject(value, ["endMs", "startMs"]);
   const start = retrievalInteger(interval.startMs, 0, Number.MAX_SAFE_INTEGER);
   const end = retrievalInteger(interval.endMs, 0, Number.MAX_SAFE_INTEGER);
-  if (start > end) {
-    throw new TypeError("relative interval is reversed");
-  }
+  if (start > end) {throw new TypeError("relative interval is reversed");}
   return interval;
 }
 
@@ -568,9 +591,7 @@ function exactRetrievalObject(
   required: readonly string[],
   optional: readonly string[] = [],
 ): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError("expected object");
-  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {throw new TypeError("expected object");}
   const input = value as Record<string, unknown>;
   const actual = Object.keys(input).toSorted(compareRetrievalV2Utf8);
   const allowed = [...required, ...optional].toSorted(compareRetrievalV2Utf8);
@@ -588,9 +609,7 @@ function retrievalArray(
   minimum: number,
   maximum: number,
 ): readonly unknown[] {
-  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) {
-    throw new TypeError("array bound differs");
-  }
+  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) {throw new TypeError("array bound differs");}
   return value;
 }
 
@@ -613,9 +632,7 @@ function retrievalSortedUnique(values: readonly string[]): void {
 }
 
 function retrievalNoOverlap(left: readonly string[], right: readonly string[]): void {
-  if (left.some((value) => right.includes(value))) {
-    throw new TypeError("identity sets overlap");
-  }
+  if (left.some((value) => right.includes(value))) {throw new TypeError("identity sets overlap");}
 }
 
 function retrievalInteger(value: unknown, minimum: number, maximum: number): number {
@@ -629,27 +646,19 @@ function retrievalInteger(value: unknown, minimum: number, maximum: number): num
 }
 
 function retrievalHash(value: unknown): string {
-  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {
-    throw new TypeError("hash is malformed");
-  }
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {throw new TypeError("hash is malformed");}
   return value;
 }
 
 function retrievalOpaque(value: unknown, maximum = 256): string {
-  if (typeof value !== "string") {
-    throw new TypeError("opaque identity is not text");
-  }
+  if (typeof value !== "string") {throw new TypeError("opaque identity is not text");}
   const points = Array.from(value);
   for (let index = 0; index < value.length; index += 1) {
     const unit = value.charCodeAt(index);
     if (unit >= 0xD800 && unit <= 0xDBFF) {
-      if (index + 1 >= value.length) {
-        throw new TypeError("opaque identity contains malformed Unicode");
-      }
+      if (index + 1 >= value.length) {throw new TypeError("opaque identity contains malformed Unicode");}
       const next = value.charCodeAt(index + 1);
-      if (next < 0xDC00 || next > 0xDFFF) {
-        throw new TypeError("opaque identity contains malformed Unicode");
-      }
+      if (next < 0xDC00 || next > 0xDFFF) {throw new TypeError("opaque identity contains malformed Unicode");}
       index += 1;
     } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
       throw new TypeError("opaque identity contains malformed Unicode");
@@ -723,9 +732,7 @@ function retrievalTimestamp(value: unknown): string {
   const timestamp = retrievalOpaque(value);
   const match = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.(\d{1,6}))?Z$/u
     .exec(timestamp);
-  if (match === null) {
-    throw new TypeError("timestamp is malformed");
-  }
+  if (match === null) {throw new TypeError("timestamp is malformed");}
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
@@ -747,11 +754,13 @@ function retrievalTimestampOrder(value: string): string {
 }
 
 function retrievalDaysInMonth(year: number, month: number): number {
-  if (month < 1 || month > 12) {
-    return 0;
-  }
-  if (month === 2) {
-    return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
-  }
+  if (month < 1 || month > 12) {return 0;}
+  if (month === 2) {return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;}
   return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+
+export function isLocatorRetrievalBinding(binding: RetrievalBindingSnapshot | undefined):
+  binding is Extract<RetrievalBindingSnapshot, { readonly retrievalPath: "infinity_locator_v2" | "infinity_locator_v3" }> {
+  return binding?.retrievalPath === "infinity_locator_v2" || binding?.retrievalPath === "infinity_locator_v3";
 }

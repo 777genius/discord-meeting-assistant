@@ -279,16 +279,16 @@ function sameRetrievalBinding(
     left.retrievalPath === right.retrievalPath &&
     JSON.stringify(left.localCurrentIdentity) ===
       JSON.stringify(right.localCurrentIdentity) &&
-    JSON.stringify(left.retrievalPath === "infinity_locator_v2"
+    JSON.stringify((left.retrievalPath === "infinity_locator_v2" || left.retrievalPath === "infinity_locator_v3")
       ? left.compositeProfile : null) ===
-      JSON.stringify(right.retrievalPath === "infinity_locator_v2"
+      JSON.stringify((right.retrievalPath === "infinity_locator_v2" || right.retrievalPath === "infinity_locator_v3")
         ? right.compositeProfile : null) &&
     sameCanonicalEvidenceFilters(
       left.canonicalEvidenceFilters,
       right.canonicalEvidenceFilters,
     ) &&
-    (left.retrievalPath !== "infinity_locator_v2" || (
-      right.retrievalPath === "infinity_locator_v2" &&
+    ((left.retrievalPath !== "infinity_locator_v2" && left.retrievalPath !== "infinity_locator_v3") || (
+      (right.retrievalPath === "infinity_locator_v2" || right.retrievalPath === "infinity_locator_v3") &&
       sameFocusedLocatorRetrievalV2Value(left.request, right.request)
     ));
 }

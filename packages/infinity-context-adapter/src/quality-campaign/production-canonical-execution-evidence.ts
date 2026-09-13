@@ -289,11 +289,12 @@ async function readOptionalBounded(path: string, maximumBytes: number,
 }
 
 function isArtifactKind(value: unknown): value is SemanticQualityV4ArtifactKind {
-  return ["adjudication", "answer", "answer_normalized_outcome", "answer_original_model_surface",
+  return ["adjudication", "answer", "answer_execution_observation", "answer_normalized_outcome", "answer_request_intent",
+    "answer_original_model_surface",
     "answer_original_request", "answer_original_response", "answer_repair_model_surface",
     "answer_repair_request", "answer_repair_response", "capability_request", "capability_response",
     "evidence", "original_model_input", "original_provider_request", "original_provider_response",
     "repair_model_input", "repair_provider_request", "repair_provider_response", "raw_outcome",
-    "response_runtime", "retrieval_request", "retrieval_response", "scope_resolution_observation", "retrieval_observation",
+    "response_runtime", "retrieval_binding", "retrieval_request", "retrieval_response", "scope_resolution_observation", "retrieval_observation",
     "selected_canonical_turns"].includes(value as string);
 }

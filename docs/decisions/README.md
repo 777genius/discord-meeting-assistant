@@ -61,7 +61,7 @@
 - [ADR-0053: V2-only meeting retrieval composition](0053-v2-only-meeting-retrieval.md)
 - [ADR-0064: Composite retrieval authority fence and candidate isolation](0064-composite-retrieval-authority-fence.md)
 - [ADR-0065: Private quality budget-ledger lock adapter](0065-private-quality-budget-ledger-lock-adapter.md)
-- [ADR-0066: Bind qualification corpus cardinality to an authoritative generation](0066-authoritative-qualification-corpus-generation.md)
+- [ADR-0077: Admit only the exact authoritative qualification generation](0077-exact-authoritative-qualification-generation.md)
 - [ADR-0067: Two-application self-hosting topology](0067-two-application-self-hosting-topology.md)
 - [ADR-0068: Verified legacy recording compatibility](0068-verified-legacy-recording-compatibility.md)
 
@@ -92,6 +92,7 @@
 - [ADR-0033: Adaptive bounded current grounding](0033-adaptive-current-grounding.md)
 - [ADR-0058: Exact Craig hosted stack recovery](0058-exact-craig-hosted-stack-recovery.md)
 - [ADR-0050: Persisted Retrieval V2 serving binding and official SDK custody](0050-persisted-retrieval-v2-serving-binding.md)
+- [ADR-0066: Bind qualification corpus cardinality to an authoritative generation](0066-authoritative-qualification-corpus-generation.md)
 
 OSS STT native collection extends the existing Voicetext adapter and Platform
 composition, with qualification owned by `apps/discord-e2e-actors/src/oss-*`.

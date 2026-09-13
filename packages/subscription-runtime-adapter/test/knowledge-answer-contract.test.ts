@@ -14,6 +14,7 @@ import {
   auditedSubscriptionRuntimePackageVersion,
   canonicalJsonSha256,
   buildSubscriptionRuntimeKnowledgeAnswerRequest,
+  knowledgeAnswerExchangeInventorySha256,
   knowledgeAnswerExecutionProfile,
   knowledgeCoverageExecutionProfile,
   providerKnowledgeCoverageExtractSchema,
@@ -177,6 +178,10 @@ function historicalSource(meetingId: string) {
     transcriptId: `transcript-${meetingId}`,
     transcriptVersion: 1,
   };
+}
+
+function bytes(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
 }
 
 describe("Meeting Knowledge subscription runtime contract", () => {
@@ -377,6 +382,16 @@ describe("Meeting Knowledge subscription runtime contract", () => {
     expect(runtime.requests[1]?.task.systemPrompt).toContain(
       "for an answerable question populate claims with at least one concise supported claim",
     );
+  });
+
+  it("hashes ordered request/response boundaries and repair occurrence", () => {
+    const originalOnly = knowledgeAnswerExchangeInventorySha256([{
+      callOrdinal: "original", requestBytes: bytes("request"), responseBytes: bytes("AB"),
+    }]);
+    const repaired = knowledgeAnswerExchangeInventorySha256([{
+      callOrdinal: "original", requestBytes: bytes("request"), responseBytes: bytes("A"),
+    }, { callOrdinal: "repair", requestBytes: bytes("repair"), responseBytes: bytes("B") }]);
+    expect(repaired).not.toBe(originalOnly);
   });
 
   it("keeps an exhausted runtime provider output repair terminal", async () => {

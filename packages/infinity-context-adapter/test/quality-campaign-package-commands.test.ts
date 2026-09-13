@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,4 +53,12 @@ describe("installed quality campaign package commands", () => {
       ]);
     }
   }, 60_000);
+  it("fails closed for the removed legacy real-preflight flag", () => {
+    const script = new URL("./run-semantic-quality-v4.ts", import.meta.url);
+    const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx/esm"),
+      script.pathname, "--real-preflight"], { encoding: "utf8", timeout: 10_000 });
+    expect(child.status).not.toBe(0);
+    expect(child.stderr).toContain("unsupported legacy real command");
+  });
+
 });

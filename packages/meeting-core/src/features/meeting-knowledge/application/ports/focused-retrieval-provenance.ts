@@ -1,7 +1,7 @@
 import type { FocusedMemoryReference } from "../../domain/grounding-plan.js";
 import { MeetingKnowledgeInvariantError, requireKnowledgeText, requireSha256 } from
   "../../domain/errors.js";
-import type { LocalCurrentRetrievalIdentitySnapshot,
+import type { FocusedLocatorRetrievalRequestSnapshot, LocalCurrentRetrievalIdentitySnapshot,
   RetrievalBindingSnapshot } from "../../domain/retrieval-admission.js";
 import type { FocusedLocatorRetrievalV2Candidate } from
   "./focused-locator-retrieval-v2.js";
@@ -53,11 +53,11 @@ async function retrievalAuditsBind(
     originalQuestion: binding.originalQuestion,
     schemaVersion: 1,
   });
-  const historicalRequestDigest = binding.retrievalPath === "infinity_locator_v2"
+  const historicalRequestDigest = (binding.retrievalPath === "infinity_locator_v2" || binding.retrievalPath === "infinity_locator_v3")
     ? await canonicalDigest(binding.request) : null;
-  const queryIds = new Set(binding.retrievalPath === "infinity_locator_v2"
+  const queryIds = new Set((binding.retrievalPath === "infinity_locator_v2" || binding.retrievalPath === "infinity_locator_v3")
     ? binding.request.queries.map(({ queryId }) => queryId) : []);
-  const providerLanes = new Set(binding.retrievalPath === "infinity_locator_v2"
+  const providerLanes = new Set((binding.retrievalPath === "infinity_locator_v2" || binding.retrievalPath === "infinity_locator_v3")
     ? binding.request.binding.requiredProviderLanes : []);
   for (const candidate of candidates) {
     if (!await candidateAuditBinds(candidate, binding, localRequestDigest, {
@@ -67,7 +67,7 @@ async function retrievalAuditsBind(
     }
   }
   return !requireRetrievalOrder ||
-    laneOrderIsCanonical(candidates, binding.retrievalPath === "infinity_locator_v2");
+    laneOrderIsCanonical(candidates, (binding.retrievalPath === "infinity_locator_v2" || binding.retrievalPath === "infinity_locator_v3"));
 }
 
 async function candidateAuditBinds(
@@ -112,7 +112,7 @@ function historicalAuditBinds(
   queryIds: ReadonlySet<string>,
   providerLanes: ReadonlySet<string>,
 ): boolean {
-  return binding.retrievalPath === "infinity_locator_v2" &&
+  return (binding.retrievalPath === "infinity_locator_v2" || binding.retrievalPath === "infinity_locator_v3") &&
     audit.laneIdentity?.lane === "historical" &&
     audit.laneIdentity.capabilityFingerprint ===
       binding.request.binding.capabilityFingerprint &&
@@ -129,8 +129,7 @@ export async function historicalRetrievalAuditsBindRequest(
       "retrievalAudit"
     ]>;
   }[],
-  request: Extract<RetrievalBindingSnapshot,
-    { readonly retrievalPath: "infinity_locator_v2" }>["request"],
+  request: FocusedLocatorRetrievalRequestSnapshot,
 ): Promise<boolean> {
   if (candidates.length < 1) {return false;}
   const requestDigest = await canonicalDigest(request);
@@ -254,6 +253,11 @@ function canonicalLaneRanks(candidates: readonly FocusedMemoryReference[]): bool
       (current.providerRank === previous.providerRank &&
         current.locator === previous.locator);
   });
+}
+
+/** Includes the closed request version, selector and complete source-generation filter. */
+export function focusedLocatorRequestDigest(request: FocusedLocatorRetrievalRequestSnapshot): Promise<string> {
+  return canonicalDigest(request);
 }
 
 async function canonicalDigest(value: unknown): Promise<string> {

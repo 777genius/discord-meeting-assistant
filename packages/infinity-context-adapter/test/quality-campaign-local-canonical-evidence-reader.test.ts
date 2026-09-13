@@ -4,15 +4,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { createFocusedRetrievalGroundingPlan } from
+  "@discord-meeting/meeting-core/meeting-knowledge";
+import { buildSubscriptionRuntimeKnowledgeAnswerRequest, knowledgeAnswerExchangeInventorySha256,
+  serializeSubscriptionRuntimeTaskRequest } from
+  "@discord-meeting/subscription-runtime-adapter";
 
-import { canonicalJson } from "../src/quality-campaign/canonical.js";
+import { absentAnswerRequestIntentBytes, absentAnswerRequestIntentSha256,
+  preparedAnswerRequestIntentBytes } from
+  "../src/quality-campaign/canonical-answer-artifact-validation.js";
+import { canonicalJson, sha256 as canonicalSha256 } from
+  "../src/quality-campaign/canonical.js";
+import { attemptIdentity } from "../src/quality-campaign/execution.js";
 import { createProductionCanonicalExecutionEvidence } from
   "../src/quality-campaign/production-canonical-execution-evidence.js";
 import { createProductionLocalCanonicalEvidenceReader } from
   "../src/quality-campaign/production-local-canonical-evidence-reader.js";
 
-const attemptId = `sqv4-${"a".repeat(64)}`;
 const campaignRootSha256 = "b".repeat(64);
+const executionPacket = { locale: "en" as const, questionId: "q-1",
+  questionText: "What synthetic evidence was retained?",
+  scopeTopologyReference: "synthetic-topology-reference", source: "automatic" as const };
+const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0, campaignRootSha256,
+  questionDigestSha256: canonicalSha256(executionPacket), questionId: executionPacket.questionId,
+  releaseRootSha256: "d".repeat(64), repetition: 1,
+  spendReservationSha256: "e".repeat(64) });
+const attemptId = identity.attemptId;
 
 describe("production local canonical evidence reader", () => {
   it("authenticates the exact SDK exchange and normalized outcome into a deterministic inventory",
@@ -21,9 +38,12 @@ describe("production local canonical evidence reader", () => {
       const verified = await fixture.reader.verify({ attempts: [fixture.projection],
         campaignRootSha256 });
       expect(verified.inventorySha256).toMatch(/^[a-f0-9]{64}$/u);
+      await expect(fixture.reader.readReservedAnswerSpendClaims!([identity])).resolves.toEqual([]);
       await expect(fixture.reader.verify({ attempts: [{ ...fixture.projection,
         retrievalLatencyUs: fixture.projection.retrievalLatencyUs - 1 }], campaignRootSha256 }))
         .rejects.toThrow("differs from measured canonical SDK operation");
+      await expect(fixture.reader.readReservedAnswerSpendClaims!([identity]))
+        .rejects.toThrow("lack their verified local receipt inventory");
       const foreignKeyReader = createProductionLocalCanonicalEvidenceReader({ artifactKey:
         new Uint8Array(32).fill(7), artifactKeyId: "another-key", artifactRoot:
         fixture.artifactRoot });
@@ -47,7 +67,11 @@ describe("production local canonical evidence reader", () => {
 
   it("rejects authenticated unknown or unprepared scope metadata", async () => {
     for (const options of [{ scopeStatus: "interrupted" },
-      { scopeReadStatus: "outcome_unknown" }]) {
+      { scopeReadStatus: "outcome_unknown" },
+      { scopeValue: { schemaVersion: "meeting_knowledge.scope_resolution.v1",
+        status: "unavailable", reads: [{ kind: "scope_spaces",
+          requestSha256: "1".repeat(64), responseSha256: null, responseBytes: 0,
+          status: "outcome_unknown" }] } }]) {
       const fixture = await localFixture(options);
       await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
         .rejects.toThrow("canonical scope resolution observation");
@@ -97,8 +121,9 @@ describe("production local canonical evidence reader", () => {
     await expect(fixture.reader.verify({ attempts: [{ ...fixture.projection,
       attemptId: `sqv4-${"d".repeat(64)}` }], campaignRootSha256 })).rejects.toThrow();
     const failed = await localFixture({ outcomeStatus: "failed" });
-    await expect(failed.reader.verify({ attempts: [failed.projection], campaignRootSha256 }))
-      .rejects.toThrow("differs from external outcome evidence");
+    const failedVerification = await failed.reader.verify({ attempts: [failed.projection],
+      campaignRootSha256 });
+    expect(failedVerification.inventorySha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
   it("rejects missing indices and corrupt envelopes without scanning for replacements", async () => {
@@ -124,10 +149,128 @@ describe("production local canonical evidence reader", () => {
     await expect(foreignKind.reader.verify({ attempts: [foreignKind.projection],
       campaignRootSha256 })).rejects.toThrow("foreign or substituted");
   });
+
+  it.each(["empty", "unavailable"] as const)(
+    "retains an authenticated pre-retrieval %s failure without fake transport exchanges",
+    async (status) => {
+      const fixture = await earlyFailureFixture(status);
+      const verification = await fixture.reader.verify({ attempts: [fixture.projection],
+        campaignRootSha256 });
+      expect(verification.inventorySha256).toMatch(/^[a-f0-9]{64}$/u);
+      await expect(fixture.reader.verify({ attempts: [{ ...fixture.projection,
+        terminalAnswerRequestSha256: "0".repeat(64) }], campaignRootSha256 }))
+        .rejects.toThrow("unprepared answer intent differs");
+      await fixture.evidence.audit.seal({ attemptId: fixture.projection.attemptId,
+        kind: "capability_request", plaintext: new Uint8Array() });
+      await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
+        .rejects.toThrow("contains unopened artifacts");
+    });
+
+  it("rejects non-empty metadata substituted into an empty pre-retrieval branch", async () => {
+    const fixture = await earlyFailureFixture("empty", [{ kind: "scope_spaces",
+      requestSha256: "1".repeat(64), responseBytes: 0, responseSha256: null,
+      status: "failed" }]);
+    await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
+      .rejects.toThrow("canonical scope resolution observation is incomplete");
+  });
+
+  it("rejects missing V1 answer intent and execution observation custody", async () => {
+    const missingIntent = await localFixture();
+    await unlink(join(missingIntent.artifactRoot, "receipts", attemptId,
+      "answer_request_intent.json"));
+    await expect(missingIntent.reader.verify({ attempts: [missingIntent.projection],
+      campaignRootSha256 })).rejects.toThrow();
+
+    const missingObservation = await localFixture();
+    await unlink(join(missingObservation.artifactRoot, "receipts", attemptId,
+      "answer_execution_observation.json"));
+    await expect(missingObservation.reader.verify({ attempts: [missingObservation.projection],
+      campaignRootSha256 })).rejects.toThrow();
+  });
+
+  it("rejects foreign V1 retained generation and unknown answer execution custody", async () => {
+    const foreignGeneration = await localFixture({
+      selectedMemoryGeneration: "foreign-memory-generation" });
+    await expect(foreignGeneration.reader.verify({ attempts: [foreignGeneration.projection],
+      campaignRootSha256 })).rejects.toThrow("independently reconstructed evidence");
+
+    const unknownOutcome = await localFixture({ outcomeCertain: false });
+    await expect(unknownOutcome.reader.verify({ attempts: [unknownOutcome.projection],
+      campaignRootSha256 })).rejects.toThrow("outcome remains unknown");
+
+    const unknownNoSend = await localFixture({ omitAnswerExchange: true,
+      outcomeStatus: "failed" });
+    await expect(unknownNoSend.reader.verify({ attempts: [unknownNoSend.projection],
+      campaignRootSha256 }))
+      .rejects.toThrow("terminal reason differs from proven provider call inventory");
+  });
+
+  it("requires V2 topology binding and exact zero retrieval latency before retrieval", async () => {
+    const legacy = await earlyFailureFixture("empty", [], { legacy: true });
+    await expect(legacy.reader.verify({ attempts: [legacy.projection], campaignRootSha256 }))
+      .rejects.toThrow("generation-bound V2");
+    const altered = await earlyFailureFixture("empty", [], { alteredTopology: true });
+    await expect(altered.reader.verify({ attempts: [altered.projection], campaignRootSha256 }))
+      .rejects.toThrow("topology differs");
+    const nonzero = await earlyFailureFixture("empty");
+    await expect(nonzero.reader.verify({ attempts: [{ ...nonzero.projection,
+      retrievalLatencyUs: 1 }], campaignRootSha256 })).rejects.toThrow("pre-retrieval outcome");
+  });
 });
 
+async function earlyFailureFixture(status: "empty" | "unavailable",
+  reads: readonly unknown[] = status === "unavailable" ? [{ kind: "scope_spaces",
+    requestSha256: "1".repeat(64), responseBytes: 0, responseSha256: null,
+    status: "failed" }] : [], options: { readonly alteredTopology?: boolean;
+      readonly legacy?: boolean } = {}) {
+  const versionedPacket = { ...executionPacket,
+    schemaVersion: "meeting_knowledge.qualification_execution_packet.v2" as const,
+    scopeTopologyDocumentSha256: "9".repeat(64), scopeTopologyGeneration: "generation-1" };
+  const packet = options.legacy === true ? executionPacket : versionedPacket;
+  const earlyIdentity = attemptIdentity({ callKind: "answer", callOrdinal: 0, campaignRootSha256,
+    questionDigestSha256: canonicalSha256(packet), questionId: packet.questionId,
+    releaseRootSha256: "d".repeat(64), repetition: 1,
+    spendReservationSha256: "e".repeat(64) });
+  const root = await mkdtemp(join(tmpdir(), "canonical-early-reader-"));
+  const artifactRoot = join(root, "artifacts");
+  const artifactKey = new Uint8Array(32).fill(7);
+  const evidence = createProductionCanonicalExecutionEvidence({ answerJournalRoot:
+    join(root, "answer"), artifactKey, artifactKeyId: "synthetic-key", artifactRoot,
+    attemptId: earlyIdentity.attemptId, questionId: packet.questionId, repetition: 1,
+    retrievalJournalRoot: join(root, "retrieval"), rootBindingSha256: campaignRootSha256 });
+  const reason = `request_${status}`;
+  const outcome = { citations: [], claims: [], rawRetrievalResponseSha256: null,
+    reason, retrievalCandidates: [], selectedTurns: [], status: "failed" as const };
+  for (const [kind, plaintext] of [
+    ["scope_resolution_observation", bytes(canonicalJson({ reads,
+      schemaVersion: "meeting_knowledge.scope_resolution.v1", status }))],
+    ["answer_request_intent", absentAnswerRequestIntentBytes(earlyIdentity.attemptId, reason)],
+    ["answer_normalized_outcome", bytes(JSON.stringify(outcome))],
+  ] as const) {
+    await evidence.audit.seal({ attemptId: earlyIdentity.attemptId, kind, plaintext });
+  }
+  const topology = { currentMeetingId: "synthetic-meeting", roomId: "synthetic-room",
+    scopeId: "synthetic-scope", memoryScopeId: "internal-memory-scope", spaceId: "internal-space",
+    topologyDocumentSha256: versionedPacket.scopeTopologyDocumentSha256,
+    topologyGeneration: options.alteredTopology === true ? "altered-generation" :
+      versionedPacket.scopeTopologyGeneration };
+  const reader = createProductionLocalCanonicalEvidenceReader({ artifactKey,
+    artifactKeyId: "synthetic-key", artifactRoot, topology: { resolve: async () => topology } });
+  return { evidence, reader, projection: { answerAbstained: false, attemptId: earlyIdentity.attemptId,
+    campaignRootSha256, capabilityRequestSha256: null,
+    capabilityResponseSha256: null, citationLocatorIds: [],
+    diagnosticCustody: null, evidenceLocatorIds: [], evidenceTurnIds: [], executionPacket: packet,
+    identity: earlyIdentity, providerCallInventory: [], rankedLocatorIds: [], retrievalLatencyUs: 0,
+    retrievalRequestSha256: null, retrievalResponseSha256: null,
+    terminalAnswerRequestSha256: absentAnswerRequestIntentSha256(earlyIdentity.attemptId, reason),
+    terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([]), terminalReason: reason,
+    terminalStatus: "failed" as const, topology: null } };
+}
+
 async function localFixture(options: { readonly extraObservationKey?: boolean;
+  readonly omitAnswerExchange?: boolean; readonly outcomeCertain?: boolean;
   readonly scopeStatus?: string; readonly scopeReadStatus?: string; readonly scopeValue?: unknown;
+  readonly selectedMemoryGeneration?: string;
   readonly outcomeStatus?: "answered" | "failed" } = {}) {
   const root = await mkdtemp(join(tmpdir(), "canonical-local-reader-"));
   const artifactRoot = join(root, "artifacts"); const artifactKey = new Uint8Array(32).fill(7);
@@ -147,12 +290,27 @@ async function localFixture(options: { readonly extraObservationKey?: boolean;
     schemaVersion: "meeting_knowledge.canonical_retrieval_observation.v1",
     ...(options.extraObservationKey === true ? { unexpected: true } : {}) };
   const turn = { endMs: 2, sourceLocatorId: "locator-1", speakerId: "speaker-1", startMs: 1,
-    text: "Synthetic evidence", turnHash: "turn-hash", turnId: "turn-1" };
-  const outcome = { citations: ["turn-1"], claims: ["Synthetic claim"],
+    text: "Synthetic evidence", turnHash: "d".repeat(64), turnId: "turn-1" };
+  const outcome = { citations: options.outcomeStatus === "failed" ? [] : ["turn-1"],
+    claims: options.outcomeStatus === "failed" ? [] : ["Synthetic claim"],
     rawRetrievalResponseSha256: sha(retrievalResponse), retrievalCandidates: [{ contributions: [],
       fusedScore: 1, locatorId: "locator-1", providerRank: 0 }], selectedTurns: [turn],
     ...(options.outcomeStatus === "failed" ? { reason: "synthetic_failure" } : {}),
     status: options.outcomeStatus ?? "answered" };
+  const memoryGeneration = "postgres-memory-generation-1";
+  const answerBinding = { canonicalEvidenceHash: canonicalSha256([turn.turnHash]),
+    memoryGeneration, transcriptVersion: 1 };
+  const answerPlan = createFocusedRetrievalGroundingPlan({ authorityGeneration: memoryGeneration,
+    coverage: "sufficient", humanActorIds: [turn.speakerId], turns: [turn] });
+  const answerRequest = buildSubscriptionRuntimeKnowledgeAnswerRequest({ attemptId,
+    binding: answerBinding, locale: executionPacket.locale, plan: answerPlan,
+    question: executionPacket.questionText }, {
+    isolatedCwd: "/run/discord-meeting-subscription-runtime/workspace",
+    maxOutputTokens: 2_048, timeoutMs: 180_000 });
+  const answerResponse = bytes("synthetic-runtime-response");
+  const answerSurface = bytes([answerRequest.task.systemPrompt, answerRequest.task.prompt,
+    JSON.stringify(answerRequest.task.controls.outputSchema)].join("\n"));
+  const terminalReason = options.outcomeStatus === "failed" ? "synthetic_failure" : null;
   for (const [kind, plaintext] of [["capability_request", capabilityRequest],
     ["capability_response", capabilityResponse], ["retrieval_request", retrievalRequest],
     ["retrieval_response", retrievalResponse], ["retrieval_observation", bytes(canonicalJson(observation))],
@@ -163,17 +321,47 @@ async function localFixture(options: { readonly extraObservationKey?: boolean;
           null : "2".repeat(64), responseBytes: options.scopeReadStatus === "outcome_unknown" ? 0 : 12,
         status: options.scopeReadStatus ?? "received" })),
     }))],
+    ["selected_canonical_turns", bytes(JSON.stringify({ attemptId,
+      memoryGeneration: options.selectedMemoryGeneration ?? memoryGeneration,
+      schemaVersion: "meeting_knowledge.selected_canonical_turns.v2", turns: [turn] }))],
+    ["answer_request_intent", preparedAnswerRequestIntentBytes(attemptId, answerRequest,
+      memoryGeneration)],
+    ["answer_execution_observation", bytes(canonicalJson({ attemptId,
+      outcomeCertain: options.outcomeCertain ?? true,
+      providerBytesSent: options.omitAnswerExchange !== true,
+      schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v2",
+      terminalReason }))],
+    ["answer_original_model_surface", answerSurface],
+    ["answer_original_request", serializeSubscriptionRuntimeTaskRequest(answerRequest)],
+    ["answer_original_response", answerResponse],
     ["answer_normalized_outcome", bytes(JSON.stringify(outcome))]] as const) {
+    if (options.omitAnswerExchange === true && kind.startsWith("answer_original_")) {continue;}
     await evidence.audit.seal({ attemptId, kind, plaintext });
   }
-  return { artifactRoot, reader: createProductionLocalCanonicalEvidenceReader({ artifactKey,
+  return { artifactRoot, evidence, reader: createProductionLocalCanonicalEvidenceReader({ artifactKey,
     artifactKeyId: "synthetic-key", artifactRoot }), projection: { answerAbstained: false,
     attemptId, campaignRootSha256,
     capabilityRequestSha256: sha(capabilityRequest), capabilityResponseSha256: sha(capabilityResponse),
-    citationLocatorIds: ["locator-1"], evidenceLocatorIds: ["locator-1"],
-    evidenceTurnIds: ["turn-1"], rankedLocatorIds: ["locator-1"], retrievalLatencyUs: 12,
+    citationLocatorIds: options.outcomeStatus === "failed" ? [] : ["locator-1"],
+    evidenceLocatorIds: ["locator-1"],
+    diagnosticCustody: null, evidenceTurnIds: ["turn-1"], executionPacket, identity,
+    providerCallInventory: [{ callKind: "capability" as const, callOrdinal: 0 as const },
+      { callKind: "retrieval" as const, callOrdinal: 0 as const },
+      ...(options.omitAnswerExchange === true ? [] :
+        [{ callKind: "answer" as const, callOrdinal: 0 as const }])],
+    rankedLocatorIds: ["locator-1"], retrievalLatencyUs: 12,
     retrievalRequestSha256: sha(retrievalRequest), retrievalResponseSha256:
-      sha(retrievalResponse) } };
+      sha(retrievalResponse), terminalAnswerRequestSha256: canonicalSha256({
+        effectKind: "answer", request: answerRequest }),
+    terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256(
+      options.omitAnswerExchange === true ? [] : [{
+        callOrdinal: "original", requestBytes: serializeSubscriptionRuntimeTaskRequest(answerRequest),
+        responseBytes: answerResponse }]),
+    terminalReason: options.outcomeStatus === "failed" ? "synthetic_failure" : null,
+    terminalStatus: options.outcomeStatus === "failed" ? "failed" as const : "answered" as const,
+    topology: {
+      currentMeetingId: "synthetic-meeting", roomId: "synthetic-room",
+      scopeId: "synthetic-scope" } } };
 }
 function bytes(value: string): Uint8Array {return new TextEncoder().encode(value);}
 function sha(value: Uint8Array): string {return createHash("sha256").update(value).digest("hex");}

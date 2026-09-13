@@ -320,6 +320,11 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-authentication.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-artifact-validation.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-artifact-envelope-validation.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-answer-artifact-validation.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-pre-retrieval-artifact-validation.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-evidence-port.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-retrieval-port.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-evidence-store.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
@@ -327,6 +332,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-evidence-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-http-connection-configuration.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-local-canonical-evidence-reader.ts
@@ -340,6 +346,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-manifest.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-frozen-store.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-index-readiness.ts
+      - packages/infinity-context-adapter/src/quality-campaign/diagnostic-installed-sdk.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-run.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-score-cli.ts
@@ -352,6 +359,10 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/operator-cli.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-authentication.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-artifact-validation.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-artifact-envelope-validation.ts
+      - packages/infinity-context-adapter/src/quality-campaign/canonical-answer-artifact-validation.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-evidence-port.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-canonical-retrieval-port.ts
       - packages/infinity-context-adapter/src/quality-campaign/canonical-execution-evidence-store.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-checkpoints.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-cleanup.ts
@@ -359,6 +370,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/production-evidence-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-holdout.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-http-ports.ts
+      - packages/infinity-context-adapter/src/quality-campaign/production-http-connection-configuration.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-inputs.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-main-execution.ts
       - packages/infinity-context-adapter/src/quality-campaign/production-local-canonical-evidence-reader.ts
@@ -372,6 +384,7 @@ boundaries:
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-manifest.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-frozen-store.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-index-readiness.ts
+      - packages/infinity-context-adapter/src/quality-campaign/diagnostic-installed-sdk.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-run.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-custody.ts
       - packages/infinity-context-adapter/src/quality-campaign/diagnostic-score-cli.ts
@@ -393,6 +406,7 @@ boundaries:
         - node:fs
         - node:fs/promises
         - node:path
+        - node:url
       runtimeReferences: []
   - id: adapters.infinity-quality-budget-lock
     roots:
@@ -415,6 +429,8 @@ boundaries:
       - packages/infinity-context-adapter/src/infinity-context-historical-memory.ts
       - packages/infinity-context-adapter/src/infinity-context-live-finalized-memory.ts
       - packages/infinity-context-adapter/src/infinity-context-retrieval-v2.ts
+      - packages/infinity-context-adapter/src/infinity-context-retrieval-v3.ts
+      - packages/infinity-context-adapter/src/infinity-context-retrieval-exchange.ts
       - packages/infinity-context-adapter/src/infinity-retrieval-scope-resolution.ts
       - packages/infinity-context-adapter/src/infinity-exact-document-compatibility.ts
       - packages/infinity-context-adapter/src/infinity-production-qualification.ts

@@ -1,13 +1,14 @@
 import { digest, exactRecord } from "./canonical.js";
 
 export type SemanticQualityV4ArtifactKind = "adjudication" | "answer" | "evidence" |
+  "answer_request_intent" | "answer_execution_observation" |
   "answer_normalized_outcome" | "answer_original_model_surface" |
   "answer_original_request" | "answer_original_response" | "answer_repair_model_surface" |
   "answer_repair_request" | "answer_repair_response" | "capability_request" |
   "capability_response" |
   "original_model_input" | "original_provider_request" | "original_provider_response" |
   "repair_model_input" | "repair_provider_request" | "repair_provider_response" |
-  "raw_outcome" | "response_runtime" | "retrieval_request" | "retrieval_response" |
+  "raw_outcome" | "response_runtime" | "retrieval_request" | "retrieval_response" | "retrieval_binding" |
   "scope_resolution_observation" | "retrieval_observation" | "selected_canonical_turns";
 
 export interface SemanticQualityV4ArtifactReceipt {
@@ -51,10 +52,19 @@ export function validateCanonicalScopeResolutionObservation(value: unknown) {
       responseBytes: Number(read.responseBytes), status: String(read.status) });
   });
   if (reads.some((read, index) => index < reads.length - 1 && read.status !== "received") ||
+    reads.some((read) => read.status === "outcome_unknown") && record.status !== "interrupted" ||
+    record.status === "empty" && reads.length !== 0 ||
+    !validScopeTerminalRead(String(record.status), reads.at(-1)?.status) ||
     record.status === "prepared" && (reads.length !== 2 ||
       reads.some((read) => read.status !== "received"))) {
     throw new Error("canonical scope resolution observation is incomplete");
   }
   return Object.freeze({ reads: Object.freeze(reads), status: String(record.status),
     schemaVersion: "meeting_knowledge.scope_resolution.v1" as const });
+}
+
+function validScopeTerminalRead(status: string, lastReadStatus: string | undefined): boolean {
+  if (status === "unavailable") {return lastReadStatus === "failed";}
+  if (status === "interrupted") {return lastReadStatus === "outcome_unknown";}
+  return true;
 }

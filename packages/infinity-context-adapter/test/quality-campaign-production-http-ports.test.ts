@@ -1,7 +1,7 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -56,6 +56,80 @@ describe("concrete HTTP production review evidence", () => {
           "canonical actor key profile is invalid");
       expect(fixture.fetchCalls()).toHaveLength(0);
     }
+  });
+
+  it.each([undefined, "context-retrieval.v2", "context-retrieval.v3"] as const)(
+    "accepts supported canonical retrieval contract version %s", async (version) => {
+      const fixture = await httpFixture();
+      const config = JSON.parse(await readFile(fixture.connectionsPath, "utf8")) as
+        Record<string, unknown>;
+      const canonical = config.canonicalExecution as Record<string, unknown>;
+      if (version === undefined) { Reflect.deleteProperty(canonical, "retrievalContractVersion"); }
+      else { canonical.retrievalContractVersion = version; }
+      await writeFile(fixture.connectionsPath, canonicalJson(config));
+
+      await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath))
+        .resolves.toBeDefined();
+    });
+
+  it.each(["context-retrieval.v1", "context-retrieval.v4", null, 3])(
+    "rejects unsupported canonical retrieval contract version %s", async (version) => {
+      const fixture = await httpFixture();
+      await fixture.writeInvalidEndpoint((config) => {
+        (config.canonicalExecution as Record<string, unknown>).retrievalContractVersion = version;
+      });
+
+      await expect(createHttpQualityCampaignProductionPorts(fixture.connectionsPath))
+        .rejects.toThrow("canonical retrieval contract configuration is invalid");
+      expect(fixture.fetchCalls()).toHaveLength(0);
+    });
+
+  it("forwards the selected retrieval contract version into the real canonical factory", async () => {
+    const fixture = await httpFixture();
+    const root = dirname(fixture.connectionsPath);
+    const config = JSON.parse(await readFile(fixture.connectionsPath, "utf8")) as
+      Record<string, unknown>;
+    const canonical = config.canonicalExecution as Record<string, unknown>;
+    const paths = {
+      answerExecutionBindingPath: join(root, "factory-answer-execution.json"),
+      artifactKeyPath: join(root, "factory-artifact-key"),
+      infinityCapabilityPath: join(root, "factory-capability.json"),
+      infinityTokenPath: join(root, "factory-infinity-token"),
+      postgresUrlPath: join(root, "factory-postgres-url"),
+      runtimeTokenPath: join(root, "factory-runtime-token"),
+      topologyKeyPath: join(root, "factory-topology-key"),
+      topologyPath: join(root, "factory-topology.json"),
+    };
+    Object.assign(canonical, paths);
+    await Promise.all([
+      writeFile(paths.answerExecutionBindingPath, canonicalJson({})),
+      writeFile(paths.artifactKeyPath, Buffer.alloc(32, 1).toString("base64")),
+      writeFile(paths.infinityCapabilityPath, canonicalJson({ capability_fingerprint: "fingerprint",
+        index_profile_digest: "digest", profile_id: "not-the-full-profile",
+        service_revision: "revision" })),
+      writeFile(paths.infinityTokenPath, "infinity-token"),
+      writeFile(paths.postgresUrlPath, "postgres://synthetic.invalid/database"),
+      writeFile(paths.runtimeTokenPath, "runtime-token-1234"),
+      writeFile(paths.topologyKeyPath, Buffer.alloc(32, 7)),
+      writeFile(paths.topologyPath, canonicalJson({})),
+    ]);
+    const invoke = async (version?: "context-retrieval.v2" | "context-retrieval.v3") => {
+      if (version === undefined) { Reflect.deleteProperty(canonical, "retrievalContractVersion"); }
+      else { canonical.retrievalContractVersion = version; }
+      await writeFile(fixture.connectionsPath, canonicalJson(config));
+      const ports = await createHttpQualityCampaignProductionPorts(fixture.connectionsPath);
+      return await ports.mainExecutorFactory.create({} as Parameters<
+        typeof ports.mainExecutorFactory.create>[0]);
+    };
+
+    await expect(invoke()).rejects.toThrow(
+      "Infinity capability is not the full locator production profile");
+    await expect(invoke("context-retrieval.v2")).rejects.toThrow(
+      "Infinity capability is not the full locator production profile");
+    const v3Failure = await invoke("context-retrieval.v3").catch((error: unknown) => error);
+    expect(v3Failure).toBeInstanceOf(Error);
+    expect((v3Failure as Error).message).not.toContain(
+      "Infinity capability is not the full locator production profile");
   });
 
   it("accepts independently configured legacy public trust and rejects open trust entries", async () => {

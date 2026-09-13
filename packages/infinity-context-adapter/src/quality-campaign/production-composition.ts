@@ -111,6 +111,7 @@ Promise<ProductionCompositionResult> {
     const adjudicatedReceiptSha256 = await checkpoints.requirePhase(admitted.rootBindingSha256, "adjudicated");
     const evidence = await loadMainExecutionEvidence({ ports: input.ports, campaignRootSha256:
       admitted.rootBindingSha256, questions: admitted.questions,
+      executionPackets,
       deadlineEpochMs: deadline.campaignDeadlineEpochMs,
       releaseRootSha256: verifiedRelease.releaseRootSha256,
       spendReservationSha256ByRepetition: spendDigests });
@@ -137,6 +138,7 @@ Promise<ProductionCompositionResult> {
     const retainedReceiptSha256 = await checkpoints.requirePhase(admitted.rootBindingSha256, "retained");
     const evidence = await loadMainExecutionEvidence({ ports: input.ports, campaignRootSha256:
       admitted.rootBindingSha256, questions: admitted.questions,
+      executionPackets,
       deadlineEpochMs: deadline.campaignDeadlineEpochMs,
       releaseRootSha256: verifiedRelease.releaseRootSha256,
       spendReservationSha256ByRepetition: spendDigests });

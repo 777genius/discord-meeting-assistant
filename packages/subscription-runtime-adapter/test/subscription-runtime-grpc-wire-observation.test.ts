@@ -59,12 +59,14 @@ describe("qualified subscription runtime gRPC wire observation", () => {
 
     expect(reservations).toEqual(["original"]);
     expect(observation.exchanges.repair).toBeNull();
-    expect(Buffer.from(observation.exchanges.original.requestBytes)).toEqual(expectedRequest);
-    expect(Buffer.from(observation.exchanges.original.responseBytes)).toEqual(expectedResponse);
-    expect(observation.exchanges.original.requestBytes).not.toEqual(
+    const original = observation.exchanges.original;
+    if (original === null) {throw new Error("original exchange was not captured");}
+    expect(Buffer.from(original.requestBytes)).toEqual(expectedRequest);
+    expect(Buffer.from(original.responseBytes)).toEqual(expectedResponse);
+    expect(original.requestBytes).not.toEqual(
       Buffer.from(JSON.stringify(grpcRequest)),
     );
-    expect(observation.exchanges.original.responseBytes).not.toEqual(
+    expect(original.responseBytes).not.toEqual(
       Buffer.from(JSON.stringify(rawResponse)),
     );
   });
@@ -88,11 +90,13 @@ describe("qualified subscription runtime gRPC wire observation", () => {
 
     await answer.generate(request);
     const observation = answer.takeQualificationObservation(request.attemptId);
+    const original = observation.exchanges.original;
+    if (original === null) {throw new Error("original exchange was not captured");}
 
     expect(events).toEqual([
       "reserve:original", "send:original", "reserve:repair", "send:repair",
     ]);
-    expect(observation.exchanges.original.identity).toMatchObject({
+    expect(original.identity).toMatchObject({
       attemptId: request.attemptId, callOrdinal: "original",
       purpose: "discord_meeting.knowledge.answer.v1",
     });
@@ -100,7 +104,7 @@ describe("qualified subscription runtime gRPC wire observation", () => {
       attemptId: request.attemptId, callOrdinal: "repair",
     });
     expect(observation.exchanges.repair?.identity.runId).not.toBe(
-      observation.exchanges.original.identity.runId,
+      original.identity.runId,
     );
     expect(() => answer.takeQualificationObservation(request.attemptId)).toThrow(/absent/u);
 

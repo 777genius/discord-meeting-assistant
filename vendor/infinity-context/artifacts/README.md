@@ -16,10 +16,19 @@ artifact and its packed metadata, never to a mutable source checkout.
 - release manifest SHA-256: `8b675d4f4ee00b3effc4208fe24a65f6406b891d6c33d388dafd73ce4b7f71af`
 - release verification receipt SHA-256: `4dff2fb23ddf2913332d033d0283b5268e24ce88eee7c854bc26e417ae1946cf`
 
-`prepare-official-sdk.mjs` verifies all of these values offline. It does not
-rebuild or silently regenerate the reviewed tarball.
+`prepare-official-sdk.mjs` verifies all of these historical values offline. It
+also verifies the separately retained 0.3.1 draft intake with the repository's
+strict custody helper. It does not rebuild or silently regenerate either
+tarball.
 
-The predecessor packages are retained for evidence only; 0.2.4 is the only active SDK artifact.
+The installed package pin is `infinity-context-sdk-0.3.1.tgz`. That artifact is
+a mutable, unpublished draft observed at source commit
+`9e06b31c7e07d158ead3e0b4ba34b5371c8913f2`; its
+`immutable_attestation_verified` and public-distribution claims are both false.
+Its release manifest, draft qualification receipt, source `package-lock.json`,
+and independently derived trusted-intake record are versioned beside it. This
+test-only draft qualification does not replace or upgrade the genuine 0.2.4
+release evidence and cannot pass the production immutable gate.
 
 Release: https://github.com/777genius/infinity-context/releases/tag/sdk-v0.2.4
 

@@ -1,8 +1,12 @@
-const EXECUTION_PACKET_KEYS = Object.freeze([
+import { QUALIFICATION_PROVIDER_INPUT_CONTRACT } from "./qualification-contract.js";
+
+const EXECUTION_PACKET_V1_KEYS = Object.freeze([
   "locale", "questionId", "questionText", "scopeTopologyReference", "source",
 ]);
+const EXECUTION_PACKET_V2_KEYS = Object.freeze([...EXECUTION_PACKET_V1_KEYS, "schemaVersion",
+  "scopeTopologyDocumentSha256", "scopeTopologyGeneration"]);
 
-export interface QualificationExecutionPacket {
+interface QualificationExecutionPacketCommon {
   readonly locale: "en" | "mixed" | "ru";
   readonly questionId: string;
   readonly questionText: string;
@@ -10,6 +14,16 @@ export interface QualificationExecutionPacket {
   readonly scopeTopologyReference: string;
   readonly source: "automatic" | "independent_review";
 }
+
+export type QualificationExecutionPacket = QualificationExecutionPacketCommon & ({
+  readonly schemaVersion?: never;
+  readonly scopeTopologyDocumentSha256?: never;
+  readonly scopeTopologyGeneration?: never;
+} | {
+  readonly schemaVersion: "meeting_knowledge.qualification_execution_packet.v2";
+  readonly scopeTopologyDocumentSha256: string;
+  readonly scopeTopologyGeneration: string;
+});
 
 export interface QualificationRetrievalContribution {
   readonly contributionScorePicos: number;
@@ -145,6 +159,7 @@ export class ExecuteAdmittedQualificationQuestion {
       evidence = await this.ports.evidence.rehydrate({ locatorIds,
         questionId: input.questionId, scopeTopologyReference: input.scopeTopologyReference }, options);
     } catch {
+      options.signal.throwIfAborted();
       return await this.complete(options.attemptId, { citations: [], claims: [],
         rawRetrievalResponseSha256: retrieval.rawResponseSha256,
         reason: "evidence_rehydration_failed", retrievalCandidates: retrieval.candidates,
@@ -194,14 +209,22 @@ export class ExecuteAdmittedQualificationQuestion {
 }
 
 function assertExecutionPacket(input: unknown): asserts input is QualificationExecutionPacket {
+  const versioned = isRecord(input) && input.schemaVersion ===
+    "meeting_knowledge.qualification_execution_packet.v2";
   if (!isRecord(input) ||
-    JSON.stringify(Object.keys(input).toSorted()) !== JSON.stringify([...EXECUTION_PACKET_KEYS].toSorted()) ||
+    JSON.stringify(Object.keys(input).toSorted()) !== JSON.stringify(
+      [...(versioned ? EXECUTION_PACKET_V2_KEYS : EXECUTION_PACKET_V1_KEYS)].toSorted()) ||
     typeof input.locale !== "string" || !["en", "mixed", "ru"].includes(input.locale) ||
     typeof input.source !== "string" ||
     !["automatic", "independent_review"].includes(input.source) ||
-    [input.questionId, input.questionText, input.scopeTopologyReference]
+    [input.questionId, input.questionText, input.scopeTopologyReference,
+      ...(versioned ? [input.scopeTopologyGeneration] : [])]
       .some((value) => typeof value !== "string" || value.trim().length === 0)) {
     throw new Error("qualification execution packet is invalid or gold-bearing");
+  }
+  if (versioned && (typeof input.scopeTopologyDocumentSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(input.scopeTopologyDocumentSha256))) {
+    throw new Error("qualification execution packet topology binding is invalid");
   }
 }
 
@@ -236,7 +259,9 @@ function assertSelectedEvidence(locatorIds: readonly string[],
 
 function assertEvidenceBytes(turns: readonly QualificationCanonicalTurn[]): void {
   const bytes = new TextEncoder().encode(JSON.stringify(turns)).byteLength;
-  if (bytes > 16_000) {throw new Error("qualification selected evidence exceeds 16000 UTF-8 bytes");}
+  if (bytes > QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.evidenceByteLimit) {
+    throw new Error("qualification selected evidence exceeds 16000 UTF-8 bytes");
+  }
 }
 
 function freezeOutcome(input: QualificationQuestionOutcome): QualificationQuestionOutcome {

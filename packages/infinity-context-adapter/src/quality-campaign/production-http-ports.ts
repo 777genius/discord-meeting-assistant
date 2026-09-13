@@ -1,10 +1,13 @@
+import type { HttpAuthority, HttpConnectionConfiguration } from
+  "./production-http-connection-configuration.js";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { digest, exactRecord, safeId } from "./canonical.js";
 import { assertAttemptIdentity, attemptIdentity, type AttemptIdentity,
   type ProviderExchangePort } from "./execution.js";
 import { createLocalEvidenceCustody } from "./production-evidence-custody.js";
-import { createProductionCanonicalExecutorFactory, validateLegacyHistoricalPublicTrust,
+import { createProductionCanonicalExecutorFactory, loadProductionCanonicalEvidenceTopology,
+  validateLegacyHistoricalPublicTrust,
   type ProductionCanonicalExecutionConnectionConfiguration } from
   "./production-canonical-executor-factory.js";
 import { createProductionLocalCanonicalEvidenceReader } from
@@ -15,35 +18,6 @@ import type { CampaignCallContext, CampaignProviderPorts,
 import { readCanonicalQualityCampaignJson, readQualityCampaignBytes, readQualityCampaignText } from
   "./production-execution-corpus-custody.js";
 
-interface HttpConnectionConfiguration {
-  readonly absenceAuthority: HttpAuthority;
-  readonly absenceEndpoint: string;
-  readonly adjudicators: readonly [HttpReviewer, HttpReviewer, HttpReviewer];
-  readonly artifactCustody: { readonly envelopeRoot: string; readonly keyCustodySha256: string;
-    readonly keyId: string; readonly keyPath: string };
-  readonly canonicalExecution: ProductionCanonicalExecutionConnectionConfiguration;
-  readonly credentialPath: string;
-  readonly deletionAuthority: HttpAuthority;
-  readonly deletionEndpoint: string;
-  readonly evidenceEndpoint: string;
-  readonly evidenceAuthority: HttpAuthority;
-  readonly evidenceKeyId: string;
-  readonly evidenceKeyPath: string;
-  readonly holdoutAnswerEndpoint: string;
-  readonly holdoutCapabilityEndpoint: string;
-  readonly holdoutEvidenceEndpoint: string;
-  readonly holdoutEvidenceAuthority: HttpAuthority;
-  readonly holdoutEvidenceKeyId: string;
-  readonly holdoutEvidenceKeyPath: string;
-  readonly holdoutProviderResultAuthority: HttpAuthority;
-  readonly holdoutRetrievalEndpoint: string;
-  readonly providerResultAuthority: HttpAuthority;
-  readonly rawOutcomeEndpoint: string;
-  readonly releaseObservationEndpoint: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_http_connections.v5";
-}
-interface HttpAuthority { readonly keyId: string; readonly publicKeyPath: string }
-interface HttpReviewer extends HttpAuthority { readonly endpoint: string }
 const MAXIMUM_HTTP_RESPONSE_BYTES = 8_000_000;
 type AbsenceInput = Parameters<QualityCampaignProductionPorts["absence"]["observe"]>[0];
 type DeletionInput = Parameters<QualityCampaignProductionPorts["deletion"]["deleteDerived"]>[0];
@@ -83,7 +57,8 @@ Promise<QualityCampaignProductionPorts> {
   const mainCanonicalEvidence = createProductionLocalCanonicalEvidenceReader({ artifactKey:
     decodeAesKey(await readQualityCampaignText(absolute(config.canonicalExecution.artifactKeyPath),
       "canonical artifact key", 16_384)), artifactKeyId: config.canonicalExecution.artifactKeyId,
-  artifactRoot: config.canonicalExecution.artifactRoot });
+  artifactRoot: config.canonicalExecution.artifactRoot, topology: async () =>
+    await loadProductionCanonicalEvidenceTopology(config.canonicalExecution) });
   let canonicalFactory: Promise<Awaited<ReturnType<
     typeof createProductionCanonicalExecutorFactory>>> | undefined;
   return Object.freeze({
@@ -268,8 +243,14 @@ function decodeCanonicalExecutionConfiguration(value:
     "retrievalJournalRoot", "runtimeAddress", "runtimeTokenPath", "topologyAuthority",
     "topologyKeyPath", "topologyPath"];
   if (value.legacyHistoricalPublicTrust !== undefined) { keys.push("legacyHistoricalPublicTrust"); }
+  if (value.retrievalContractVersion !== undefined) { keys.push("retrievalContractVersion"); }
   const record = exactRecord(value, keys, "canonical execution connection configuration");
   safeId(record.actorKeyProfileId, "canonical actor key profile");
+  if (record.retrievalContractVersion !== undefined &&
+    !["context-retrieval.v2", "context-retrieval.v3"].includes(
+      record.retrievalContractVersion as string)) {
+    throw new Error("canonical retrieval contract configuration is invalid");
+  }
   validateLegacyHistoricalPublicTrust(value.legacyHistoricalPublicTrust);
   const topologyAuthority = exactRecord(record.topologyAuthority, ["keyId", "publicKeyPath"],
     "scope topology authority");

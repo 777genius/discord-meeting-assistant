@@ -2,43 +2,34 @@ import { InfinityRetrievalScopeResolution } from "../infinity-retrieval-scope-re
 import { open, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Pool } from "pg";
-import { buildHistoricalIndexPlan, historicalEmbeddingTokenProfile, PrepareFocusedLocatorRetrievalV2Request, type HistoricalIndexPlanV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
+import { buildHistoricalIndexPlan, historicalEmbeddingTokenProfile,
+  PrepareFocusedLocatorRetrievalV2Request, PrepareFocusedLocatorRetrievalV3Request,
+  type HistoricalIndexPlanV1 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresDiagnosticFinalEvidence } from "@discord-meeting/postgres-adapter";
 import { createGrpcQualifiedGroundedAnswerAdapter, GrpcSubscriptionRuntimeTransport, subscriptionRuntimeCliEngine } from "@discord-meeting/subscription-runtime-adapter";
 import { HmacHistoricalOpaqueIds } from "../hmac-historical-ids.js";
 import { InfinityContextHistoricalMemoryAdapter } from "../infinity-context-historical-memory.js";
 import { InfinityContextRetrievalV2Adapter } from "../infinity-context-retrieval-v2.js";
+import { InfinityContextRetrievalV3Adapter } from "../infinity-context-retrieval-v3.js";
 import { PinnedMultilingualMiniLmTokenizer } from "../pinned-multilingual-minilm-tokenizer.js";
 import { canonicalJson, sha256 } from "./canonical.js";
-import { awaitDiagnosticIndexReadiness, DiagnosticIndexReadinessError } from "./diagnostic-index-readiness.js";
+import { awaitDiagnosticIndexReadiness, awaitDiagnosticIndexReadinessV3,
+  DiagnosticIndexReadinessError } from "./diagnostic-index-readiness.js";
 import { DiagnosticCustody } from "./diagnostic-custody.js";
 import { DiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
-import { decodeDiagnosticManifest, decodeDiagnosticQuestions, type DiagnosticManifest, type DiagnosticQuestion } from "./diagnostic-manifest.js";
-import { createDiagnosticCanonicalQuestionChain } from "./production-canonical-question-chain.js";
+import { decodeVersionedDiagnosticManifest, decodeDiagnosticQuestions,
+  type DiagnosticManifest, type DiagnosticManifestV2, type DiagnosticOutcome,
+  type DiagnosticQuestion,
+} from "./diagnostic-manifest.js";
+import { createDiagnosticCanonicalQuestionChain,
+  type QualificationEncryptedAuditPort } from "./production-canonical-question-chain.js";
+import { ExecuteAdmittedQualificationQuestion,
+  type QualificationExternalEffectReservationPort } from
+  "./execute-admitted-qualification-question.js";
 import { createProductionCanonicalExecutionEvidence } from "./production-canonical-execution-evidence.js";
-export interface DiagnosticOutcome {
-  readonly questionId: string;
-  readonly status: "answered" | "abstained" | "failed" | "outcome_unknown";
-  readonly reason: string | null;
-  readonly citations: readonly string[];
-  readonly claims: readonly string[];
-  readonly retrievedLocators: readonly string[];
-  readonly citationValidity: {
-    readonly valid: number;
-    readonly total: number;
-  };
-  readonly latencyMs: {
-    readonly retrieval: number | null;
-    readonly postgres: number | null;
-    readonly answer: number | null;
-    readonly endToEnd: number;
-  };
-  readonly bytes: {
-    readonly evidence: number;
-    readonly originalPrompt: number;
-    readonly repairPrompt: number;
-  };
-}
+import { verifyInstalledDiagnosticSdk } from "./diagnostic-installed-sdk.js";
+export { verifyDiagnosticSdkPackageBytes, verifyInstalledDiagnosticSdk } from "./diagnostic-installed-sdk.js";
+export type { DiagnosticOutcome } from "./diagnostic-manifest.js";
 export async function runDiagnosticCli(argv: readonly string[], writeSafeLine?: (line: string) => void): Promise<0 | 1> {
   const manifestPath = argv[1], reportPath = argv[2];
   if (manifestPath === undefined || reportPath === undefined || !manifestPath.startsWith("/") ||
@@ -46,9 +37,12 @@ export async function runDiagnosticCli(argv: readonly string[], writeSafeLine?: 
     return 1;
   }
   try {
-    const manifest = decodeDiagnosticManifest(JSON.parse(await readFile(manifestPath, "utf8")));
+    const manifest = decodeVersionedDiagnosticManifest(JSON.parse(await readFile(manifestPath, "utf8")));
     if ((argv[3] !== undefined && argv[3] !== "--reconcile-index") || argv.length > 4) {
       throw new Error("diagnostic report path or option is invalid");
+    }
+    if (manifest.schemaVersion === "meeting_knowledge.real40_diagnostic.v2") {
+      await verifyInstalledDiagnosticSdk(manifest.sdkIdentity);
     }
     const resolvedReportPath = await resolveDiagnosticReportPath(reportPath, manifest.connections.artifactRoot);
     const reportFile = await open(resolvedReportPath, "wx", 0o600);
@@ -101,12 +95,18 @@ async function diagnosticPhysicalPath(path: string): Promise<string> {
   }
 }
 
-export async function runDiagnostic(manifest: DiagnosticManifest, reconcileIndex = false) {
+export async function runDiagnostic(manifest: DiagnosticManifest | DiagnosticManifestV2,
+  reconcileIndex = false) {
   // Decode again: exported composition never treats a TypeScript cast as authority.
-  const m = decodeDiagnosticManifest(manifest), c = m.connections;
+  const m = decodeVersionedDiagnosticManifest(manifest), c = m.connections;
   if (sha256(m.frozen.roster) !== m.rosterSha256) {
     throw new Error("diagnostic frozen identity/profile differs");
   }
+  // V2 may execute only from the exact installed draft package authenticated by
+  // the repository's test-only SDK intake boundary. A source checkout,
+  // entrypoint alias, or manifest assertion alone is never package custody.
+  const installedSdk = m.schemaVersion === "meeting_knowledge.real40_diagnostic.v2"
+    ? await verifyInstalledDiagnosticSdk(m.sdkIdentity) : null;
   const [postgresUrl, infinityToken, runtimeToken, keyText, topologyKey] = await Promise.all([
     secret(c.postgresUrlPath), secret(c.infinityTokenPath), secret(c.runtimeTokenPath),
     secret(c.artifactKeyPath), readFile(c.topologyKeyPath),
@@ -166,12 +166,15 @@ export async function runDiagnostic(manifest: DiagnosticManifest, reconcileIndex
     if (applied.planSha256 !== sha256(plan)) {
       throw new Error("diagnostic applied receipt is foreign");
     }
-    const indexPreparation = await awaitDiagnosticIndexReadiness({ baseUrl: c.infinityBaseUrl,
-      token: infinityToken, binding: m.providerBinding, custody });
+    const indexPreparation = m.schemaVersion === "meeting_knowledge.real40_diagnostic.v2"
+      ? await awaitDiagnosticIndexReadinessV3({ baseUrl: c.infinityBaseUrl,
+          token: infinityToken, binding: m.providerBinding, custody })
+      : await awaitDiagnosticIndexReadiness({ baseUrl: c.infinityBaseUrl,
+          token: infinityToken, binding: m.providerBinding, custody });
     const store = new DiagnosticFrozenStore(authority, plan, applied.remoteDocumentIds);
     const outcomes = await runDiagnosticSchedule(custody, m.questions, question => executeQuestion({ m, question, root, key, custody, authority, store, ids,
       transport, infinityToken }));
-    const report = { schemaVersion: "meeting_knowledge.real40_diagnostic_report.v1", qualifying: false,
+    const commonReport = { qualifying: false,
       rootBindingSha256: root, declaredSourceRevision: m.sourceRevision, sourceRevisionAuthority: "owner_declared_unverified", loadedModuleSha256, loadedSdkSha256,
       snapshotSha256: m.frozen.snapshotSha256, transcriptSha256: m.frozen.transcriptSha256,
       rosterSha256: m.rosterSha256, planSha256: sha256(plan), questionDenominator: 40, indexPreparation,
@@ -185,6 +188,15 @@ export async function runDiagnostic(manifest: DiagnosticManifest, reconcileIndex
         claimCount: claims.length
       })),
     };
+    const report = m.schemaVersion === "meeting_knowledge.real40_diagnostic.v2"
+      ? { ...commonReport, schemaVersion: "meeting_knowledge.real40_diagnostic_report.v2",
+          executingModuleIdentity: Object.freeze({ loadedModuleSha256 }),
+          sdkIdentity: m.sdkIdentity, executingSdkIdentity: installedSdk,
+          selectedContracts: Object.freeze({ manifest: m.schemaVersion,
+            report: "meeting_knowledge.real40_diagnostic_report.v2" as const,
+            retrieval: m.providerBinding.contractVersion,
+            threadSelector: m.threadSelector }) }
+      : { schemaVersion: "meeting_knowledge.real40_diagnostic_report.v1", ...commonReport };
     if (await custody.recover("execution-complete") === null) {
       await custody.retain("execution-complete", report);
     }
@@ -236,7 +248,7 @@ export async function runDiagnosticSchedule(custody: DiagnosticCustody, packets:
   return outcomes;
 }
 async function executeQuestion(input: {
-  readonly m: DiagnosticManifest;
+  readonly m: DiagnosticManifest | DiagnosticManifestV2;
   readonly question: DiagnosticQuestion;
   readonly root: string;
   readonly key: Uint8Array;
@@ -277,10 +289,14 @@ async function executeQuestion(input: {
       effect.providerReserved = true;
     },
   });
-  const chain = createDiagnosticCanonicalQuestionChain({
-    answer, audit: { seal: async (value) => {
+  const commonChain = {
+    answer, audit: { seal: async (value: Parameters<QualificationEncryptedAuditPort["seal"]>[0]) => {
         if (value.kind === "selected_canonical_turns") {
-          bytes.evidence = value.plaintext.length;
+          const retained: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(value.plaintext));
+          const turns: unknown = Array.isArray(retained) ? retained : retained !== null &&
+            typeof retained === "object" ? Reflect.get(retained, "turns") : undefined;
+          if (!Array.isArray(turns)) {throw new Error("diagnostic selected evidence artifact is invalid");}
+          bytes.evidence = new TextEncoder().encode(JSON.stringify(turns)).byteLength;
         }
         if (value.kind === "answer_original_model_surface") {
           bytes.originalPrompt = value.plaintext.length;
@@ -295,55 +311,65 @@ async function executeQuestion(input: {
         await evidence.audit.seal(value);
       } },
     evidenceAuthority: input.authority, store: input.store, ids: input.ids, journal: evidence.journal,
-    preparer: new PrepareFocusedLocatorRetrievalV2Request({ ids: input.ids,
-      scopeResolution: new InfinityRetrievalScopeResolution({ baseUrl: c.infinityBaseUrl,
-        token: input.infinityToken, operationTimeoutMs: 500, requestTimeoutMs: 500 }),
-      providerBinding: m.providerBinding, snapshot: input.store }),
-    retrieval: new InfinityContextRetrievalV2Adapter({ baseUrl: c.infinityBaseUrl,
-      token: input.infinityToken, operationTimeoutMs: 4000, requestTimeoutMs: 2000 }),
-    spend: { reserve: async (reservation) => {
+    spend: { reserve: async (reservation: Parameters<
+      QualificationExternalEffectReservationPort["reserve"]>[0]) => {
         await custody.reserve(`effect-${sha256({ attemptId, kind: reservation.effectKind })}`, reservation);
       } },
-    topology: { resolve: async (reference) => {
+    topology: { resolve: async (reference: string) => {
         if (reference !== question.scopeTopologyReference) {
           throw new Error("foreign diagnostic question");
         }
         return { currentMeetingId: m.frozen.meetingId, scopeId: m.frozen.scopeId, roomId: m.frozen.roomId };
       } },
-  });
+  };
+  const retrievalConfiguration = { baseUrl: c.infinityBaseUrl,
+    token: input.infinityToken, operationTimeoutMs: 4000, requestTimeoutMs: 2000 };
+  const preparationDependencies = { ids: input.ids,
+      scopeResolution: new InfinityRetrievalScopeResolution({ baseUrl: c.infinityBaseUrl,
+        token: input.infinityToken, operationTimeoutMs: 500, requestTimeoutMs: 500 }),
+      snapshot: input.store };
+  const chain = m.schemaVersion === "meeting_knowledge.real40_diagnostic.v2"
+    ? createDiagnosticCanonicalQuestionChain({ ...commonChain,
+        preparer: new PrepareFocusedLocatorRetrievalV3Request({ ...preparationDependencies,
+          providerBinding: m.providerBinding }),
+        retrieval: new InfinityContextRetrievalV3Adapter(retrievalConfiguration) })
+    : createDiagnosticCanonicalQuestionChain({ ...commonChain,
+        preparer: new PrepareFocusedLocatorRetrievalV2Request({ ...preparationDependencies,
+          providerBinding: m.providerBinding }),
+        retrieval: new InfinityContextRetrievalV2Adapter(retrievalConfiguration) });
   const options = { attemptId, signal };
+  const timed = async <T>(key: "answer" | "postgres" | "retrieval",
+    operation: () => Promise<T>): Promise<T> => {
+    const mark = Date.now();
+    try {return await operation();}
+    finally {latencyMs[key] = Date.now() - mark;}
+  };
+  const ports = {
+    answer: { generate: (...args: Parameters<typeof chain.answer.generate>) =>
+      timed("answer", () => chain.answer.generate(...args)) },
+    evidence: { rehydrate: (...args: Parameters<typeof chain.evidence.rehydrate>) =>
+      timed("postgres", () => chain.evidence.rehydrate(...args)) },
+    outcome: chain.outcome,
+    retrieval: { retrieve: async (...args: Parameters<typeof chain.retrieval.retrieve>) => {
+      const result = await timed("retrieval", () => chain.retrieval.retrieve(...args));
+      if (result.status === "completed") {
+        retrievalCompleted = true;
+        retrievedLocators = result.candidates.map(({ locatorId }) => locatorId);
+      }
+      return result;
+    } },
+  };
   try {
-    let mark = Date.now();
-    const retrieved = await chain.retrieval.retrieve(question, options);
-    latencyMs.retrieval = Date.now() - mark;
-    if (retrieved.status !== "completed") {
-      return { ...emptyOutcome(question, "failed", retrieved.reason), bytes,
-        latencyMs: { ...latencyMs, endToEnd: Date.now() - start } };
-    }
-    retrievalCompleted = true;
-    retrievedLocators = retrieved.candidates.map(r => r.locatorId);
-    mark = Date.now();
-    const selected = await chain.evidence.rehydrate({ locatorIds: retrievedLocators,
-      questionId: question.questionId, scopeTopologyReference: question.scopeTopologyReference }, options);
-    latencyMs.postgres = Date.now() - mark;
-    // Overlapping canonical slices are not silently collapsed into misleading citation identity.
-    if (new Set(selected.turns.map(t => t.turnId)).size !== selected.turns.length) {
-      return { ...emptyOutcome(question, "failed", "overlapping_canonical_turn_identity"), retrievedLocators, bytes,
-        latencyMs: { ...latencyMs, endToEnd: Date.now() - start } };
-    }
-    mark = Date.now();
-    const result = await chain.answer.generate({ ...selected, evidence: selected.turns,
-      locale: question.locale, questionId: question.questionId, questionText: question.questionText }, options);
-    latencyMs.answer = Date.now() - mark;
+    const result = await new ExecuteAdmittedQualificationQuestion(ports).execute({
+      locale: question.locale, questionId: question.questionId, questionText: question.questionText,
+      scopeTopologyReference: question.scopeTopologyReference, source: "independent_review",
+    }, options);
     latencyMs.endToEnd = Date.now() - start;
-    if (result.status === "failed") {
-      return { ...emptyOutcome(question, "failed", result.reason), retrievedLocators, bytes, latencyMs };
-    }
-    const turnIds = new Set(selected.turns.map(t => t.turnId));
-    return { questionId: question.questionId, status: result.status, reason: null,
+    const turnIds = new Set(result.selectedTurns.map(({ turnId }) => turnId));
+    return { questionId: question.questionId, status: result.status, reason: result.reason ?? null,
       claims: result.claims, citations: result.citations, retrievedLocators,
-      citationValidity: { valid: result.citations.filter(id => turnIds.has(id)).length, total: result.citations.length },
-      bytes, latencyMs };
+      citationValidity: { valid: result.citations.filter(id => turnIds.has(id)).length,
+        total: result.citations.length }, bytes, latencyMs };
   }
   catch {
     return { ...emptyOutcome(question, effect.providerReserved || !retrievalCompleted && await custody.reserved(`effect-${sha256({ attemptId, kind: "retrieval" })}`) ? "outcome_unknown" : "failed", signal.aborted ? "timeout" : "diagnostic_execution_failed"), retrievedLocators, bytes,

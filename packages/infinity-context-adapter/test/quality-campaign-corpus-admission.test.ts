@@ -14,6 +14,16 @@ import { loadProductionExecutionCorpus } from
   "../src/quality-campaign/production-execution-corpus-custody.js";
 import { QUALITY_AUTHORITY_ROLES } from "../src/quality-campaign/release.js";
 
+const authoritativeGeneration = Object.freeze({
+  canonicalTurnSha256: "3940285ace11a4449a7489bdc631833fffaeda3339b581316d48bf6358fc5c82",
+  caseCounts: Object.freeze({ abstention: 11, answerable: 29,
+    locales: Object.freeze({ en: 10, ru: 30 }), total: 40 }),
+  meetingId: "HQogFSdvy0tf",
+  sourceSha256: "fc92b9d76f4b4c9613e19f78b87fe3a38e4b772b3d4943cde486ed75ac0a72e4",
+  speakerCount: 7,
+  turnCount: 1_779,
+});
+
 describe("installed quality campaign corpus admission", () => {
   it("deterministically emits execution-safe and role-separated production inputs", async () => {
     const fixture = await createFixture();
@@ -67,7 +77,9 @@ describe("installed quality campaign corpus admission", () => {
   it("fails closed for tampering, wrong counts, cross-scope bindings, and path substitution",
     async () => {
       for (const mutation of ["tamper", "hash", "unsigned", "count", "duplicate", "version",
-        "scope", "path", "auth-version", "auth-disabled", "auth-expired", "symlink",
+        "target", "generation", "case-counts", "source", "generation-receipt", "scope", "path",
+        "auth-version",
+        "auth-disabled", "auth-expired", "symlink",
         "authority-symlink", "duplicate-json", "array-overlap", "nested-overlap"] as const) {
         const fixture = await createFixture();
         const phase = await json(fixture.phasePath) as { payload: Record<string, unknown>;
@@ -101,8 +113,26 @@ describe("installed quality campaign corpus admission", () => {
         } else if (mutation === "version") {
           const corpus = await json(String(phase.payload.sealedCorpusPath)) as {
             schemaVersion: string };
-          corpus.schemaVersion = "meeting_knowledge.semantic_quality_sealed_corpus.v2";
+          corpus.schemaVersion = "meeting_knowledge.semantic_quality_sealed_corpus.v1";
           await writeFile(String(phase.payload.sealedCorpusPath), canonicalJson(corpus));
+        } else if (["target", "generation", "case-counts", "source"].includes(mutation)) {
+          const corpus = await json(String(phase.payload.sealedCorpusPath)) as {
+            authoritativeGeneration: {
+              canonicalTurnSha256: string; caseCounts: { answerable: number };
+              meetingId: string;
+            }; sourceDigestSha256: string };
+          if (mutation === "target") {corpus.authoritativeGeneration.meetingId = "other-meeting";}
+          else if (mutation === "generation") {
+            corpus.authoritativeGeneration.canonicalTurnSha256 = "0".repeat(64);
+          } else if (mutation === "case-counts") {
+            corpus.authoritativeGeneration.caseCounts.answerable = 37;
+          } else {corpus.sourceDigestSha256 = "0".repeat(64);}
+          await writeFile(String(phase.payload.sealedCorpusPath), canonicalJson(corpus));
+        } else if (mutation === "generation-receipt") {
+          const mappingPath = String(phase.payload.turnToBlockManifestPath);
+          const mapping = await json(mappingPath) as { payload: Record<string, unknown> };
+          mapping.payload.authoritativeGenerationSha256 = "0".repeat(64);
+          await writeFile(mappingPath, canonicalJson(fixture.signCustody(mapping.payload)));
         } else if (mutation === "scope") {
           const corpus = await json(String(phase.payload.sealedCorpusPath)) as {
             releaseRootSha256: string };
@@ -139,7 +169,7 @@ describe("installed quality campaign corpus admission", () => {
           const corpusPath = String(phase.payload.sealedCorpusPath);
           const bytes = await readFile(corpusPath, "utf8");
           await writeFile(corpusPath,
-            `{"schemaVersion":"meeting_knowledge.semantic_quality_sealed_corpus.v1",${bytes.slice(1)}`);
+            `{"schemaVersion":"meeting_knowledge.semantic_quality_sealed_corpus.v2",${bytes.slice(1)}`);
         } else if (mutation === "array-overlap") {
           const paths = phase.payload.questionReviewReceiptPaths as string[];
           phase.payload.questionReviewReceiptPaths = [paths[0], paths[0]];
@@ -372,11 +402,13 @@ async function createFixture(forbiddenCount = 12, inconsistentTurnMapping = fals
   const releaseRootSha256 = sha256("release");
   const reviewerDigestSha256 = sha256("two-independent-reviewers");
   const snapshotSha256 = sha256("frozen-synthetic-snapshot");
-  const sourceDigestSha256 = sha256("synthetic-source");
+  const sourceDigestSha256 = authoritativeGeneration.sourceSha256;
   const entries = Array.from({ length: 240 }, (_, index) => {
     const questionId = `synthetic-${index.toString().padStart(3, "0")}`;
-    const answerable = index % 5 !== 0;
-    const locale = (["en", "ru", "mixed"] as const)[index % 3]!;
+    const reviewedIndex = index - 200;
+    const answerable = index < 200 ? index % 5 !== 0 : reviewedIndex < 29;
+    const locale = index < 200 ? (["en", "ru", "mixed"] as const)[index % 3]! :
+      reviewedIndex < 30 ? "ru" as const : "en" as const;
     const execution = { locale, questionId,
       questionText: locale === "ru" ? `Что решили для ${questionId}?` :
         locale === "mixed" ? `What решили for ${questionId}?` : `What was decided for ${questionId}?`,
@@ -399,8 +431,9 @@ async function createFixture(forbiddenCount = 12, inconsistentTurnMapping = fals
     turnId: "second-turn-in-the-same-source-block" });
   if (inconsistentTurnMapping) {turnMappings.push({ sourceLocatorId: sha256("another-block"),
     turnId: "turn-1" });}
-  const corpus = { entries, forbiddenLocatorIds, releaseRootSha256, reviewerDigestSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_sealed_corpus.v1",
+  const corpus = { authoritativeGeneration, entries, forbiddenLocatorIds, releaseRootSha256,
+    reviewerDigestSha256,
+    schemaVersion: "meeting_knowledge.semantic_quality_sealed_corpus.v2",
     snapshotSha256, sourceDigestSha256, turnMappings };
   const sealedCorpusPath = join(inputRoot, "sealed-corpus.json");
   await writeFile(sealedCorpusPath, canonicalJson(corpus));
@@ -427,9 +460,10 @@ async function createFixture(forbiddenCount = 12, inconsistentTurnMapping = fals
   const reviewPaths = await Promise.all((["reviewer_1", "reviewer_2"] as const).map(
     async (role) => {const path = join(inputRoot, `${role}-review.json`);
       await writeFile(path, canonicalJson(authorities[role]!.signed(reviewPayload))); return path;}));
-  const mappingPayload = { turnMappingsSha256: sha256({ dataset: turnMappings,
-    purpose: "turn_to_source_locator_authority" }), releaseRootSha256,
-  schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1", snapshotSha256 };
+  const mappingPayload = { authoritativeGenerationSha256: sha256(authoritativeGeneration),
+    releaseRootSha256, schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v2",
+    snapshotSha256, sourceDigestSha256, turnMappingsSha256: sha256({ dataset: turnMappings,
+      purpose: "turn_to_source_locator_authority" }) };
   const forbiddenPayload = { forbiddenLocatorSetSha256: sha256({ dataset: forbiddenLocatorIds,
     purpose: "global_forbidden_locator_authority" }), releaseRootSha256,
   schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1", snapshotSha256 };

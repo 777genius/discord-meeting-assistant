@@ -7,7 +7,8 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PrepareFocusedLocatorRetrievalV2Request } from
+import { boundedRetrievalQuery, PrepareFocusedLocatorRetrievalV2Request,
+  redactRetrievalQueryIdentities } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { PostgresHistoricalEvidenceAuthority, PostgresHistoricalMemoryStore } from
   "@discord-meeting/postgres-adapter";
@@ -225,7 +226,7 @@ describe("canonical execution evidence durability", () => {
           "spend:capability", "spend:retrieval", "journal:reserve", "http:capability",
           "http:retrieval", "seal:capability_request", "seal:capability_response",
           "seal:retrieval_request", "seal:retrieval_response", "seal:retrieval_observation",
-          "journal:failed", "seal:answer_normalized_outcome",
+          "journal:failed", "seal:answer_request_intent", "seal:answer_normalized_outcome",
         ]);
         expect(fixture.answerCalls()).toBe(0);
       } finally {
@@ -577,7 +578,8 @@ function retrievalRequest(): InfinityContextRetrievalV2Request {
     kinds: ["record_block"], relativeTimeInterval: null,
     sourceGenerations: [{ projectionGeneration: "generation-1", sourceKey: "source-1" }],
     tagsAll: [], tagsAny: [], tagsNone: [], timeInterval: null },
-  queries: [{ query: "actual measured request", queryId: "original-question" }],
+  queries: [{ query: boundedRetrievalQuery(redactRetrievalQueryIdentities(
+    executionPacket.questionText, [])), queryId: "original-question" }],
   schemaVersion: 2, scope: { memoryScopeId: "scope-1", spaceId: "space-1", threadId: null },
   softPreferences: { actorPreferences: [], relativeTimeInterval: null, sourcePreferences: [],
     timeInterval: null, timeWeightMicros: null } };

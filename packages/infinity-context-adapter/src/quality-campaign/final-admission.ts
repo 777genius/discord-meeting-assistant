@@ -18,7 +18,7 @@ export interface RepetitionQualificationEvidence {
   readonly metricsSha256: string; readonly outcomes: readonly QualificationOutcome[];
   readonly outcomesSha256: string; readonly releaseRootSha256: string;
   readonly repetition: 1 | 2 | 3; readonly rootBindingSha256: string;
-  readonly schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v4";
+  readonly schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v5";
   readonly spendReservationSha256: string;
   readonly thresholdsPassed: boolean;
 }
@@ -290,7 +290,7 @@ function decodeRepetitionEvidence(value: unknown,
     "outcomes", "outcomesSha256", "releaseRootSha256", "repetition", "rootBindingSha256",
     "schemaVersion", "spendReservationSha256", "thresholdsPassed"],
   "repetition qualification evidence payload");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_repetition_evidence.v4" ||
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_repetition_evidence.v5" ||
     record.campaignRootSha256 !== expected.campaignRootSha256 ||
     record.releaseRootSha256 !== expected.releaseRootSha256 ||
     record.repetition !== expected.repetition ||
@@ -321,18 +321,20 @@ function decodeRepetitionEvidence(value: unknown,
     metricsSha256: record.metricsSha256, outcomes, outcomesSha256: record.outcomesSha256,
     releaseRootSha256: expected.releaseRootSha256, repetition: expected.repetition,
     rootBindingSha256: expected.rootBindingSha256,
-    schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v4",
+    schemaVersion: "meeting_knowledge.semantic_quality_repetition_evidence.v5",
     spendReservationSha256: expected.spendReservationSha256, thresholdsPassed: true });
 }
 
+// Exact status, inventory, metric, and authority checks deliberately remain one decoder.
+// oxlint-disable-next-line complexity
 function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition,
   questionById: ReadonlyMap<string, CampaignQuestion>): QualificationOutcome {
   const record = exactRecord(value, ["abstention", "artifactBindingSha256ByKind",
     "campaignRootSha256", "citationChecks", "claimChecks", "evidenceTurnIds",
-    "finalAdjudicationSha256", "identity", "locale", "rankedLocatorIds",
+    "finalAdjudicationSha256", "identity", "locale", "providerCallInventory", "rankedLocatorIds",
     "relevantLocatorIds", "repetition", "resolverRequired", "retrievalLatencyUs",
     "rootBindingSha256", "scopeViolationLocatorIds", "source", "speakerTimeChecks",
-    "terminalChain"],
+    "terminalChain", "terminalReason", "terminalStatus"],
   "qualification outcome");
   const identity = record.identity as AttemptIdentity;
   assertAttemptIdentity(identity, expected);
@@ -356,14 +358,36 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
     !expected.authorizedLocatorIds.has(id))) {
     throw new Error("qualification outcome contains a foreign locator ID");
   }
+  const allowsEmptyAnswerEvidence = abstention.observed || record.terminalStatus === "failed";
   const evidenceTurnIds = decodeIdList(record.evidenceTurnIds, "evidence turn", 256,
-    abstention.observed);
+    allowsEmptyAnswerEvidence);
   const speakerTimeChecks = decodeSpeakerTimeChecks(record.speakerTimeChecks,
-    new Set(evidenceTurnIds), abstention.observed);
-  const terminalChain = decodeTerminalChain(record.terminalChain);
+    new Set(evidenceTurnIds), allowsEmptyAnswerEvidence);
+  const providerCallInventory = decodeProviderCallInventory(record.providerCallInventory);
+  if (!(record.terminalReason === null || typeof record.terminalReason === "string" &&
+    record.terminalReason.trim() !== "")) {
+    throw new Error("qualification terminal reason is invalid");
+  }
+  if (!["abstained", "answered", "failed"].includes(String(record.terminalStatus)) ||
+    abstention.observed !== (record.terminalStatus === "abstained") ||
+    record.terminalStatus === "failed" && record.terminalReason === null ||
+    record.terminalStatus === "answered" && record.terminalReason !== null) {
+    throw new Error("qualification terminal status and reason are inconsistent");
+  }
+  const terminalChain = decodeTerminalChain(record.terminalChain, providerCallInventory);
   const citationChecks = decodeCitationChecks(record.citationChecks, new Set(evidenceTurnIds),
-    abstention.observed);
-  const claimChecks = decodeClaimChecks(record.claimChecks, abstention.observed);
+    allowsEmptyAnswerEvidence);
+  const claimChecks = decodeClaimChecks(record.claimChecks, allowsEmptyAnswerEvidence);
+  const answerCalled = providerCallInventory.some(({ callKind }) => callKind === "answer");
+  const answerTerminalPresent = terminalChain.some(({ callKind }) => callKind === "answer");
+  if (answerCalled !== answerTerminalPresent || !answerCalled &&
+    (record.terminalStatus === "answered" || record.terminalStatus === "abstained" &&
+      (record.terminalReason !== "zero_admissible_evidence" || evidenceTurnIds.length !== 0 ||
+        citationChecks.length !== 0 || claimChecks.length !== 0) ||
+      record.terminalStatus === "failed" && providerCallInventory.length !== 0 &&
+        record.terminalReason !== "runtime_unavailable")) {
+    throw new Error("qualification outcome without an answer call is not an exact no-evidence abstention or pre-send failure");
+  }
   const claimIds = new Set(claimChecks.map(({ claimId }) => claimId));
   if (citationChecks.some(({ claimId }) => !claimIds.has(claimId))) {
     throw new Error("citation check references a foreign claim ID");}
@@ -372,8 +396,10 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
   }
   const factualClaimIds = claimChecks.filter(({ factual }) => factual)
     .map(({ claimId }) => claimId).toSorted();
-  if ((abstention.observed && (claimChecks.length > 0 || citationChecks.length > 0)) ||
-    (!abstention.observed && factualClaimIds.length === 0) || canonicalJson(factualClaimIds) !==
+  if ((record.terminalStatus !== "answered" &&
+      (claimChecks.length > 0 || citationChecks.length > 0)) ||
+    (record.terminalStatus === "answered" && factualClaimIds.length === 0) ||
+    canonicalJson(factualClaimIds) !==
     canonicalJson(citationChecks.map(({ claimId }) => claimId).toSorted())) {
     throw new Error("factual claims and actual citation checks are not exact");}
   digest(record.finalAdjudicationSha256, "final adjudication");
@@ -382,28 +408,38 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
     record.artifactBindingSha256ByKind === null || Array.isArray(record.artifactBindingSha256ByKind)) {
     throw new Error("qualification artifact inventory is invalid");
   }
+  if (providerCallInventory.length === 0 &&
+    (!["request_empty", "request_unavailable"].includes(String(record.terminalReason)) ||
+      Number(record.retrievalLatencyUs) !== 0 || rankedLocatorIds.length !== 0 ||
+      evidenceTurnIds.length !== 0 || abstention.observed || claimChecks.length !== 0 ||
+      citationChecks.length !== 0)) {
+    throw new Error("provider-free qualification outcome is not a pre-retrieval failure");
+  }
   return Object.freeze({ abstention, artifactBindingSha256ByKind:
     record.artifactBindingSha256ByKind, campaignRootSha256: expected.campaignRootSha256,
   citationChecks, claimChecks, evidenceTurnIds,
   finalAdjudicationSha256: String(record.finalAdjudicationSha256), identity,
   locale: question.locale, rankedLocatorIds, relevantLocatorIds,
+  providerCallInventory,
   retrievalLatencyUs: Number(record.retrievalLatencyUs),
   repetition: expected.repetition, resolverRequired: record.resolverRequired,
   rootBindingSha256: expected.rootBindingSha256, scopeViolationLocatorIds,
-  source: question.source, speakerTimeChecks, terminalChain });
+  source: question.source, speakerTimeChecks, terminalChain,
+  terminalReason: record.terminalReason,
+  terminalStatus: record.terminalStatus as QualificationOutcome["terminalStatus"] });
 }
 
-function decodeTerminalChain(value: unknown): QualificationOutcome["terminalChain"] {
-  if (!Array.isArray(value) || value.length !== 3) {
-    throw new Error("qualification terminal chain is incomplete");
+function decodeTerminalChain(value: unknown,
+  inventory: QualificationOutcome["providerCallInventory"]): QualificationOutcome["terminalChain"] {
+  if (!Array.isArray(value) || value.length !== inventory.length) {
+    throw new Error("qualification terminal chain differs from provider call inventory");
   }
-  const expectedKinds = ["capability", "retrieval", "answer"] as const;
   let predecessor: string | null = null;
   return Object.freeze(value.map((item, index) => {
     const record = exactRecord(item, ["attemptId", "callKind", "callOrdinal",
       "predecessorResultDigestSha256", "requestDigestSha256", "resultEnvelopeDigestSha256",
       "signedResult", "terminalDigestSha256"], "qualification terminal");
-    if (record.callKind !== expectedKinds[index] || record.callOrdinal !== 0 ||
+    if (record.callKind !== inventory[index]?.callKind || record.callOrdinal !== 0 ||
       record.predecessorResultDigestSha256 !== predecessor) {
       throw new Error("qualification terminal chain is reordered or substituted");
     }
@@ -413,6 +449,20 @@ function decodeTerminalChain(value: unknown): QualificationOutcome["terminalChai
     predecessor = record.resultEnvelopeDigestSha256 as string;
     return record as unknown as QualificationOutcome["terminalChain"][number];
   }));
+}
+
+function decodeProviderCallInventory(value: unknown): QualificationOutcome["providerCallInventory"] {
+  if (!Array.isArray(value)) {throw new Error("qualification provider call inventory is invalid");}
+  const inventory = value.map((item) => exactRecord(item, ["callKind", "callOrdinal"],
+    "qualification provider call inventory"));
+  const kinds = inventory.map(({ callKind }) => callKind);
+  if (!inventory.every(({ callKind, callOrdinal }) =>
+    ["capability", "retrieval", "answer"].includes(String(callKind)) && callOrdinal === 0) ||
+    ![[], ["capability", "retrieval"], ["capability", "retrieval", "answer"]]
+      .some((candidate) => canonicalJson(candidate) === canonicalJson(kinds))) {
+    throw new Error("qualification provider call inventory is invalid or non-prefix");
+  }
+  return Object.freeze(inventory) as unknown as QualificationOutcome["providerCallInventory"];
 }
 
 function assertOutcomeQuestionBinding(record: Record<string, unknown>, identity: AttemptIdentity,

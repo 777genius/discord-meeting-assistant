@@ -1,3 +1,4 @@
+import { historicalSnapshotMatchesScope } from "./focused-locator-retrieval-v2-scope.js";
 import {
   admitsHistoricalRetrieval,
   DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
@@ -7,7 +8,7 @@ import type {
   FocusedMemoryReference,
   RehydratedEvidenceTurn,
 } from "../domain/grounding-plan.js";
-import { decodeFocusedLocatorCandidate, historicalRetrievalAuditsBindRequest } from
+import { decodeFocusedLocatorCandidate, focusedLocatorRequestDigest, historicalRetrievalAuditsBindRequest } from
   "./ports/focused-retrieval-provenance.js";
 import {
   buildHistoricalRoomTopology,
@@ -19,7 +20,9 @@ import {
   type FocusedHistoricalEvidenceV2Result,
   type FocusedHistoricalEvidenceV2UnavailableReason,
   type FocusedLocatorRetrievalV2Candidate,
-  type FocusedLocatorRetrievalV2Port,
+  type FocusedLocatorRetrievalPort,
+  type FocusedLocatorRetrievalRequestSnapshot,
+  type FocusedLocatorRetrievalV3RequestSnapshot,
   type FocusedLocatorRetrievalV2RequestSnapshot,
 } from "./ports/focused-locator-retrieval-v2.js";
 import type { HistoricalAuthorizationPort } from "./ports/historical-grounding.js";
@@ -37,10 +40,10 @@ import type {
   FocusedMemoryRetrievalResult,
 } from "./ports/final-reply.js";
 
-interface HistoricalLocatorRetrievalV2Input {
+interface HistoricalLocatorRetrievalInput<T extends FocusedLocatorRetrievalRequestSnapshot> {
   readonly authorizationPrincipalRef: string;
   readonly currentMeetingId: string;
-  readonly request: FocusedLocatorRetrievalV2RequestSnapshot;
+  readonly request: T;
   readonly roomId: string;
   readonly scopeId: string;
   readonly signal?: AbortSignal;
@@ -73,7 +76,8 @@ type AdmittedHistoricalCandidates = {
   readonly status: "current";
 } | Extract<HydratedHistoricalEvidence, { readonly status: "unavailable" }>;
 
-export class HistoricalFocusedLocatorRetrievalV2 {
+abstract class HistoricalFocusedLocatorRetrieval<T extends FocusedLocatorRetrievalRequestSnapshot> {
+  protected abstract readonly schemaVersion: T["schemaVersion"];
   public constructor(private readonly dependencies: {
     readonly authorization: HistoricalAuthorizationPort;
     /** Ignored; retained only for source-compatible test construction. */
@@ -82,7 +86,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     readonly actorKeysForSpeaker?: (speakerId: string) => readonly string[];
     readonly ids: HistoricalOpaqueIdPort;
     readonly scopeResolution?: FocusedRetrievalScopeResolutionPort;
-    readonly retrieval: FocusedLocatorRetrievalV2Port;
+    readonly retrieval: FocusedLocatorRetrievalPort<T>;
     readonly servingAuthorized?: () => boolean;
     readonly snapshot?: HistoricalRoomAuthoritySnapshotPort;
     /** Test fixtures may retain the old property name. */
@@ -91,7 +95,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   }, private readonly profile: TwoHourHistoricalRetrievalProfileV1 =
     DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE) {}
 
-  public async retrieve(input: HistoricalLocatorRetrievalV2Input):
+  public async retrieve(input: HistoricalLocatorRetrievalInput<T>):
   Promise<FocusedMemoryRetrievalResult> {
     const hydrated = await this.retrieveHydrated(input);
     return hydrated.status === "unavailable" ? unavailable() : Object.freeze({
@@ -103,7 +107,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   }
 
   public async retrieveEvidence(
-    input: HistoricalLocatorRetrievalV2Input,
+    input: HistoricalLocatorRetrievalInput<T>,
   ): Promise<FocusedHistoricalEvidenceV2Result> {
     const hydrated = await this.retrieveHydrated(input);
     return hydrated.status === "unavailable"
@@ -119,12 +123,12 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   }
 
   private async retrieveHydrated(
-    input: HistoricalLocatorRetrievalV2Input,
+    input: HistoricalLocatorRetrievalInput<T>,
   ): Promise<HydratedHistoricalEvidence> {
     input.signal?.throwIfAborted();
-    if (this.dependencies.servingAuthorized?.() === false) {
-      return rejected("serving_not_authorized");
-    }
+    if (input.request.schemaVersion !== this.schemaVersion || input.request.binding.contractVersion !==
+      `context-retrieval.v${this.schemaVersion}`) {return rejected("request_not_admitted");}
+    if (this.dependencies.servingAuthorized?.() === false) {return rejected("serving_not_authorized");}
     if (!await this.scopeIsAuthorized(input)) {
       return rejected("scope_not_bound");
     }
@@ -142,9 +146,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     if (admittedCandidates.status === "unavailable") {return admittedCandidates;}
     const candidates = admittedCandidates.candidates;
     const hydrated = await this.rehydrateLocators(input, candidates);
-    if (hydrated.status === "unavailable") {
-      return hydrated;
-    }
+    if (hydrated.status === "unavailable") {return hydrated;}
     const after = await this.dependencies.authorization.authorize(authorizationRequest);
     const hydratedAudits = [...new Map(hydrated.references.map((reference) => [
       reference.historicalSource!.candidateLocator,
@@ -154,9 +156,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     if (!sameAuthorization(before, after)) {
       return rejected("authorization_changed");
     }
-    if (candidates.length > 0 && hydrated.references.length < 1) {
-      return rejected("canonical_evidence_unavailable");
-    }
+    if (candidates.length > 0 && hydrated.references.length < 1) {return rejected("canonical_evidence_unavailable");}
     if (hydrated.references.length > 0 &&
       !await historicalRetrievalAuditsBindRequest(hydratedAudits, input.request)) {
       return rejected("canonical_provenance_invalid");
@@ -171,7 +171,9 @@ export class HistoricalFocusedLocatorRetrievalV2 {
         turnHash,
       ]),
     ];
-    const authorityGeneration = `historical-locator-v2:${this.dependencies.ids.keyedId(
+    const v3 = input.request.schemaVersion === 3;
+    if (v3) {generationParts.unshift(await focusedLocatorRequestDigest(input.request));}
+    const authorityGeneration = `historical-locator-v${v3 ? 3 : 2}:${this.dependencies.ids.keyedId(
         "focused-historical-generation",
         generationParts,
       )}`;
@@ -186,7 +188,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   }
 
   private async scopeIsAuthorized(
-    input: HistoricalLocatorRetrievalV2Input,
+    input: HistoricalLocatorRetrievalInput<T>,
   ): Promise<boolean> {
     const topology = buildHistoricalRoomTopology(input.scopeId, input.roomId,
       this.dependencies.ids);
@@ -207,12 +209,10 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   }
 
   private async retrieveCandidates(
-    input: HistoricalLocatorRetrievalV2Input,
+    input: HistoricalLocatorRetrievalInput<T>,
   ): Promise<AdmittedHistoricalCandidates> {
     input.signal?.throwIfAborted();
-    if (this.dependencies.servingAuthorized?.() === false) {
-      return rejected("serving_not_authorized");
-    }
+    if (this.dependencies.servingAuthorized?.() === false) {return rejected("serving_not_authorized");}
     const remote = await this.dependencies.retrieval.retrieve(
       input.request, input.signal === undefined ? {} : { signal: input.signal });
     if (!availableRemoteWithinLimit(remote, input.request.budgets.resultLimit)) {
@@ -231,7 +231,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   }
 
   private async rehydrateLocators(
-    input: HistoricalLocatorRetrievalV2Input,
+    input: HistoricalLocatorRetrievalInput<T>,
     candidates: readonly FocusedLocatorRetrievalV2Candidate[],
   ): Promise<RehydratedLocators> {
     const snapshotPort = this.dependencies.snapshot ?? this.dependencies.store;
@@ -243,7 +243,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
       scopeId: input.scopeId,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
-    if (snapshot.status !== "current") {
+    if (!historicalSnapshotMatchesScope(snapshot, input, input.request.binding.contractVersion)) {
       return rejected("historical_authority_unavailable");
     }
     const records = snapshot.entries;
@@ -269,9 +269,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
     let evidenceBytes = 0;
     for (const candidate of candidates) {
       input.signal?.throwIfAborted();
-      if (observedLocators.has(candidate.locator)) {
-        continue;
-      }
+      if (observedLocators.has(candidate.locator)) {continue;}
       observedLocators.add(candidate.locator);
       const ownedRecords = recordsByLocator.get(candidate.locator);
       const record = ownedRecords?.length === 1 ? ownedRecords[0] : undefined;
@@ -333,7 +331,7 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   }
 
   private applyCanonicalHardFilters(
-    input: HistoricalLocatorRetrievalV2Input,
+    input: HistoricalLocatorRetrievalInput<T>,
     turns: LocallyRehydratedEvidenceBlockV1["turns"],
   ): LocallyRehydratedEvidenceBlockV1["turns"] {
     const actorKeys = input.request.filters.actorKeys;
@@ -380,8 +378,14 @@ export class HistoricalFocusedLocatorRetrievalV2 {
   }
 }
 
+export class HistoricalFocusedLocatorRetrievalV2 extends
+  HistoricalFocusedLocatorRetrieval<FocusedLocatorRetrievalV2RequestSnapshot> { protected readonly schemaVersion = 2; }
+
+export class HistoricalFocusedLocatorRetrievalV3 extends
+  HistoricalFocusedLocatorRetrieval<FocusedLocatorRetrievalV3RequestSnapshot> { protected readonly schemaVersion = 3; }
+
 function availableRemoteWithinLimit(
-  remote: Awaited<ReturnType<FocusedLocatorRetrievalV2Port["retrieve"]>>,
+  remote: Awaited<ReturnType<FocusedLocatorRetrievalPort["retrieve"]>>,
   resultLimit: number,
 ): remote is Extract<typeof remote, { readonly status: "available" }> {
   return remote.status === "available" && remote.candidates.length <= resultLimit;

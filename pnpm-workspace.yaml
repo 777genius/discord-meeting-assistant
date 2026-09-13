@@ -12,7 +12,7 @@ catalog:
   "@bufbuild/buf": 1.72.0
   "@grpc/grpc-js": 1.14.4
   "@grpc/proto-loader": 0.8.1
-  "@infinity-context/sdk": 0.2.4
+  "@infinity-context/sdk": 0.3.1
   "@openai/codex": 0.153.3
   "@aws-sdk/client-s3": 3.1101.0
   "@aws-sdk/lib-storage": 3.1101.0
@@ -62,7 +62,7 @@ allowBuilds:
   ssh2: false
 
 overrides:
-  "@infinity-context/sdk": "file:vendor/infinity-context/artifacts/infinity-context-sdk-0.2.4.tgz"
+  "@infinity-context/sdk": "file:vendor/infinity-context/artifacts/infinity-context-sdk-0.3.1.tgz"
   # Keep security fixes within each consumer's compatible major; node-pre-gyp's
   # tar 6 is unmaintained and uses the extraction API retained by tar 7.
   "@discordjs/node-pre-gyp>tar": 7.5.22
