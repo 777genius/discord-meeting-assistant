@@ -623,8 +623,9 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     turns: [turn] });
   const answerRequest = buildSubscriptionRuntimeKnowledgeAnswerRequest({ attemptId: input.attemptId,
     binding: answerBinding, locale: input.packet.locale, plan, question: input.packet.questionText }, {
-    isolatedCwd: "/run/discord-meeting-subscription-runtime/workspace", maxOutputTokens: 2048,
-    timeoutMs: 180000 });
+    executionProfile: "sealed_qualification",
+    isolatedCwd: "/run/discord-meeting-subscription-runtime/workspace",
+    maxOutputTokens: 2048, timeoutMs: 180000 });
   const repairRunId = stableSubscriptionRuntimeId("knowledge-answer-provider-output-repair",
     answerRequest.runId);
   const repairRequest = { ...answerRequest, context: { ...answerRequest.context,

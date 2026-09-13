@@ -31,6 +31,7 @@ describe("canonical prepared answer intent", () => {
         coverage: "sufficient", humanActorIds: [turn.speakerId], turns: [turn] });
       const request = buildSubscriptionRuntimeKnowledgeAnswerRequest({ attemptId: identity.attemptId,
         binding, locale: packet.locale, plan, question: packet.questionText }, {
+        executionProfile: "sealed_qualification",
         isolatedCwd: "/run/discord-meeting-subscription-runtime/workspace",
         maxOutputTokens: 2_048, timeoutMs: 180_000 });
       const terminalAnswerRequestSha256 = sha256({ effectKind: "answer", request });

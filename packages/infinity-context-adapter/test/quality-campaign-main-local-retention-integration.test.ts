@@ -76,6 +76,7 @@ describe("main external/local retention binding", () => {
         const answerRequest = buildSubscriptionRuntimeKnowledgeAnswerRequest({
           attemptId: identity.attemptId, binding: answerBinding, locale: packet.locale,
           plan: answerPlan, question: packet.questionText }, {
+          executionProfile: "sealed_qualification",
           isolatedCwd: "/run/discord-meeting-subscription-runtime/workspace",
           maxOutputTokens: 2_048, timeoutMs: 180_000 });
         const answerRequestBytes = serializeSubscriptionRuntimeTaskRequest(answerRequest);

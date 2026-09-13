@@ -132,6 +132,7 @@ export {
   knowledgeAnswerExecutionProfile,
   knowledgeAnswerOutputSchemaName,
   knowledgeAnswerPolicyVersion,
+  qualificationKnowledgeAnswerExecutionProfile,
   knowledgeCoverageExecutionProfile,
   knowledgeCoverageOutputSchemaName,
   knowledgeCoveragePolicyVersion,

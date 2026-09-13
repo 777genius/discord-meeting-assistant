@@ -12,6 +12,7 @@ import {
 import {
   buildSubscriptionRuntimeKnowledgeAnswerRequest,
   knowledgeAnswerRuntimeProfile,
+  qualificationKnowledgeAnswerRuntimeProfile,
   type KnowledgeAnswerRequestOptions,
 } from "./knowledge-answer-request-mapper.js";
 import { providerKnowledgeAnswerSchema } from "./provider-knowledge-schema.js";
@@ -29,6 +30,7 @@ import {
   validateAttestationExpectation,
 } from "./summary-adapter-options.js";
 import {
+  qualificationKnowledgeAnswerExecutionProfile,
   subscriptionRuntimeKnowledgeAnswerMaxOutputTokens,
   type SubscriptionRuntimeAgentTaskRequest,
   type SubscriptionRuntimeEngine,
@@ -150,8 +152,12 @@ export class SubscriptionRuntimeGroundedAnswerAdapter
     this.#wireObservation = wireObservation;
     this.#qualificationExecutionBinding = qualificationExecutionBinding === undefined ? undefined :
       Object.freeze({ ...qualificationExecutionBinding });
-    this.attestation = validateAttestationExpectation(options);
-    this.requestOptions = validateRequestOptions(options);
+    const attestation = validateAttestationExpectation(options);
+    this.attestation = this.#qualificationExecutionBinding === undefined ? attestation :
+      Object.freeze({ ...attestation,
+        executionProfile: qualificationKnowledgeAnswerExecutionProfile });
+    this.requestOptions = validateRequestOptions(options,
+      this.#qualificationExecutionBinding !== undefined);
     this.tokenCounter = options.tokenCounter ?? utf8ByteUpperBoundKnowledgeTokenCounter;
     Object.freeze(this);
   }
@@ -173,7 +179,8 @@ export class SubscriptionRuntimeGroundedAnswerAdapter
       ...exactInput,
       inputTokens,
       requestBytes: new TextEncoder().encode(JSON.stringify(runtimeRequest)).byteLength,
-      runtimeProfile: `${knowledgeAnswerRuntimeProfile}:${this.tokenCounter.profile}`,
+      runtimeProfile: `${this.requestOptions.executionProfile === "sealed_qualification" ?
+        qualificationKnowledgeAnswerRuntimeProfile : knowledgeAnswerRuntimeProfile}:${this.tokenCounter.profile}`,
     };
   }
 
@@ -338,6 +345,7 @@ function invalidOutput(code: string): GroundedAnswerGenerationResult {
 
 function validateRequestOptions(
   options: SubscriptionRuntimeGroundedAnswerAdapterOptions,
+  qualification: boolean,
 ): KnowledgeAnswerRequestOptions {
   const isolatedCwd = options.isolatedCwd ?? defaultIsolatedCwd;
   const maxOutputTokens = options.maxOutputTokens ??
@@ -354,6 +362,7 @@ function validateRequestOptions(
     throw new Error("knowledge answer options conflict with the pinned runtime profile");
   }
   return {
+    ...(qualification ? { executionProfile: "sealed_qualification" as const } : {}),
     isolatedCwd,
     maxOutputTokens,
     ...(options.speakerAliases === undefined

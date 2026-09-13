@@ -16,6 +16,7 @@ import {
   buildSubscriptionRuntimeKnowledgeAnswerRequest,
   knowledgeAnswerExchangeInventorySha256,
   knowledgeAnswerExecutionProfile,
+  qualificationKnowledgeAnswerExecutionProfile,
   knowledgeCoverageExecutionProfile,
   providerKnowledgeCoverageExtractSchema,
   subscriptionRuntimeCliEngine,
@@ -587,6 +588,12 @@ describe("Meeting Knowledge grounding runtime contract", () => {
       model: "gpt-5.6-terra",
       purpose: "discord_meeting.knowledge.answer.v1",
       reasoningEffort: "low",
+      serviceTier: "default",
+    });
+    expect(qualificationKnowledgeAnswerExecutionProfile).toMatchObject({
+      model: "gpt-5.6-sol",
+      purpose: "discord_meeting.knowledge.answer.v1",
+      reasoningEffort: "medium",
       serviceTier: "default",
     });
     expect(knowledgeCoverageExecutionProfile).toMatchObject({
