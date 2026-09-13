@@ -189,22 +189,24 @@ function createAnswerPort(input: CanonicalEngineInput,
       locale: request.locale, plan, question: request.questionText };
     const prepared = input.answer.prepare(groundedRequest);
     await input.audit.seal({ attemptId, kind: "answer_request_intent",
-      plaintext: preparedAnswerRequestIntentBytes(attemptId, prepared.request) });
+      plaintext: preparedAnswerRequestIntentBytes(attemptId, prepared.request,
+        execution.binding.memoryGeneration) });
     const payloadSha256 = sha256Json({ effectKind: "answer", request: prepared.request });
     await input.spend.reserve({ effectKind: "answer", payloadSha256,
       requestedEncryptedBytes: 16_000, requestedTokens: 2_048 });
     await input.journal.reserve({ attemptId, payloadSha256, phase: "answer" });
     const generated = await input.answer.generate(groundedRequest, options);
     const observation = input.answer.takeQualificationObservation(attemptId);
+    const terminalReason = generated.status === "failed" ? generated.code : null;
     await input.audit.seal({ attemptId, kind: "answer_execution_observation",
       plaintext: utf8Json({ attemptId, outcomeCertain: observation.outcomeCertain,
         providerBytesSent: observation.providerBytesSent,
-        schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v1" }) });
+        schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v2",
+        terminalReason }) });
     await sealAnswerExchanges(input.audit, attemptId, observation.exchanges.original,
       observation.exchanges.repair, prepared.modelInputs);
-    const stateValue = observation.providerBytesSent && !observation.outcomeCertain ?
-      "outcome_unknown" as const : generated.status === "completed" ?
-        "succeeded" as const : "failed" as const;
+    const stateValue = !observation.outcomeCertain ? "outcome_unknown" as const :
+      generated.status === "completed" ? "succeeded" as const : "failed" as const;
     await input.journal.terminal({ attemptId, payloadSha256: sha256Json({ generated,
       outcomeCertain: observation.outcomeCertain,
       runtimeReceiptSha256: observation.runtimeReceiptSha256 }), phase: "answer",

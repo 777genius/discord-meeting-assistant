@@ -312,7 +312,11 @@ async function executeQuestion(input: {
   const commonChain = {
     answer, audit: { seal: async (value: Parameters<QualificationEncryptedAuditPort["seal"]>[0]) => {
         if (value.kind === "selected_canonical_turns") {
-          bytes.evidence = value.plaintext.length;
+          const retained: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(value.plaintext));
+          const turns: unknown = Array.isArray(retained) ? retained : retained !== null &&
+            typeof retained === "object" ? Reflect.get(retained, "turns") : undefined;
+          if (!Array.isArray(turns)) {throw new Error("diagnostic selected evidence artifact is invalid");}
+          bytes.evidence = new TextEncoder().encode(JSON.stringify(turns)).byteLength;
         }
         if (value.kind === "answer_original_model_surface") {
           bytes.originalPrompt = value.plaintext.length;

@@ -143,14 +143,7 @@ export async function awaitDiagnosticIndexReadinessV3(input: {
   const client = new InfinityContextClient({ baseUrl: input.baseUrl, token: input.token,
     retryPolicy: { maxAttempts: 1 }, timeoutMs: 2_000, transport: observer });
   let probes = 0, lastProbeCode: ProbeCode = "invalid_capability", ready = false;
-  const validBinding = binding.contractVersion === "context-retrieval.v3" &&
-    binding.rankingPolicy === sdk.CONTEXT_RETRIEVAL_RANKING_POLICY &&
-    /^[a-f0-9]{64}$/u.test(binding.indexProfileDigest) &&
-    /^[a-f0-9]{64}$/u.test(binding.capabilityFingerprint) &&
-    /^[a-f0-9]{40}$/u.test(binding.serviceRevision) &&
-    binding.profileId === `locator-v2-full-${binding.indexProfileDigest}` &&
-    JSON.stringify(binding.requiredProviderLanes) === JSON.stringify(["postgres_keyword", "qdrant_dense"]);
-  while (validBinding && performance.now() < deadline) {
+  while (validV3Binding(binding) && performance.now() < deadline) {
     probes += 1;
     observer.reset();
     try {
@@ -180,14 +173,31 @@ export async function awaitDiagnosticIndexReadinessV3(input: {
   return preparation;
 }
 
-function v3PinsMatch(capability: sdk.RetrievalV3Capability, binding: DiagnosticV3ProviderBinding): boolean {
-  return capability.contract_version === binding.contractVersion &&
-    capability.endpoint === "/v1/context/retrieve-v3" &&
-    capability.service_revision === binding.serviceRevision &&
-    capability.index_profile_digest === binding.indexProfileDigest &&
-    capability.profile_id === binding.profileId && capability.ranking_policy === binding.rankingPolicy &&
-    JSON.stringify(capability.required_provider_lanes) === JSON.stringify(binding.requiredProviderLanes);
+function validV3Binding(binding: DiagnosticV3ProviderBinding): boolean {
+  const candidate = binding as unknown as Readonly<Record<string, unknown>>;
+  return candidate.contractVersion === "context-retrieval.v3" &&
+    candidate.rankingPolicy === sdk.CONTEXT_RETRIEVAL_RANKING_POLICY &&
+    typeof candidate.indexProfileDigest === "string" &&
+    /^[a-f0-9]{64}$/u.test(candidate.indexProfileDigest) &&
+    typeof candidate.capabilityFingerprint === "string" &&
+    /^[a-f0-9]{64}$/u.test(candidate.capabilityFingerprint) &&
+    typeof candidate.serviceRevision === "string" &&
+    /^[a-f0-9]{40}$/u.test(candidate.serviceRevision) &&
+    candidate.profileId === `locator-v2-full-${candidate.indexProfileDigest}` &&
+    JSON.stringify(candidate.requiredProviderLanes) === JSON.stringify(["postgres_keyword", "qdrant_dense"]);
 }
+
+function v3PinsMatch(capability: sdk.RetrievalV3Capability, binding: DiagnosticV3ProviderBinding): boolean {
+  const candidate = capability as unknown as Readonly<Record<string, unknown>>;
+  return candidate.contract_version === binding.contractVersion &&
+    candidate.endpoint === "/v1/context/retrieve-v3" &&
+    candidate.service_revision === binding.serviceRevision &&
+    candidate.index_profile_digest === binding.indexProfileDigest &&
+    candidate.profile_id === binding.profileId && candidate.ranking_policy === binding.rankingPolicy &&
+    JSON.stringify(candidate.required_provider_lanes) === JSON.stringify(binding.requiredProviderLanes);
+}
+
+type UntrustedLaneFlags = Readonly<Record<"required" | "healthy" | "profile_qualified", unknown>>;
 
 class V3ReadinessTransport implements HttpTransport {
   public observation: ProbeCode = "invalid_capability";
@@ -203,12 +213,12 @@ class V3ReadinessTransport implements HttpTransport {
       // This projection permits only retry classification. The original bytes always go to the SDK,
       // whose strict JSON failure (including duplicate keys) cannot authorize another probe.
       const restored = sdk.decodeRetrievalV3Capability({ ...value,
-        provider_lanes: value.provider_lanes.map(lane => lane.required === true
+        provider_lanes: value.provider_lanes.map((lane: UntrustedLaneFlags) => lane.required === true
           ? { ...lane, healthy: true, profile_qualified: true } : lane) });
       if (!v3PinsMatch(restored, this.binding)) {this.observation = "foreign_binding";}
       else if (await sdk.retrievalCapabilityFingerprint(value) === value.capability_fingerprint &&
         await sdk.retrievalCapabilityFingerprint(restored) === this.binding.capabilityFingerprint &&
-        value.provider_lanes.some(lane => lane.required === true &&
+        value.provider_lanes.some((lane: UntrustedLaneFlags) => lane.required === true &&
           (lane.healthy === false || lane.profile_qualified === false)) &&
         value.provider_lanes.every(lane => typeof lane.healthy === "boolean" &&
           typeof lane.profile_qualified === "boolean")) {this.observation = "provider_unready";}

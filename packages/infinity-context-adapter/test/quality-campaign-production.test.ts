@@ -1397,7 +1397,7 @@ describe("production quality campaign final evidence", () => {
       predecessor.plaintextSha256, false);
     const incompleteArtifact = encryptedArtifact(selected.identity, "final_adjudication",
       Buffer.from(canonicalJson(incompleteValue)), FINAL.stored);
-    const incompleteOutcomes = first.outcomes.map((outcome, index) => index === 1 ? { ...outcome,
+    const incompleteOutcomes = first.outcomes.map((outcome) => outcome === selected ? { ...outcome,
       artifactBindingSha256ByKind: { ...outcome.artifactBindingSha256ByKind,
         final_adjudication: incompleteArtifact.artifactBindingSha256 },
       finalAdjudicationSha256: incompleteArtifact.plaintextSha256 } : outcome);
@@ -1411,7 +1411,7 @@ describe("production quality campaign final evidence", () => {
       artifacts: incompleteArtifacts, campaignByteCeiling: incompleteArtifacts.reduce(
         (total, artifact) => total + artifact.storedBytes, 0), repetitionEvidence:
         [incompleteReceipt, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
-      .rejects.toThrow(/answerComplete/u);
+      .rejects.toThrow("final adjudication completeness differs from terminal outcome");
 
     const bindingKinds = [...KINDS.slice(0, -1), "resolver_result", "final_adjudication"] as const;
     for (const kind of bindingKinds) {

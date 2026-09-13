@@ -7,6 +7,7 @@ import { knowledgeAnswerExchangeInventorySha256 } from
   "@discord-meeting/subscription-runtime-adapter";
 
 import { canonicalJson, digest, exactRecord } from "./canonical.js";
+import type { ExpectedSpendClaim } from "./cumulative-spend.js";
 import { custodyDigest, custodyJson, validateCanonicalRetrievalBinding, validateCanonicalRetrievalObservation,
   validateCanonicalScopeResolutionObservation,
   type SemanticQualityV4ArtifactKind, type SemanticQualityV4ArtifactReceipt } from
@@ -57,7 +58,7 @@ MainCanonicalEvidenceVerificationPort {
         campaignRootSha256)) {
       throw new Error("local canonical evidence inventory is empty, duplicated, or foreign");
     }
-    const receipts = (await mapBounded(attempts, 8, async (attempt) =>
+    const verified = await mapBounded(attempts, 8, async (attempt) =>
       await verifyAttempt(input.artifactRoot, key, input.artifactKeyId, attempt, async () => {
         if (input.topology === undefined) {
           throw new Error("canonical evidence topology admission is unavailable");
@@ -71,9 +72,12 @@ MainCanonicalEvidenceVerificationPort {
               topologyDocumentSha256: packet.scopeTopologyDocumentSha256,
               topologyGeneration: packet.scopeTopologyGeneration,
             } : undefined);
-      })))
-      .flat().toSorted(compareReceipt);
-    return Object.freeze({ inventorySha256: sha256(receipts) });
+      }));
+    const receipts = verified.flatMap(value => value.receipts).toSorted(compareReceipt);
+    const reservedAnswerSpendClaims = verified.flatMap(value =>
+      value.reservedAnswerSpendClaim === null ? [] : [value.reservedAnswerSpendClaim]);
+    return Object.freeze({ inventorySha256: sha256(receipts),
+      reservedAnswerSpendClaims: Object.freeze(reservedAnswerSpendClaims) });
   } });
 }
 
@@ -90,8 +94,9 @@ interface AttemptVerificationSource {
 
 async function verifyAttempt(artifactRoot: string, artifactKey: Uint8Array,
   artifactKeyId: string, expected: MainCanonicalEvidenceProjection,
-  resolveTopology: () => Promise<QualificationScopeTopology>):
-Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
+  resolveTopology: () => Promise<QualificationScopeTopology>): Promise<{
+    readonly receipts: readonly SemanticQualityV4ArtifactReceipt[];
+    readonly reservedAnswerSpendClaim: ExpectedSpendClaim | null }> {
   const source = { artifactRoot, artifactKey, artifactKeyId, expected, resolveTopology };
   const opened = await openRequiredArtifacts(source);
   const scope = decodeScopeObservation(opened.get("scope_resolution_observation")!.plaintext);
@@ -103,7 +108,8 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
   if (scope.status !== "prepared") {
     await verifyPreRetrievalFailure(opened, source, scope, outcome);
     assertCanonicalOutcomeProjection(outcome, expected);
-    return [...opened.values()].map(({ receipt }) => receipt);
+    return Object.freeze({ receipts: [...opened.values()].map(({ receipt }) => receipt),
+      reservedAnswerSpendClaim: null });
   }
   if (canonicalJson(expected.providerCallInventory.slice(0, 2)) !== canonicalJson([
     { callKind: "capability", callOrdinal: 0 }, { callKind: "retrieval", callOrdinal: 0 }])) {
@@ -113,11 +119,13 @@ Promise<readonly SemanticQualityV4ArtifactReceipt[]> {
     if (!opened.has(kind)) {await openArtifact(opened, kind, source);}
   }
   const validated = validateBaseArtifacts(opened, expected, outcome);
-  if (validated.v3Exchange !== null) {
-    await verifyV3Artifacts(opened, source, validated.outcome, validated.v3Exchange);
-  }
+  const v3MemoryGeneration = validated.v3Exchange === null ? null :
+    await verifyV3RetrievalArtifacts(opened, source, validated.outcome, validated.v3Exchange);
+  const reservedAnswerSpendClaim = await verifyCommonAnswerArtifacts(opened, source,
+    validated.outcome, v3MemoryGeneration);
   assertCanonicalOutcomeProjection(validated.outcome, expected);
-  return [...opened.values()].map(({ receipt }) => receipt);
+  return Object.freeze({ receipts: [...opened.values()].map(({ receipt }) => receipt),
+    reservedAnswerSpendClaim });
 }
 
 async function openRequiredArtifacts(source: AttemptVerificationSource): Promise<OpenedArtifacts> {
@@ -231,9 +239,10 @@ function parseObservationRecord(bytes: Uint8Array, attemptId: string) {
   return { observationRecord, v3 };
 }
 
-async function verifyV3Artifacts(opened: OpenedArtifacts, source: AttemptVerificationSource,
+async function verifyV3RetrievalArtifacts(opened: OpenedArtifacts,
+  source: AttemptVerificationSource,
   outcome: ReturnType<typeof decodeQualificationQuestionOutcome>,
-  v3Exchange: NonNullable<ReturnType<typeof validateBaseArtifacts>["v3Exchange"]>): Promise<void> {
+  v3Exchange: NonNullable<ReturnType<typeof validateBaseArtifacts>["v3Exchange"]>): Promise<string> {
   const { expected } = source;
   assertExpectedAttempt(expected);
   const topology = Object.freeze({ ...await source.resolveTopology() });
@@ -254,12 +263,30 @@ async function verifyV3Artifacts(opened: OpenedArtifacts, source: AttemptVerific
     custodyJson(binding.candidates) !== custodyJson(outcome.retrievalCandidates)) {
     throw new Error("canonical V3 retrieval binding differs from retained outcome inventory");
   }
+  return binding.request.filters.sourceGenerations[0]!.projectionGeneration;
+}
+
+async function verifyCommonAnswerArtifacts(opened: OpenedArtifacts,
+  source: AttemptVerificationSource,
+  outcome: ReturnType<typeof decodeQualificationQuestionOutcome>,
+  legacyV3MemoryGeneration: string | null): Promise<ExpectedSpendClaim | null> {
+  const { expected } = source;
+  assertExpectedAttempt(expected);
   const selectedExpected = outcome.status !== "failed" || outcome.selectedTurns.length > 0;
+  let memoryGeneration = legacyV3MemoryGeneration;
   if (selectedExpected) {
     await openArtifact(opened, "selected_canonical_turns", source);
-    if (canonicalJson(parseJson(opened.get("selected_canonical_turns")!.plaintext,
-      "selected canonical turns")) !== canonicalJson(outcome.selectedTurns)) {
+    const selected = decodeSelectedCanonicalTurns(
+      opened.get("selected_canonical_turns")!.plaintext, expected.attemptId);
+    if (canonicalJson(selected.turns) !== canonicalJson(outcome.selectedTurns)) {
       throw new Error("selected canonical turns differ from the normalized outcome");
+    }
+    if (selected.memoryGeneration !== null) {
+      if (legacyV3MemoryGeneration !== null &&
+        selected.memoryGeneration !== legacyV3MemoryGeneration) {
+        throw new Error("selected canonical turns carry a foreign memory generation");
+      }
+      memoryGeneration = selected.memoryGeneration;
     }
   }
   const answerInventory = await openAnswerInventory(opened, expected, source.artifactRoot,
@@ -267,22 +294,24 @@ async function verifyV3Artifacts(opened: OpenedArtifacts, source: AttemptVerific
   assertAnswerInventory(outcome, answerInventory.originalPresent);
   await openArtifact(opened, "answer_request_intent", source);
   const answerIntent = verifyAnswerRequestIntent(
-    opened.get("answer_request_intent")!.plaintext, expected, outcome,
-    binding.request.filters.sourceGenerations[0]!.projectionGeneration);
+    opened.get("answer_request_intent")!.plaintext, expected, outcome, memoryGeneration);
   if (answerIntent.prepared !== (outcome.selectedTurns.length > 0)) {
     throw new Error("answer request intent differs from the normalized branch");
   }
+  let reservedWithoutExchange = false;
   if (answerIntent.prepared) {
     await openArtifact(opened, "answer_execution_observation", source);
-    assertAnswerExecutionObservation(
+    reservedWithoutExchange = assertAnswerExecutionObservation(
       opened.get("answer_execution_observation")!.plaintext, expected, outcome,
       answerInventory.originalPresent);
   } else if (expected.providerCallInventory.some(({ callKind }) => callKind === "answer")) {
     throw new Error("unprepared answer branch contains a provider answer call");
   }
   if (answerInventory.originalPresent) {
-    await verifyAnswerArtifacts(opened, expected, outcome,
-      binding.request.filters.sourceGenerations[0]!.projectionGeneration,
+    if (memoryGeneration === null) {
+      throw new Error("answer artifacts have no independently retained memory generation");
+    }
+    await verifyAnswerArtifacts(opened, expected, outcome, memoryGeneration,
       answerInventory.repairPresent);
   }
   if (knowledgeAnswerExchangeInventorySha256(answerInventory.exchanges) !==
@@ -290,24 +319,52 @@ async function verifyV3Artifacts(opened: OpenedArtifacts, source: AttemptVerific
     throw new Error("answer exchange inventory differs from external terminal evidence");
   }
   await assertClosedV3ReceiptInventory(source.artifactRoot, expected.attemptId, [...opened.keys()]);
+  return reservedWithoutExchange ? Object.freeze({ identity: expected.identity,
+    requestDigestSha256: expected.terminalAnswerRequestSha256 }) : null;
 }
+
+function decodeSelectedCanonicalTurns(bytes: Uint8Array, attemptId: string): {
+  readonly memoryGeneration: string | null; readonly turns: unknown } {
+  const value = parseJson(bytes, "selected canonical turns");
+  if (Array.isArray(value)) {
+    return Object.freeze({ memoryGeneration: null, turns: value });
+  }
+  const record = exactRecord(value, ["attemptId", "memoryGeneration", "schemaVersion", "turns"],
+    "selected canonical turns");
+  if (record.schemaVersion !== "meeting_knowledge.selected_canonical_turns.v2" ||
+    record.attemptId !== attemptId || typeof record.memoryGeneration !== "string" ||
+    record.memoryGeneration.trim() === "" || !Array.isArray(record.turns)) {
+    throw new Error("selected canonical turns binding is invalid");
+  }
+  return Object.freeze({ memoryGeneration: record.memoryGeneration, turns: record.turns });
+}
+
+const KNOWN_PRESEND_FAILURE_REASONS = new Set(["runtime_unavailable"]);
 
 function assertAnswerExecutionObservation(bytes: Uint8Array,
   expected: MainCanonicalEvidenceProjection,
-  outcome: ReturnType<typeof decodeQualificationQuestionOutcome>, exchangePresent: boolean): void {
+  outcome: ReturnType<typeof decodeQualificationQuestionOutcome>, exchangePresent: boolean): boolean {
   const record = exactRecord(parseJson(bytes, "answer execution observation"), ["attemptId",
-    "outcomeCertain", "providerBytesSent", "schemaVersion"], "answer execution observation");
-  if (record.schemaVersion !== "meeting_knowledge.canonical_answer_execution_observation.v1" ||
-    record.attemptId !== expected.attemptId || record.outcomeCertain !== true ||
-    typeof record.providerBytesSent !== "boolean" || record.providerBytesSent !== exchangePresent) {
+    "outcomeCertain", "providerBytesSent", "schemaVersion", "terminalReason"],
+  "answer execution observation");
+  const terminalReason = outcome.reason ?? null;
+  if (record.schemaVersion !== "meeting_knowledge.canonical_answer_execution_observation.v2" ||
+    record.attemptId !== expected.attemptId || typeof record.outcomeCertain !== "boolean" ||
+    typeof record.providerBytesSent !== "boolean" || record.providerBytesSent !== exchangePresent ||
+    record.terminalReason !== terminalReason) {
     throw new Error("answer execution observation differs from retained exchange inventory");
   }
-  const responseDependent = outcome.status === "failed" &&
-    ["invalid_attestation", "provider_output_invalid"].includes(outcome.reason ?? "");
-  if (responseDependent && !exchangePresent || outcome.status !== "failed" && !exchangePresent ||
+  if (!record.outcomeCertain) {
+    throw new Error("answer execution outcome remains unknown");
+  }
+  const reservedWithoutExchange = !exchangePresent;
+  if (reservedWithoutExchange && (outcome.status !== "failed" ||
+      typeof terminalReason !== "string" || !KNOWN_PRESEND_FAILURE_REASONS.has(terminalReason)) ||
+    outcome.status !== "failed" && !exchangePresent ||
     expected.providerCallInventory.some(({ callKind }) => callKind === "answer") !== exchangePresent) {
     throw new Error("answer terminal reason differs from proven provider call inventory");
   }
+  return reservedWithoutExchange;
 }
 
 function assertAnswerInventory(outcome: ReturnType<typeof decodeQualificationQuestionOutcome>,

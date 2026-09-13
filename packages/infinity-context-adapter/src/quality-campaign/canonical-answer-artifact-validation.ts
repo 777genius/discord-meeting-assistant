@@ -26,19 +26,24 @@ type CanonicalAnswerRequestIntent = Readonly<{
   readonly status: "not_prepared";
 } | {
   readonly attemptId: string;
+  readonly memoryGeneration: string;
   readonly requestBase64: string;
   readonly requestSha256: string;
-  readonly schemaVersion: "meeting_knowledge.canonical_answer_request_intent.v1";
+  readonly schemaVersion: "meeting_knowledge.canonical_answer_request_intent.v2";
   readonly status: "prepared";
 }>;
 
 /** Retains preparation separately from a transport exchange, which may never be sent. */
 export function preparedAnswerRequestIntentBytes(attemptId: string,
-  request: AnswerRequest): Uint8Array {
+  request: AnswerRequest, memoryGeneration: string): Uint8Array {
+  if (memoryGeneration.trim() === "") {
+    throw new Error("prepared answer intent requires an explicit memory generation");
+  }
   const requestBytes = serializeSubscriptionRuntimeTaskRequest(request);
-  return utf8(canonicalJson({ attemptId, requestBase64: Buffer.from(requestBytes).toString("base64"),
+  return utf8(canonicalJson({ attemptId, memoryGeneration,
+    requestBase64: Buffer.from(requestBytes).toString("base64"),
     requestSha256: canonicalSha256({ effectKind: "answer", request }),
-    schemaVersion: "meeting_knowledge.canonical_answer_request_intent.v1",
+    schemaVersion: "meeting_knowledge.canonical_answer_request_intent.v2",
     status: "prepared" }));
 }
 
@@ -75,6 +80,9 @@ export function verifyAnswerRequestIntent(bytes: Uint8Array,
   }
   if (outcome.selectedTurns.length === 0 || memoryGeneration === null) {
     throw new Error("prepared answer intent has no independently retained evidence");
+  }
+  if (intent.memoryGeneration !== memoryGeneration) {
+    throw new Error("prepared answer request intent differs from independently reconstructed evidence");
   }
   const requestBytes = Buffer.from(intent.requestBase64, "base64");
   if (requestBytes.toString("base64") !== intent.requestBase64 || requestBytes.byteLength === 0 ||
@@ -176,13 +184,16 @@ function decodeAnswerRequestIntent(bytes: Uint8Array): CanonicalAnswerRequestInt
   }
   const candidate = value as Record<string, unknown>;
   const prepared = candidate.status === "prepared";
-  const record = exactRecord(value, prepared ? ["attemptId", "requestBase64", "requestSha256",
-    "schemaVersion", "status"] : ["attemptId", "reason", "schemaVersion", "status"],
-  "answer request intent");
-  if (record.schemaVersion !== "meeting_knowledge.canonical_answer_request_intent.v1" ||
-    typeof record.attemptId !== "string" || prepared &&
-      (typeof record.requestBase64 !== "string" || typeof record.requestSha256 !== "string") ||
-    !prepared && (record.status !== "not_prepared" || typeof record.reason !== "string" ||
+  const record = exactRecord(value, prepared ? ["attemptId", "memoryGeneration", "requestBase64",
+    "requestSha256", "schemaVersion", "status"] :
+    ["attemptId", "reason", "schemaVersion", "status"], "answer request intent");
+  if (typeof record.attemptId !== "string" || prepared &&
+      (record.schemaVersion !== "meeting_knowledge.canonical_answer_request_intent.v2" ||
+        typeof record.memoryGeneration !== "string" || record.memoryGeneration.trim() === "" ||
+        typeof record.requestBase64 !== "string" || typeof record.requestSha256 !== "string") ||
+    !prepared && (record.schemaVersion !==
+        "meeting_knowledge.canonical_answer_request_intent.v1" ||
+      record.status !== "not_prepared" || typeof record.reason !== "string" ||
       record.reason.trim() === "")) {
     throw new Error("answer request intent is invalid");
   }

@@ -939,6 +939,7 @@ function createRuntimeFixture(input: RuntimeFixtureInput) {
       ...projection, diagnosticCustody: null, topology: { currentMeetingId: "synthetic-meeting",
         roomId: "synthetic-room", scopeId: "synthetic-scope" } }),
     verify: async ({ attempts, campaignRootSha256 }) => ({
+      reservedAnswerSpendClaims: [],
       inventorySha256: sha256({ attempts, campaignRootSha256,
         localInventoryRevision,
         schemaVersion: "synthetic.local_canonical_inventory.v1" }) }) },

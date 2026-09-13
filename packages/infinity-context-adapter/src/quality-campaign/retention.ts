@@ -135,6 +135,7 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
   readonly scopeObservationCustody?: CanonicalScopeObservationPort;
   readonly keyNamespace?: string;
   readonly providerResultAuthorityRole?: "holdout_provider_result" | "provider_result";
+  readonly reservedAnswerSpendClaims?: readonly ExpectedSpendClaim[];
   readonly release: QualityCampaignRelease;
   readonly releaseDocumentSha256: string;
   readonly spendReservations: readonly VerifiedSpendReservation[] }): Promise<{
@@ -153,7 +154,7 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
     authenticated: new Map<string, AuthenticatedArtifact>(), custody: input.custody,
     effectVerificationEpochMs: input.effectVerificationEpochMs, expected, releaseDocumentSha256:
     digest(input.releaseDocumentSha256, "retained release document"), reviewSpendClaims: [], seen,
-    expectedSpendClaims: [],
+    expectedSpendClaims: [...(input.reservedAnswerSpendClaims ?? [])],
     keyNamespace: input.keyNamespace,
     providerResultAuthorityRole: input.providerResultAuthorityRole ?? "provider_result",
     release: input.release,
@@ -616,7 +617,7 @@ function assertSchedulerProducedProviderExchanges(values: ReadonlyMap<RetainedAr
     const expectedIdentity = artifactAttemptIdentity(answerIdentity, requestKind);
     const requestChain = values.get(requestKind)?.chain as Record<string, unknown> | undefined;
     const responseChain = values.get(responseKind)?.chain as Record<string, unknown> | undefined;
-    if (terminal === undefined || requestChain === undefined || responseChain === undefined ||
+    if (requestChain === undefined || responseChain === undefined ||
       terminal.attemptId !== expectedIdentity.attemptId || terminal.callOrdinal !== 0 ||
       terminal.predecessorResultDigestSha256 !== predecessor ||
       terminal.terminalDigestSha256 !== sha256(terminal.signedResult) ||

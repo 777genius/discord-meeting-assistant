@@ -84,25 +84,26 @@ function assertCompatibility(
   });
 }
 
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonical).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).toSorted().map((key) =>
+      `${JSON.stringify(key)}:${canonical(record[key])}`).join(",")}}`;
+  }
+  const encoded: unknown = JSON.stringify(value);
+  if (typeof encoded !== "string") {
+    throw new Error("SDK artifact inventory is not JSON");
+  }
+  return encoded;
+}
+
 describe("Infinity Context official SDK provenance", () => {
   const repositoryRoot = new URL("../../../", import.meta.url);
   const retainedDigest = (path: string): string =>
     "sha256:" + createHash("sha256").update(readFileSync(new URL(path, repositoryRoot))).digest("hex");
-  const canonical = (value: unknown): string => {
-    if (Array.isArray(value)) {
-      return `[${value.map(canonical).join(",")}]`;
-    }
-    if (value !== null && typeof value === "object") {
-      const record = value as Record<string, unknown>;
-      return `{${Object.keys(record).sort().map((key) =>
-        `${JSON.stringify(key)}:${canonical(record[key])}`).join(",")}}`;
-    }
-    const encoded = JSON.stringify(value);
-    if (encoded === undefined) {
-      throw new Error("SDK artifact inventory is not JSON");
-    }
-    return encoded;
-  };
 
   it("loads the exact official package through ESM, CJS, and advisory-search types", async () => {
     const esm = await import("@infinity-context/sdk");
@@ -232,13 +233,15 @@ describe("Infinity Context official SDK provenance", () => {
   });
 
   it("does not let V3 draft provenance satisfy immutable production admission", () => {
-    expect(() => assertInfinityContextActivation({
-      ...productionActivation,
-      immutablePackageIntegrity:
-        INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.packageTarballIntegrity,
-      sdkCommit: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.reviewedSourceCommit,
-      sdkTree: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.reviewedSourceTree,
-    })).toThrow(/Infinity SDK provenance does not match the reviewed source/u);
+    expect(() => {
+      assertInfinityContextActivation({
+        ...productionActivation,
+        immutablePackageIntegrity:
+          INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.packageTarballIntegrity,
+        sdkCommit: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.reviewedSourceCommit,
+        sdkTree: INFINITY_CONTEXT_RETRIEVAL_V3_SDK_PROVENANCE.reviewedSourceTree,
+      });
+    }).toThrow(/Infinity SDK provenance does not match the reviewed source/u);
   });
 
   it("binds the composite exact-head and retained predecessor qualification evidence", () => {

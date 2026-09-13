@@ -159,7 +159,7 @@ function loadAgentRuntimeService(): ServiceClientConstructor {
     fileURLToPath(new URL("../proto/agent_runtime.proto", import.meta.url)),
     { defaults: true, enums: String, keepCase: false, longs: String, oneofs: true },
   );
-  return readNestedService(loadPackageDefinition(definition) as Record<string, unknown>);
+  return readNestedService(loadPackageDefinition(definition));
 }
 
 interface MutableWireCapture {

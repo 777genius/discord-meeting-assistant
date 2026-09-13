@@ -39,8 +39,8 @@ describe("canonical prepared answer intent", () => {
         capabilityResponseSha256: "2".repeat(64), citationLocatorIds: [],
         diagnosticCustody: null, evidenceLocatorIds: [turn.sourceLocatorId],
         evidenceTurnIds: [turn.turnId], executionPacket: packet, identity,
-        providerCallInventory: [{ callKind: "capability", callOrdinal: 0 as const },
-          { callKind: "retrieval", callOrdinal: 0 as const }],
+        providerCallInventory: [{ callKind: "capability" as const, callOrdinal: 0 as const },
+          { callKind: "retrieval" as const, callOrdinal: 0 as const }],
         rankedLocatorIds: [turn.sourceLocatorId], retrievalLatencyUs: 1,
         retrievalRequestSha256: "3".repeat(64), retrievalResponseSha256: "4".repeat(64),
         terminalAnswerRequestSha256, terminalAnswerResponseSha256: "5".repeat(64),
@@ -49,15 +49,22 @@ describe("canonical prepared answer intent", () => {
         reason: "runtime_unavailable", retrievalCandidates: [{ contributions: [], fusedScore: 1,
           locatorId: turn.sourceLocatorId, providerRank: 0 }], selectedTurns: [turn],
         status: "failed" as const };
-      const intent = preparedAnswerRequestIntentBytes(identity.attemptId, request);
+      const intent = preparedAnswerRequestIntentBytes(identity.attemptId, request,
+        memoryGeneration);
 
       expect(verifyAnswerRequestIntent(intent, projection, outcome, memoryGeneration))
         .toEqual({ prepared: true });
       expect(() => verifyAnswerRequestIntent(intent, {
         ...projection, terminalAnswerRequestSha256: "0".repeat(64) }, outcome, memoryGeneration))
         .toThrow("prepared answer request intent differs");
+      expect(() => verifyAnswerRequestIntent(intent, projection, outcome, null))
+        .toThrow("prepared answer intent has no independently retained evidence");
       expect(() => verifyAnswerRequestIntent(
-        preparedAnswerRequestIntentBytes("foreign-attempt", request), projection, outcome,
-        memoryGeneration)).toThrow("belongs to another attempt");
+        preparedAnswerRequestIntentBytes(identity.attemptId, request,
+          "foreign-memory-generation"), projection, outcome, memoryGeneration))
+        .toThrow("prepared answer request intent differs from independently reconstructed evidence");
+      expect(() => verifyAnswerRequestIntent(
+        preparedAnswerRequestIntentBytes("foreign-attempt", request, memoryGeneration),
+        projection, outcome, memoryGeneration)).toThrow("belongs to another attempt");
     });
 });

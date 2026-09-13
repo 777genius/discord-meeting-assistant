@@ -18,11 +18,8 @@ import { canonicalJson, safeId } from "./canonical.js";
 export type { SemanticQualityV4ArtifactKind, SemanticQualityV4ArtifactReceipt } from
   "./canonical-metadata-contract.js";
 export { validateCanonicalScopeResolutionObservation } from "./canonical-metadata-contract.js";
-export {
-  decodeArtifactEnvelope,
-  validateSemanticQualityV4ArtifactReceipt,
-  type SemanticQualityV4ArtifactEnvelope,
-} from "./canonical-artifact-envelope-validation.js";
+export { decodeArtifactEnvelope, validateSemanticQualityV4ArtifactReceipt } from
+  "./canonical-artifact-envelope-validation.js";
 
 interface CanonicalRetrievalObservationArtifactCommon {
   readonly attemptId: string;

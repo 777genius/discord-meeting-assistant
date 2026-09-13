@@ -53,7 +53,9 @@ export function createCanonicalEvidencePort(input: CanonicalEngineInput,
       memoryGeneration: "qualification-empty:v1", transcriptVersion: 0 });
     state.set(options.attemptId, { ...execution, binding: resolved, turns: Object.freeze(turns) });
     await input.audit.seal({ attemptId: options.attemptId,
-      kind: "selected_canonical_turns", plaintext: utf8Json(turns) });
+      kind: "selected_canonical_turns", plaintext: utf8Json({ attemptId: options.attemptId,
+        memoryGeneration: resolved.memoryGeneration,
+        schemaVersion: "meeting_knowledge.selected_canonical_turns.v2", turns }) });
     return Object.freeze({ authorityGeneration: resolved.memoryGeneration,
       canonicalEvidenceHash: resolved.canonicalEvidenceHash,
       transcriptVersion: resolved.transcriptVersion, turns: Object.freeze(turns) });

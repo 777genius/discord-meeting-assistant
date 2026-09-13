@@ -622,12 +622,15 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
       reads: ["scope_spaces", "scope_memory_scopes"].map(kind => ({ kind,
         requestSha256: "1".repeat(64), responseSha256: "2".repeat(64), responseBytes: 12,
         status: "received" })) }))],
-    ["selected_canonical_turns", new TextEncoder().encode(JSON.stringify([turn]))],
+    ["selected_canonical_turns", new TextEncoder().encode(JSON.stringify({
+      attemptId: input.attemptId, memoryGeneration: answerBinding.memoryGeneration,
+      schemaVersion: "meeting_knowledge.selected_canonical_turns.v2", turns: [turn] }))],
     ["answer_request_intent", answerIntent.preparedAnswerRequestIntentBytes(
-      input.attemptId, answerRequest)],
+      input.attemptId, answerRequest, answerBinding.memoryGeneration)],
     ["answer_execution_observation", new TextEncoder().encode(canonicalJson({
       attemptId: input.attemptId, outcomeCertain: true, providerBytesSent: true,
-      schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v1" }))],
+      schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v2",
+      terminalReason: null }))],
     ["answer_original_model_surface", answerSurface(answerRequest)],
     ["answer_original_request", serializeSubscriptionRuntimeTaskRequest(answerRequest)],
     ["answer_original_response", answerResponse],
@@ -648,9 +651,9 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     capabilityResponseSha256: shaBytes(input.exchange.capabilityResponseBytes),
     citationLocatorIds: [turn.sourceLocatorId], evidenceLocatorIds: [turn.sourceLocatorId],
     evidenceTurnIds: [turn.turnId], rankedLocatorIds: binding.candidates.map(value => value.locatorId),
-    providerCallInventory: [{ callKind: "capability", callOrdinal: 0 as const },
-      { callKind: "retrieval", callOrdinal: 0 as const },
-      { callKind: "answer", callOrdinal: 0 as const }],
+    providerCallInventory: [{ callKind: "capability" as const, callOrdinal: 0 as const },
+      { callKind: "retrieval" as const, callOrdinal: 0 as const },
+      { callKind: "answer" as const, callOrdinal: 0 as const }],
     diagnosticCustody: input.diagnosticCustody, executionPacket: input.packet, identity,
     retrievalLatencyUs: 12, retrievalRequestSha256: binding.rawRequestSha256,
     retrievalResponseSha256: binding.rawResponseSha256,
@@ -670,7 +673,7 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
       reason: "provider_output_invalid", status: "failed" })) });
   await expect(reader.verify({ attempts: [{ ...projection, citationLocatorIds: [],
     terminalReason: "provider_output_invalid", terminalStatus: "failed" as const }],
-    campaignRootSha256 })).resolves.toBeDefined();
+    campaignRootSha256 })).rejects.toThrow("execution observation differs");
   await unlink(normalizedReceipt);
   await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
@@ -762,7 +765,9 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     reason: "zero_admissible_evidence", retrievalCandidates: binding.candidates,
     selectedTurns: [], status: "abstained" as const };
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "selected_canonical_turns",
-    plaintext: new TextEncoder().encode(JSON.stringify([])) });
+    plaintext: new TextEncoder().encode(JSON.stringify({ attemptId: input.attemptId,
+      memoryGeneration: answerBinding.memoryGeneration,
+      schemaVersion: "meeting_knowledge.selected_canonical_turns.v2", turns: [] })) });
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
     plaintext: new TextEncoder().encode(JSON.stringify(zeroEvidenceOutcome)) });
   const noModelProjection = { ...projection, answerAbstained: true,
@@ -802,30 +807,35 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
       "evidence_rehydration_failed") }],
     campaignRootSha256 })).resolves.toBeDefined();
 
-  for (const kind of ["selected_canonical_turns", "answer_normalized_outcome",
-    "answer_request_intent"] as const) {
+  for (const kind of ["answer_normalized_outcome", "answer_request_intent"] as const) {
     await unlink(receipt(kind));
   }
   await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
   const preSendFailure = { ...outcome, citations: [], claims: [], reason: "runtime_unavailable",
     status: "failed" as const };
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "selected_canonical_turns",
-    plaintext: new TextEncoder().encode(JSON.stringify([turn])) });
+    plaintext: new TextEncoder().encode(JSON.stringify({ attemptId: input.attemptId,
+      memoryGeneration: answerBinding.memoryGeneration,
+      schemaVersion: "meeting_knowledge.selected_canonical_turns.v2", turns: [turn] })) });
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_request_intent",
-    plaintext: answerIntent.preparedAnswerRequestIntentBytes(input.attemptId, answerRequest) });
+    plaintext: answerIntent.preparedAnswerRequestIntentBytes(input.attemptId, answerRequest,
+      answerBinding.memoryGeneration) });
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_execution_observation",
     plaintext: new TextEncoder().encode(canonicalJson({ attemptId: input.attemptId,
       outcomeCertain: true, providerBytesSent: false,
-      schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v1" })) });
+      schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v2",
+      terminalReason: "runtime_unavailable" })) });
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
     plaintext: new TextEncoder().encode(JSON.stringify(preSendFailure)) });
   const preSendProjection = { ...projection, citationLocatorIds: [],
     providerCallInventory: projection.providerCallInventory.slice(0, 2),
     terminalAnswerResponseSha256: knowledgeAnswerExchangeInventorySha256([]),
     terminalReason: "runtime_unavailable", terminalStatus: "failed" as const };
+  await expect(reader.verify({ attempts: [preSendProjection], campaignRootSha256 }))
+    .resolves.toBeDefined();
   const forgedReasonProjection = { ...preSendProjection, terminalReason: "invalid_attestation" };
   await expect(reader.verify({ attempts: [forgedReasonProjection], campaignRootSha256 }))
-    .resolves.toBeDefined();
+    .rejects.toThrow("canonical terminal reason differs");
 
   await unlink(receipt("answer_normalized_outcome"));
   await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
@@ -833,13 +843,18 @@ it("requires and reconstructs the V3 retrieval binding in retained local evidenc
     plaintext: new TextEncoder().encode(JSON.stringify({ ...preSendFailure,
       reason: "invalid_attestation" })) });
   await expect(reader.verify({ attempts: [forgedReasonProjection], campaignRootSha256 }))
-    .rejects.toThrow("terminal reason differs");
+    .rejects.toThrow("execution observation differs");
 
+  await unlink(receipt("answer_normalized_outcome"));
+  await unlink(path.join(artifactRoot, "outcomes", `${input.attemptId}.json`));
+  await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_normalized_outcome",
+    plaintext: new TextEncoder().encode(JSON.stringify(preSendFailure)) });
   await unlink(receipt("answer_execution_observation"));
   await evidence.audit.seal({ attemptId: input.attemptId, kind: "answer_execution_observation",
     plaintext: new TextEncoder().encode(canonicalJson({ attemptId: "foreign-attempt",
       outcomeCertain: true, providerBytesSent: false,
-      schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v1" })) });
+      schemaVersion: "meeting_knowledge.canonical_answer_execution_observation.v2",
+      terminalReason: "runtime_unavailable" })) });
   await expect(reader.verify({ attempts: [preSendProjection], campaignRootSha256 }))
     .rejects.toThrow("execution observation differs");
 });

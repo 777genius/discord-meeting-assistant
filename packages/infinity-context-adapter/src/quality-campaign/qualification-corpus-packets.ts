@@ -19,7 +19,7 @@ export interface QualificationGoldScoringPort {
 
 export function validateQualificationExecutionPacket(value: unknown):
 import("./execute-admitted-qualification-question.js").QualificationExecutionPacket {
-  const candidate = value as Record<string, unknown>;
+  const candidate = value as Record<string, unknown> | null | undefined;
   const v2 = candidate?.schemaVersion === "meeting_knowledge.qualification_execution_packet.v2";
   const record = exactObject(value, ["locale", "questionId", "questionText",
     "scopeTopologyReference", "source", ...(v2 ? ["schemaVersion",

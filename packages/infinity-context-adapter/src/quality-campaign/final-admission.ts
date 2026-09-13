@@ -76,6 +76,7 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
   readonly questionReviewReceipts: readonly [unknown, unknown];
   readonly release: PinnedReleaseDocument; readonly repetitionAuthorityKeyId: string;
   readonly repetitionEvidence: readonly unknown[]; readonly rootBindingSha256: string;
+  readonly reservedAnswerSpendClaims?: readonly import("./cumulative-spend.js").ExpectedSpendClaim[];
   readonly spendLedger: CumulativeSpendLedgerPort;
   readonly spendReservationSha256ByRepetition: readonly [string, string, string];
   readonly spendReservationsByRepetition: readonly [unknown, unknown, unknown];
@@ -139,6 +140,7 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
     effectVerificationEpochMs: input.effectVerificationEpochMs, expectedOutcomes,
     perRepetitionCardinality: MAIN_CARDINALITY.perRepetition,
     scopeObservationCustody: input.scopeObservationCustody,
+    reservedAnswerSpendClaims: input.reservedAnswerSpendClaims ?? [],
     release: release.release,
     releaseDocumentSha256: sha256(input.release.document),
     spendReservations: verifiedSpendReservations });
@@ -415,7 +417,7 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
   repetition: expected.repetition, resolverRequired: record.resolverRequired,
   rootBindingSha256: expected.rootBindingSha256, scopeViolationLocatorIds,
   source: question.source, speakerTimeChecks, terminalChain,
-  terminalReason: record.terminalReason as string | null,
+  terminalReason: record.terminalReason,
   terminalStatus: record.terminalStatus as QualificationOutcome["terminalStatus"] });
 }
 

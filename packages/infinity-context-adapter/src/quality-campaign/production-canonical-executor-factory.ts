@@ -253,10 +253,11 @@ FocusedLocatorRetrievalV2ProviderBinding {
 async function providerBindingFromV3(
   capability: RetrievalV3Capability,
 ): Promise<FocusedLocatorRetrievalV3ProviderBinding> {
-  if (capability.contract_version !== "context-retrieval.v3" ||
-    capability.endpoint !== "/v1/context/retrieve-v3" ||
+  const candidate = capability as unknown as Readonly<Record<string, unknown>>;
+  if (candidate.contract_version !== "context-retrieval.v3" ||
+    candidate.endpoint !== "/v1/context/retrieve-v3" ||
     capability.profile_id !== `locator-v2-full-${capability.index_profile_digest}` ||
-    capability.ranking_policy !== CONTEXT_RETRIEVAL_RANKING_POLICY ||
+    candidate.ranking_policy !== CONTEXT_RETRIEVAL_RANKING_POLICY ||
     JSON.stringify(capability.required_provider_lanes) !==
       JSON.stringify(["postgres_keyword", "qdrant_dense"]) ||
     await retrievalCapabilityFingerprint(capability) !== capability.capability_fingerprint) {

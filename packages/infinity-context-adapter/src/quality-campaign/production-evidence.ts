@@ -152,6 +152,7 @@ export async function reconstructExactMainEvidence(input: {
   readonly release: QualityCampaignRelease;
   readonly releaseRootSha256: string;
   readonly releaseDocumentSha256: string;
+  readonly reservedAnswerSpendClaims?: readonly import("./cumulative-spend.js").ExpectedSpendClaim[];
   readonly effectVerificationEpochMs: number;
   readonly spendReservations: readonly VerifiedSpendReservation[];
   readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
@@ -186,6 +187,7 @@ export async function reconstructExactMainEvidence(input: {
     custody: input.custody, effectVerificationEpochMs: input.effectVerificationEpochMs,
     perRepetitionCardinality: 240,
     scopeObservationCustody: input.scopeObservationCustody,
+    reservedAnswerSpendClaims: input.reservedAnswerSpendClaims ?? [],
     releaseDocumentSha256: input.releaseDocumentSha256,
     release: input.release,
     spendReservations: input.spendReservations, expectedOutcomes: expected.map(({ attempt }) => {
@@ -494,7 +496,7 @@ function assertExactMembership(campaignRootSha256: string, expected: readonly {
 // The versioned external outcome is decoded in one closed pass.
 // oxlint-disable-next-line complexity
 export function assertExactOutcomeContract(value: ExactOutcomeEvidence): void {
-  exactRecord(value, ["answerAbstained", "answerExchangeInventorySha256", "answerRequestIntentSha256",
+  const record = exactRecord(value, ["answerAbstained", "answerExchangeInventorySha256", "answerRequestIntentSha256",
     "attemptId", "campaignRootSha256",
     "artifactBindingSha256ByKind", "citationLocatorDigests", "evidenceLocatorDigests",
     "expectedAnswer", "finalAdjudicationSha256", "forbiddenLocatorDigests", "identity",
@@ -507,7 +509,7 @@ export function assertExactOutcomeContract(value: ExactOutcomeEvidence): void {
   digest(value.questionDigestSha256, "outcome question digest");
   digest(value.answerExchangeInventorySha256, "outcome answer exchange inventory");
   digest(value.answerRequestIntentSha256, "outcome answer request intent");
-  if (value.schemaVersion !== "meeting_knowledge.semantic_quality_exact_outcome.v2" ||
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_exact_outcome.v2" ||
     typeof value.answerAbstained !== "boolean" ||
     !["answerable", "abstain"].includes(value.expectedAnswer) ||
     !Number.isSafeInteger(value.retrievalLatencyUs) || value.retrievalLatencyUs < 0) {
@@ -519,6 +521,12 @@ export function assertExactOutcomeContract(value: ExactOutcomeEvidence): void {
   assertLocatorDigests(value.relevantLocatorDigests);
   assertLocatorDigests(value.forbiddenLocatorDigests);
   assertProviderCallInventory(value.providerCallInventory);
+  const answerTerminal = value.terminalChain.find(({ callKind }) => callKind === "answer");
+  if (answerTerminal !== undefined &&
+    (value.answerRequestIntentSha256 !== answerTerminal.requestDigestSha256 ||
+      value.answerExchangeInventorySha256 !== answerTerminal.resultEnvelopeDigestSha256)) {
+    throw new Error("outcome answer evidence is detached from its provider terminal");
+  }
   if (!(value.terminalReason === null || typeof value.terminalReason === "string" &&
     value.terminalReason.trim() !== "")) {
     throw new Error("outcome terminal reason is invalid");
