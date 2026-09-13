@@ -4,13 +4,17 @@ import { canonicalFinalReplyTurnHash } from "@discord-meeting/postgres-adapter";
 import { createHash } from "node:crypto";
 
 import { custodyDigest, custodyJson } from "./canonical-execution-artifact-validation.js";
+import { QUALIFICATION_PROVIDER_INPUT_CONTRACT } from "./qualification-contract.js";
 import type { QualificationCanonicalTurn, QualificationQuestionEvidencePort,
   QualificationQuestionExecutionContext } from "./execute-admitted-qualification-question.js";
 import type { CanonicalEngineInput, CanonicalQuestionState } from
   "./production-canonical-question-chain.js";
 
 export function createCanonicalEvidencePort(input: CanonicalEngineInput,
-  state: CanonicalQuestionState): QualificationQuestionEvidencePort {
+  state: CanonicalQuestionState,
+  fitsPreparedModelInput: (execution: Execution, binding: NonNullable<Execution["binding"]>,
+    turns: readonly QualificationCanonicalTurn[], attemptId: string) => boolean,
+): QualificationQuestionEvidencePort {
   return Object.freeze({ rehydrate: async (
     request: Parameters<QualificationQuestionEvidencePort["rehydrate"]>[0],
     options: QualificationQuestionExecutionContext,
@@ -26,7 +30,8 @@ export function createCanonicalEvidencePort(input: CanonicalEngineInput,
     if (records.length !== request.locatorIds.length) {
       throw new Error("PostgreSQL locator authority is missing or ambiguous");
     }
-    const turns: QualificationCanonicalTurn[] = [];
+    const rankedTurns: QualificationCanonicalTurn[][] = [];
+    let turns: readonly QualificationCanonicalTurn[] = Object.freeze([]);
     let binding = null;
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index]!;
@@ -40,7 +45,14 @@ export function createCanonicalEvidencePort(input: CanonicalEngineInput,
       if (block.candidateLocator !== request.locatorIds[index]) {
         throw new Error("PostgreSQL locator order or ownership is ambiguous");
       }
-      appendCanonicalTurns(turns, block, input.diagnostic === true);
+      rankedTurns.push(canonicalTurns(block));
+      turns = selectCanonicalTurnsWithinModelInputLimit(rankedTurns, candidateTurns => {
+        const candidateBinding = Object.freeze({ canonicalEvidenceHash: sha256Json(
+          candidateTurns.map(({ turnHash }) => turnHash)), memoryGeneration: block.indexGeneration,
+        transcriptVersion: block.binding.transcriptVersion });
+        return fitsPreparedModelInput(execution, candidateBinding, candidateTurns,
+          options.attemptId);
+      });
       const nextBinding = Object.freeze({ canonicalEvidenceHash: sha256Json(
         turns.map(({ turnHash }) => turnHash)), memoryGeneration: block.indexGeneration,
       transcriptVersion: block.binding.transcriptVersion });
@@ -51,14 +63,14 @@ export function createCanonicalEvidencePort(input: CanonicalEngineInput,
     }
     const resolved = binding ?? Object.freeze({ canonicalEvidenceHash: sha256Json([]),
       memoryGeneration: "qualification-empty:v1", transcriptVersion: 0 });
-    state.set(options.attemptId, { ...execution, binding: resolved, turns: Object.freeze(turns) });
+    state.set(options.attemptId, { ...execution, binding: resolved, turns });
     await input.audit.seal({ attemptId: options.attemptId,
       kind: "selected_canonical_turns", plaintext: utf8Json({ attemptId: options.attemptId,
         memoryGeneration: resolved.memoryGeneration,
         schemaVersion: "meeting_knowledge.selected_canonical_turns.v2", turns }) });
     return Object.freeze({ authorityGeneration: resolved.memoryGeneration,
       canonicalEvidenceHash: resolved.canonicalEvidenceHash,
-      transcriptVersion: resolved.transcriptVersion, turns: Object.freeze(turns) });
+      transcriptVersion: resolved.transcriptVersion, turns });
   } });
 }
 
@@ -97,22 +109,38 @@ async function assertAdmissibleRecord(input: CanonicalEngineInput, execution: Ex
   }
 }
 
-function appendCanonicalTurns(turns: QualificationCanonicalTurn[], block: HistoricalBlock,
-  diagnostic: boolean): void {
-  for (const turn of block.turns) {
-    const canonical = Object.freeze({ endMs: turn.endMs,
-      sourceLocatorId: block.candidateLocator, speakerId: turn.speakerId,
-      startMs: turn.startMs, text: turn.text, turnHash: canonicalFinalReplyTurnHash(turn),
-      turnId: turn.turnId });
-    const previous = diagnostic ? turns.find(value => value.turnId === canonical.turnId) : undefined;
-    if (previous !== undefined) {
-      if (previous.turnHash !== canonical.turnHash) {
-        throw new Error("diagnostic selected incompatible slices of one canonical turn");
+function canonicalTurns(block: HistoricalBlock): QualificationCanonicalTurn[] {
+  return block.turns.map(turn => Object.freeze({ endMs: turn.endMs,
+    sourceLocatorId: block.candidateLocator, speakerId: turn.speakerId,
+    startMs: turn.startMs, text: turn.text, turnHash: canonicalFinalReplyTurnHash(turn),
+    turnId: turn.turnId }));
+}
+
+/** Greedily admits whole authoritative turns in ranked-locator order under exact prepared bounds. */
+export function selectCanonicalTurnsWithinModelInputLimit(
+  rankedTurns: readonly (readonly QualificationCanonicalTurn[])[],
+  fitsPreparedModelInput: (turns: readonly QualificationCanonicalTurn[]) => boolean,
+): readonly QualificationCanonicalTurn[] {
+  const selected: QualificationCanonicalTurn[] = [];
+  const seen = new Map<string, string>();
+  const limit = QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.evidenceByteLimit;
+  for (const locatorTurns of rankedTurns) {
+    for (const turn of locatorTurns) {
+      const previousHash = seen.get(turn.turnId);
+      if (previousHash !== undefined) {
+        if (previousHash !== turn.turnHash) {
+          throw new Error("selected locators contain incompatible slices of one canonical turn");
+        }
+        continue;
       }
-    } else {
-      turns.push(canonical);
+      seen.set(turn.turnId, turn.turnHash);
+      const candidate = [...selected, turn];
+      if (utf8Json(candidate).byteLength <= limit && fitsPreparedModelInput(candidate)) {
+        selected.push(turn);
+      }
     }
   }
+  return Object.freeze(selected);
 }
 
 function sha256Json(value: unknown): string {

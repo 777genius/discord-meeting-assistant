@@ -148,7 +148,8 @@ function isConcreteRetrievalPair(input: Pick<ProductionCanonicalQuestionChainInp
 function createCanonicalQuestionEngine(input: CanonicalEngineInput) {
   const state: CanonicalQuestionState = new Map();
   const retrieval = createCanonicalRetrievalPort(input, state);
-  const evidence = createCanonicalEvidencePort(input, state);
+  const evidence = createCanonicalEvidencePort(input, state, (execution, binding, turns, attemptId) =>
+    canonicalAnswerFitsPreparedInput(input.answer, execution.packet, binding, turns, attemptId));
   const answer = createAnswerPort(input, state);
   const outcome: QualificationQuestionOutcomePort = Object.freeze({
     record: async (attemptId: string, value: QualificationQuestionOutcome) => {
@@ -180,13 +181,10 @@ function createAnswerPort(input: CanonicalEngineInput,
       JSON.stringify(execution.turns) !== JSON.stringify(request.evidence)) {
       throw new Error("grounded answer evidence is not the selected PostgreSQL evidence");
     }
-    const plan = createFocusedRetrievalGroundingPlan({ authorityGeneration:
-      request.authorityGeneration, coverage: "sufficient",
-    humanActorIds: [...new Set(request.evidence.map(({ speakerId }) => speakerId))],
-    turns: request.evidence });
     const attemptId = options.attemptId;
-    const groundedRequest = { attemptId, binding: execution.binding,
-      locale: request.locale, plan, question: request.questionText };
+    const groundedRequest = canonicalAnswerRequest(execution.packet, execution.binding,
+      request.evidence, attemptId);
+    const plan = groundedRequest.plan;
     const prepared = input.answer.prepare(groundedRequest);
     await input.audit.seal({ attemptId, kind: "answer_request_intent",
       plaintext: preparedAnswerRequestIntentBytes(attemptId, prepared.request,
@@ -228,6 +226,33 @@ function createAnswerPort(input: CanonicalEngineInput,
     claims: Object.freeze(generated.answer.claims.map(({ text }) => text)),
     status: "answered" as const });
   } });
+}
+
+function canonicalAnswerRequest(packet: Pick<DiagnosticQuestion, "locale" | "questionText">,
+  binding: GroundedAnswerGenerationBinding, turns: readonly QualificationCanonicalTurn[],
+  attemptId: string) {
+  const plan = createFocusedRetrievalGroundingPlan({ authorityGeneration:
+    binding.memoryGeneration, coverage: "sufficient",
+  humanActorIds: [...new Set(turns.map(({ speakerId }) => speakerId))], turns });
+  return Object.freeze({ attemptId, binding, locale: packet.locale, plan,
+    question: packet.questionText });
+}
+
+/** Exact provider-free preflight shared by selection and the eventual answer request. */
+export function canonicalAnswerFitsPreparedInput(answer: SubscriptionRuntimeGroundedAnswerAdapter,
+  packet: Pick<DiagnosticQuestion, "locale" | "questionText">,
+  binding: GroundedAnswerGenerationBinding, turns: readonly QualificationCanonicalTurn[],
+  attemptId: string): boolean {
+  try {
+    answer.prepare(canonicalAnswerRequest(packet, binding, turns, attemptId));
+    return true;
+  } catch (error) {
+    if (error instanceof Error &&
+      error.message === "knowledge answer model input exceeds the qualified 16000-byte bound") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function sealAnswerExchanges(audit: QualificationEncryptedAuditPort, attemptId: string,

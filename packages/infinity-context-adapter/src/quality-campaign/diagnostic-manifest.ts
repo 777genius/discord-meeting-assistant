@@ -3,6 +3,19 @@ import { CONTEXT_RETRIEVAL_CONTRACT, CONTEXT_RETRIEVAL_RANKING_POLICY } from "@i
 import { normalizeDiagnosticFinalEvidenceBinding, type DiagnosticFinalEvidenceBinding } from "@discord-meeting/postgres-adapter";
 import type { FocusedLocatorRetrievalV2ProviderBinding } from "@discord-meeting/meeting-core/meeting-knowledge";
 import { exactRecord, safeId, digest } from "./canonical.js";
+export interface DiagnosticOutcome {
+  readonly questionId: string;
+  readonly status: "answered" | "abstained" | "failed" | "outcome_unknown";
+  readonly reason: string | null;
+  readonly citations: readonly string[];
+  readonly claims: readonly string[];
+  readonly retrievedLocators: readonly string[];
+  readonly citationValidity: { readonly valid: number; readonly total: number };
+  readonly latencyMs: { readonly retrieval: number | null; readonly postgres: number | null;
+    readonly answer: number | null; readonly endToEnd: number };
+  readonly bytes: { readonly evidence: number; readonly originalPrompt: number;
+    readonly repairPrompt: number };
+}
 export interface DiagnosticQuestion {
   readonly locale: "en" | "ru" | "mixed";
   readonly questionId: string;

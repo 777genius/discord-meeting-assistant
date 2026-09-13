@@ -3,7 +3,8 @@ import type { HistoricalIndexPlanV1 } from "@discord-meeting/meeting-core/meetin
 import { canonicalJson, sha256 } from "./canonical.js";
 import { DiagnosticCustody } from "./diagnostic-custody.js";
 import { decodeVersionedDiagnosticManifest } from "./diagnostic-manifest.js";
-import { verifyInstalledDiagnosticSdk, type DiagnosticOutcome } from "./diagnostic-run.js";
+import { verifyInstalledDiagnosticSdk } from "./diagnostic-run.js";
+import type { DiagnosticOutcome } from "./diagnostic-manifest.js";
 import { authenticateDiagnosticScoreV2, scoreDiagnostic } from "./diagnostic-scoring.js";
 /** Separate post-execution entrypoint: execution has no gold-reading capability. */
 export async function runDiagnosticScoreCli(argv: readonly string[], writeSafeLine?: (line: string) => void): Promise<0 | 1> {

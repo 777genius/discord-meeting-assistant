@@ -1,3 +1,5 @@
+import { QUALIFICATION_PROVIDER_INPUT_CONTRACT } from "./qualification-contract.js";
+
 const EXECUTION_PACKET_V1_KEYS = Object.freeze([
   "locale", "questionId", "questionText", "scopeTopologyReference", "source",
 ]);
@@ -157,6 +159,7 @@ export class ExecuteAdmittedQualificationQuestion {
       evidence = await this.ports.evidence.rehydrate({ locatorIds,
         questionId: input.questionId, scopeTopologyReference: input.scopeTopologyReference }, options);
     } catch {
+      options.signal.throwIfAborted();
       return await this.complete(options.attemptId, { citations: [], claims: [],
         rawRetrievalResponseSha256: retrieval.rawResponseSha256,
         reason: "evidence_rehydration_failed", retrievalCandidates: retrieval.candidates,
@@ -256,7 +259,9 @@ function assertSelectedEvidence(locatorIds: readonly string[],
 
 function assertEvidenceBytes(turns: readonly QualificationCanonicalTurn[]): void {
   const bytes = new TextEncoder().encode(JSON.stringify(turns)).byteLength;
-  if (bytes > 16_000) {throw new Error("qualification selected evidence exceeds 16000 UTF-8 bytes");}
+  if (bytes > QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.evidenceByteLimit) {
+    throw new Error("qualification selected evidence exceeds 16000 UTF-8 bytes");
+  }
 }
 
 function freezeOutcome(input: QualificationQuestionOutcome): QualificationQuestionOutcome {

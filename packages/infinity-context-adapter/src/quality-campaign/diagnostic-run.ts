@@ -18,38 +18,18 @@ import { awaitDiagnosticIndexReadiness, awaitDiagnosticIndexReadinessV3,
 import { DiagnosticCustody } from "./diagnostic-custody.js";
 import { DiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
 import { decodeVersionedDiagnosticManifest, decodeDiagnosticQuestions,
-  type DiagnosticManifest, type DiagnosticManifestV2, type DiagnosticQuestion,
+  type DiagnosticManifest, type DiagnosticManifestV2, type DiagnosticOutcome,
+  type DiagnosticQuestion,
 } from "./diagnostic-manifest.js";
 import { createDiagnosticCanonicalQuestionChain,
   type QualificationEncryptedAuditPort } from "./production-canonical-question-chain.js";
-import type { QualificationExternalEffectReservationPort } from
+import { ExecuteAdmittedQualificationQuestion,
+  type QualificationExternalEffectReservationPort } from
   "./execute-admitted-qualification-question.js";
 import { createProductionCanonicalExecutionEvidence } from "./production-canonical-execution-evidence.js";
 import { verifyInstalledDiagnosticSdk } from "./diagnostic-installed-sdk.js";
 export { verifyDiagnosticSdkPackageBytes, verifyInstalledDiagnosticSdk } from "./diagnostic-installed-sdk.js";
-export interface DiagnosticOutcome {
-  readonly questionId: string;
-  readonly status: "answered" | "abstained" | "failed" | "outcome_unknown";
-  readonly reason: string | null;
-  readonly citations: readonly string[];
-  readonly claims: readonly string[];
-  readonly retrievedLocators: readonly string[];
-  readonly citationValidity: {
-    readonly valid: number;
-    readonly total: number;
-  };
-  readonly latencyMs: {
-    readonly retrieval: number | null;
-    readonly postgres: number | null;
-    readonly answer: number | null;
-    readonly endToEnd: number;
-  };
-  readonly bytes: {
-    readonly evidence: number;
-    readonly originalPrompt: number;
-    readonly repairPrompt: number;
-  };
-}
+export type { DiagnosticOutcome } from "./diagnostic-manifest.js";
 export async function runDiagnosticCli(argv: readonly string[], writeSafeLine?: (line: string) => void): Promise<0 | 1> {
   const manifestPath = argv[1], reportPath = argv[2];
   if (manifestPath === undefined || reportPath === undefined || !manifestPath.startsWith("/") ||
@@ -358,38 +338,38 @@ async function executeQuestion(input: {
           providerBinding: m.providerBinding }),
         retrieval: new InfinityContextRetrievalV2Adapter(retrievalConfiguration) });
   const options = { attemptId, signal };
+  const timed = async <T>(key: "answer" | "postgres" | "retrieval",
+    operation: () => Promise<T>): Promise<T> => {
+    const mark = Date.now();
+    try {return await operation();}
+    finally {latencyMs[key] = Date.now() - mark;}
+  };
+  const ports = {
+    answer: { generate: (...args: Parameters<typeof chain.answer.generate>) =>
+      timed("answer", () => chain.answer.generate(...args)) },
+    evidence: { rehydrate: (...args: Parameters<typeof chain.evidence.rehydrate>) =>
+      timed("postgres", () => chain.evidence.rehydrate(...args)) },
+    outcome: chain.outcome,
+    retrieval: { retrieve: async (...args: Parameters<typeof chain.retrieval.retrieve>) => {
+      const result = await timed("retrieval", () => chain.retrieval.retrieve(...args));
+      if (result.status === "completed") {
+        retrievalCompleted = true;
+        retrievedLocators = result.candidates.map(({ locatorId }) => locatorId);
+      }
+      return result;
+    } },
+  };
   try {
-    let mark = Date.now();
-    const retrieved = await chain.retrieval.retrieve(question, options);
-    latencyMs.retrieval = Date.now() - mark;
-    if (retrieved.status !== "completed") {
-      return { ...emptyOutcome(question, "failed", retrieved.reason), bytes,
-        latencyMs: { ...latencyMs, endToEnd: Date.now() - start } };
-    }
-    retrievalCompleted = true;
-    retrievedLocators = retrieved.candidates.map(r => r.locatorId);
-    mark = Date.now();
-    const selected = await chain.evidence.rehydrate({ locatorIds: retrievedLocators,
-      questionId: question.questionId, scopeTopologyReference: question.scopeTopologyReference }, options);
-    latencyMs.postgres = Date.now() - mark;
-    // Overlapping canonical slices are not silently collapsed into misleading citation identity.
-    if (new Set(selected.turns.map(t => t.turnId)).size !== selected.turns.length) {
-      return { ...emptyOutcome(question, "failed", "overlapping_canonical_turn_identity"), retrievedLocators, bytes,
-        latencyMs: { ...latencyMs, endToEnd: Date.now() - start } };
-    }
-    mark = Date.now();
-    const result = await chain.answer.generate({ ...selected, evidence: selected.turns,
-      locale: question.locale, questionId: question.questionId, questionText: question.questionText }, options);
-    latencyMs.answer = Date.now() - mark;
+    const result = await new ExecuteAdmittedQualificationQuestion(ports).execute({
+      locale: question.locale, questionId: question.questionId, questionText: question.questionText,
+      scopeTopologyReference: question.scopeTopologyReference, source: "independent_review",
+    }, options);
     latencyMs.endToEnd = Date.now() - start;
-    if (result.status === "failed") {
-      return { ...emptyOutcome(question, "failed", result.reason), retrievedLocators, bytes, latencyMs };
-    }
-    const turnIds = new Set(selected.turns.map(t => t.turnId));
-    return { questionId: question.questionId, status: result.status, reason: null,
+    const turnIds = new Set(result.selectedTurns.map(({ turnId }) => turnId));
+    return { questionId: question.questionId, status: result.status, reason: result.reason ?? null,
       claims: result.claims, citations: result.citations, retrievedLocators,
-      citationValidity: { valid: result.citations.filter(id => turnIds.has(id)).length, total: result.citations.length },
-      bytes, latencyMs };
+      citationValidity: { valid: result.citations.filter(id => turnIds.has(id)).length,
+        total: result.citations.length }, bytes, latencyMs };
   }
   catch {
     return { ...emptyOutcome(question, effect.providerReserved || !retrievalCompleted && await custody.reserved(`effect-${sha256({ attemptId, kind: "retrieval" })}`) ? "outcome_unknown" : "failed", signal.aborted ? "timeout" : "diagnostic_execution_failed"), retrievedLocators, bytes,
