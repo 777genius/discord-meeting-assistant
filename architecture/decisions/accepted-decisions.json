@@ -366,6 +366,11 @@
       "id": "ADR-0076",
       "path": "docs/decisions/0076-read-only-retrieval-scope-resolution.md",
       "immutableDigest": "sha256:0b60dacf59f8c92831f0b8b9980b53acc939f23169c4fe89cb63ac80fb7d607d"
+    },
+    {
+      "id": "ADR-0077",
+      "path": "docs/decisions/0077-exact-authoritative-qualification-generation.md",
+      "immutableDigest": "sha256:b9a04cd79cda285a906ff175527eb5611451d41920fa549469df3a0570c43d53"
     }
   ]
 }

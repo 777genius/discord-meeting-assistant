@@ -17,6 +17,15 @@ import { validateQualificationExecutionPacket, validateQualificationGoldPacket,
 import type { TrustedAuthorityPin } from "./release.js";
 
 const MAXIMUM_INPUT_BYTES = 8_000_000;
+const AUTHORITATIVE_QUALIFICATION_GENERATION = Object.freeze({
+  canonicalTurnSha256: "3940285ace11a4449a7489bdc631833fffaeda3339b581316d48bf6358fc5c82",
+  caseCounts: Object.freeze({ abstention: 11, answerable: 29,
+    locales: Object.freeze({ en: 10, ru: 30 }), total: 40 }),
+  meetingId: "HQogFSdvy0tf",
+  sourceSha256: "fc92b9d76f4b4c9613e19f78b87fe3a38e4b772b3d4943cde486ed75ac0a72e4",
+  speakerCount: 7,
+  turnCount: 1_779,
+});
 const OUTPUT_FILES = Object.freeze({
   acceptance: "acceptance-receipt.json", authorization: "execution-authorization.json",
   automatic: "automatic-questions.json", execution: "execution-corpus.json",
@@ -102,13 +111,20 @@ Promise<CorpusAdmissionResult> {
 
   const { output, outputName, parent } = await createPrivateOutput(input.outputRoot);
   try {
+    const downstreamMapping = signed(signers[0], {
+      releaseRootSha256: input.releaseRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_locator_authority.v1",
+      snapshotSha256: corpus.snapshotSha256,
+      turnMappingsSha256: sha256({ dataset: corpus.turnMappings,
+        purpose: "turn_to_source_locator_authority" }),
+    });
     const initialFiles: Readonly<Record<string, unknown>> = Object.freeze({
       [OUTPUT_FILES.acceptance]: acceptance, [OUTPUT_FILES.authorization]: authorization,
       [OUTPUT_FILES.automatic]: questions.filter(({ source }) => source === "automatic"),
       [OUTPUT_FILES.forbidden]: forbidden, [OUTPUT_FILES.review1]: review1,
       [OUTPUT_FILES.review2]: review2,
       [OUTPUT_FILES.reviewed]: questions.filter(({ source }) => source === "independent_review"),
-      [OUTPUT_FILES.turnMapping]: mapping,
+      [OUTPUT_FILES.turnMapping]: downstreamMapping,
     });
     const checksumInventory = [];
     for (const [path, document] of Object.entries(initialFiles)) {
@@ -248,10 +264,10 @@ function decodePhase(value: unknown): CorpusAdmissionPhase {
 }
 
 function decodeCorpus(value: unknown, releaseRootSha256: string) {
-  const record = exactRecord(value, ["entries", "forbiddenLocatorIds", "releaseRootSha256",
-    "reviewerDigestSha256", "schemaVersion", "snapshotSha256", "sourceDigestSha256",
-    "turnMappings"], "sealed corpus");
-  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_sealed_corpus.v1" ||
+  const record = exactRecord(value, ["authoritativeGeneration", "entries", "forbiddenLocatorIds",
+    "releaseRootSha256", "reviewerDigestSha256", "schemaVersion", "snapshotSha256",
+    "sourceDigestSha256", "turnMappings"], "sealed corpus");
+  if (record.schemaVersion !== "meeting_knowledge.semantic_quality_sealed_corpus.v2" ||
     record.releaseRootSha256 !== releaseRootSha256 || !Array.isArray(record.entries) ||
     record.entries.length !== MAIN_CARDINALITY.perRepetition) {
     throw new Error("sealed corpus version, release, or cardinality is invalid");
@@ -274,6 +290,8 @@ function decodeCorpus(value: unknown, releaseRootSha256: string) {
   if (new Set(entries.map(({ execution }) => execution.questionId)).size !== entries.length) {
     throw new Error("sealed corpus contains duplicate question IDs");
   }
+  assertAuthoritativeGeneration(record.authoritativeGeneration, entries,
+    record.sourceDigestSha256);
   const forbiddenLocatorIds = locatorList(record.forbiddenLocatorIds,
     "global forbidden locator", 100);
   if (forbiddenLocatorIds.length === 0) {throw new Error("global forbidden locator set is empty");}
@@ -291,11 +309,42 @@ function decodeCorpus(value: unknown, releaseRootSha256: string) {
       forbiddenLocatorIds.includes(sourceLocatorId))) {
     throw new Error("authoritative locator datasets are duplicated, incomplete, or overlapping");
   }
-  return Object.freeze({ entries: Object.freeze(entries), forbiddenLocatorIds,
+  return Object.freeze({ authoritativeGeneration: AUTHORITATIVE_QUALIFICATION_GENERATION,
+    entries: Object.freeze(entries), forbiddenLocatorIds,
     releaseRootSha256: digest(record.releaseRootSha256, "sealed corpus release"),
     reviewerDigestSha256: digest(record.reviewerDigestSha256, "sealed corpus reviewers"),
     snapshotSha256: digest(record.snapshotSha256, "sealed corpus snapshot"), turnMappings,
     sourceDigestSha256: digest(record.sourceDigestSha256, "sealed corpus source") });
+}
+
+function assertAuthoritativeGeneration(value: unknown, entries: readonly CorpusEntry[],
+  sourceDigestSha256: unknown): void {
+  const generation = exactRecord(value, ["canonicalTurnSha256", "caseCounts", "meetingId",
+    "sourceSha256", "speakerCount", "turnCount"], "authoritative qualification generation");
+  const caseCounts = exactRecord(generation.caseCounts, ["abstention", "answerable", "locales",
+    "total"], "authoritative qualification case counts");
+  const locales = exactRecord(caseCounts.locales, ["en", "ru"],
+    "authoritative qualification locale counts");
+  const observedGeneration = { ...generation, caseCounts: { ...caseCounts, locales } };
+  if (canonicalJson(observedGeneration) !== canonicalJson(AUTHORITATIVE_QUALIFICATION_GENERATION) ||
+    sourceDigestSha256 !== AUTHORITATIVE_QUALIFICATION_GENERATION.sourceSha256) {
+    throw new Error("sealed corpus targets another authoritative generation");
+  }
+  const reviewed = entries.filter(({ execution }) => execution.source === "independent_review");
+  const observedCounts = {
+    abstention: reviewed.filter(({ gold }) => gold.abstentionAuthority === "must_abstain").length,
+    answerable: reviewed.filter(({ gold }) => gold.abstentionAuthority === "answerable").length,
+    locales: {
+      en: reviewed.filter(({ execution }) => execution.locale === "en").length,
+      ru: reviewed.filter(({ execution }) => execution.locale === "ru").length,
+    },
+    total: reviewed.length,
+  };
+  if (reviewed.some(({ execution }) => execution.locale === "mixed") ||
+    canonicalJson(observedCounts) !==
+      canonicalJson(AUTHORITATIVE_QUALIFICATION_GENERATION.caseCounts)) {
+    throw new Error("sealed corpus cases do not match the authoritative generation");
+  }
 }
 
 function toCampaignQuestion(entry: CorpusEntry): CampaignQuestion {
@@ -365,16 +414,24 @@ function verifyPreparationReceipts(input: { readonly acceptance: unknown;
     const verified = nodeCampaignAuthentication.verify<Record<string, unknown>>(document,
       input.custody.keyId, input.custody.publicKeyPem, `${label} custody`);
     const digestKey = label === "mapping" ? "turnMappingsSha256" : "forbiddenLocatorSetSha256";
-    const authority = exactRecord(verified.payload, [digestKey, "releaseRootSha256",
-      "schemaVersion", "snapshotSha256"], `${label} custody payload`);
+    const authority = exactRecord(verified.payload, label === "mapping" ?
+      ["authoritativeGenerationSha256", digestKey, "releaseRootSha256", "schemaVersion",
+        "snapshotSha256", "sourceDigestSha256"] :
+      [digestKey, "releaseRootSha256", "schemaVersion", "snapshotSha256"],
+    `${label} custody payload`);
     const actualDataset = label === "mapping" ? input.corpus.turnMappings :
       input.corpus.forbiddenLocatorIds;
     const expectedDatasetSha256 = sha256({ dataset: actualDataset, purpose: label === "mapping" ?
       "turn_to_source_locator_authority" : "global_forbidden_locator_authority" });
-    if (authority.schemaVersion !== "meeting_knowledge.semantic_quality_locator_authority.v1" ||
+    const expectedSchema = label === "mapping" ?
+      "meeting_knowledge.semantic_quality_locator_authority.v2" :
+      "meeting_knowledge.semantic_quality_locator_authority.v1";
+    if (authority.schemaVersion !== expectedSchema ||
       authority.releaseRootSha256 !== input.input.releaseRootSha256 ||
       authority.snapshotSha256 !== input.corpus.snapshotSha256 ||
-      authority[digestKey] !== expectedDatasetSha256) {
+      authority[digestKey] !== expectedDatasetSha256 || label === "mapping" &&
+      (authority.authoritativeGenerationSha256 !== sha256(input.corpus.authoritativeGeneration) ||
+      authority.sourceDigestSha256 !== input.corpus.sourceDigestSha256)) {
       throw new Error(`${label} custody is foreign`);
     }
   }

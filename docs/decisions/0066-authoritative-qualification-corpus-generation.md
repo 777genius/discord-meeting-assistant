@@ -1,8 +1,8 @@
 ---
 id: ADR-0066
-status: accepted
+status: superseded
 supersedes: [ADR-0052]
-superseded_by: []
+superseded_by: [ADR-0077]
 ---
 
 # ADR-0066: Bind qualification corpus cardinality to an authoritative generation
