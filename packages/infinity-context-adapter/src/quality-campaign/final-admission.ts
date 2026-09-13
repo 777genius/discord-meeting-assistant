@@ -76,7 +76,6 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
   readonly questionReviewReceipts: readonly [unknown, unknown];
   readonly release: PinnedReleaseDocument; readonly repetitionAuthorityKeyId: string;
   readonly repetitionEvidence: readonly unknown[]; readonly rootBindingSha256: string;
-  readonly reservedAnswerSpendClaims?: readonly import("./cumulative-spend.js").ExpectedSpendClaim[];
   readonly spendLedger: CumulativeSpendLedgerPort;
   readonly spendReservationSha256ByRepetition: readonly [string, string, string];
   readonly spendReservationsByRepetition: readonly [unknown, unknown, unknown];
@@ -140,7 +139,6 @@ export async function admitFinalCampaign(policy: QualityCampaignAuthorityPolicy,
     effectVerificationEpochMs: input.effectVerificationEpochMs, expectedOutcomes,
     perRepetitionCardinality: MAIN_CARDINALITY.perRepetition,
     scopeObservationCustody: input.scopeObservationCustody,
-    reservedAnswerSpendClaims: input.reservedAnswerSpendClaims ?? [],
     release: release.release,
     releaseDocumentSha256: sha256(input.release.document),
     spendReservations: verifiedSpendReservations });
@@ -380,6 +378,16 @@ function decodeQualificationOutcome(value: unknown, expected: ExpectedRepetition
   const citationChecks = decodeCitationChecks(record.citationChecks, new Set(evidenceTurnIds),
     allowsEmptyAnswerEvidence);
   const claimChecks = decodeClaimChecks(record.claimChecks, allowsEmptyAnswerEvidence);
+  const answerCalled = providerCallInventory.some(({ callKind }) => callKind === "answer");
+  const answerTerminalPresent = terminalChain.some(({ callKind }) => callKind === "answer");
+  if (answerCalled !== answerTerminalPresent || !answerCalled &&
+    (record.terminalStatus === "answered" || record.terminalStatus === "abstained" &&
+      (record.terminalReason !== "zero_admissible_evidence" || evidenceTurnIds.length !== 0 ||
+        citationChecks.length !== 0 || claimChecks.length !== 0) ||
+      record.terminalStatus === "failed" && providerCallInventory.length !== 0 &&
+        record.terminalReason !== "runtime_unavailable")) {
+    throw new Error("qualification outcome without an answer call is not an exact no-evidence abstention or pre-send failure");
+  }
   const claimIds = new Set(claimChecks.map(({ claimId }) => claimId));
   if (citationChecks.some(({ claimId }) => !claimIds.has(claimId))) {
     throw new Error("citation check references a foreign claim ID");}

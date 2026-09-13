@@ -158,6 +158,10 @@ describe("main external/local retention binding", () => {
           assertExactOutcomeContract({ ...outcomes[0]!, [field]: "0".repeat(64) });
         }).toThrow("answer evidence is detached");
       }
+      expect(() => {assertExactOutcomeContract({ ...outcomes[0]!,
+        providerCallInventory: outcomes[0]!.providerCallInventory.slice(0, 2),
+        terminalChain: outcomes[0]!.terminalChain.slice(0, 2) });})
+        .toThrow("without an answer call");
       const { schemaVersion: _schemaVersion, ...legacy } = outcomes[0]!;
       expect(() => {assertExactOutcomeContract(legacy as ExactOutcomeEvidence);}).toThrow();
     });

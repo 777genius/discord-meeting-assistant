@@ -52,11 +52,19 @@ export function validateCanonicalScopeResolutionObservation(value: unknown) {
       responseBytes: Number(read.responseBytes), status: String(read.status) });
   });
   if (reads.some((read, index) => index < reads.length - 1 && read.status !== "received") ||
+    reads.some((read) => read.status === "outcome_unknown") && record.status !== "interrupted" ||
     record.status === "empty" && reads.length !== 0 ||
+    !validScopeTerminalRead(String(record.status), reads.at(-1)?.status) ||
     record.status === "prepared" && (reads.length !== 2 ||
       reads.some((read) => read.status !== "received"))) {
     throw new Error("canonical scope resolution observation is incomplete");
   }
   return Object.freeze({ reads: Object.freeze(reads), status: String(record.status),
     schemaVersion: "meeting_knowledge.scope_resolution.v1" as const });
+}
+
+function validScopeTerminalRead(status: string, lastReadStatus: string | undefined): boolean {
+  if (status === "unavailable") {return lastReadStatus === "failed";}
+  if (status === "interrupted") {return lastReadStatus === "outcome_unknown";}
+  return true;
 }

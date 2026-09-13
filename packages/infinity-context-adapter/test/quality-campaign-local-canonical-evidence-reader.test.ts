@@ -38,9 +38,12 @@ describe("production local canonical evidence reader", () => {
       const verified = await fixture.reader.verify({ attempts: [fixture.projection],
         campaignRootSha256 });
       expect(verified.inventorySha256).toMatch(/^[a-f0-9]{64}$/u);
+      await expect(fixture.reader.readReservedAnswerSpendClaims!([identity])).resolves.toEqual([]);
       await expect(fixture.reader.verify({ attempts: [{ ...fixture.projection,
         retrievalLatencyUs: fixture.projection.retrievalLatencyUs - 1 }], campaignRootSha256 }))
         .rejects.toThrow("differs from measured canonical SDK operation");
+      await expect(fixture.reader.readReservedAnswerSpendClaims!([identity]))
+        .rejects.toThrow("lack their verified local receipt inventory");
       const foreignKeyReader = createProductionLocalCanonicalEvidenceReader({ artifactKey:
         new Uint8Array(32).fill(7), artifactKeyId: "another-key", artifactRoot:
         fixture.artifactRoot });
@@ -64,7 +67,11 @@ describe("production local canonical evidence reader", () => {
 
   it("rejects authenticated unknown or unprepared scope metadata", async () => {
     for (const options of [{ scopeStatus: "interrupted" },
-      { scopeReadStatus: "outcome_unknown" }]) {
+      { scopeReadStatus: "outcome_unknown" },
+      { scopeValue: { schemaVersion: "meeting_knowledge.scope_resolution.v1",
+        status: "unavailable", reads: [{ kind: "scope_spaces",
+          requestSha256: "1".repeat(64), responseSha256: null, responseBytes: 0,
+          status: "outcome_unknown" }] } }]) {
       const fixture = await localFixture(options);
       await expect(fixture.reader.verify({ attempts: [fixture.projection], campaignRootSha256 }))
         .rejects.toThrow("canonical scope resolution observation");

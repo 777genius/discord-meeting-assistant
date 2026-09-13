@@ -152,7 +152,6 @@ export async function reconstructExactMainEvidence(input: {
   readonly release: QualityCampaignRelease;
   readonly releaseRootSha256: string;
   readonly releaseDocumentSha256: string;
-  readonly reservedAnswerSpendClaims?: readonly import("./cumulative-spend.js").ExpectedSpendClaim[];
   readonly effectVerificationEpochMs: number;
   readonly spendReservations: readonly VerifiedSpendReservation[];
   readonly spendReservationSha256ByRepetition: Readonly<Record<1 | 2 | 3, string>>;
@@ -187,7 +186,6 @@ export async function reconstructExactMainEvidence(input: {
     custody: input.custody, effectVerificationEpochMs: input.effectVerificationEpochMs,
     perRepetitionCardinality: 240,
     scopeObservationCustody: input.scopeObservationCustody,
-    reservedAnswerSpendClaims: input.reservedAnswerSpendClaims ?? [],
     releaseDocumentSha256: input.releaseDocumentSha256,
     release: input.release,
     spendReservations: input.spendReservations, expectedOutcomes: expected.map(({ attempt }) => {
@@ -522,10 +520,21 @@ export function assertExactOutcomeContract(value: ExactOutcomeEvidence): void {
   assertLocatorDigests(value.forbiddenLocatorDigests);
   assertProviderCallInventory(value.providerCallInventory);
   const answerTerminal = value.terminalChain.find(({ callKind }) => callKind === "answer");
-  if (answerTerminal !== undefined &&
-    (value.answerRequestIntentSha256 !== answerTerminal.requestDigestSha256 ||
-      value.answerExchangeInventorySha256 !== answerTerminal.resultEnvelopeDigestSha256)) {
+  const answerCalled = value.providerCallInventory.some(({ callKind }) => callKind === "answer");
+  if (answerCalled !== (answerTerminal !== undefined) ||
+    answerTerminal !== undefined &&
+      (value.answerRequestIntentSha256 !== answerTerminal.requestDigestSha256 ||
+        value.answerExchangeInventorySha256 !== answerTerminal.resultEnvelopeDigestSha256)) {
     throw new Error("outcome answer evidence is detached from its provider terminal");
+  }
+  if (!answerCalled && (value.terminalStatus === "answered" ||
+    value.terminalStatus === "abstained" &&
+      (value.terminalReason !== "zero_admissible_evidence" ||
+        value.evidenceLocatorDigests.length !== 0 || value.evidenceTurnIds.length !== 0 ||
+        value.citationLocatorDigests.length !== 0) ||
+    value.terminalStatus === "failed" && value.providerCallInventory.length !== 0 &&
+      value.terminalReason !== "runtime_unavailable")) {
+    throw new Error("outcome without an answer call is not an exact no-evidence abstention or pre-send failure");
   }
   if (!(value.terminalReason === null || typeof value.terminalReason === "string" &&
     value.terminalReason.trim() !== "")) {

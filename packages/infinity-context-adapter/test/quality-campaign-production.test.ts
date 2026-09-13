@@ -1060,6 +1060,27 @@ describe("production quality campaign final evidence", () => {
     expect(metrics.every(({ thresholdPassed }) => thresholdPassed)).toBe(true);
   }, 60_000);
 
+  it("rejects an orphan ledger claim even with a matching forged caller expectation", async () => {
+    const spendReservationSha256 = FINAL.input.spendReservationSha256ByRepetition[0];
+    const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
+      campaignRootSha256: CAMPAIGN_ROOT, questionDigestSha256: d("f"),
+      questionId: "forged-orphan", releaseRootSha256: FINAL.release.releaseRootSha256,
+      repetition: 1, spendReservationSha256 });
+    const requestDigestSha256 = d("e");
+    const forgedClaim = { admissionId: `forged-${identity.attemptId}`,
+      attemptId: identity.attemptId, callKind: identity.callKind,
+      campaignRootSha256: identity.campaignRootSha256, repetition: identity.repetition,
+      requestedEncryptedBytes: 1, requestedTokens: 1, requestDigestSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_budget_claim.v1" as const,
+      spendReservationSha256 };
+    const spendLedger = { loadAdmittedClaims: async (reservation: VerifiedSpendReservation) => [
+      ...await FINAL.input.spendLedger.loadAdmittedClaims(reservation),
+      ...(reservation.payload.repetition === 1 ? [forgedClaim] : [])] };
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input, spendLedger,
+      reservedAnswerSpendClaims: [{ identity, requestDigestSha256 }] } as never))
+      .rejects.toThrow(/orphaned/u);
+  }, 60_000);
+
   it("rejects a fabricated provider artifact for an authenticated provider-free attempt", async () => {
     const outcome = FINAL.outcomesByRepetition[0]![1]!;
     const identity = artifactAttemptIdentity(outcome.identity, "capability_request");
@@ -1074,16 +1095,25 @@ describe("production quality campaign final evidence", () => {
       artifacts: [...FINAL.input.artifacts, fabricated] })).rejects.toThrow("orphan artifact");
   });
 
-  it("rejects an authenticated call inventory with a missing provider terminal chain", async () => {
+  it("rejects missing provider terminals and answered outcomes without an answer call", async () => {
     const first = FINAL.evidence[0]!.payload;
-    const outcomes = first.outcomes.map((outcome, index) => index === 1 ? { ...outcome,
+    const missingTerminal = first.outcomes.map((outcome, index) => index === 1 ? { ...outcome,
       providerCallInventory: (["capability", "retrieval", "answer"] as const)
         .map((callKind) => ({ callKind, callOrdinal: 0 as const })) } : outcome);
-    const receipt = FINAL.repetitionAuthority.signed({ ...first, outcomes,
-      outcomesSha256: sha256(outcomes) });
+    const missingReceipt = FINAL.repetitionAuthority.signed({ ...first,
+      outcomes: missingTerminal, outcomesSha256: sha256(missingTerminal) });
     await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
-      repetitionEvidence: [receipt, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
+      repetitionEvidence: [missingReceipt, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
       .rejects.toThrow("differs from provider call inventory");
+
+    const noAnswer = first.outcomes.map((outcome, index) => index === 0 ? { ...outcome,
+      providerCallInventory: outcome.providerCallInventory.slice(0, 2),
+      terminalChain: outcome.terminalChain.slice(0, 2) } : outcome);
+    const noAnswerReceipt = FINAL.repetitionAuthority.signed({ ...first, outcomes: noAnswer,
+      outcomesSha256: sha256(noAnswer) });
+    await expect(admitFinalCampaign(FINAL.authorities.policy, { ...FINAL.input,
+      repetitionEvidence: [noAnswerReceipt, FINAL.evidence[1]!, FINAL.evidence[2]!] }))
+      .rejects.toThrow("without an answer call");
   });
 
   it.each(["v3", "v4"] as const)("rejects legacy %s repetition evidence", async (version) => {

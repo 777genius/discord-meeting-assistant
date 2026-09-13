@@ -1,6 +1,5 @@
 import type { AdjudicationEffectEvidence, RawOutcomeVaultPort } from "./adjudication.js";
 import type { AttemptIdentity, ProviderExchangePort } from "./execution.js";
-import type { ExpectedSpendClaim } from "./cumulative-spend.js";
 import type { QualityCampaignRelease } from "./release.js";
 import type { ArtifactCustodyPort, CanonicalScopeObservationPort } from "./retention.js";
 import type { ExactCampaignEvidence, ProviderCallInventoryEntry } from "./production-evidence.js";
@@ -137,7 +136,6 @@ export interface MainCanonicalEvidenceProjection {
 
 export interface VerifiedMainCanonicalEvidence {
   readonly inventorySha256: string;
-  readonly reservedAnswerSpendClaims: readonly ExpectedSpendClaim[];
 }
 
 /** Consumer-owned local proof boundary; no corpus, gold, or adjudication facts cross it. */

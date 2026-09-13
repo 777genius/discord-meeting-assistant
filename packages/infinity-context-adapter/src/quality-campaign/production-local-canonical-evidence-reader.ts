@@ -39,7 +39,23 @@ MainCanonicalEvidenceVerificationPort {
   }
   const key = new Uint8Array(input.artifactKey);
   let topologyAdmission: Promise<QualificationScopeTopologyPort> | undefined;
-  return Object.freeze({ project: async (projection: Parameters<
+  const verifiedClaimsByCampaign = new Map<string, { readonly attemptInventorySha256: string;
+    readonly claims: readonly ExpectedSpendClaim[] }>();
+  return Object.freeze({ readReservedAnswerSpendClaims: async (identities: readonly import(
+    "./execution.js").AttemptIdentity[]) => {
+    if (identities.length === 0 || new Set(identities.map(({ campaignRootSha256 }) =>
+      campaignRootSha256)).size !== 1) {
+      throw new Error("reserved answer claim lookup has an invalid attempt inventory");
+    }
+    const campaignRootSha256 = identities[0]!.campaignRootSha256;
+    const verified = verifiedClaimsByCampaign.get(campaignRootSha256);
+    const attemptInventorySha256 = sha256(identities.toSorted((left, right) =>
+      left.attemptId.localeCompare(right.attemptId)));
+    if (verified === undefined || verified.attemptInventorySha256 !== attemptInventorySha256) {
+      throw new Error("reserved answer claims lack their verified local receipt inventory");
+    }
+    return verified.claims;
+  }, project: async (projection: Parameters<
     MainCanonicalEvidenceVerificationPort["project"]>[0]) => {
     return Object.freeze({ ...projection, topology: null, diagnosticCustody: null });
   }, readScopeObservation: async (identity: Parameters<
@@ -52,6 +68,8 @@ MainCanonicalEvidenceVerificationPort {
   }, verify: async (verification: Parameters<
     MainCanonicalEvidenceVerificationPort["verify"]>[0]) => {
     const { attempts, campaignRootSha256 } = verification;
+    // A failed recheck must not leave an earlier claim proof available.
+    verifiedClaimsByCampaign.delete(campaignRootSha256);
     digest(campaignRootSha256, "local canonical evidence campaign root");
     if (attempts.length === 0 || new Set(attempts.map(({ attemptId }) => attemptId)).size !==
       attempts.length || attempts.some((attempt) => attempt.campaignRootSha256 !==
@@ -74,10 +92,13 @@ MainCanonicalEvidenceVerificationPort {
             } : undefined);
       }));
     const receipts = verified.flatMap(value => value.receipts).toSorted(compareReceipt);
-    const reservedAnswerSpendClaims = verified.flatMap(value =>
-      value.reservedAnswerSpendClaim === null ? [] : [value.reservedAnswerSpendClaim]);
-    return Object.freeze({ inventorySha256: sha256(receipts),
-      reservedAnswerSpendClaims: Object.freeze(reservedAnswerSpendClaims) });
+    const reservedAnswerSpendClaims = Object.freeze(verified.flatMap(value =>
+      value.reservedAnswerSpendClaim === null ? [] : [value.reservedAnswerSpendClaim]));
+    verifiedClaimsByCampaign.set(campaignRootSha256, Object.freeze({
+      attemptInventorySha256: sha256(attempts.map(({ identity }) => identity)
+        .toSorted((left, right) => left.attemptId.localeCompare(right.attemptId))),
+      claims: reservedAnswerSpendClaims }));
+    return Object.freeze({ inventorySha256: sha256(receipts) });
   } });
 }
 

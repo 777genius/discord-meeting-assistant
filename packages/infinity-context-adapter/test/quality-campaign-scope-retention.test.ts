@@ -13,21 +13,26 @@ import { scopeObservation, scopeObservationCustody } from "./quality-campaign-sc
 const digest = (value: string) => value.repeat(64);
 
 describe("authenticated scope retention and durable budget", () => {
-  it("keeps unavailable metadata attempts and their unknown read in the denominator", async () => {
+  it("rejects unavailable metadata with an unknown outcome and retains a genuine failed read", async () => {
     const identity = attemptIdentity({ callKind: "answer", callOrdinal: 0,
       campaignRootSha256: digest("a"), releaseRootSha256: digest("b"),
       questionDigestSha256: digest("c"), questionId: "q-1", repetition: 1,
       spendReservationSha256: digest("d") });
-    const observation = { schemaVersion: "meeting_knowledge.scope_resolution.v1",
-      status: "unavailable", reads: [{ kind: "scope_spaces", requestSha256: digest("e"),
-        responseBytes: 0, responseSha256: null, status: "outcome_unknown" }] };
+    const receipt = { algorithm: "A256GCM" as const,
+      artifactKind: "scope_resolution_observation" as const, attemptId: identity.attemptId,
+      envelopeSha256: digest("f"), plaintextSha256: digest("1"),
+      rootBindingSha256: identity.campaignRootSha256,
+      schemaVersion: "meeting_knowledge.semantic_quality_artifact_receipt.v1" as const,
+      sizeBytes: 256, storeIdentitySha256: digest("2") };
+    const observation = (status: "failed" | "outcome_unknown") => ({
+      schemaVersion: "meeting_knowledge.scope_resolution.v1", status: "unavailable",
+      reads: [{ kind: "scope_spaces", requestSha256: digest("e"), responseBytes: 0,
+        responseSha256: null, status }] });
+    await expect(verifyCanonicalScopeRetention([identity], {
+      readScopeObservation: async () => ({ observation: observation("outcome_unknown"), receipt }) }))
+      .rejects.toThrow("canonical scope resolution observation is incomplete");
     const retained = await verifyCanonicalScopeRetention([identity], {
-      readScopeObservation: async () => ({ observation, receipt: { algorithm: "A256GCM",
-        artifactKind: "scope_resolution_observation", attemptId: identity.attemptId,
-        envelopeSha256: digest("f"), plaintextSha256: digest("1"),
-        rootBindingSha256: identity.campaignRootSha256,
-        schemaVersion: "meeting_knowledge.semantic_quality_artifact_receipt.v1",
-        sizeBytes: 256, storeIdentitySha256: digest("2") } }) });
+      readScopeObservation: async () => ({ observation: observation("failed"), receipt }) });
     expect(retained.expectedSpendClaims).toHaveLength(1);
     expect(retained.expectedSpendClaims[0]).toMatchObject({
       identity: { callKind: "capability", callOrdinal: 1 },

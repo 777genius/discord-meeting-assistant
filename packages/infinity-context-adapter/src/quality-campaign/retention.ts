@@ -21,6 +21,9 @@ import type { ProviderCallInventoryEntry } from "./production-evidence.js";
 export interface CanonicalScopeObservationPort {
   readScopeObservation(identity: AttemptIdentity): Promise<{
     readonly observation: unknown; readonly receipt: SemanticQualityV4ArtifactReceipt }>;
+  /** Returns only claims reconstructed from the already authenticated local receipt inventory. */
+  readReservedAnswerSpendClaims?(identities: readonly AttemptIdentity[]):
+    Promise<readonly ExpectedSpendClaim[]>;
 }
 
 export async function verifyCanonicalScopeRetention(identities: readonly AttemptIdentity[],
@@ -135,7 +138,6 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
   readonly scopeObservationCustody?: CanonicalScopeObservationPort;
   readonly keyNamespace?: string;
   readonly providerResultAuthorityRole?: "holdout_provider_result" | "provider_result";
-  readonly reservedAnswerSpendClaims?: readonly ExpectedSpendClaim[];
   readonly release: QualityCampaignRelease;
   readonly releaseDocumentSha256: string;
   readonly spendReservations: readonly VerifiedSpendReservation[] }): Promise<{
@@ -154,14 +156,20 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
     authenticated: new Map<string, AuthenticatedArtifact>(), custody: input.custody,
     effectVerificationEpochMs: input.effectVerificationEpochMs, expected, releaseDocumentSha256:
     digest(input.releaseDocumentSha256, "retained release document"), reviewSpendClaims: [], seen,
-    expectedSpendClaims: [...(input.reservedAnswerSpendClaims ?? [])],
+    expectedSpendClaims: [],
     keyNamespace: input.keyNamespace,
     providerResultAuthorityRole: input.providerResultAuthorityRole ?? "provider_result",
     release: input.release,
     spendReservations: input.spendReservations };
-  const scope = perRepetitionCardinality === 240 ? await verifyCanonicalScopeRetention(
-    input.expectedOutcomes.map(({ identity }) => identity), requireScopeCustody(input.scopeObservationCustody)) : null;
-  if (scope !== null) { context.expectedSpendClaims.push(...scope.expectedSpendClaims); }
+  const scopeCustody = perRepetitionCardinality === 240 ?
+    requireScopeCustody(input.scopeObservationCustody) : null;
+  const scope = scopeCustody === null ? null : await verifyCanonicalScopeRetention(
+    input.expectedOutcomes.map(({ identity }) => identity), scopeCustody);
+  if (scope !== null && scopeCustody !== null) {
+    context.expectedSpendClaims.push(...scope.expectedSpendClaims);
+    context.expectedSpendClaims.push(...await authenticatedReservedAnswerSpendClaims(
+      input.expectedOutcomes, scopeCustody));
+  }
   let totalStoredBytes = scope?.totalStoredBytes ?? 0;
   for (const artifact of input.artifacts) {
     await admitRetainedArtifact(policy, artifact, context);
@@ -191,6 +199,34 @@ export async function verifyExactRetentionInventory(policy: QualityCampaignAutho
 function requireScopeCustody(custody: CanonicalScopeObservationPort | undefined): CanonicalScopeObservationPort {
   if (custody === undefined) { throw new Error("main retention requires authenticated scope observations"); }
   return custody;
+}
+
+async function authenticatedReservedAnswerSpendClaims(
+  outcomes: readonly ExpectedOutcomeInventory[], custody: CanonicalScopeObservationPort,
+): Promise<readonly ExpectedSpendClaim[]> {
+  const eligible = outcomes.filter((outcome) =>
+    outcome.providerCallInventory.length !== 0 &&
+    !outcome.providerCallInventory.some(({ callKind }) => callKind === "answer") &&
+    outcome.terminalStatus === "failed" && outcome.terminalReason === "runtime_unavailable");
+  if (eligible.length === 0) {return Object.freeze([]);}
+  if (custody.readReservedAnswerSpendClaims === undefined) {
+    throw new Error("reserved answer spend lacks authenticated local receipt custody");
+  }
+  const claims = await custody.readReservedAnswerSpendClaims(
+    outcomes.map(({ identity }) => identity));
+  const eligibleByAttempt = new Map(eligible.map((outcome) =>
+    [outcome.identity.attemptId, outcome.identity] as const));
+  if (claims.length !== eligible.length ||
+    new Set(claims.map(({ identity }) => identity.attemptId)).size !== claims.length ||
+    claims.some((claim) => {
+      const identity = eligibleByAttempt.get(claim.identity.attemptId);
+      return identity === undefined || canonicalJson(identity) !== canonicalJson(claim.identity) ||
+        digest(claim.requestDigestSha256, "reserved answer request intent") !==
+          claim.requestDigestSha256;
+    })) {
+    throw new Error("reserved answer spend claims differ from authenticated pre-send intent inventory");
+  }
+  return Object.freeze([...claims]);
 }
 
 interface ExpectedArtifactMembership {
