@@ -287,7 +287,8 @@ type CanonicalRetrievalBindingInput = Parameters<typeof createCanonicalRetrieval
 function validateRetrievalBindingInput(input: CanonicalRetrievalBindingInput) {
   if (!attemptPattern.test(input.attemptId)) {throw new Error("retrieval binding attempt is invalid");}
   const packet = validateCustodyPacket(input.packet);
-  const admittedMain = "source" in packet;
+  const admittedMain = "schemaVersion" in packet && packet.schemaVersion ===
+    "meeting_knowledge.qualification_execution_packet.v2";
   validateBindingTopology(input, admittedMain);
   const request = validateFocusedLocatorRetrievalV3Request(input.request);
   assertCanonicalRequest(request, packet.questionText);

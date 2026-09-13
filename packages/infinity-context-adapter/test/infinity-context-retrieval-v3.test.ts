@@ -520,6 +520,30 @@ it("reconstructs V3 frozen binding with separate byte, snapshot and projection i
   await expect(validateCanonicalRetrievalBinding({ ...binding, candidates: [] }, input)).rejects.toThrow();
 });
 
+it("uses explicit execution packet version to select legacy or topology-bound custody", async () => {
+  const { createCanonicalRetrievalBinding } = await import(
+    "../src/quality-campaign/canonical-execution-artifact-validation.js");
+  const input = await custodyFixture();
+  const { schemaVersion: _schemaVersion,
+    scopeTopologyDocumentSha256: _scopeTopologyDocumentSha256,
+    scopeTopologyGeneration: _scopeTopologyGeneration, ...legacyPacket } = input.packet;
+  const legacyTopology = { currentMeetingId: input.topology.currentMeetingId,
+    roomId: input.topology.roomId, scopeId: input.topology.scopeId };
+
+  await expect(createCanonicalRetrievalBinding({ ...input, packet: legacyPacket,
+    topology: legacyTopology })).resolves.toMatchObject({
+      packet: legacyPacket,
+      schemaVersion: "meeting_knowledge.canonical_retrieval_binding.v1",
+      topology: legacyTopology,
+  });
+  await expect(createCanonicalRetrievalBinding({ ...input, topology: legacyTopology }))
+    .rejects.toThrow("retrieval binding packet or topology is invalid");
+  await expect(createCanonicalRetrievalBinding(input)).resolves.toMatchObject({
+    schemaVersion: "meeting_knowledge.canonical_retrieval_binding.v2",
+    scopeDerivationSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+  });
+});
+
 it("retains malformed raw response as failed binding without inventing candidates", async () => {
   const { createCanonicalRetrievalBinding } = await import(
     "../src/quality-campaign/canonical-execution-artifact-validation.js");
