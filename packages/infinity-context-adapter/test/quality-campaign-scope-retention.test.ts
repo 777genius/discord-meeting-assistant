@@ -46,8 +46,8 @@ describe("authenticated scope retention and durable budget", () => {
         allowedCallKinds: ["capability"], campaignRootSha256: digest("a"),
         releaseRootSha256: digest("b"), repetition, maxCalls: 2,
         maxCallsByKind: { capability: 2, answer: 0, retrieval: 0, adjudicator_1: 0, adjudicator_2: 0, resolver: 0 }, maxTokens: 2, maxEncryptedBytes: 4096, expiresAtEpochMs: 2_000_000_000_000,
-        maximumEffectDurationMs: 3000, model: "gpt-5.6-terra", provider: "subscription-runtime",
-        reasoning: "low", serviceTier: "default",
+        maximumEffectDurationMs: 3000, model: "gpt-5.6-sol", provider: "subscription-runtime",
+        reasoning: "medium", serviceTier: "default",
       },
     }));
     const identities = reservations.map((spend) => attemptIdentity({ callKind: "answer", callOrdinal: 0,

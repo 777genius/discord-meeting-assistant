@@ -146,6 +146,7 @@ function reconstructAnswerRequest(expected: MainCanonicalEvidenceProjection,
     turns: outcome.selectedTurns });
   return buildSubscriptionRuntimeKnowledgeAnswerRequest({ attemptId: expected.attemptId, binding,
     locale: expected.executionPacket.locale, plan, question: expected.executionPacket.questionText }, {
+    executionProfile: "sealed_qualification",
     isolatedCwd: "/run/discord-meeting-subscription-runtime/workspace",
     maxOutputTokens: 2_048, timeoutMs: 180_000 });
 }

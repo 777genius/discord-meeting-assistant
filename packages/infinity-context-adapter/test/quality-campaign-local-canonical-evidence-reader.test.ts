@@ -305,6 +305,7 @@ async function localFixture(options: { readonly extraObservationKey?: boolean;
   const answerRequest = buildSubscriptionRuntimeKnowledgeAnswerRequest({ attemptId,
     binding: answerBinding, locale: executionPacket.locale, plan: answerPlan,
     question: executionPacket.questionText }, {
+    executionProfile: "sealed_qualification",
     isolatedCwd: "/run/discord-meeting-subscription-runtime/workspace",
     maxOutputTokens: 2_048, timeoutMs: 180_000 });
   const answerResponse = bytes("synthetic-runtime-response");

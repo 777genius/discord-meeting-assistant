@@ -1805,14 +1805,14 @@ describe("production quality campaign final evidence", () => {
 
 });
 
-describe("memory default profile authority", () => {
-  it("rejects correctly signed previous Sol/medium release and spend bindings", () => {
-    const staleProfile = { model: "gpt-5.6-sol", reasoning: "medium" };
+describe("qualification profile authority", () => {
+  it("rejects correctly signed Terra/low release and spend bindings", () => {
+    const staleProfile = { model: "gpt-5.6-terra", reasoning: "low" };
     const staleRelease = FINAL.release.authority.signed({ ...FINAL.release.release,
       ...staleProfile });
     expect(() => verifyReleaseRoot(FINAL.authorities.policy, {
       authorityKeyId: FINAL.release.authority.keyId, document: staleRelease }))
-      .toThrow(/gpt-5.6-terra\/low\/default/u);
+      .toThrow(/gpt-5.6-sol\/medium\/default/u);
     const staleSpend = spendReceipt({ authority: FINAL.authorities.signers.spend,
       releaseRootSha256: FINAL.release.releaseRootSha256, repetition: 1,
       overrides: staleProfile });

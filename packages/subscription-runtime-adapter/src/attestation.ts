@@ -4,11 +4,13 @@ import {
   subscriptionRuntimeProfileForPurpose,
   subscriptionRuntimeProvider,
   type SubscriptionRuntimeEngine,
+  type SubscriptionRuntimeExecutionProfile,
   type SubscriptionRuntimeAgentTaskRequest,
   type SubscriptionRuntimeTaskResult,
 } from "./subscription-runtime-contract.js";
 
 export interface AttestationExpectation {
+  readonly executionProfile?: SubscriptionRuntimeExecutionProfile;
   readonly launcherSha256: string;
   readonly runtimeEngine: SubscriptionRuntimeEngine;
   readonly runtimePackageVersion: string;
@@ -20,9 +22,11 @@ export function verifySubscriptionRuntimeAttestation(
   expectation: AttestationExpectation,
 ): void {
   const attestation = result.executionAttestation;
-  const profile = subscriptionRuntimeProfileForPurpose(request.context.purpose);
+  const profile = expectation.executionProfile ??
+    subscriptionRuntimeProfileForPurpose(request.context.purpose);
   if (
     profile === undefined ||
+    !requestMatchesExecutionProfile(request, profile) ||
     attestation.schemaVersion !== 1 ||
     attestation.requestId !== request.runId ||
     attestation.purpose !== profile.purpose ||
@@ -43,4 +47,18 @@ export function verifySubscriptionRuntimeAttestation(
       "Subscription runtime execution attestation did not match the request and result",
     );
   }
+}
+
+function requestMatchesExecutionProfile(request: SubscriptionRuntimeAgentTaskRequest,
+  profile: SubscriptionRuntimeExecutionProfile): boolean {
+  return request.context.purpose === profile.purpose &&
+    request.task.controls.maxOutputTokens === profile.maxOutputTokens &&
+    request.task.controls.model === profile.model &&
+    request.task.metadata.model === profile.model &&
+    request.task.controls.outputSchemaName === profile.outputSchemaName &&
+    request.task.metadata.policyVersion === profile.policyVersion &&
+    request.task.controls.reasoningEffort === profile.reasoningEffort &&
+    request.task.metadata.reasoningEffort === profile.reasoningEffort &&
+    request.task.controls.serviceTier === profile.serviceTier &&
+    request.task.metadata.serviceTier === profile.serviceTier;
 }

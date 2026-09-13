@@ -371,6 +371,11 @@
       "id": "ADR-0077",
       "path": "docs/decisions/0077-exact-authoritative-qualification-generation.md",
       "immutableDigest": "sha256:b9a04cd79cda285a906ff175527eb5611451d41920fa549469df3a0570c43d53"
+    },
+    {
+      "id": "ADR-0078",
+      "path": "docs/decisions/0078-restore-sealed-qualification-answer-profile.md",
+      "immutableDigest": "sha256:d26ee89766cb40defcdc39fa795a91b13a742cd814399da934cf45b2ed220e40"
     }
   ]
 }

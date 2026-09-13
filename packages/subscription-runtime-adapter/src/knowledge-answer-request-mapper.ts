@@ -16,6 +16,8 @@ import {
   subscriptionRuntimeKnowledgeModel,
   subscriptionRuntimeProtocolVersion,
   subscriptionRuntimeKnowledgeReasoningEffort,
+  subscriptionRuntimeModel,
+  subscriptionRuntimeReasoningEffort,
   type SubscriptionRuntimeAgentTaskRequest,
 } from "./subscription-runtime-contract.js";
 
@@ -52,8 +54,11 @@ const exhaustiveKnowledgeAnswerSystemPrompt = [
 
 export const knowledgeAnswerRuntimeProfile =
   "meeting-knowledge.answer.terra-low.bounded-grounding.v4" as const;
+export const qualificationKnowledgeAnswerRuntimeProfile =
+  "meeting-knowledge.answer.sol-medium.sealed-qualification.v1" as const;
 
 export interface KnowledgeAnswerRequestOptions {
+  readonly executionProfile?: "sealed_qualification";
   readonly isolatedCwd: string;
   readonly maxOutputTokens: number;
   readonly speakerAliases?: SpeakerAliasMapV1;
@@ -65,6 +70,10 @@ export function buildSubscriptionRuntimeKnowledgeAnswerRequest(
   options: KnowledgeAnswerRequestOptions,
 ): SubscriptionRuntimeAgentTaskRequest {
   validateOptions(options);
+  const qualification = options.executionProfile === "sealed_qualification";
+  const model = qualification ? subscriptionRuntimeModel : subscriptionRuntimeKnowledgeModel;
+  const reasoningEffort = qualification ? subscriptionRuntimeReasoningEffort :
+    subscriptionRuntimeKnowledgeReasoningEffort;
   const planMode = request.plan.mode as string;
   if (
     request.plan.authorityGeneration !== request.binding.memoryGeneration ||
@@ -171,12 +180,12 @@ export function buildSubscriptionRuntimeKnowledgeAnswerRequest(
         interactive: false,
         maxOutputTokens: options.maxOutputTokens,
         maxTurns: 1,
-        model: subscriptionRuntimeKnowledgeModel,
+        model,
         outputKind: "structured_output",
         outputSchema: providerKnowledgeAnswerJsonSchema,
         outputSchemaName: knowledgeAnswerOutputSchemaName,
         permissionMode: "read-only",
-        reasoningEffort: subscriptionRuntimeKnowledgeReasoningEffort,
+        reasoningEffort,
         serviceTier: subscriptionRuntimeDefaultServiceTier,
         responseFormat: "json",
         runtimeOutput: "structured_output",
@@ -185,9 +194,9 @@ export function buildSubscriptionRuntimeKnowledgeAnswerRequest(
       kind: "structured-prompt",
       metadata: {
         executionProfile: "stateless-completion",
-        model: subscriptionRuntimeKnowledgeModel,
+        model,
         policyVersion: knowledgeAnswerPolicyVersion,
-        reasoningEffort: subscriptionRuntimeKnowledgeReasoningEffort,
+        reasoningEffort,
         runtimeOutput: "structured_output",
         serviceTier: subscriptionRuntimeDefaultServiceTier,
         toolsDisabled: "true",
@@ -216,6 +225,8 @@ function validateEvidenceBindings(
 
 function validateOptions(options: KnowledgeAnswerRequestOptions): void {
   if (
+    (options.executionProfile !== undefined &&
+      options.executionProfile !== "sealed_qualification") ||
     options.maxOutputTokens !== subscriptionRuntimeKnowledgeAnswerMaxOutputTokens ||
     !Number.isSafeInteger(options.timeoutMs) ||
     options.timeoutMs < 1_000 ||

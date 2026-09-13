@@ -441,8 +441,8 @@ async function canonicalChainFixture(retrieval: InfinityContextRetrievalV2Adapte
     releaseRootSha256: "9".repeat(64), repetition: 1, maxCalls: 5,
     maxCallsByKind: { capability: 3, retrieval: 1, answer: 1, adjudicator_1: 0, adjudicator_2: 0, resolver: 0 },
     maxTokens: 2052, maxEncryptedBytes: 52_096, expiresAtEpochMs: 2_000_000_000_000,
-    maximumEffectDurationMs: 3000, model: "gpt-5.6-terra", provider: "subscription-runtime",
-    reasoning: "low", serviceTier: "default" } };
+    maximumEffectDurationMs: 3000, model: "gpt-5.6-sol", provider: "subscription-runtime",
+    reasoning: "medium", serviceTier: "default" } };
   const claims = new Map<string, string>();
   const spendPort = { reserve: async ({ effectKind, payloadSha256, requestedEncryptedBytes, requestedTokens }: Parameters<
     QualificationExternalEffectReservationPort["reserve"]>[0]) => {

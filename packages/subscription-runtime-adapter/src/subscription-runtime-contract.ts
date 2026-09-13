@@ -128,6 +128,10 @@ export const knowledgeAnswerExecutionProfile: SubscriptionRuntimeExecutionProfil
   serviceTier: subscriptionRuntimeDefaultServiceTier,
 });
 
+export const qualificationKnowledgeAnswerExecutionProfile: SubscriptionRuntimeExecutionProfile =
+  Object.freeze({ ...knowledgeAnswerExecutionProfile, model: subscriptionRuntimeModel,
+    reasoningEffort: subscriptionRuntimeReasoningEffort });
+
 export const knowledgeCoverageExecutionProfile: SubscriptionRuntimeExecutionProfile = Object.freeze({
   maxOutputTokens: subscriptionRuntimeKnowledgeCoverageMaxOutputTokens,
   model: subscriptionRuntimeKnowledgeModel,
@@ -153,6 +157,7 @@ export const admittedSubscriptionRuntimeExecutionProfiles = Object.freeze([
   finalSummaryExecutionProfile,
   incrementalSummaryExecutionProfile,
   knowledgeAnswerExecutionProfile,
+  qualificationKnowledgeAnswerExecutionProfile,
   knowledgeCoverageExecutionProfile,
   knowledgeEvidenceSelectorExecutionProfile,
 ]);
