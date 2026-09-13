@@ -1,8 +1,8 @@
 ---
 id: ADR-0071
-status: superseded
+status: accepted
 supersedes: []
-superseded_by: [ADR-0078]
+superseded_by: []
 ---
 
 # ADR-0071: Terra low as the memory default
@@ -11,11 +11,9 @@ Accepted on 2026-09-08 following the owner's explicit model choice.
 
 Meeting Knowledge owns the answer, semantic every-block coverage, and focused
 evidence-selection profiles. All three now require `gpt-5.6-terra`, reasoning
-`low`, and service tier `default`. At the time of this decision, memory quality
-qualification and the isolated real40 diagnostic used the identical answer
-profile. ADR-0078 supersedes only that qualification-profile clause; this
-decision still governs the application answer, coverage, focused selector, and
-isolated diagnostic profiles.
+`low`, and service tier `default`. Memory quality qualification and the isolated
+real40 diagnostic use the identical answer profile. This changes only the model
+choice previously frozen by ADR-0066; its other evidence requirements remain.
 Final summaries retain Sol/medium; incremental summaries and conversation retain
 Luna/low. Coding-worker profiles are outside this decision.
 
