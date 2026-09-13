@@ -80,10 +80,12 @@ jobs:
           --filter '!@discord-meeting/postgres-adapter'
           --if-present run check
 
-  infinity-integration:
+  infinity-changes:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 2
+    outputs:
+      required: ${{ steps.changes.outputs.required }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -109,27 +111,90 @@ jobs:
           else
             echo "required=true" >> "$GITHUB_OUTPUT"
           fi
-      - if: steps.changes.outputs.required == 'true'
-        uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
+
+  infinity-integration-checks:
+    if: needs.infinity-changes.outputs.required == 'true'
+    needs: infinity-changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: typecheck
+          - target: tests-runner-structural
+          - target: tests-production
+          - target: tests-remainder
+    name: Infinity ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
         with:
           version: 11.18.0
-      - if: steps.changes.outputs.required == 'true'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           cache: pnpm
-      - if: steps.changes.outputs.required == 'true'
-        run: node vendor/infinity-context/prepare-official-sdk.mjs
-      - if: steps.changes.outputs.required == 'true'
-        run: pnpm install --frozen-lockfile
-      - if: steps.changes.outputs.required == 'true'
-        name: Build Infinity dependency closure
+      - run: node vendor/infinity-context/prepare-official-sdk.mjs
+      - run: pnpm install --frozen-lockfile
+      - name: Build Infinity dependency closure
         run: >-
           pnpm --filter @discord-meeting/infinity-context-adapter...
           --if-present run build
-      - if: steps.changes.outputs.required == 'true'
-        name: Run full Infinity adapter checks
-        run: pnpm --filter @discord-meeting/infinity-context-adapter run check
+      - if: matrix.target == 'typecheck'
+        name: Run Infinity typecheck
+        run: >-
+          pnpm --filter @discord-meeting/infinity-context-adapter exec
+          tsc --project tsconfig.json --noEmit --pretty false
+      - if: matrix.target == 'tests-runner-structural'
+        name: Run Infinity structural runner tests
+        run: >-
+          pnpm --filter @discord-meeting/infinity-context-adapter exec
+          vitest run test/quality-campaign-production-runner-structural.test.ts
+          --no-file-parallelism
+      - if: matrix.target == 'tests-production'
+        name: Run Infinity production campaign tests
+        run: >-
+          pnpm --filter @discord-meeting/infinity-context-adapter exec
+          vitest run test/quality-campaign-production.test.ts
+          --no-file-parallelism
+      - if: matrix.target == 'tests-remainder'
+        name: Run remaining Infinity tests
+        run: >-
+          pnpm --filter @discord-meeting/infinity-context-adapter exec
+          vitest run --no-file-parallelism
+          --exclude=**/quality-campaign-production-runner-structural.test.ts
+          --exclude=**/quality-campaign-production.test.ts
+
+  infinity-integration:
+    if: always() && github.event_name == 'pull_request'
+    needs:
+      - infinity-changes
+      - infinity-integration-checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every applicable Infinity gate
+        env:
+          CHANGES_RESULT: ${{ needs.infinity-changes.result }}
+          CHECKS_REQUIRED: ${{ needs.infinity-changes.outputs.required }}
+          CHECKS_RESULT: ${{ needs.infinity-integration-checks.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "Infinity change detection did not succeed: $CHANGES_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$CHECKS_REQUIRED" == "true" && "$CHECKS_RESULT" != "success" ]]; then
+            echo "Applicable Infinity checks did not succeed: $CHECKS_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$CHECKS_REQUIRED" != "true" && "$CHECKS_REQUIRED" != "false" ]]; then
+            echo "Infinity change detection returned an invalid result" >&2
+            exit 1
+          fi
 
   postgres-integration:
     if: github.event_name == 'pull_request'
