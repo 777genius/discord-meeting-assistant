@@ -1,8 +1,8 @@
 ---
 id: ADR-0071
-status: accepted
+status: superseded
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0078]
 ---
 
 # ADR-0071: Terra low as the memory default
