@@ -97,7 +97,7 @@ function localAuditBinds(
 ): boolean {
   const laneIdentity = audit.laneIdentity;
   if (laneIdentity === undefined) {return false;}
-  return laneIdentity.lane === "local_current" &&
+  return audit.relation === undefined && laneIdentity.lane === "local_current" &&
     sameLocalIdentity(laneIdentity, identity) &&
     audit.requestDigest === requestDigest && audit.contributions.length === 1 &&
     audit.contributions[0]?.providerLaneId === "canonical_local_exact_lexical" &&
@@ -135,19 +135,18 @@ export async function historicalRetrievalAuditsBindRequest(
   const requestDigest = await canonicalDigest(request);
   const queryIds = new Set(request.queries.map(({ queryId }) => queryId));
   const providerLanes = new Set(request.binding.requiredProviderLanes);
-  return candidates.every(({ locator, retrievalProvenance: audit }, index) =>
-    audit.laneIdentity?.lane === "historical" && audit.locator === locator &&
-    audit.laneIdentity.capabilityFingerprint ===
-      request.binding.capabilityFingerprint &&
-    audit.laneIdentity.profileId === request.binding.profileId &&
-    audit.requestDigest === requestDigest &&
-    (index === 0 || audit.providerRank >
-      candidates[index - 1]!.retrievalProvenance.providerRank) &&
-    audit.contributions.every(({ providerLaneId, queryId }) =>
-      providerLanes.has(providerLaneId) && queryIds.has(queryId))
-  ) && (await Promise.all(candidates.map(async ({ retrievalProvenance: audit }) =>
-    audit.responseDigest === await canonicalDigest(canonicalResult(audit))
-  ))).every(Boolean);
+  return historicalCandidateOrderIsCanonical(candidates, request) &&
+    candidates.every(({ locator, retrievalProvenance: audit }) =>
+      audit.laneIdentity?.lane === "historical" && audit.locator === locator &&
+      audit.laneIdentity.capabilityFingerprint ===
+        request.binding.capabilityFingerprint &&
+      audit.laneIdentity.profileId === request.binding.profileId &&
+      audit.requestDigest === requestDigest &&
+      audit.contributions.every(({ providerLaneId, queryId }) =>
+        providerLanes.has(providerLaneId) && queryIds.has(queryId))
+    ) && (await Promise.all(candidates.map(async ({ retrievalProvenance: audit }) =>
+      audit.responseDigest === await canonicalDigest(canonicalResult(audit))
+    ))).every(Boolean);
 }
 
 export function decodeFocusedRetrievalAudit(
@@ -155,9 +154,10 @@ export function decodeFocusedRetrievalAudit(
   field: string,
 ): FocusedMemoryReference["retrievalAudit"] {
   if (value === undefined) {return undefined;}
+  const relationPresent = isUnknownRecord(value) && Object.hasOwn(value, "relation");
   const audit = decodedRecord(value, field, ["contributions", "fusedScore",
     "laneIdentity", "locator", "providerRank", "requestDigest",
-    "responseDigest"]);
+    "responseDigest", ...(relationPresent ? ["relation"] : [])]);
   if (!Array.isArray(audit.contributions) || audit.contributions.length < 1 ||
     audit.contributions.length > 32 || !finite(audit.fusedScore) ||
     !rank(audit.providerRank)) {invalid(field);}
@@ -174,13 +174,26 @@ export function decodeFocusedRetrievalAudit(
       queryId: text(item.queryId, `${itemField}.queryId`, 128),
       rawScoreKind: item.rawScoreKind, rawScoreValue: item.rawScoreValue });
   });
+  const relation = relationPresent
+    ? decodeNeighborRelation(audit.relation, `${field}.relation`) : undefined;
   return Object.freeze({ contributions: Object.freeze(contributions),
     fusedScore: audit.fusedScore,
     laneIdentity: decodeLaneIdentity(audit.laneIdentity, `${field}.laneIdentity`),
     locator: text(audit.locator, `${field}.locator`, 1_024),
-    providerRank: audit.providerRank, requestDigest: sha(audit.requestDigest,
-      `${field}.requestDigest`), responseDigest: sha(audit.responseDigest,
-      `${field}.responseDigest`) });
+    providerRank: audit.providerRank, ...(relation === undefined ? {} : { relation }),
+    requestDigest: sha(audit.requestDigest, `${field}.requestDigest`),
+    responseDigest: sha(audit.responseDigest, `${field}.responseDigest`) });
+}
+
+function decodeNeighborRelation(
+  value: unknown,
+  field: string,
+): NonNullable<NonNullable<FocusedMemoryReference["retrievalAudit"]>["relation"]> {
+  const relation = decodedRecord(value, field, ["distance", "kind", "seedLocator"]);
+  if (relation.kind !== "neighbor" ||
+    (relation.distance !== -1 && relation.distance !== 1)) {invalid(field);}
+  return Object.freeze({ distance: relation.distance, kind: "neighbor",
+    seedLocator: text(relation.seedLocator, `${field}.seedLocator`, 1_024) });
 }
 
 function decodeLaneIdentity(
@@ -212,6 +225,7 @@ function canonicalResult(
     fusedScore: audit.fusedScore,
     locator: audit.locator,
     providerRank: audit.providerRank,
+    ...(audit.relation === undefined ? {} : { relation: { ...audit.relation } }),
   };
 }
 
@@ -245,14 +259,53 @@ function laneOrderIsCanonical(
 }
 
 function canonicalLaneRanks(candidates: readonly FocusedMemoryReference[]): boolean {
-  return candidates.every((candidate, index) => {
-    if (index === 0) {return true;}
-    const previous = candidates[index - 1]!.retrievalAudit!;
-    const current = candidate.retrievalAudit!;
-    return current.providerRank > previous.providerRank ||
-      (current.providerRank === previous.providerRank &&
-        current.locator === previous.locator);
-  });
+  let activeSeed: { readonly locator: string; readonly rank: number } | null = null;
+  let activeLocator: string | null = null;
+  const observed = new Set<string>();
+  for (const candidate of candidates) {
+    const audit = candidate.retrievalAudit!;
+    if (activeLocator === audit.locator) {
+      if (audit.providerRank !== activeSeed?.rank) {return false;}
+      continue;
+    }
+    activeLocator = audit.locator;
+    if (observed.has(audit.locator)) {return false;}
+    observed.add(audit.locator);
+    if (audit.relation === undefined) {
+      if (activeSeed !== null && audit.providerRank <= activeSeed.rank) {return false;}
+      activeSeed = { locator: audit.locator, rank: audit.providerRank };
+      continue;
+    }
+    if (activeSeed === null || audit.relation.seedLocator !== activeSeed.locator ||
+      audit.providerRank !== activeSeed.rank || audit.locator === activeSeed.locator) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function historicalCandidateOrderIsCanonical(
+  candidates: readonly { readonly locator: string;
+    readonly retrievalProvenance: NonNullable<FocusedMemoryReference["retrievalAudit"]> }[],
+  request: FocusedLocatorRetrievalRequestSnapshot,
+): boolean {
+  let activeSeed: { readonly locator: string; readonly rank: number } | null = null;
+  const observed = new Set<string>();
+  for (const { locator, retrievalProvenance: audit } of candidates) {
+    if (observed.has(locator)) {return false;}
+    observed.add(locator);
+    if (audit.relation === undefined) {
+      if (activeSeed !== null && audit.providerRank <= activeSeed.rank) {return false;}
+      activeSeed = { locator, rank: audit.providerRank };
+      continue;
+    }
+    if (request.schemaVersion !== 3 || request.budgets.neighborRadius !== 1 ||
+      activeSeed === null || audit.relation.seedLocator !== activeSeed.locator ||
+      audit.providerRank !== activeSeed.rank || locator === activeSeed.locator) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** Includes the closed request version, selector and complete source-generation filter. */

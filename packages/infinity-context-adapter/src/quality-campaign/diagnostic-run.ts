@@ -268,7 +268,7 @@ async function executeQuestion(input: {
     attemptId, questionId: question.questionId, repetition: 1, rootBindingSha256: input.root,
   });
   const effect = {providerReserved:false};
-  let retrievalCompleted = false, repairSurfaceBytes = 0;
+  let repairSurfaceBytes = 0;
   const bytes = { evidence: 0, originalPrompt: 0, repairPrompt: 0 };
   const latencyMs: {
     retrieval: number | null;
@@ -353,7 +353,6 @@ async function executeQuestion(input: {
     retrieval: { retrieve: async (...args: Parameters<typeof chain.retrieval.retrieve>) => {
       const result = await timed("retrieval", () => chain.retrieval.retrieve(...args));
       if (result.status === "completed") {
-        retrievalCompleted = true;
         retrievedLocators = result.candidates.map(({ locatorId }) => locatorId);
       }
       return result;
@@ -372,7 +371,7 @@ async function executeQuestion(input: {
         total: result.citations.length }, bytes, latencyMs };
   }
   catch {
-    return { ...emptyOutcome(question, effect.providerReserved || !retrievalCompleted && await custody.reserved(`effect-${sha256({ attemptId, kind: "retrieval" })}`) ? "outcome_unknown" : "failed", signal.aborted ? "timeout" : "diagnostic_execution_failed"), retrievedLocators, bytes,
+    return { ...emptyOutcome(question, effect.providerReserved || await custody.reserved(`effect-${sha256({ attemptId, kind: "retrieval" })}`) ? "outcome_unknown" : "failed", signal.aborted ? "timeout" : "diagnostic_execution_failed"), retrievedLocators, bytes,
       latencyMs: { ...latencyMs, endToEnd: Date.now() - start } };
   }
 }

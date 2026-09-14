@@ -79,6 +79,7 @@
 
 - [ADR-0076: Read-only retrieval scope resolution](0076-read-only-retrieval-scope-resolution.md)
 - [ADR-0078: Restore the sealed qualification answer profile](0078-restore-sealed-qualification-answer-profile.md)
+- [ADR-0079: Expand focused V3 evidence with adjacent transcript blocks](0079-focused-v3-neighbor-evidence.md)
 
 ## Superseded
 

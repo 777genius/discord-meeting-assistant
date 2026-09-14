@@ -12,7 +12,8 @@ QualificationProviderAccounting {
     original: ["adjudicator_1", "adjudicator_2", "answer"].includes(callKind) ? one : zero,
     repair: zero, resolver: callKind === "resolver" ? one : zero };
   return assertQualificationProviderAccounting({ ...qualificationExecutionBinding(release),
-    ...defaults, ...overrides, neighborRadius: 0,
+    ...defaults, ...overrides,
+    neighborRadius: 1,
     schemaVersion: "meeting_knowledge.semantic_quality_provider_accounting.v1" },
   { callKind, release });
 }

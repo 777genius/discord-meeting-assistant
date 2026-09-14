@@ -41,6 +41,25 @@ export function providerCandidate(locator: string, request: unknown, providerRan
   }) });
 }
 
+export function providerNeighborCandidate(
+  locator: string,
+  seedLocator: string,
+  request: unknown,
+  providerRank = 1,
+  distance: -1 | 1 = 1,
+) {
+  const seed = providerCandidate(seedLocator, request, providerRank);
+  const relation = Object.freeze({ distance, kind: "neighbor" as const, seedLocator });
+  const retrievalProvenance = Object.freeze({
+    ...seed.retrievalProvenance,
+    locator,
+    relation,
+    responseDigest: digest({ contributions: seed.retrievalProvenance.contributions,
+      fusedScore: seed.retrievalProvenance.fusedScore, locator, providerRank, relation }),
+  });
+  return Object.freeze({ locator, retrievalProvenance });
+}
+
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(canonicalJsonValue(value))).digest("hex");
 }

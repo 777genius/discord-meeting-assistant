@@ -1,6 +1,7 @@
 import {
   validateFocusedLocatorRetrievalV3Request,
   type FocusedLocatorRetrievalV2Candidate,
+  type FocusedLocatorRetrievalV3NeighborCandidate,
   type FocusedLocatorRetrievalV3Port,
   type FocusedLocatorRetrievalV3RequestSnapshot,
   type FocusedLocatorRetrievalV2Result,
@@ -124,51 +125,80 @@ export function retrievalV3InputFromSnapshot(input: InfinityContextRetrievalV3Re
   return request;
 }
 
+type RetrievalV3Candidate = Awaited<ReturnType<
+  InfinityContextClient["context"]["retrieveV3"]>>["candidates"][number];
+
+function mappedContributions(candidate: RetrievalV3Candidate) {
+  return Object.freeze(candidate.contributions.map((value) => Object.freeze({
+    contributionScorePicos: value.contribution_score_picos,
+    providerLaneId: value.provider_id, providerRank: value.provider_rank,
+    queryId: value.query_id, rawScoreKind: value.raw_score_kind,
+    rawScoreValue: value.raw_score_value,
+  })));
+}
+
+function mappedCandidate(
+  candidate: RetrievalV3Candidate, locator: string,
+  binding: InfinityContextRetrievalV3Binding,
+  options: { readonly providerRank: number; readonly relation?:
+    FocusedLocatorRetrievalV3NeighborCandidate["retrievalProvenance"]["relation"];
+    readonly requestDigest: string },
+): FocusedLocatorRetrievalV2Candidate | FocusedLocatorRetrievalV3NeighborCandidate {
+  const { providerRank, relation, requestDigest } = options;
+  const contributions = mappedContributions(candidate);
+  const canonicalResult = {
+    contributions: contributions.map((value) => ({ ...value })),
+    fusedScore: candidate.fused_score, locator, providerRank,
+    ...(relation === undefined ? {} : { relation }),
+  };
+  const retrievalProvenance = Object.freeze({
+    contributions,
+    fusedScore: candidate.fused_score,
+    laneIdentity: Object.freeze({
+      capabilityFingerprint: binding.capabilityFingerprint,
+      lane: "historical" as const,
+      profileId: binding.profileId,
+    }),
+    locator, providerRank, ...(relation === undefined ? {} : { relation }), requestDigest,
+    responseDigest: createHash("sha256").update(
+      JSON.stringify(canonicalFingerprintValue(canonicalResult)), "utf8",
+    ).digest("hex"),
+  });
+  return Object.freeze({ locator, retrievalProvenance });
+}
+
 export function retrievalV3LocatorCandidates(
-  candidates: Awaited<ReturnType<InfinityContextClient["context"]["retrieveV3"]>>["candidates"],
+  candidates: readonly RetrievalV3Candidate[],
   binding: InfinityContextRetrievalV3Binding,
   requestDigest: string,
 ): readonly FocusedLocatorRetrievalV2Candidate[] {
-  return Object.freeze(candidates.map((candidate, index) => {
-    // Consumer rank binds fused response order; provider minima may tie or decrease.
-    const canonicalResult = {
-      contributions: candidate.contributions.map((contribution) => ({
-        contributionScorePicos: contribution.contribution_score_picos,
-        providerLaneId: contribution.provider_id,
-        providerRank: contribution.provider_rank,
-        queryId: contribution.query_id,
-        rawScoreKind: contribution.raw_score_kind,
-        rawScoreValue: contribution.raw_score_value,
-      })),
-      fusedScore: candidate.fused_score,
-      locator: candidate.locator,
-      providerRank: index + 1,
-    };
-    return Object.freeze({ locator: candidate.locator,
-      retrievalProvenance: Object.freeze({
-      contributions: Object.freeze(candidate.contributions.map((contribution) =>
-        Object.freeze({
-          contributionScorePicos: contribution.contribution_score_picos,
-          providerLaneId: contribution.provider_id,
-          providerRank: contribution.provider_rank,
-          queryId: contribution.query_id,
-          rawScoreKind: contribution.raw_score_kind,
-          rawScoreValue: contribution.raw_score_value,
-        }))),
-      fusedScore: candidate.fused_score,
-      laneIdentity: Object.freeze({
-        capabilityFingerprint: binding.capabilityFingerprint,
-        lane: "historical" as const,
-        profileId: binding.profileId,
-      }),
-      locator: candidate.locator,
-      providerRank: index + 1,
-      requestDigest,
-      responseDigest: createHash("sha256").update(
-        JSON.stringify(canonicalFingerprintValue(canonicalResult)), "utf8",
-      ).digest("hex"),
-    }) });
-  }));
+  return Object.freeze(candidates.map((candidate, index) =>
+    mappedCandidate(candidate, candidate.locator, binding,
+      { providerRank: index + 1, requestDigest })));
+}
+
+/** V3 evidence expansion in seed response order and official SDK neighbor order. */
+export function retrievalV3ExpandedNeighborCandidates(
+  candidates: readonly RetrievalV3Candidate[],
+  binding: InfinityContextRetrievalV3Binding,
+  requestDigest: string,
+): readonly FocusedLocatorRetrievalV3NeighborCandidate[] {
+  const observed = new Set(candidates.map(({ locator }) => locator));
+  const expanded: FocusedLocatorRetrievalV3NeighborCandidate[] = [];
+  candidates.forEach((candidate, index) => {
+    for (const neighbor of candidate.neighbors) {
+      if (neighbor.distance !== -1 && neighbor.distance !== 1) {
+        throw new RangeError("V3 consumer supports only radius-one neighbors");
+      }
+      if (observed.has(neighbor.locator)) {continue;}
+      observed.add(neighbor.locator);
+      expanded.push(mappedCandidate(candidate, neighbor.locator, binding, {
+        providerRank: index + 1, relation: Object.freeze({ distance: neighbor.distance,
+          kind: "neighbor", seedLocator: candidate.locator }), requestDigest,
+      }) as FocusedLocatorRetrievalV3NeighborCandidate);
+    }
+  });
+  return Object.freeze(expanded);
 }
 
 function sdkRequestControls(signal: AbortSignal | undefined, timeoutMs: number) {
@@ -310,13 +340,15 @@ implements FocusedLocatorRetrievalV3Port {
         if (response.status === "unqualified") {
           return unqualified(providerReason(response));
         }
+        const requestDigest = createHash("sha256").update(
+          JSON.stringify(canonicalFingerprintValue(input)), "utf8",
+        ).digest("hex");
         return Object.freeze({
           candidates: retrievalV3LocatorCandidates(
-            response.candidates,
-            input.binding,
-            createHash("sha256").update(
-              JSON.stringify(canonicalFingerprintValue(input)), "utf8",
-            ).digest("hex"),
+            response.candidates, input.binding, requestDigest,
+          ),
+          expandedNeighbors: retrievalV3ExpandedNeighborCandidates(
+            response.candidates, input.binding, requestDigest,
           ),
           status: "available",
         });

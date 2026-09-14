@@ -45,8 +45,10 @@ export type FocusedLocatorRetrievalV3ThreadSelector =
   | { readonly mode: "exact"; readonly id: string | null };
 
 export interface FocusedLocatorRetrievalV3RequestSnapshot extends
-  Omit<FocusedLocatorRetrievalV2RequestSnapshot, "binding" | "schemaVersion" | "scope"> {
-  readonly binding: FocusedLocatorRetrievalV3ProviderBinding; readonly schemaVersion: 3;
+  Omit<FocusedLocatorRetrievalV2RequestSnapshot, "binding" | "budgets" | "schemaVersion" | "scope"> {
+  readonly binding: FocusedLocatorRetrievalV3ProviderBinding; readonly budgets: Omit<
+    FocusedLocatorRetrievalV2RequestSnapshot["budgets"], "neighborRadius"> &
+    { readonly neighborRadius: 0 | 1 }; readonly schemaVersion: 3;
   readonly scope: { readonly memoryScopeId: string; readonly spaceId: string;
     readonly thread: FocusedLocatorRetrievalV3ThreadSelector };
 }
@@ -437,9 +439,9 @@ export function validateFocusedLocatorRetrievalV3Request(
       exactRetrievalObject(selector, ["mode", "id"]);
       if (selector.id !== null) {retrievalOpaque(selector.id);}
     } else {throw new TypeError("unsupported thread selector");}
-    validateRetrievalV2RequestValue({ ...request, schemaVersion: 2,
-      binding: { ...binding, contractVersion: "context-retrieval.v2" },
-      scope: { memoryScopeId: scope.memoryScopeId, spaceId: scope.spaceId, threadId: null } });
+    validateRetrievalV2RequestValue({ ...request, schemaVersion: 2, binding: {
+      ...binding, contractVersion: "context-retrieval.v2" }, scope: { memoryScopeId:
+      scope.memoryScopeId, spaceId: scope.spaceId, threadId: null } }, 1);
     return freezeRetrievalV2Request(value as FocusedLocatorRetrievalV3RequestSnapshot);
   } catch {
     throw new MeetingKnowledgeInvariantError("INVALID_BINDING",
@@ -447,12 +449,12 @@ export function validateFocusedLocatorRetrievalV3Request(
   }
 }
 
-function validateRetrievalV2RequestValue(value: unknown): void {
-  const request = exactRetrievalObject(value, ["binding", "budgets", "filters",
-    "queries", "schemaVersion", "scope", "softPreferences"]);
+function validateRetrievalV2RequestValue(value: unknown, maximumNeighborRadius = 0): void {
+  const request = exactRetrievalObject(value, ["binding", "budgets", "filters", "queries",
+    "schemaVersion", "scope", "softPreferences"]);
   if (request.schemaVersion !== 2) {throw new TypeError("unsupported schema version");}
   validateRetrievalV2ProviderBinding(request.binding);
-  validateRetrievalV2Budgets(request.budgets);
+  validateRetrievalV2Budgets(request.budgets, maximumNeighborRadius);
   validateRetrievalV2Filters(request.filters);
   validateRetrievalV2Queries(request.queries);
   validateRetrievalV2Scope(request.scope);
@@ -475,15 +477,13 @@ function validateRetrievalV2ProviderBinding(value: unknown): void {
   retrievalOpaqueArray(binding.requiredProviderLanes, 1, 4);
 }
 
-function validateRetrievalV2Budgets(value: unknown): void {
-  const budgets = exactRetrievalObject(value, [
-    "candidateLimit", "deadlineMs", "evidenceByteLimit", "neighborRadius",
-    "responseByteLimit", "resultLimit",
-  ]);
+function validateRetrievalV2Budgets(value: unknown, maximumNeighborRadius: number): void {
+  const budgets = exactRetrievalObject(value, ["candidateLimit", "deadlineMs",
+    "evidenceByteLimit", "neighborRadius", "responseByteLimit", "resultLimit"]);
   const candidateLimit = retrievalInteger(budgets.candidateLimit, 1, 1_000);
   const resultLimit = retrievalInteger(budgets.resultLimit, 1, 50);
   if (resultLimit > candidateLimit ||
-    retrievalInteger(budgets.neighborRadius, 0, 0) !== 0) {
+    retrievalInteger(budgets.neighborRadius, 0, maximumNeighborRadius) > maximumNeighborRadius) {
     throw new TypeError("invalid retrieval result bounds");
   }
   retrievalInteger(budgets.deadlineMs, 1, 2_000);

@@ -225,8 +225,6 @@ function validateEvidenceBindings(
 
 function validateOptions(options: KnowledgeAnswerRequestOptions): void {
   if (
-    (options.executionProfile !== undefined &&
-      options.executionProfile !== "sealed_qualification") ||
     options.maxOutputTokens !== subscriptionRuntimeKnowledgeAnswerMaxOutputTokens ||
     !Number.isSafeInteger(options.timeoutMs) ||
     options.timeoutMs < 1_000 ||

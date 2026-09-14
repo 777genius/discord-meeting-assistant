@@ -1,4 +1,6 @@
 import { historicalSnapshotMatchesScope } from "./focused-locator-retrieval-v2-scope.js";
+import { availableRemoteWithinLimit, candidateInventoryIsValid, interleaveExpandedNeighbors } from
+  "./focused-locator-neighbor-expansion.js";
 import {
   admitsHistoricalRetrieval,
   DEFAULT_TWO_HOUR_HISTORICAL_RETRIEVAL_PROFILE,
@@ -148,17 +150,15 @@ abstract class HistoricalFocusedLocatorRetrieval<T extends FocusedLocatorRetriev
     const hydrated = await this.rehydrateLocators(input, candidates);
     if (hydrated.status === "unavailable") {return hydrated;}
     const after = await this.dependencies.authorization.authorize(authorizationRequest);
-    const hydratedAudits = [...new Map(hydrated.references.map((reference) => [
-      reference.historicalSource!.candidateLocator,
-      Object.freeze({ locator: reference.historicalSource!.candidateLocator,
-        retrievalProvenance: reference.retrievalAudit! }),
-    ])).values()];
+    const candidateAudits = new Map(candidates.map((candidate) =>
+      [candidate.locator, candidate.retrievalProvenance]));
     if (!sameAuthorization(before, after)) {
       return rejected("authorization_changed");
     }
     if (candidates.length > 0 && hydrated.references.length < 1) {return rejected("canonical_evidence_unavailable");}
-    if (hydrated.references.length > 0 &&
-      !await historicalRetrievalAuditsBindRequest(hydratedAudits, input.request)) {
+    if (hydrated.references.some((reference) =>
+      candidateAudits.get(reference.historicalSource!.candidateLocator) !==
+        reference.retrievalAudit)) {
       return rejected("canonical_provenance_invalid");
     }
     const generationParts = [
@@ -215,19 +215,21 @@ abstract class HistoricalFocusedLocatorRetrieval<T extends FocusedLocatorRetriev
     if (this.dependencies.servingAuthorized?.() === false) {return rejected("serving_not_authorized");}
     const remote = await this.dependencies.retrieval.retrieve(
       input.request, input.signal === undefined ? {} : { signal: input.signal });
-    if (!availableRemoteWithinLimit(remote, input.request.budgets.resultLimit)) {
+    if (!availableRemoteWithinLimit(remote, input.request)) {
       return rejected("provider_result_unavailable");
     }
-    const candidates = remote.candidates.map(decodeFocusedLocatorCandidate)
-      .filter(isLocatorCandidate);
-    if (remote.candidates.length > 0 && candidates.length < 1) {
-      return rejected("provider_candidate_invalid");
-    }
+    const seeds = remote.candidates.map(decodeFocusedLocatorCandidate).filter(isLocatorCandidate);
+    const neighbors = (remote.expandedNeighbors ?? [])
+      .map(decodeFocusedLocatorCandidate).filter(isLocatorCandidate);
+    if (!candidateInventoryIsValid(remote, input.request, seeds, neighbors)) {
+      return rejected("provider_candidate_invalid"); }
+    const candidates = interleaveExpandedNeighbors(seeds, neighbors);
+    if (candidates === null || candidates.length > input.request.budgets.resultLimit * 3) {
+      return rejected("provider_candidate_invalid"); }
     if (candidates.length > 0 &&
       !await historicalRetrievalAuditsBindRequest(candidates, input.request)) {
-      return rejected("retrieval_provenance_invalid");
-    }
-    return Object.freeze({ candidates: Object.freeze(candidates), status: "current" });
+      return rejected("retrieval_provenance_invalid"); }
+    return Object.freeze({ candidates, status: "current" });
   }
 
   private async rehydrateLocators(
@@ -383,13 +385,6 @@ export class HistoricalFocusedLocatorRetrievalV2 extends
 
 export class HistoricalFocusedLocatorRetrievalV3 extends
   HistoricalFocusedLocatorRetrieval<FocusedLocatorRetrievalV3RequestSnapshot> { protected readonly schemaVersion = 3; }
-
-function availableRemoteWithinLimit(
-  remote: Awaited<ReturnType<FocusedLocatorRetrievalPort["retrieve"]>>,
-  resultLimit: number,
-): remote is Extract<typeof remote, { readonly status: "available" }> {
-  return remote.status === "available" && remote.candidates.length <= resultLimit;
-}
 
 function unavailable(): FocusedMemoryRetrievalResult {
   return Object.freeze({ schemaVersion: 1, status: "unavailable" });

@@ -70,6 +70,31 @@ describe("canonical admitted qualification question execution", () => {
     ]);
   });
 
+  it("rehydrates neighbor evidence while retaining seed-only ranked metrics", async () => {
+    let rehydrated: readonly string[] = [];
+    const useCase = new ExecuteAdmittedQualificationQuestion({
+      answer: { generate: async () => ({ citations: ["turn-neighbor"], claims: ["Supported."],
+        status: "answered" as const }) },
+      evidence: { rehydrate: async ({ locatorIds }) => {
+        rehydrated = locatorIds;
+        return { authorityGeneration: "generation-7", canonicalEvidenceHash: "e".repeat(64),
+          transcriptVersion: 3, turns: [boundTurn("turn-neighbor", "Supported.",
+            "loc-neighbor")] };
+      } },
+      outcome: { record: async () => {} },
+      retrieval: { retrieve: async () => ({ candidates: [{ contributions: [], fusedScore: 0.9,
+        locatorId: "loc-seed", providerRank: 1 }],
+      expandedNeighborLocatorIds: ["loc-neighbor"], rawResponseSha256: "a".repeat(64),
+      status: "completed" as const }) },
+    });
+    const result = await useCase.execute(packet, { attemptId: "attempt-neighbor",
+      signal: new AbortController().signal });
+    expect(rehydrated).toEqual(["loc-seed", "loc-neighbor"]);
+    expect(result.retrievalCandidates.map(({ locatorId }) => locatorId)).toEqual(["loc-seed"]);
+    expect(result.selectedTurns.map(({ sourceLocatorId }) => sourceLocatorId))
+      .toEqual(["loc-neighbor"]);
+  });
+
   it("deterministically abstains without calling the answer runtime when no evidence exists",
     async () => {
       let answerCalls = 0;

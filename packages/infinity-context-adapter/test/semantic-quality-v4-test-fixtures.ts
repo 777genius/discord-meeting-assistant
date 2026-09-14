@@ -73,8 +73,10 @@ export function perfectOutcomesForP0Test(
         v4EvaluationQuestionText: v4EvaluationQuestionText(question) }),
       retrieval: { capabilityAndRetrievalLatencyUs: 200_000, capabilityBytes: 512,
         capabilitySha256: canonicalSha256({ id: question.id, kind: "capability" }),
-        expandedNeighborLocators: [], latencyUs: 200_000,
-        rankedSeedLocators: question.goldLocatorRelevance.map(({ locatorId }) => ({ locatorId })),
+        expandedNeighborLocators: question.goldLocatorRelevance.slice(7)
+          .map(({ locatorId }) => ({ locatorId })), latencyUs: 200_000,
+        rankedSeedLocators: question.goldLocatorRelevance.slice(0, 7)
+          .map(({ locatorId }) => ({ locatorId })),
         requestBytes: 256, requestSha256: canonicalSha256({ id: question.id, kind: "request" }),
         requestSnapshotSha256: canonicalSha256({ id: question.id, kind: "request-snapshot" }),
         responseBytes: question.kind === "answerable" ? 128 : 32,

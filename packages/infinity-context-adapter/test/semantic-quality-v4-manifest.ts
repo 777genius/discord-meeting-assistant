@@ -79,7 +79,7 @@ const frozenComponentHashes: ComponentHashes = Object.freeze({
     "b24ee4b758850af9067e2b2098b68ce4239d21df8a122d29fe0193a4c90fd292",
 });
 const frozenManifestSha256 =
-  "e4ed7689cb399b0deeae0bcaf645afd336dbc9d9deccd0145c0dbb82a1a9dd17";
+  "7d32c1178af88020cbf8e527ea0d977d9262bcebc7808ee04b895e1890531c5e";
 const frozenCorpusSha256 =
   "f6b78fa91d1763519c5d3189e1b38b4f54060e4eb22ee1ae1dcfa86cd7e740f0";
 const frozenHumanQuestionSetSha256 =
@@ -87,7 +87,7 @@ const frozenHumanQuestionSetSha256 =
 const frozenAutomatedQuestionSetSha256 =
   "465e81440b9be0b5d9321596ea1791307e93cba23f8cdfbd6c5a333c28a34c15";
 const frozenThresholdProfileSha256 =
-  "b39d24f57a99e86ff2ef30b8ef517cbc0146ebf43743d023bc6d562f63908390";
+  "d0543d0378b921248a66bce88af49ca50902dd068d783b7139e8650071df3a2c";
 
 export interface SemanticQualityV4Manifest {
   readonly components: ComponentHashes;

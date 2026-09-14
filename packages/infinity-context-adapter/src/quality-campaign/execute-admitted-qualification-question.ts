@@ -54,6 +54,7 @@ export interface QualificationCanonicalTurn {
 export interface QualificationQuestionRetrievalPort {
   retrieve(input: QualificationExecutionPacket, options: QualificationQuestionExecutionContext):
     Promise<{ readonly candidates: readonly QualificationRetrievalCandidate[];
+      readonly expandedNeighborLocatorIds?: readonly string[];
       readonly rawResponseSha256: string; readonly status: "completed" } |
     { readonly reason: string; readonly status: "failed" }>;
 }
@@ -153,7 +154,10 @@ export class ExecuteAdmittedQualificationQuestion {
         selectedTurns: [], status: "failed" });
     }
     assertOrderedCandidates(retrieval.candidates);
-    const locatorIds = retrieval.candidates.map(({ locatorId }) => locatorId);
+    const rankedLocatorIds = retrieval.candidates.map(({ locatorId }) => locatorId);
+    const expandedNeighborLocatorIds = retrieval.expandedNeighborLocatorIds ?? [];
+    assertExpandedNeighborLocators(rankedLocatorIds, expandedNeighborLocatorIds);
+    const locatorIds = [...rankedLocatorIds, ...expandedNeighborLocatorIds];
     let evidence;
     try {
       evidence = await this.ports.evidence.rehydrate({ locatorIds,
@@ -242,6 +246,22 @@ function assertOrderedCandidates(candidates: readonly QualificationRetrievalCand
       throw new Error("qualification retrieval candidates are invalid or duplicated");
     }
     locators.add(candidate.locatorId);
+  }
+}
+
+function assertExpandedNeighborLocators(
+  rankedLocatorIds: readonly string[],
+  expandedNeighborLocatorIds: readonly string[],
+): void {
+  const observed = new Set(rankedLocatorIds);
+  for (const locatorId of expandedNeighborLocatorIds) {
+    if (typeof locatorId !== "string" || locatorId.length === 0 || observed.has(locatorId)) {
+      throw new Error("qualification expanded neighbor locators are invalid or duplicated");
+    }
+    observed.add(locatorId);
+  }
+  if (expandedNeighborLocatorIds.length > rankedLocatorIds.length * 2) {
+    throw new Error("qualification expanded neighbor inventory exceeds radius-one bounds");
   }
 }
 

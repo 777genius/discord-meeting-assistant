@@ -6,7 +6,7 @@ import type { InfinityContextRetrievalV2ExactExchange, InfinityContextRetrievalV
   "../infinity-context-retrieval-exchange.js";
 import { canonicalJson } from "./canonical.js";
 import { assertCanonicalRequest, createCanonicalRetrievalBinding, custodyDigest, custodyJson,
-  freezeCustody, validateCanonicalRetrievalObservation,
+  freezeCustody, retainedV3ExpandedNeighborLocatorIds, validateCanonicalRetrievalObservation,
   validateCanonicalScopeResolutionObservation, type CanonicalRetrievalBindingV1 } from
   "./canonical-execution-artifact-validation.js";
 import { DiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
@@ -107,15 +107,22 @@ async function executeRetrieval(input: CanonicalEngineInput, state: CanonicalQue
     responseSha256: createHash("sha256").update(captured.exchange.responseBytes).digest("hex") }),
     phase: "retrieval", state: result.status === "available" ? "succeeded" : "failed" });
   if (result.status !== "available") {return { reason: result.code, status: "failed" as const };}
+  const expandedNeighborLocatorIds = Object.freeze(
+    (result.expandedNeighbors ?? []).map(({ locator }) => locator),
+  );
   state.set(execution.attemptId, { binding: null, packet: execution.packet,
     topology: execution.topology, turns: [],
     request: freezeCustody(structuredClone(execution.prepared)), retrievalBinding,
-    candidateLocators: Object.freeze(result.candidates.map(candidate => candidate.locator)) });
+    candidateLocators: Object.freeze([
+      ...result.candidates.map(({ locator }) => locator),
+      ...expandedNeighborLocatorIds,
+    ]) });
   return Object.freeze({ candidates: Object.freeze(result.candidates.map((candidate) =>
     Object.freeze({ contributions: Object.freeze(candidate.retrievalProvenance.contributions
       .map((contribution) => Object.freeze({ ...contribution }))),
     fusedScore: candidate.retrievalProvenance.fusedScore, locatorId: candidate.locator,
     providerRank: candidate.retrievalProvenance.providerRank }))),
+  expandedNeighborLocatorIds,
   rawResponseSha256: createHash("sha256").update(captured.exchange.responseBytes).digest("hex"),
   status: "completed" as const });
 }
@@ -208,8 +215,14 @@ async function createV3Binding(input: CanonicalEngineInput, execution: Retrieval
     contributions: candidate.retrievalProvenance.contributions,
     fusedScore: candidate.retrievalProvenance.fusedScore, locatorId: candidate.locator,
     providerRank: candidate.retrievalProvenance.providerRank })) : [];
+  const retainedNeighbors = await retainedV3ExpandedNeighborLocatorIds(
+    exchange, execution.prepared,
+  );
+  const runtimeNeighbors = result.status === "available"
+    ? (result.expandedNeighbors ?? []).map(({ locator }) => locator) : [];
   if ((result.status === "available") !== (binding.providerStatus === "available") ||
-    custodyDigest(projected) !== binding.candidateProjectionSha256) {
+    custodyDigest(projected) !== binding.candidateProjectionSha256 ||
+    custodyJson(runtimeNeighbors) !== custodyJson(retainedNeighbors)) {
     throw new Error("V3 candidate inventory differs from official bytes");
   }
   return binding;

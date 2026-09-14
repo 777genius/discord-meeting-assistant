@@ -1,11 +1,13 @@
+/* oxlint-disable max-lines -- keep exact V3 byte-custody validation in one verifier */
 import { boundedRetrievalQuery, redactRetrievalQueryIdentities,
   validateFocusedLocatorRetrievalV3Request,
   type FocusedLocatorRetrievalRequestSnapshot, type FocusedLocatorRetrievalV3RequestSnapshot } from
   "@discord-meeting/meeting-core/meeting-knowledge";
 import { InfinityContextClient, decodeRetrievalV3Capability, retrievalV3RequestPayload,
   type RetrievalV3Capability } from "@infinity-context/sdk";
-import { retrievalV3InputFromSnapshot, retrievalV3LocatorCandidates,
-  retrievalV3CapabilityFingerprint } from "../infinity-context-retrieval-v3.js";
+import { retrievalV3ExpandedNeighborCandidates, retrievalV3InputFromSnapshot,
+  retrievalV3LocatorCandidates, retrievalV3CapabilityFingerprint } from
+  "../infinity-context-retrieval-v3.js";
 import type { InfinityContextRetrievalV3ExactExchange } from "../infinity-context-retrieval-exchange.js";
 import type { QualificationExecutionPacket, QualificationRetrievalCandidate } from
   "./execute-admitted-qualification-question.js";
@@ -174,8 +176,11 @@ function hasExactKeys(record: Record<string, unknown>, keys: readonly string[]):
 
 export function assertCanonicalRequest(request: FocusedLocatorRetrievalRequestSnapshot,
   question: string): void {
-  if (request.budgets.candidateLimit !== 100 || request.budgets.resultLimit !== 10 ||
-    !Object.is(request.budgets.neighborRadius, 0) ||
+  const expectedResultLimit = request.schemaVersion === 3 ? 7 : 10;
+  const expectedNeighborRadius = request.schemaVersion === 3 ? 1 : 0;
+  if (request.budgets.candidateLimit !== 100 ||
+    request.budgets.resultLimit !== expectedResultLimit ||
+    !Object.is(request.budgets.neighborRadius, expectedNeighborRadius) ||
     request.queries.length !== 1 || question.trim().length === 0) {
     throw new Error("qualification request violates Meeting Knowledge ownership");
   }
@@ -287,8 +292,7 @@ type CanonicalRetrievalBindingInput = Parameters<typeof createCanonicalRetrieval
 function validateRetrievalBindingInput(input: CanonicalRetrievalBindingInput) {
   if (!attemptPattern.test(input.attemptId)) {throw new Error("retrieval binding attempt is invalid");}
   const packet = validateCustodyPacket(input.packet);
-  const admittedMain = "schemaVersion" in packet && packet.schemaVersion ===
-    "meeting_knowledge.qualification_execution_packet.v2";
+  const admittedMain = "schemaVersion" in packet;
   validateBindingTopology(input, admittedMain);
   const request = validateFocusedLocatorRetrievalV3Request(input.request);
   assertCanonicalRequest(request, packet.questionText);
@@ -338,30 +342,29 @@ function validateBindingRequest(input: CanonicalRetrievalBindingInput,
 
 async function loadRetainedDescriptor(exchange: InfinityContextRetrievalV3ExactExchange,
   request: FocusedLocatorRetrievalV3RequestSnapshot): Promise<RetrievalV3Capability> {
-  // The public SDK lacks a standalone V3 capability byte decoder. This isolated
-  // in-memory transport uses its public method, preserving duplicate-key/integer
-  // token validation and fingerprint checks without rewriting descriptor bytes.
+  // Use the public SDK parser over retained bytes without issuing provider effects.
+  const send = async (transportRequest: { readonly method: string;
+    readonly url: URL }) => {
+    if (transportRequest.method !== "GET" ||
+      transportRequest.url.pathname !== exchange.capabilityRoute) {
+      throw new Error("retained descriptor decoder cannot issue provider effects"); }
+    return { body: new Uint8Array(exchange.capabilityResponseBytes),
+      headers: new Headers(), status: 200 };
+  };
   const client = new InfinityContextClient({ baseUrl: "https://retained.invalid",
-    retryPolicy: { maxAttempts: 1 }, transport: { send: async transportRequest => {
-      if (transportRequest.method !== "GET" ||
-        transportRequest.url.pathname !== exchange.capabilityRoute) {
-        throw new Error("retained descriptor decoder cannot issue provider effects");
-      }
-      return { status: 200, headers: new Headers(),
-        body: new Uint8Array(exchange.capabilityResponseBytes) };
-    } } });
+    retryPolicy: { maxAttempts: 1 }, transport: { send } });
   const descriptor = await client.context.retrievalV3Capability({ timeoutMs: 2000 });
-  if (descriptor.capability_fingerprint !== request.binding.capabilityFingerprint ||
-    descriptor.service_revision !== request.binding.serviceRevision ||
-    descriptor.profile_id !== request.binding.profileId ||
-    descriptor.index_profile_digest !== request.binding.indexProfileDigest ||
+  const binding = request.binding;
+  if (descriptor.capability_fingerprint !== binding.capabilityFingerprint ||
+    descriptor.service_revision !== binding.serviceRevision ||
+    descriptor.profile_id !== binding.profileId ||
+    descriptor.index_profile_digest !== binding.indexProfileDigest ||
     retrievalV3CapabilityFingerprint(descriptor as unknown as Record<string, unknown>) !==
       descriptor.capability_fingerprint ||
-    custodyJson(descriptor.required_provider_lanes) !== custodyJson(request.binding.requiredProviderLanes) ||
-    descriptor.provider_lanes.some(lane => request.binding.requiredProviderLanes.includes(lane.provider_id) &&
+    custodyJson(descriptor.required_provider_lanes) !== custodyJson(binding.requiredProviderLanes) ||
+    descriptor.provider_lanes.some(lane => binding.requiredProviderLanes.includes(lane.provider_id) &&
       (!lane.healthy || !lane.profile_qualified))) {
-    throw new Error("V3 retained descriptor differs from frozen pins");
-  }
+    throw new Error("V3 retained descriptor differs from frozen pins"); }
   return descriptor;
 }
 
@@ -369,23 +372,40 @@ async function decodeRetainedResponse(exchange: InfinityContextRetrievalV3ExactE
   payload: ReturnType<typeof retrievalV3RequestPayload>, descriptor: RetrievalV3Capability,
   request: FocusedLocatorRetrievalV3RequestSnapshot): Promise<{
     readonly candidates: readonly QualificationRetrievalCandidate[];
-    readonly providerStatus: CanonicalRetrievalBindingV1["providerStatus"];
-  }> {
+    readonly expandedNeighborLocatorIds: readonly string[];
+    readonly providerStatus: CanonicalRetrievalBindingV1["providerStatus"] }> {
   const { decodeRetrieveContextV3ResponseBytes } = await import("@infinity-context/sdk");
   try {
     const response = decodeRetrieveContextV3ResponseBytes(exchange.responseBytes, payload, descriptor);
     if (response.candidates.some(candidate => !request.filters.sourceGenerations.some(pair =>
       pair.sourceKey === candidate.source_key))) {throw new Error("unadmitted source");}
-    const candidates = response.status === "available" ?
-      retrievalV3LocatorCandidates(response.candidates, request.binding, custodyDigest(request))
-        .map(candidate => ({ locatorId: candidate.locator,
-          contributions: candidate.retrievalProvenance.contributions,
-          fusedScore: candidate.retrievalProvenance.fusedScore,
-          providerRank: candidate.retrievalProvenance.providerRank })) : [];
-    return { candidates, providerStatus: response.status };
-  } catch {
-    return { candidates: [], providerStatus: "invalid_response" };
-  }
+    const candidates = response.status === "available"
+      ? retrievalV3LocatorCandidates(response.candidates, request.binding, custodyDigest(request))
+        .map(({ locator, retrievalProvenance: audit }) => ({ locatorId: locator,
+          contributions: audit.contributions, fusedScore: audit.fusedScore,
+          providerRank: audit.providerRank })) : [];
+    const expandedNeighborLocatorIds = response.status === "available"
+      ? retrievalV3ExpandedNeighborCandidates(response.candidates, request.binding,
+          custodyDigest(request)).map(({ locator }) => locator) : [];
+    return { candidates, expandedNeighborLocatorIds, providerStatus: response.status };
+  } catch { return { candidates: [], expandedNeighborLocatorIds: [],
+    providerStatus: "invalid_response" }; }
+}
+
+export async function retainedV3ExpandedNeighborLocatorIds(
+  exchange: InfinityContextRetrievalV3ExactExchange,
+  input: FocusedLocatorRetrievalV3RequestSnapshot,
+): Promise<readonly string[]> {
+  const request = validateFocusedLocatorRetrievalV3Request(input);
+  const payload = retrievalV3RequestPayload(retrievalV3InputFromSnapshot(request));
+  const expectedBytes = new TextEncoder().encode(JSON.stringify(payload));
+  if (!Buffer.from(expectedBytes).equals(exchange.requestBytes)) {
+    throw new Error("V3 neighbor replay request differs from retained bytes"); }
+  const descriptor = await loadRetainedDescriptor(exchange, request);
+  const decoded = await decodeRetainedResponse(exchange, payload, descriptor, request);
+  if (decoded.providerStatus === "invalid_response") {
+    throw new Error("V3 neighbor replay response is invalid"); }
+  return Object.freeze([...decoded.expandedNeighborLocatorIds]);
 }
 
 /** Exact-key reconstruction rejects a re-signed projection unless every retained byte agrees. */
