@@ -122,14 +122,35 @@ function response(): Record<string, unknown> {
     applied_bounds: {
       candidate_limit: 100,
       deadline_ms: 1_000,
-      neighbor_radius: 0,
+      neighbor_radius: 1,
       response_byte_limit: 16_384,
-      result_limit: 10,
+      result_limit: 7,
       returned_neighbors: 0,
       returned_seeds: 1,
     },
     candidates: [direct],
   });
+}
+
+function responseWithNeighbor(): Record<string, unknown> {
+  const value = response();
+  const direct = (value.candidates as Array<Record<string, unknown>>)[0]!;
+  direct.neighbors = [{
+    canonical_identity: `${String(direct.canonical_identity)}-neighbor`,
+    canonical_version: direct.canonical_version,
+    chunk_key: `${String(direct.chunk_key)}-neighbor`,
+    distance: 1,
+    document_key: direct.document_key,
+    lifecycle_status: "active",
+    locator: `${String(direct.locator)}-neighbor`,
+    relation: "neighbor",
+    source_key: direct.source_key,
+  }];
+  value.applied_bounds = {
+    ...(value.applied_bounds as Record<string, unknown>),
+    returned_neighbors: 1,
+  };
+  return value;
 }
 
 function request(overrides: Partial<InfinityContextRetrievalV3Request> = {}):
@@ -148,9 +169,9 @@ InfinityContextRetrievalV3Request {
       candidateLimit: 100,
       deadlineMs: 1_000,
       evidenceByteLimit: 16_000,
-      neighborRadius: 0,
+      neighborRadius: 1,
       responseByteLimit: 16_384,
-      resultLimit: 10,
+      resultLimit: 7,
     },
     filters: {
       actorKeys: ["actor-a"],
@@ -241,6 +262,37 @@ it("rejects unadmitted source keys while leaving locator generation/room reautho
   });
 });
 
+it("returns V3 neighbors as a separate evidence inventory with seed provenance", async () => {
+  const endpoint = new RetrievalV3Endpoint();
+  endpoint.response = responseWithNeighbor();
+  const retrievalAdapter = new InfinityContextRetrievalV3Adapter({
+    baseUrl: "https://infinity.invalid", operationTimeoutMs: 1_000,
+    requestTimeoutMs: 1_000, transport: endpoint,
+  });
+  const result = await retrievalAdapter.retrieve(request());
+  if (result.status !== "available") {throw new Error(result.status);}
+  expect(result.candidates).toHaveLength(1);
+  expect(result.expandedNeighbors).toHaveLength(1);
+  expect(result.expandedNeighbors?.[0]?.locator).not.toBe(result.candidates[0]?.locator);
+  expect(result.expandedNeighbors?.[0]?.retrievalProvenance.relation).toEqual({
+    distance: 1, kind: "neighbor", seedLocator: result.candidates[0]?.locator,
+  });
+});
+
+it("fails closed when an expanded neighbor crosses the admitted source", async () => {
+  const endpoint = new RetrievalV3Endpoint();
+  endpoint.response = responseWithNeighbor();
+  const direct = (endpoint.response.candidates as Array<Record<string, unknown>>)[0]!;
+  (direct.neighbors as Array<Record<string, unknown>>)[0]!.source_key = "foreign-source";
+  const retrievalAdapter = new InfinityContextRetrievalV3Adapter({
+    baseUrl: "https://infinity.invalid", operationTimeoutMs: 1_000,
+    requestTimeoutMs: 1_000, transport: endpoint,
+  });
+  await expect(retrievalAdapter.retrieve(request())).resolves.toMatchObject({
+    code: "memory.context_retrieval_response_invalid", status: "unavailable",
+  });
+});
+
 it.each(["v2-envelope", "v2-descriptor", "wrong-route"])("never falls back for %s", async (kind) => {
   const endpoint = new RetrievalV3Endpoint();
   endpoint.capabilities = kind === "v2-envelope" ? { context: { retrieval: capability } }
@@ -313,8 +365,11 @@ it("captures successful wire bytes, keeps snapshot/candidate digests distinct, a
 it("preserves V2/null alongside explicit V3/any on separate exact transports", async () => {
   const { InfinityContextRetrievalV2Adapter } = await import("../src/infinity-context-retrieval-v2.js");
   const v2Capability = fixture("capability");
-  const v2Response = { ...response(), contract_version: "context-retrieval.v2",
-    capability_fingerprint: v2Capability.capability_fingerprint };
+  const v3Response = response();
+  const v2Response = { ...v3Response, contract_version: "context-retrieval.v2",
+    capability_fingerprint: v2Capability.capability_fingerprint,
+    applied_bounds: { ...(v3Response.applied_bounds as Record<string, unknown>),
+      neighbor_radius: 0, result_limit: 10 } };
   const urls: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
     const path = new URL(urlText(url)).pathname;
@@ -330,6 +385,7 @@ it("preserves V2/null alongside explicit V3/any on separate exact transports", a
     const v2 = new InfinityContextRetrievalV2Adapter(config);
     const v3 = new InfinityContextRetrievalV3Adapter(config);
     const v2Request = { ...request(), schemaVersion: 2 as const,
+      budgets: { ...request().budgets, neighborRadius: 0 as const, resultLimit: 10 },
       scope: { memoryScopeId: "scope-a", spaceId: "space-a", threadId: null },
       binding: { ...request().binding, contractVersion: "context-retrieval.v2" as const,
         capabilityFingerprint: v2Capability.capability_fingerprint as string } };
@@ -520,6 +576,48 @@ it("reconstructs V3 frozen binding with separate byte, snapshot and projection i
   await expect(validateCanonicalRetrievalBinding({ ...binding, candidates: [] }, input)).rejects.toThrow();
 });
 
+it("accepts only current or legacy paired budgets when replaying retained V3 requests", async () => {
+  const { createCanonicalRetrievalBinding, assertCanonicalRequest } = await import(
+    "../src/quality-campaign/canonical-execution-artifact-validation.js");
+  const { retrievalV3RequestPayload } = await import("@infinity-context/sdk");
+  const { retrievalV3InputFromSnapshot } = await import("../src/infinity-context-retrieval-v3.js");
+  const base = await custodyFixture();
+  const retainedInput = (neighborRadius: 0 | 1, resultLimit: number) => {
+    const snapshot = request({ budgets: { ...base.request.budgets, neighborRadius, resultLimit } });
+    const raw = response();
+    raw.applied_bounds = { ...(raw.applied_bounds as Record<string, unknown>),
+      deadline_ms: 2_000, neighbor_radius: neighborRadius, result_limit: resultLimit };
+    return { ...base, request: snapshot, exchange: { ...base.exchange,
+      requestBytes: new TextEncoder().encode(JSON.stringify(
+        retrievalV3RequestPayload(retrievalV3InputFromSnapshot(snapshot)))),
+      responseBytes: new TextEncoder().encode(JSON.stringify(raw)) } };
+  };
+
+  await expect(createCanonicalRetrievalBinding(retainedInput(1, 7))).resolves.toBeDefined();
+  await expect(createCanonicalRetrievalBinding(retainedInput(0, 10))).resolves.toBeDefined();
+  expect(() => {assertCanonicalRequest(retainedInput(0, 10).request,
+    base.packet.questionText);}).toThrow("qualification request violates Meeting Knowledge ownership");
+  for (const [neighborRadius, resultLimit] of [[0, 7], [1, 10], [0, 9], [1, 8]] as const) {
+    await expect(createCanonicalRetrievalBinding(retainedInput(neighborRadius, resultLimit)))
+      .rejects.toThrow("qualification request violates Meeting Knowledge ownership");
+  }
+});
+
+it("reconstructs the expanded neighbor inventory from exact retained V3 bytes", async () => {
+  const input = await custodyFixture();
+  const raw = responseWithNeighbor();
+  (raw.applied_bounds as Record<string, unknown>).deadline_ms = 2_000;
+  const exchange = { ...input.exchange,
+    responseBytes: new TextEncoder().encode(JSON.stringify(raw)) };
+  const { createCanonicalRetrievalBinding, retainedV3ExpandedNeighborLocatorIds } =
+    await import("../src/quality-campaign/canonical-execution-artifact-validation.js");
+  const binding = await createCanonicalRetrievalBinding({ ...input, exchange });
+  const expanded = await retainedV3ExpandedNeighborLocatorIds(exchange, input.request);
+  expect(binding.candidates).toHaveLength(1);
+  expect(expanded).toHaveLength(1);
+  expect(expanded[0]).not.toBe(binding.candidates[0]?.locatorId);
+});
+
 it("uses explicit execution packet version to select legacy or topology-bound custody", async () => {
   const { createCanonicalRetrievalBinding } = await import(
     "../src/quality-campaign/canonical-execution-artifact-validation.js");
@@ -538,10 +636,14 @@ it("uses explicit execution packet version to select legacy or topology-bound cu
   });
   await expect(createCanonicalRetrievalBinding({ ...input, topology: legacyTopology }))
     .rejects.toThrow("retrieval binding packet or topology is invalid");
-  await expect(createCanonicalRetrievalBinding(input)).resolves.toMatchObject({
-    schemaVersion: "meeting_knowledge.canonical_retrieval_binding.v2",
-    scopeDerivationSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-  });
+  const currentBinding = await createCanonicalRetrievalBinding(input);
+  expect(currentBinding.schemaVersion).toBe(
+    "meeting_knowledge.canonical_retrieval_binding.v2",
+  );
+  if (currentBinding.schemaVersion !== "meeting_knowledge.canonical_retrieval_binding.v2") {
+    throw new Error("expected current canonical retrieval binding");
+  }
+  expect(currentBinding.scopeDerivationSha256).toMatch(/^[a-f0-9]{64}$/u);
 });
 
 it("retains malformed raw response as failed binding without inventing candidates", async () => {

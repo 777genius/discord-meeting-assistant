@@ -8,7 +8,8 @@ import { knowledgeAnswerExchangeInventorySha256 } from
 
 import { canonicalJson, digest, exactRecord } from "./canonical.js";
 import type { ExpectedSpendClaim } from "./cumulative-spend.js";
-import { custodyDigest, custodyJson, validateCanonicalRetrievalBinding, validateCanonicalRetrievalObservation,
+import { custodyDigest, custodyJson, retainedV3ExpandedNeighborLocatorIds,
+  validateCanonicalRetrievalBinding, validateCanonicalRetrievalObservation,
   validateCanonicalScopeResolutionObservation,
   type SemanticQualityV4ArtifactKind, type SemanticQualityV4ArtifactReceipt } from
   "./canonical-execution-artifact-validation.js";
@@ -277,7 +278,16 @@ async function verifyV3RetrievalArtifacts(opened: OpenedArtifacts,
   const binding = await validateCanonicalRetrievalBinding(bindingValue, {
     attemptId: expected.attemptId, packet: expected.executionPacket, topology,
     diagnosticPlanSha256, exchange: v3Exchange });
-  if ((binding.providerStatus === "available") !== (outcome.rawRetrievalResponseSha256 !== null) ||
+  const expandedNeighborLocatorIds = await retainedV3ExpandedNeighborLocatorIds(
+    v3Exchange, binding.request,
+  );
+  const admittedEvidenceLocators = new Set([
+    ...binding.candidates.map(({ locatorId }) => locatorId),
+    ...expandedNeighborLocatorIds,
+  ]);
+  if (outcome.selectedTurns.some(({ sourceLocatorId }) =>
+      !admittedEvidenceLocators.has(sourceLocatorId)) ||
+    (binding.providerStatus === "available") !== (outcome.rawRetrievalResponseSha256 !== null) ||
     binding.rawCapabilitySha256 !== expected.capabilityResponseSha256 ||
     binding.rawRequestSha256 !== expected.retrievalRequestSha256 ||
     binding.rawResponseSha256 !== expected.retrievalResponseSha256 ||

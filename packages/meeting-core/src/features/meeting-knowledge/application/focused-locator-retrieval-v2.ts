@@ -118,6 +118,8 @@ abstract class PrepareFocusedLocatorRetrievalRequest<T extends FocusedLocatorRet
       ? timeFilter.interval : null;
     const scope = await resolveFocusedRetrievalScope(this.dependencies.scopeResolution, input, topology);
     if (scope === null) {return unavailablePreparation("scope_resolution_unavailable");}
+    const contractVersion = this.dependencies.providerBinding.contractVersion;
+    const resultBudget = focusedRetrievalResultBudget(contractVersion, this.policy.resultLimit);
     const common = {
       binding: Object.freeze({ ...this.dependencies.providerBinding,
         requiredProviderLanes: Object.freeze([...this.dependencies.providerBinding.requiredProviderLanes]) }),
@@ -125,9 +127,9 @@ abstract class PrepareFocusedLocatorRetrievalRequest<T extends FocusedLocatorRet
         candidateLimit: this.policy.candidateLimit,
         deadlineMs: this.policy.deadlineMs,
         evidenceByteLimit: this.policy.evidenceByteLimit,
-        neighborRadius: 0 as const,
+        neighborRadius: resultBudget.neighborRadius,
         responseByteLimit: this.policy.responseByteLimit,
-        resultLimit: this.policy.resultLimit,
+        resultLimit: resultBudget.resultLimit,
       }),
       filters: Object.freeze({
         actorKeys,
@@ -164,7 +166,7 @@ abstract class PrepareFocusedLocatorRetrievalRequest<T extends FocusedLocatorRet
         timeWeightMicros: null,
       }),
     };
-    const versioned = this.dependencies.providerBinding.contractVersion === "context-retrieval.v3"
+    const versioned = contractVersion === "context-retrieval.v3"
       ? validateFocusedLocatorRetrievalV3Request({ ...common, schemaVersion: 3,
           scope: { memoryScopeId: scope.memoryScopeId, spaceId: scope.spaceId,
             thread: { mode: "any" } } })
@@ -208,16 +210,16 @@ export class PrepareFocusedLocatorRetrievalV3Request extends
 function preparedRequest<T extends FocusedLocatorRetrievalRequestSnapshot>(
   request: T,
 ): T & { readonly status: "prepared" } {
-  const result = request as T & {
-    readonly status: "prepared";
-  };
-  Object.defineProperty(result, "status", {
-    configurable: false,
-    enumerable: false,
-    value: "prepared",
-    writable: false,
-  });
+  const result = request as T & { readonly status: "prepared" };
+  Object.defineProperty(result, "status", { configurable: false, enumerable: false,
+    value: "prepared", writable: false });
   return Object.freeze(result);
+}
+
+function focusedRetrievalResultBudget(contractVersion: "context-retrieval.v2" | "context-retrieval.v3", policyResultLimit: number) {
+  if (contractVersion === "context-retrieval.v3") {
+    return { neighborRadius: 1 as const, resultLimit: Math.min(policyResultLimit, 7) }; }
+  return { neighborRadius: 0 as const, resultLimit: policyResultLimit };
 }
 
 function unavailablePreparation(
@@ -394,8 +396,8 @@ function interleave(current: readonly FocusedMemoryReference[], historical: read
   return Object.freeze(output);
 }
 function canonicalKey(reference: FocusedMemoryReference): string {
-  return [reference.meetingId, reference.transcriptId,
-    reference.transcriptVersion, reference.turnId,
+  return [reference.meetingId, reference.transcriptId, reference.transcriptVersion,
+    reference.turnId,
     reference.sourceStartCodePoint ?? "",
     reference.sourceEndCodePoint ?? ""].join("\u0000");
 }

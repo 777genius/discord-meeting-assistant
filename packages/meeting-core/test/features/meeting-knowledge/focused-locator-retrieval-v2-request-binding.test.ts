@@ -10,6 +10,7 @@ import {
   buildHistoricalIndexPlan,
   PrepareFocusedLocatorRetrievalV2Request,
   PrepareFocusedLocatorRetrievalV3Request,
+  retrievalAuditsBindInput,
   type FocusedLocatorRetrievalV2Port,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
@@ -24,6 +25,7 @@ import {
   fixture,
   providerBinding,
   providerCandidate,
+  providerNeighborCandidate,
 } from "./focused-locator-retrieval-v2.fixture.test.js";
 
 describe("resolved scope preparation", () => {
@@ -108,7 +110,7 @@ describe("resolved scope preparation", () => {
 
 
 describe("V3 shared deterministic preparation", () => {
-  it("changes only contract and selector while retaining the complete admitted pair set", async () => {
+  it("uses the V3 selector and measured radius-one response budget", async () => {
     const { prepare, store } = fixture();
     let bound: unknown;
     const v3 = new PrepareFocusedLocatorRetrievalV3Request({ ids: new TestIds(), store,
@@ -130,7 +132,7 @@ describe("V3 shared deterministic preparation", () => {
       memoryScopeId: old.scope.memoryScopeId, thread: { mode: "any" } });
     expect(request.filters).toEqual(old.filters);
     expect(request.queries).toEqual(old.queries);
-    expect(request.budgets).toEqual(old.budgets);
+    expect(request.budgets).toEqual({ ...old.budgets, neighborRadius: 1, resultLimit: 7 });
     expect(request.softPreferences).toEqual(old.softPreferences);
     expect(request.filters.sourceGenerations.length).toBeGreaterThan(0);
     expect(Object.isFrozen(request.scope.thread)).toBe(true);
@@ -210,6 +212,60 @@ it("rehydrates both admitted V3 sources with equal turn IDs and excludes an unad
   if (result.status !== "current") {throw new Error(result.status);}
   expect(result.turns.map((turn) => [turn.source?.meetingId, turn.turnId]))
     .toEqual([["first", "turn-1"], ["second", "turn-1"]]);
+});
+
+it("rehydrates V3 neighbors after their ranked seed without counting them as seeds", async () => {
+  const ids = new TestIds();
+  const meetings = ["seed", "neighbor"].map((meetingId) => makeMeeting({
+    meetingId, turns: [{ turnId: `turn-${meetingId}`, startMs: 0, endMs: 1_000,
+      text: `Evidence ${meetingId}.` }],
+  }));
+  const plans = meetings.map((meeting) => buildHistoricalIndexPlan(meeting, ids));
+  const store = new AppliedStore(meetings.map((meeting, index) => ({
+    binding: meeting.binding, plan: plans[index]!, remoteDocumentIds: {},
+  })), meetings);
+  const preparer = new PrepareFocusedLocatorRetrievalV3Request({ ids, store, scopeResolution,
+    providerBinding: { ...providerBinding, contractVersion: "context-retrieval.v3" } });
+  const input = { currentMeetingId: "current", question: "What evidence?", roomId: "room-1",
+    scopeId: "scope-1" };
+  const request = await preparer.prepare(input);
+  if (request.status !== "prepared") {throw new Error(request.status);}
+  const seedLocator = plans[0]!.documents[0]!.manifest.candidateLocator;
+  const neighborLocator = plans[1]!.documents[0]!.manifest.candidateLocator;
+  const historical = new HistoricalFocusedLocatorRetrievalV3({ ids, store, scopeResolution,
+    authorization: authorization(), turnHashes: { hash: () => "a".repeat(64) },
+    retrieval: { retrieve: async (value) => ({ status: "available",
+      candidates: [providerCandidate(seedLocator, value)],
+      expandedNeighbors: [providerNeighborCandidate(
+        neighborLocator, seedLocator, value,
+      )] }) },
+  });
+  const result = await historical.retrieve({ ...input, request,
+    authorizationPrincipalRef: "principal" });
+  if (result.status !== "current") {throw new Error(result.status);}
+  expect(result.candidates.map(({ turnId }) => turnId))
+    .toEqual(["turn-seed", "turn-neighbor"]);
+  expect(result.candidates[0]!.retrievalAudit?.relation).toBeUndefined();
+  expect(result.candidates[1]!.retrievalAudit?.relation).toEqual({
+    distance: 1, kind: "neighbor", seedLocator,
+  });
+  const references = result.candidates.filter(({ retrievalAudit }) =>
+    retrievalAudit?.relation !== undefined);
+  const retrievalBinding = {
+    canonicalEvidenceFilters: { relativeTimeInterval: null, requiresSpeakerMatch: false,
+      speakerIds: [] },
+    compositeProfile: { candidatePolicy: "bounded_lane_round_robin_dedupe.v1",
+      interleavePolicy: "local_then_historical_per_rank.v1",
+      profileId: "meeting-knowledge.composite-retrieval.v1" },
+    cutoverEpoch: "test-cutover", localCurrentIdentity: {
+      algorithmId: "canonical_local_exact_lexical_v1", profileFingerprint: "f".repeat(64),
+      profileId: "meeting-knowledge.local-current.v2" },
+    originalQuestion: input.question, profileFingerprint: "e".repeat(64),
+    provenanceSchemaVersion: 1, request, retrievalPath: "infinity_locator_v3",
+  } as const;
+  expect(await retrievalAuditsBindInput(result.candidates, retrievalBinding, input.question))
+    .toBe(true);
+  expect(await retrievalAuditsBindInput(references, retrievalBinding, input.question)).toBe(true);
 });
 
 it("rejects a stale admitted source generation even with a correctly hashed provider audit", async () => {

@@ -17,9 +17,22 @@ export interface FocusedLocatorRetrievalV2Candidate {
   readonly retrievalProvenance: FocusedRetrievalAudit;
 }
 
+export interface FocusedLocatorRetrievalV3NeighborCandidate extends
+  FocusedLocatorRetrievalV2Candidate {
+  readonly retrievalProvenance: FocusedRetrievalAudit & {
+    readonly relation: {
+      readonly distance: -1 | 1;
+      readonly kind: "neighbor";
+      readonly seedLocator: string;
+    };
+  };
+}
+
 export type FocusedLocatorRetrievalV2Result =
   | {
       readonly candidates: readonly FocusedLocatorRetrievalV2Candidate[];
+      /** V3-only evidence expansion; never part of ranked retrieval metrics. */
+      readonly expandedNeighbors?: readonly FocusedLocatorRetrievalV3NeighborCandidate[];
       readonly status: "available";
     }
   | {

@@ -429,7 +429,7 @@ describe("Infinity Context locator-only Retrieval V3 validation", () => {
   it("rejects query, result, and neighbor bounds before transport", async () => {
     const endpoint = new RetrievalV3Endpoint();
     const invalid = request({
-      budgets: { ...request().budgets, neighborRadius: 1 as 0 },
+      budgets: { ...request().budgets, neighborRadius: 1 },
       queries: [{ query: "x".repeat(513), queryId: "q1" }],
     });
     expect(await adapter(endpoint).retrieve(invalid)).toEqual({

@@ -65,6 +65,15 @@ export interface FocusedRetrievalAudit {
       };
   readonly locator: string;
   readonly providerRank: number;
+  /**
+   * V3-only expansion provenance. A neighbor inherits its seed's ranking
+   * contributions but remains distinguishable from a ranked provider hit.
+   */
+  readonly relation?: {
+    readonly distance: -1 | 1;
+    readonly kind: "neighbor";
+    readonly seedLocator: string;
+  };
   readonly requestDigest: string;
   readonly responseDigest: string;
 }

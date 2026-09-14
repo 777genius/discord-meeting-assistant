@@ -283,13 +283,13 @@ describe("meeting-memory V4 frozen provider-free corpus", () => {
 });
 
 describe("meeting-memory V4 exact rational metrics and thresholds", () => {
-  it("scores ranked opaque top-10 inputs and applies only preregistered gates", () => {
+  it("scores bounded ranked inputs and applies only preregistered gates", () => {
     const corpus = frozenSemanticQualityCorpusV4();
     const metrics = evaluateSemanticQualityV4({ outcomes: perfectOutcomes(corpus) });
     expect(metrics.completeQuestionRecallAt5).toEqual({ denominator: 120, numerator: 118 });
-    expect(metrics.completeQuestionRecallAt10).toEqual({ denominator: 120, numerator: 120 });
+    expect(metrics.completeQuestionRecallAt10).toEqual({ denominator: 120, numerator: 119 });
     expect(metrics.mrrAt10).toEqual({ denominator: 302_400, numerator: 302_400 });
-    expect(metrics.ndcgAt10.numerator).toBe(metrics.ndcgAt10.denominator);
+    expect(metrics.ndcgAt10).toEqual({ denominator: 120_000_000, numerator: 119_855_095 });
     expect(metrics.finalAnswerRecall.numerator).toBe(metrics.finalAnswerRecall.denominator);
     expect(metrics.abstentionPrecision).toEqual({ denominator: 120, numerator: 120 });
     expect(metrics.abstentionRecall).toEqual({ denominator: 120, numerator: 120 });
@@ -715,8 +715,10 @@ function perfectOutcomes(corpus: FrozenSemanticQualityCorpusV4): V4EvaluationOut
         capabilityBytes: 512,
         capabilitySha256: canonicalSha256({ id: question.id, kind: "capability" }),
         latencyUs: 200_000,
-        expandedNeighborLocators: [],
-        rankedSeedLocators: question.goldLocatorRelevance.map(({ locatorId }) => ({ locatorId })),
+        expandedNeighborLocators: question.goldLocatorRelevance.slice(7)
+          .map(({ locatorId }) => ({ locatorId })),
+        rankedSeedLocators: question.goldLocatorRelevance.slice(0, 7)
+          .map(({ locatorId }) => ({ locatorId })),
         requestBytes: 256,
         requestSha256: canonicalSha256({ id: question.id, kind: "request" }),
         requestSnapshotSha256: canonicalSha256({ id: question.id, kind: "request-snapshot" }),

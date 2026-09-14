@@ -395,10 +395,14 @@ interface MutableRetrievalRequest {
 }
 
 describe("V3 persisted question recovery", () => {
-  const v3 = (thread: { mode: "any" } | { mode: "exact"; id: string | null }) =>
+  const v3 = (thread: { mode: "any" } | { mode: "exact"; id: string | null },
+    neighborRadius: 0 | 1 = 0) =>
     QuestionBinding.create({ ...legacyInput, bindingProtocolVersion: 2,
       retrievalBinding: { ...retrievalBinding, retrievalPath: "infinity_locator_v3",
-        request: { ...retrievalBinding.request, schemaVersion: 3,
+        request: { ...retrievalBinding.request,
+          budgets: { ...retrievalBinding.request.budgets, neighborRadius,
+            resultLimit: neighborRadius === 1 ? 7 : 10 },
+          schemaVersion: 3,
           binding: { ...retrievalBinding.request.binding, contractVersion: "context-retrieval.v3" },
           scope: { memoryScopeId: "scope-opaque", spaceId: "space-opaque", thread },
           filters: { ...retrievalBinding.request.filters, sourceGenerations: [
@@ -418,6 +422,14 @@ describe("V3 persisted question recovery", () => {
       groundingPlan: null, questionText: "Question?" })).toEqual({
       binding, groundingPlan: null, migration: "current", status: "decoded",
     });
+  });
+
+  it("recovers both historical radius-zero and current radius-one V3 budgets", () => {
+    for (const binding of [v3({ mode: "any" }), v3({ mode: "any" }, 1)]) {
+      const hash = questionAdmissionBindingHash(binding);
+      const serialized: unknown = JSON.parse(JSON.stringify(binding));
+      expect(decodePersistedQuestionBinding(serialized, hash)).toEqual(binding);
+    }
   });
 
   it("binds selector and complete source-generation vector to durable hash", () => {

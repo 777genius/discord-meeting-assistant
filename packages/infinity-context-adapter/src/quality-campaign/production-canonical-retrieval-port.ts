@@ -6,12 +6,14 @@ import type { InfinityContextRetrievalV2ExactExchange, InfinityContextRetrievalV
   "../infinity-context-retrieval-exchange.js";
 import { canonicalJson } from "./canonical.js";
 import { assertCanonicalRequest, createCanonicalRetrievalBinding, custodyDigest, custodyJson,
-  freezeCustody, validateCanonicalRetrievalObservation,
+  freezeCustody, retainedV3ExpandedNeighborLocatorIds, validateCanonicalRetrievalObservation,
   validateCanonicalScopeResolutionObservation, type CanonicalRetrievalBindingV1 } from
   "./canonical-execution-artifact-validation.js";
 import { DiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
 import type { DiagnosticQuestion } from "./diagnostic-manifest.js";
-import type { QualificationExecutionPacket, QualificationQuestionExecutionContext } from
+import { orderedQualificationEvidenceLocatorIds,
+  type QualificationExecutionPacket, type QualificationQuestionExecutionContext,
+  type QualificationRetrievalCandidate } from
   "./execute-admitted-qualification-question.js";
 import type { CanonicalEngineInput, CanonicalQuestionState,
   ProductionCanonicalQuestionChainInput, QualificationEncryptedAuditPort } from
@@ -107,15 +109,24 @@ async function executeRetrieval(input: CanonicalEngineInput, state: CanonicalQue
     responseSha256: createHash("sha256").update(captured.exchange.responseBytes).digest("hex") }),
     phase: "retrieval", state: result.status === "available" ? "succeeded" : "failed" });
   if (result.status !== "available") {return { reason: result.code, status: "failed" as const };}
-  state.set(execution.attemptId, { binding: null, packet: execution.packet,
-    topology: execution.topology, turns: [],
-    request: freezeCustody(structuredClone(execution.prepared)), retrievalBinding,
-    candidateLocators: Object.freeze(result.candidates.map(candidate => candidate.locator)) });
-  return Object.freeze({ candidates: Object.freeze(result.candidates.map((candidate) =>
-    Object.freeze({ contributions: Object.freeze(candidate.retrievalProvenance.contributions
-      .map((contribution) => Object.freeze({ ...contribution }))),
+  const candidates: readonly QualificationRetrievalCandidate[] = Object.freeze(
+    result.candidates.map((candidate) => Object.freeze({ contributions: Object.freeze(
+      candidate.retrievalProvenance.contributions.map((contribution) =>
+        Object.freeze({ ...contribution }))),
     fusedScore: candidate.retrievalProvenance.fusedScore, locatorId: candidate.locator,
-    providerRank: candidate.retrievalProvenance.providerRank }))),
+    providerRank: candidate.retrievalProvenance.providerRank })),
+  );
+  const expandedNeighbors = Object.freeze((result.expandedNeighbors ?? []).map((neighbor) => {
+    const relation = neighbor.retrievalProvenance.relation;
+    return Object.freeze({ distance: relation.distance, locatorId: neighbor.locator,
+      providerRank: neighbor.retrievalProvenance.providerRank,
+      seedLocatorId: relation.seedLocator });
+  }));
+  const candidateLocators = orderedQualificationEvidenceLocatorIds(candidates, expandedNeighbors);
+  state.set(execution.attemptId, { binding: null, packet: execution.packet,
+    topology: execution.topology, turns: [], candidateLocators,
+    request: freezeCustody(structuredClone(execution.prepared)), retrievalBinding });
+  return Object.freeze({ candidates, expandedNeighbors,
   rawResponseSha256: createHash("sha256").update(captured.exchange.responseBytes).digest("hex"),
   status: "completed" as const });
 }
@@ -208,8 +219,14 @@ async function createV3Binding(input: CanonicalEngineInput, execution: Retrieval
     contributions: candidate.retrievalProvenance.contributions,
     fusedScore: candidate.retrievalProvenance.fusedScore, locatorId: candidate.locator,
     providerRank: candidate.retrievalProvenance.providerRank })) : [];
+  const retainedNeighbors = await retainedV3ExpandedNeighborLocatorIds(
+    exchange, execution.prepared,
+  );
+  const runtimeNeighbors = result.status === "available"
+    ? (result.expandedNeighbors ?? []).map(({ locator }) => locator) : [];
   if ((result.status === "available") !== (binding.providerStatus === "available") ||
-    custodyDigest(projected) !== binding.candidateProjectionSha256) {
+    custodyDigest(projected) !== binding.candidateProjectionSha256 ||
+    custodyJson(runtimeNeighbors) !== custodyJson(retainedNeighbors)) {
     throw new Error("V3 candidate inventory differs from official bytes");
   }
   return binding;

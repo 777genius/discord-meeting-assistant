@@ -146,8 +146,8 @@ export const retrievalV2RequestSchema = z.object({
 }).strict();
 
 const retrievalV3RequestSchema = retrievalV2RequestSchema.extend({
-  binding: retrievalV2RequestSchema.shape.binding.extend({
-    contractVersion: z.literal("context-retrieval.v3"), }).strict(),
+  binding: retrievalV2RequestSchema.shape.binding.extend({ contractVersion: z.literal("context-retrieval.v3") }).strict(),
+  budgets: retrievalV2RequestSchema.shape.budgets.extend({ neighborRadius: z.union([z.literal(0), z.literal(1)]) }).strict(),
   schemaVersion: z.literal(3),
   scope: z.object({ memoryScopeId: z.string(), spaceId: z.string(),
     thread: z.discriminatedUnion("mode", [

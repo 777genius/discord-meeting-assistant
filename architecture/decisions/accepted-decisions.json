@@ -376,6 +376,11 @@
       "id": "ADR-0078",
       "path": "docs/decisions/0078-restore-sealed-qualification-answer-profile.md",
       "immutableDigest": "sha256:d26ee89766cb40defcdc39fa795a91b13a742cd814399da934cf45b2ed220e40"
+    },
+    {
+      "id": "ADR-0079",
+      "path": "docs/decisions/0079-focused-v3-neighbor-evidence.md",
+      "immutableDigest": "sha256:df29df54709b6effd560c0ef831963d54fb68c5a39a84be05114b008d0cf29ca"
     }
   ]
 }

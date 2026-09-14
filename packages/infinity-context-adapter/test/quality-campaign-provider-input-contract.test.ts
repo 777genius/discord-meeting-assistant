@@ -33,15 +33,15 @@ describe("canonical production provider-input contract", () => {
       answer: { maximumInputUtf8Bytes: 16_000, maximumOutputBytes: 16_384,
         maximumOutputTokens: 2_048, repairCalls: { maximum: 1, minimum: 0 } },
       retrieval: { candidateLimit: policy.candidateLimit, deadlineMs: policy.deadlineMs,
-        evidenceByteLimit: policy.evidenceByteLimit, maximumQueries: 4, neighborRadius: 0,
-        responseByteLimit: policy.responseByteLimit, resultLimit: policy.resultLimit },
+        evidenceByteLimit: policy.evidenceByteLimit, maximumQueries: 4, neighborRadius: 1,
+        responseByteLimit: policy.responseByteLimit, resultLimit: 7 },
       schemaVersion: "meeting_knowledge.semantic_quality_provider_input_contract.v1",
     });
     expect(QUALIFICATION_THRESHOLDS.maximumRetrievalLatencyP95Us).toBe(3_000_000);
   });
 
   it("rejects the unchanged-schema 1000 ms accounting identity", () => {
-    const staleContractSha256 = "ca773c4516342ea2e034ba2714fddd5742a80e78761944ea20f5da7a43317bf3";
+    const staleContractSha256 = "acd1d8c121749addfbcc4dfb33b55c418c7269e3a0690a2760a3328661572289";
     expect(sha256({ ...QUALIFICATION_PROVIDER_INPUT_CONTRACT,
       retrieval: { ...QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval, deadlineMs: 1_000 },
     })).toBe(staleContractSha256);
@@ -85,7 +85,10 @@ describe("canonical production provider-input contract", () => {
       expect(() => assertQualificationProviderAccounting(value,
         { callKind: "answer", release: RELEASE })).toThrow();
     }
-    expect(QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.neighborRadius).toBe(0);
+    const retrieval = qualificationProviderAccountingFixture(RELEASE, "retrieval");
+    expect(() => assertQualificationProviderAccounting({ ...retrieval, candidateCount: 8 },
+      { callKind: "retrieval", release: RELEASE })).toThrow(/frozen contract/u);
+    expect(QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.neighborRadius).toBe(1);
     expect(QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.candidateLimit).toBe(100);
   });
 

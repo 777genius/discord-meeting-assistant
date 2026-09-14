@@ -7,8 +7,8 @@ export const QUALIFICATION_PROVIDER_INPUT_CONTRACT = Object.freeze({
   answer: Object.freeze({ maximumInputUtf8Bytes: 16_000, maximumOutputBytes: 16_384,
     maximumOutputTokens: 2_048, repairCalls: Object.freeze({ maximum: 1, minimum: 0 }) }),
   retrieval: Object.freeze({ candidateLimit: 100, deadlineMs: 2_000,
-    evidenceByteLimit: 16_000, maximumQueries: 4, neighborRadius: 0,
-    responseByteLimit: 16_384, resultLimit: 10 }),
+    evidenceByteLimit: 16_000, maximumQueries: 4, neighborRadius: 1,
+    responseByteLimit: 16_384, resultLimit: 7 }),
   schemaVersion: "meeting_knowledge.semantic_quality_provider_input_contract.v1",
 });
 
@@ -110,7 +110,7 @@ QualificationProviderAccounting {
   const candidateCount = exactNonnegativeInteger(record.candidateCount, "candidate count");
   const neighborRadius = exactNonnegativeInteger(record.neighborRadius, "neighbor radius");
   assertCallCardinality(input.callKind, { original, repair, resolver });
-  if (candidateCount > QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.candidateLimit ||
+  if (candidateCount > QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.resultLimit ||
     neighborRadius !== QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.neighborRadius ||
     input.callKind !== "retrieval" && candidateCount !== 0) {
     throw new Error("qualification retrieval accounting exceeds the frozen contract");

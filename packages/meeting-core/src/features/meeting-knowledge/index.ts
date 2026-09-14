@@ -323,6 +323,7 @@ export type {
   FocusedHistoricalEvidenceV2Port,
   FocusedHistoricalEvidenceV2Result,
   FocusedLocatorRetrievalV2Candidate,
+  FocusedLocatorRetrievalV3NeighborCandidate,
   FocusedLocatorRetrievalV2Preparation,
   FocusedLocatorRetrievalV3Preparation,
   FocusedLocatorRetrievalPreparation,
