@@ -576,6 +576,33 @@ it("reconstructs V3 frozen binding with separate byte, snapshot and projection i
   await expect(validateCanonicalRetrievalBinding({ ...binding, candidates: [] }, input)).rejects.toThrow();
 });
 
+it("accepts only current or legacy paired budgets when replaying retained V3 requests", async () => {
+  const { createCanonicalRetrievalBinding, assertCanonicalRequest } = await import(
+    "../src/quality-campaign/canonical-execution-artifact-validation.js");
+  const { retrievalV3RequestPayload } = await import("@infinity-context/sdk");
+  const { retrievalV3InputFromSnapshot } = await import("../src/infinity-context-retrieval-v3.js");
+  const base = await custodyFixture();
+  const retainedInput = (neighborRadius: 0 | 1, resultLimit: number) => {
+    const snapshot = request({ budgets: { ...base.request.budgets, neighborRadius, resultLimit } });
+    const raw = response();
+    raw.applied_bounds = { ...(raw.applied_bounds as Record<string, unknown>),
+      deadline_ms: 2_000, neighbor_radius: neighborRadius, result_limit: resultLimit };
+    return { ...base, request: snapshot, exchange: { ...base.exchange,
+      requestBytes: new TextEncoder().encode(JSON.stringify(
+        retrievalV3RequestPayload(retrievalV3InputFromSnapshot(snapshot)))),
+      responseBytes: new TextEncoder().encode(JSON.stringify(raw)) } };
+  };
+
+  await expect(createCanonicalRetrievalBinding(retainedInput(1, 7))).resolves.toBeDefined();
+  await expect(createCanonicalRetrievalBinding(retainedInput(0, 10))).resolves.toBeDefined();
+  expect(() => {assertCanonicalRequest(retainedInput(0, 10).request,
+    base.packet.questionText);}).toThrow("qualification request violates Meeting Knowledge ownership");
+  for (const [neighborRadius, resultLimit] of [[0, 7], [1, 10], [0, 9], [1, 8]] as const) {
+    await expect(createCanonicalRetrievalBinding(retainedInput(neighborRadius, resultLimit)))
+      .rejects.toThrow("qualification request violates Meeting Knowledge ownership");
+  }
+});
+
 it("reconstructs the expanded neighbor inventory from exact retained V3 bytes", async () => {
   const input = await custodyFixture();
   const raw = responseWithNeighbor();

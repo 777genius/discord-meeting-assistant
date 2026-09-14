@@ -176,11 +176,24 @@ function hasExactKeys(record: Record<string, unknown>, keys: readonly string[]):
 
 export function assertCanonicalRequest(request: FocusedLocatorRetrievalRequestSnapshot,
   question: string): void {
-  const expectedResultLimit = request.schemaVersion === 3 ? 7 : 10;
-  const expectedNeighborRadius = request.schemaVersion === 3 ? 1 : 0;
+  assertCanonicalRequestBudgets(request, question, false);
+}
+
+function assertRetainedCanonicalRequest(request: FocusedLocatorRetrievalRequestSnapshot,
+  question: string): void {
+  assertCanonicalRequestBudgets(request, question, true);
+}
+
+function assertCanonicalRequestBudgets(request: FocusedLocatorRetrievalRequestSnapshot,
+  question: string, allowLegacyV3: boolean): void {
+  const hasCurrentV3Budgets = request.schemaVersion === 3 &&
+    request.budgets.neighborRadius === 1 && request.budgets.resultLimit === 7;
+  const hasLegacyBudgets = request.budgets.neighborRadius === 0 &&
+    request.budgets.resultLimit === 10;
+  const hasCanonicalBudgets = hasCurrentV3Budgets || hasLegacyBudgets &&
+    (request.schemaVersion === 2 || allowLegacyV3);
   if (request.budgets.candidateLimit !== 100 ||
-    request.budgets.resultLimit !== expectedResultLimit ||
-    !Object.is(request.budgets.neighborRadius, expectedNeighborRadius) ||
+    !hasCanonicalBudgets ||
     request.queries.length !== 1 || question.trim().length === 0) {
     throw new Error("qualification request violates Meeting Knowledge ownership");
   }
@@ -295,7 +308,7 @@ function validateRetrievalBindingInput(input: CanonicalRetrievalBindingInput) {
   const admittedMain = "schemaVersion" in packet;
   validateBindingTopology(input, admittedMain);
   const request = validateFocusedLocatorRetrievalV3Request(input.request);
-  assertCanonicalRequest(request, packet.questionText);
+  assertRetainedCanonicalRequest(request, packet.questionText);
   validateBindingRequest(input, packet, request, admittedMain);
   return { admittedMain, packet, request };
 }
