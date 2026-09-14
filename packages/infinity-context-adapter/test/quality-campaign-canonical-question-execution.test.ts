@@ -83,14 +83,17 @@ describe("canonical admitted qualification question execution", () => {
       } },
       outcome: { record: async () => {} },
       retrieval: { retrieve: async () => ({ candidates: [{ contributions: [], fusedScore: 0.9,
-        locatorId: "loc-seed", providerRank: 1 }],
-      expandedNeighborLocatorIds: ["loc-neighbor"], rawResponseSha256: "a".repeat(64),
+        locatorId: "loc-seed", providerRank: 1 }, { contributions: [], fusedScore: 0.8,
+        locatorId: "loc-seed-2", providerRank: 2 }],
+      expandedNeighbors: [{ distance: 1 as const, locatorId: "loc-neighbor", providerRank: 1,
+        seedLocatorId: "loc-seed" }], rawResponseSha256: "a".repeat(64),
       status: "completed" as const }) },
     });
     const result = await useCase.execute(packet, { attemptId: "attempt-neighbor",
       signal: new AbortController().signal });
-    expect(rehydrated).toEqual(["loc-seed", "loc-neighbor"]);
-    expect(result.retrievalCandidates.map(({ locatorId }) => locatorId)).toEqual(["loc-seed"]);
+    expect(rehydrated).toEqual(["loc-seed", "loc-neighbor", "loc-seed-2"]);
+    expect(result.retrievalCandidates.map(({ locatorId }) => locatorId))
+      .toEqual(["loc-seed", "loc-seed-2"]);
     expect(result.selectedTurns.map(({ sourceLocatorId }) => sourceLocatorId))
       .toEqual(["loc-neighbor"]);
   });

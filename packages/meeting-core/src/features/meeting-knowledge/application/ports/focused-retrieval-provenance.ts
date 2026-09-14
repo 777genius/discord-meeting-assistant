@@ -66,8 +66,12 @@ async function retrievalAuditsBind(
       return false;
     }
   }
+  const composite = binding.retrievalPath === "infinity_locator_v2" ||
+    binding.retrievalPath === "infinity_locator_v3";
+  const historicalNeighbors = binding.retrievalPath === "infinity_locator_v3" &&
+    binding.request.budgets.neighborRadius === 1;
   return !requireRetrievalOrder ||
-    laneOrderIsCanonical(candidates, (binding.retrievalPath === "infinity_locator_v2" || binding.retrievalPath === "infinity_locator_v3"));
+    laneOrderIsCanonical(candidates, composite, historicalNeighbors);
 }
 
 async function candidateAuditBinds(
@@ -243,10 +247,12 @@ function sameLocalIdentity(
 function laneOrderIsCanonical(
   candidates: readonly FocusedMemoryReference[],
   composite: boolean,
+  historicalNeighbors: boolean,
 ): boolean {
   const local = candidates.filter(({ historicalSource }) => historicalSource === undefined);
   const historical = candidates.filter(({ historicalSource }) => historicalSource !== undefined);
-  if (!canonicalLaneRanks(local) || !canonicalLaneRanks(historical) ||
+  if (!canonicalLaneRanks(local, false) ||
+    !canonicalLaneRanks(historical, historicalNeighbors) ||
     (!composite && historical.length > 0)) {return false;}
   const expected: FocusedMemoryReference[] = [];
   const maximum = Math.max(local.length, historical.length);
@@ -258,28 +264,32 @@ function laneOrderIsCanonical(
     expected.every((candidate, index) => candidate === candidates[index]);
 }
 
-function canonicalLaneRanks(candidates: readonly FocusedMemoryReference[]): boolean {
-  let activeSeed: { readonly locator: string; readonly rank: number } | null = null;
+function canonicalLaneRanks(
+  candidates: readonly FocusedMemoryReference[],
+  allowNeighbors: boolean,
+): boolean {
   let activeLocator: string | null = null;
+  let group: { readonly rank: number; readonly seedLocator: string } | null = null;
   const observed = new Set<string>();
   for (const candidate of candidates) {
     const audit = candidate.retrievalAudit!;
     if (activeLocator === audit.locator) {
-      if (audit.providerRank !== activeSeed?.rank) {return false;}
+      if (audit.providerRank !== group?.rank) {return false;}
       continue;
     }
     activeLocator = audit.locator;
     if (observed.has(audit.locator)) {return false;}
     observed.add(audit.locator);
     if (audit.relation === undefined) {
-      if (activeSeed !== null && audit.providerRank <= activeSeed.rank) {return false;}
-      activeSeed = { locator: audit.locator, rank: audit.providerRank };
+      if (group !== null && audit.providerRank <= group.rank) {return false;}
+      group = { rank: audit.providerRank, seedLocator: audit.locator };
       continue;
     }
-    if (activeSeed === null || audit.relation.seedLocator !== activeSeed.locator ||
-      audit.providerRank !== activeSeed.rank || audit.locator === activeSeed.locator) {
-      return false;
-    }
+    if (!allowNeighbors || audit.locator === audit.relation.seedLocator ||
+      group !== null && audit.providerRank < group.rank) {return false;}
+    if (group === null || audit.providerRank > group.rank) {
+      group = { rank: audit.providerRank, seedLocator: audit.relation.seedLocator };
+    } else if (audit.relation.seedLocator !== group.seedLocator) {return false;}
   }
   return true;
 }

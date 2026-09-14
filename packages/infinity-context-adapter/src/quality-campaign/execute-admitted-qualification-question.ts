@@ -41,6 +41,13 @@ export interface QualificationRetrievalCandidate {
   readonly providerRank: number;
 }
 
+export interface QualificationExpandedNeighbor {
+  readonly distance: -1 | 1;
+  readonly locatorId: string;
+  readonly providerRank: number;
+  readonly seedLocatorId: string;
+}
+
 export interface QualificationCanonicalTurn {
   readonly endMs: number;
   readonly sourceLocatorId: string;
@@ -54,7 +61,7 @@ export interface QualificationCanonicalTurn {
 export interface QualificationQuestionRetrievalPort {
   retrieve(input: QualificationExecutionPacket, options: QualificationQuestionExecutionContext):
     Promise<{ readonly candidates: readonly QualificationRetrievalCandidate[];
-      readonly expandedNeighborLocatorIds?: readonly string[];
+      readonly expandedNeighbors?: readonly QualificationExpandedNeighbor[];
       readonly rawResponseSha256: string; readonly status: "completed" } |
     { readonly reason: string; readonly status: "failed" }>;
 }
@@ -154,10 +161,9 @@ export class ExecuteAdmittedQualificationQuestion {
         selectedTurns: [], status: "failed" });
     }
     assertOrderedCandidates(retrieval.candidates);
-    const rankedLocatorIds = retrieval.candidates.map(({ locatorId }) => locatorId);
-    const expandedNeighborLocatorIds = retrieval.expandedNeighborLocatorIds ?? [];
-    assertExpandedNeighborLocators(rankedLocatorIds, expandedNeighborLocatorIds);
-    const locatorIds = [...rankedLocatorIds, ...expandedNeighborLocatorIds];
+    const locatorIds = orderedQualificationEvidenceLocatorIds(
+      retrieval.candidates, retrieval.expandedNeighbors ?? [],
+    );
     let evidence;
     try {
       evidence = await this.ports.evidence.rehydrate({ locatorIds,
@@ -249,20 +255,29 @@ function assertOrderedCandidates(candidates: readonly QualificationRetrievalCand
   }
 }
 
-function assertExpandedNeighborLocators(
-  rankedLocatorIds: readonly string[],
-  expandedNeighborLocatorIds: readonly string[],
-): void {
-  const observed = new Set(rankedLocatorIds);
-  for (const locatorId of expandedNeighborLocatorIds) {
-    if (typeof locatorId !== "string" || locatorId.length === 0 || observed.has(locatorId)) {
-      throw new Error("qualification expanded neighbor locators are invalid or duplicated");
+export function orderedQualificationEvidenceLocatorIds(
+  candidates: readonly QualificationRetrievalCandidate[],
+  expandedNeighbors: readonly QualificationExpandedNeighbor[],
+): readonly string[] {
+  const seeds = new Map(candidates.map((candidate) => [candidate.locatorId, candidate]));
+  const observed = new Set(seeds.keys());
+  const bySeed = new Map<string, QualificationExpandedNeighbor[]>();
+  for (const neighbor of expandedNeighbors) {
+    const seed = seeds.get(neighbor.seedLocatorId);
+    if (typeof neighbor.locatorId !== "string" || neighbor.locatorId.length === 0 ||
+      observed.has(neighbor.locatorId) || seed === undefined ||
+      neighbor.providerRank !== seed.providerRank) {
+      throw new Error("qualification expanded neighbors are invalid or duplicated");
     }
-    observed.add(locatorId);
+    observed.add(neighbor.locatorId);
+    const group = [...(bySeed.get(neighbor.seedLocatorId) ?? []), neighbor];
+    if (group.length > 2) {
+      throw new Error("qualification expanded neighbor inventory exceeds radius-one bounds");
+    }
+    bySeed.set(neighbor.seedLocatorId, group);
   }
-  if (expandedNeighborLocatorIds.length > rankedLocatorIds.length * 2) {
-    throw new Error("qualification expanded neighbor inventory exceeds radius-one bounds");
-  }
+  return Object.freeze(candidates.flatMap((seed) => [seed.locatorId,
+    ...(bySeed.get(seed.locatorId) ?? []).map(({ locatorId }) => locatorId)]));
 }
 
 function assertSelectedEvidence(locatorIds: readonly string[],

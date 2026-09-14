@@ -10,6 +10,7 @@ import {
   buildHistoricalIndexPlan,
   PrepareFocusedLocatorRetrievalV2Request,
   PrepareFocusedLocatorRetrievalV3Request,
+  retrievalAuditsBindInput,
   type FocusedLocatorRetrievalV2Port,
 } from "@discord-meeting/meeting-core/meeting-knowledge";
 import {
@@ -239,14 +240,32 @@ it("rehydrates V3 neighbors after their ranked seed without counting them as see
         neighborLocator, seedLocator, value,
       )] }) },
   });
-  const result = await historical.retrieveEvidence({ ...input, request,
+  const result = await historical.retrieve({ ...input, request,
     authorizationPrincipalRef: "principal" });
   if (result.status !== "current") {throw new Error(result.status);}
-  expect(result.turns.map(({ turnId }) => turnId)).toEqual(["turn-seed", "turn-neighbor"]);
-  expect(result.turns[0]!.retrievalAudit?.relation).toBeUndefined();
-  expect(result.turns[1]!.retrievalAudit?.relation).toEqual({
+  expect(result.candidates.map(({ turnId }) => turnId))
+    .toEqual(["turn-seed", "turn-neighbor"]);
+  expect(result.candidates[0]!.retrievalAudit?.relation).toBeUndefined();
+  expect(result.candidates[1]!.retrievalAudit?.relation).toEqual({
     distance: 1, kind: "neighbor", seedLocator,
   });
+  const references = result.candidates.filter(({ retrievalAudit }) =>
+    retrievalAudit?.relation !== undefined);
+  const retrievalBinding = {
+    canonicalEvidenceFilters: { relativeTimeInterval: null, requiresSpeakerMatch: false,
+      speakerIds: [] },
+    compositeProfile: { candidatePolicy: "bounded_lane_round_robin_dedupe.v1",
+      interleavePolicy: "local_then_historical_per_rank.v1",
+      profileId: "meeting-knowledge.composite-retrieval.v1" },
+    cutoverEpoch: "test-cutover", localCurrentIdentity: {
+      algorithmId: "canonical_local_exact_lexical_v1", profileFingerprint: "f".repeat(64),
+      profileId: "meeting-knowledge.local-current.v2" },
+    originalQuestion: input.question, profileFingerprint: "e".repeat(64),
+    provenanceSchemaVersion: 1, request, retrievalPath: "infinity_locator_v3",
+  } as const;
+  expect(await retrievalAuditsBindInput(result.candidates, retrievalBinding, input.question))
+    .toBe(true);
+  expect(await retrievalAuditsBindInput(references, retrievalBinding, input.question)).toBe(true);
 });
 
 it("rejects a stale admitted source generation even with a correctly hashed provider audit", async () => {

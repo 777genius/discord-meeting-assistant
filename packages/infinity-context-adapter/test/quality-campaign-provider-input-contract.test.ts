@@ -85,6 +85,9 @@ describe("canonical production provider-input contract", () => {
       expect(() => assertQualificationProviderAccounting(value,
         { callKind: "answer", release: RELEASE })).toThrow();
     }
+    const retrieval = qualificationProviderAccountingFixture(RELEASE, "retrieval");
+    expect(() => assertQualificationProviderAccounting({ ...retrieval, candidateCount: 8 },
+      { callKind: "retrieval", release: RELEASE })).toThrow(/frozen contract/u);
     expect(QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.neighborRadius).toBe(1);
     expect(QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.candidateLimit).toBe(100);
   });

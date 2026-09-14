@@ -110,7 +110,7 @@ QualificationProviderAccounting {
   const candidateCount = exactNonnegativeInteger(record.candidateCount, "candidate count");
   const neighborRadius = exactNonnegativeInteger(record.neighborRadius, "neighbor radius");
   assertCallCardinality(input.callKind, { original, repair, resolver });
-  if (candidateCount > QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.candidateLimit ||
+  if (candidateCount > QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.resultLimit ||
     neighborRadius !== QUALIFICATION_PROVIDER_INPUT_CONTRACT.retrieval.neighborRadius ||
     input.callKind !== "retrieval" && candidateCount !== 0) {
     throw new Error("qualification retrieval accounting exceeds the frozen contract");

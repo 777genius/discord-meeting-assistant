@@ -11,7 +11,9 @@ import { assertCanonicalRequest, createCanonicalRetrievalBinding, custodyDigest,
   "./canonical-execution-artifact-validation.js";
 import { DiagnosticFrozenStore } from "./diagnostic-frozen-store.js";
 import type { DiagnosticQuestion } from "./diagnostic-manifest.js";
-import type { QualificationExecutionPacket, QualificationQuestionExecutionContext } from
+import { orderedQualificationEvidenceLocatorIds,
+  type QualificationExecutionPacket, type QualificationQuestionExecutionContext,
+  type QualificationRetrievalCandidate } from
   "./execute-admitted-qualification-question.js";
 import type { CanonicalEngineInput, CanonicalQuestionState,
   ProductionCanonicalQuestionChainInput, QualificationEncryptedAuditPort } from
@@ -107,22 +109,24 @@ async function executeRetrieval(input: CanonicalEngineInput, state: CanonicalQue
     responseSha256: createHash("sha256").update(captured.exchange.responseBytes).digest("hex") }),
     phase: "retrieval", state: result.status === "available" ? "succeeded" : "failed" });
   if (result.status !== "available") {return { reason: result.code, status: "failed" as const };}
-  const expandedNeighborLocatorIds = Object.freeze(
-    (result.expandedNeighbors ?? []).map(({ locator }) => locator),
-  );
-  state.set(execution.attemptId, { binding: null, packet: execution.packet,
-    topology: execution.topology, turns: [],
-    request: freezeCustody(structuredClone(execution.prepared)), retrievalBinding,
-    candidateLocators: Object.freeze([
-      ...result.candidates.map(({ locator }) => locator),
-      ...expandedNeighborLocatorIds,
-    ]) });
-  return Object.freeze({ candidates: Object.freeze(result.candidates.map((candidate) =>
-    Object.freeze({ contributions: Object.freeze(candidate.retrievalProvenance.contributions
-      .map((contribution) => Object.freeze({ ...contribution }))),
+  const candidates: readonly QualificationRetrievalCandidate[] = Object.freeze(
+    result.candidates.map((candidate) => Object.freeze({ contributions: Object.freeze(
+      candidate.retrievalProvenance.contributions.map((contribution) =>
+        Object.freeze({ ...contribution }))),
     fusedScore: candidate.retrievalProvenance.fusedScore, locatorId: candidate.locator,
-    providerRank: candidate.retrievalProvenance.providerRank }))),
-  expandedNeighborLocatorIds,
+    providerRank: candidate.retrievalProvenance.providerRank })),
+  );
+  const expandedNeighbors = Object.freeze((result.expandedNeighbors ?? []).map((neighbor) => {
+    const relation = neighbor.retrievalProvenance.relation;
+    return Object.freeze({ distance: relation.distance, locatorId: neighbor.locator,
+      providerRank: neighbor.retrievalProvenance.providerRank,
+      seedLocatorId: relation.seedLocator });
+  }));
+  const candidateLocators = orderedQualificationEvidenceLocatorIds(candidates, expandedNeighbors);
+  state.set(execution.attemptId, { binding: null, packet: execution.packet,
+    topology: execution.topology, turns: [], candidateLocators,
+    request: freezeCustody(structuredClone(execution.prepared)), retrievalBinding });
+  return Object.freeze({ candidates, expandedNeighbors,
   rawResponseSha256: createHash("sha256").update(captured.exchange.responseBytes).digest("hex"),
   status: "completed" as const });
 }
