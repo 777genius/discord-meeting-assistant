@@ -30,7 +30,7 @@ catalog:
   fastify: 5.12.3
   fast-check: 4.9.0
   knip: 6.31.0
-  nx: 23.1.1
+  nx: 23.2.1
   openai: 7.3.0
   oxlint: 1.76.0
   oxlint-tsgolint: 7.0.2001
