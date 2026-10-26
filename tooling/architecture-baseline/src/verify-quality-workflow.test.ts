@@ -51,7 +51,7 @@ void test("Infinity validation shards every test exactly once behind a fail-clos
     /vitest run --no-file-parallelism[\s\S]*--exclude=\*\*\/quality-campaign-production-runner-structural\.test\.ts[\s\S]*--exclude=\*\*\/quality-campaign-production\.test\.ts/u,
   );
 
-  assert.match(aggregate, /if: always\(\) && github\.event_name == 'pull_request'/u);
+  assert.match(aggregate, /if: always\(\) && !cancelled\(\) && github\.event_name == 'pull_request'/u);
   assert.match(aggregate, /- infinity-changes/u);
   assert.match(aggregate, /- infinity-integration-checks/u);
   assert.match(aggregate, /CHANGES_RESULT.*needs\.infinity-changes\.result/u);
