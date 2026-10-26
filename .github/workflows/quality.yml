@@ -169,7 +169,7 @@ jobs:
           --exclude=**/quality-campaign-production.test.ts
 
   infinity-integration:
-    if: always() && github.event_name == 'pull_request'
+    if: always() && !cancelled() && github.event_name == 'pull_request'
     needs:
       - infinity-changes
       - infinity-integration-checks
