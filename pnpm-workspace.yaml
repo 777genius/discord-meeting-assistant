@@ -27,7 +27,7 @@ catalog:
   bullmq: 5.81.3
   confusables: 1.1.1
   discord.js: 14.27.0
-  fastify: 5.12.3
+  fastify: 5.12.6
   fast-check: 4.9.0
   knip: 6.31.0
   nx: 23.1.1
